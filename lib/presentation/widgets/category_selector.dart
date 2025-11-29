@@ -1,0 +1,422 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../../providers/database_providers.dart';
+
+class CategorySelector extends ConsumerWidget {
+  const CategorySelector({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final categoriesAsync = ref.watch(categoriesProvider);
+    final selectedCategory = ref.watch(selectedCategoryProvider);
+
+    return Container(
+      height: 100,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Calculator button
+          Padding(
+            padding: const EdgeInsets.only(left: 16, right: 8, top: 12, bottom: 12),
+            child: InkWell(
+              onTap: () {
+                _showCalculator(context);
+              },
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 76,
+                decoration: BoxDecoration(
+                  color: Colors.blue[700],
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.blue.withValues(alpha: 0.3),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.calculate,
+                      size: 36,
+                      color: Colors.white,
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Calc',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Categories list
+          Expanded(
+            child: categoriesAsync.when(
+              data: (categories) {
+                return ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(right: 16, top: 12, bottom: 12),
+                  itemCount: categories.length + 1, // +1 for "All" category
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      // "All" category
+                      return _CategoryChip(
+                        name: 'All',
+                        imageUrl: null,
+                        isSelected: selectedCategory == null,
+                        onTap: () {
+                          ref.read(selectedCategoryProvider.notifier).state = null;
+                        },
+                      );
+                    }
+
+                    final category = categories[index - 1];
+                    return _CategoryChip(
+                      name: category.name,
+                      imageUrl: category.imageUrl,
+                      isSelected: selectedCategory == category.id,
+                      onTap: () {
+                        ref.read(selectedCategoryProvider.notifier).state = category.id;
+                      },
+                    );
+                  },
+                );
+              },
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (error, stack) => Center(
+                child: Text('Error loading categories: $error'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showCalculator(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => const _CalculatorDialog(),
+    );
+  }
+}
+
+class _CategoryChip extends StatelessWidget {
+  final String name;
+  final String? imageUrl;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _CategoryChip({
+    required this.name,
+    this.imageUrl,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          width: 120,
+          constraints: const BoxConstraints(
+            minWidth: 100,
+            maxWidth: 120,
+          ),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? Theme.of(context).primaryColor
+                : Colors.grey[100],
+            border: Border.all(
+              color: isSelected
+                  ? Theme.of(context).primaryColor
+                  : Colors.grey[300]!,
+              width: 2,
+            ),
+          ),
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  name,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.black87,
+                    fontSize: 20,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalculatorDialog extends StatefulWidget {
+  const _CalculatorDialog();
+
+  @override
+  State<_CalculatorDialog> createState() => _CalculatorDialogState();
+}
+
+class _CalculatorDialogState extends State<_CalculatorDialog> {
+  String _display = '0';
+  String _expression = '';
+  double? _firstOperand;
+  String? _operator;
+  bool _shouldResetDisplay = false;
+
+  void _onNumberPressed(String number) {
+    setState(() {
+      if (_shouldResetDisplay || _display == '0') {
+        _display = number;
+        _shouldResetDisplay = false;
+      } else {
+        _display += number;
+      }
+    });
+  }
+
+  void _onOperatorPressed(String operator) {
+    setState(() {
+      if (_firstOperand == null) {
+        _firstOperand = double.tryParse(_display);
+        _operator = operator;
+        _expression = '$_display $operator';
+        _shouldResetDisplay = true;
+      } else {
+        _calculate();
+        _operator = operator;
+        _expression = '$_display $operator';
+        _shouldResetDisplay = true;
+      }
+    });
+  }
+
+  void _calculate() {
+    if (_firstOperand == null || _operator == null) return;
+
+    final secondOperand = double.tryParse(_display);
+    if (secondOperand == null) return;
+
+    double result = 0;
+    switch (_operator) {
+      case '+':
+        result = _firstOperand! + secondOperand;
+        break;
+      case '-':
+        result = _firstOperand! - secondOperand;
+        break;
+      case '×':
+        result = _firstOperand! * secondOperand;
+        break;
+      case '÷':
+        if (secondOperand != 0) {
+          result = _firstOperand! / secondOperand;
+        }
+        break;
+    }
+
+    setState(() {
+      _display = result.toString();
+      if (_display.endsWith('.0')) {
+        _display = _display.substring(0, _display.length - 2);
+      }
+      _expression = '';
+      _firstOperand = result;
+      _operator = null;
+    });
+  }
+
+  void _onEqualsPressed() {
+    _calculate();
+    setState(() {
+      _shouldResetDisplay = true;
+    });
+  }
+
+  void _onClearPressed() {
+    setState(() {
+      _display = '0';
+      _expression = '';
+      _firstOperand = null;
+      _operator = null;
+      _shouldResetDisplay = false;
+    });
+  }
+
+  void _onDecimalPressed() {
+    setState(() {
+      if (_shouldResetDisplay) {
+        _display = '0.';
+        _shouldResetDisplay = false;
+      } else if (!_display.contains('.')) {
+        _display += '.';
+      }
+    });
+  }
+
+  void _onBackspacePressed() {
+    setState(() {
+      if (_display.length > 1) {
+        _display = _display.substring(0, _display.length - 1);
+      } else {
+        _display = '0';
+      }
+    });
+  }
+
+  Widget _buildButton(String text, {Color? color, VoidCallback? onPressed}) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: ElevatedButton(
+          onPressed: onPressed,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: color ?? Colors.grey[200],
+            foregroundColor: color != null ? Colors.white : Colors.black87,
+            padding: const EdgeInsets.all(20),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: Text(
+            text,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        width: 350,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Calculator',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Display
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (_expression.isNotEmpty)
+                    Text(
+                      _expression,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _display,
+                    style: const TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Buttons
+            Row(
+              children: [
+                _buildButton('C', color: Colors.red[400], onPressed: _onClearPressed),
+                _buildButton('⌫', onPressed: _onBackspacePressed),
+                _buildButton('÷', color: Colors.blue[700], onPressed: () => _onOperatorPressed('÷')),
+              ],
+            ),
+            Row(
+              children: [
+                _buildButton('7', onPressed: () => _onNumberPressed('7')),
+                _buildButton('8', onPressed: () => _onNumberPressed('8')),
+                _buildButton('9', onPressed: () => _onNumberPressed('9')),
+                _buildButton('×', color: Colors.blue[700], onPressed: () => _onOperatorPressed('×')),
+              ],
+            ),
+            Row(
+              children: [
+                _buildButton('4', onPressed: () => _onNumberPressed('4')),
+                _buildButton('5', onPressed: () => _onNumberPressed('5')),
+                _buildButton('6', onPressed: () => _onNumberPressed('6')),
+                _buildButton('-', color: Colors.blue[700], onPressed: () => _onOperatorPressed('-')),
+              ],
+            ),
+            Row(
+              children: [
+                _buildButton('1', onPressed: () => _onNumberPressed('1')),
+                _buildButton('2', onPressed: () => _onNumberPressed('2')),
+                _buildButton('3', onPressed: () => _onNumberPressed('3')),
+                _buildButton('+', color: Colors.blue[700], onPressed: () => _onOperatorPressed('+')),
+              ],
+            ),
+            Row(
+              children: [
+                _buildButton('0', onPressed: () => _onNumberPressed('0')),
+                _buildButton('.', onPressed: _onDecimalPressed),
+                _buildButton('=', color: Colors.green[700], onPressed: _onEqualsPressed),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
