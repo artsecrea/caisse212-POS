@@ -38,8 +38,8 @@ class OrderPanel extends ConsumerWidget {
                   color: Theme.of(context).primaryColor,
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  'Current Order',
+                Text(
+                  currentOrder.orderId?.toString() ?? 'Current Order*',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
@@ -69,7 +69,7 @@ class OrderPanel extends ConsumerWidget {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'click a product to start !',
+                          'click a product to start new order',
                           style: TextStyle(
                             fontSize: 16,
                             color: Colors.grey[500],

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:loggecrea/loggecrea.dart';
 import '../domain/models/order_models.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/order_events.dart';
@@ -91,6 +92,7 @@ final orderProvider = StateNotifierProvider<OrderNotifier, CurrentOrder>((ref) {
 // Order Repository
 class OrderRepository {
   final AppDatabase _database;
+  final _logger = Logger.instance;
 
   OrderRepository(this._database);
 
@@ -210,10 +212,15 @@ class OrderRepository {
     ));
 
     // Delete existing order products
-    await (_database.delete(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))).go();
+    await (_database.delete(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))..where((tbl) => tbl.ticketId.isNull())).go();
 
     // Insert new order products
     for (final item in order.items) {
+      if (item.ticketId != null) {
+        // Skip items that are already ticketed
+        _logger.debug("continue");
+        continue;
+      }
       final orderProductId = await _database.into(_database.orderProducts).insert(
         OrderProductsCompanion.insert(
           orderId: orderId,
@@ -442,6 +449,10 @@ class OrderRepository {
       newStatus: status,
     ));
   }
+
+
+
+
 
   Future<void> setTableOrderId(int tableId, int? orderId) async {
     await (_database.update(_database.areaTables)..where((tbl) => tbl.id.equals(tableId))).write(AreaTablesCompanion(orderId: Value(orderId)));

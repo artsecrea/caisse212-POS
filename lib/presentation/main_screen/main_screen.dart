@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:loggecrea/loggecrea.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../paymen_screen/payment_screen.dart';
@@ -19,6 +20,8 @@ class MainScreen extends ConsumerStatefulWidget {
 }
 
 class _MainScreenState extends ConsumerState<MainScreen> {
+
+  final _logger = Logger.instance;
   @override
   Widget build(BuildContext context) {
     final currentOrder = ref.watch(orderProvider);
@@ -216,10 +219,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       print(currentOrder.orderId);
 
                       if (currentOrder.isSaved()) {
-                        print("order updated");
+                        _logger.error("order updated");
                         await orderRepo.updateOrder(currentOrder);
                       } else {
-                        print("new order created");
+                        _logger.error("new order created");
                         final orderId = await orderRepo.saveOrder(
                           currentOrder,
                           currentUser.id,

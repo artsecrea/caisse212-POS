@@ -202,6 +202,19 @@ class _TopBarState extends ConsumerState<TopBar> {
                   ],
                 ),
               ),
+              PopupMenuItem(
+                value: 'orders',
+                child: const Row(
+                  children: [
+                    Icon(Icons.list),
+                    SizedBox(width: 8),
+                    Text('orders'),
+                  ],
+                ),
+                onTap: (){
+                  Navigator.pushNamed(context, '/orders');
+                },
+              ),
               const PopupMenuDivider(),
               const PopupMenuItem(
                 value: 'logout',

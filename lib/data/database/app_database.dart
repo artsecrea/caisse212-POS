@@ -53,12 +53,13 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
+  //never change the db version , just delete the db file to reset
   int get schemaVersion => 1;
 
   static LazyDatabase _openConnection() {
     return LazyDatabase(() async {
       final dbFolder = await getApplicationDocumentsDirectory();
-      final file = File(p.join(dbFolder.path, 'posecrea3.db'));
+      final file = File(p.join(dbFolder.path, 'posecrea8.db'));
       return NativeDatabase(file);
     });
   }

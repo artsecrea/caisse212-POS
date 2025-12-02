@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:drift/drift.dart' hide Column;
+import 'package:loggecrea/loggecrea.dart';
 import 'package:posecrea/providers/order_provider.dart' hide CurrentOrder;
 import 'package:posecrea/providers/database_providers.dart';
 import 'package:posecrea/data/database/app_database.dart';
@@ -95,6 +96,8 @@ class PaymentScreen extends ConsumerStatefulWidget {
 }
 
 class _PaymentScreenState extends ConsumerState<PaymentScreen> {
+
+  final _logger = Logger.instance;
   @override
   void initState() {
     super.initState();
@@ -1001,9 +1004,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       final ticketNumStr = newTicketNum.toString().padLeft(4, '0');
 
       // Insert the ticket into the database
-      await database.into(database.tickets).insert(
+      final ticketId = await database.into(database.tickets).insert(
         TicketsCompanion.insert(
-          id: Value(newTicketNum),
           num: ticketNumStr,
           orderId: currentOrder.orderId ?? 0,
           paymentMethod: ticket.paymentMethod.value,
@@ -1012,6 +1014,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           printCount: const Value(0),
         ),
       );
+      _logger.info('Inserted ticket #$ticketNumStr with ID $ticketId');
+      _logger.info('Inserted ticket amount #$ticketNumStr with ID ${ticket.total}');
 
       // Update all order items in this ticket with the ticket ID
       for (final item in ticket.items) {
@@ -1019,9 +1023,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           await (database.update(database.orderProducts)
                 ..where((tbl) => tbl.id.equals(item.id!)))
               .write(OrderProductsCompanion(
-            ticketId: Value(newTicketNum),
+            ticketId: Value(ticketId),
             updatedAt: Value(DateTime.now()),
           ));
+          Logger.instance.info('Updated order item ${item.id} with ticket ID $ticketId');
         }
       }
 
