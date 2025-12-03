@@ -4335,15 +4335,6 @@ class $StationsTable extends Stations with TableInfo<$StationsTable, Station> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _kdsIdMeta = const VerificationMeta('kdsId');
-  @override
-  late final GeneratedColumn<int> kdsId = GeneratedColumn<int>(
-    'kds_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -4373,7 +4364,6 @@ class $StationsTable extends Stations with TableInfo<$StationsTable, Station> {
     id,
     name,
     description,
-    kdsId,
     createdAt,
     updatedAt,
   ];
@@ -4409,12 +4399,6 @@ class $StationsTable extends Stations with TableInfo<$StationsTable, Station> {
         ),
       );
     }
-    if (data.containsKey('kds_id')) {
-      context.handle(
-        _kdsIdMeta,
-        kdsId.isAcceptableOrUnknown(data['kds_id']!, _kdsIdMeta),
-      );
-    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -4448,10 +4432,6 @@ class $StationsTable extends Stations with TableInfo<$StationsTable, Station> {
         DriftSqlType.string,
         data['${effectivePrefix}description'],
       ),
-      kdsId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}kds_id'],
-      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -4473,14 +4453,12 @@ class Station extends DataClass implements Insertable<Station> {
   final int id;
   final String name;
   final String? description;
-  final int? kdsId;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Station({
     required this.id,
     required this.name,
     this.description,
-    this.kdsId,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -4491,9 +4469,6 @@ class Station extends DataClass implements Insertable<Station> {
     map['name'] = Variable<String>(name);
     if (!nullToAbsent || description != null) {
       map['description'] = Variable<String>(description);
-    }
-    if (!nullToAbsent || kdsId != null) {
-      map['kds_id'] = Variable<int>(kdsId);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -4507,9 +4482,6 @@ class Station extends DataClass implements Insertable<Station> {
       description: description == null && nullToAbsent
           ? const Value.absent()
           : Value(description),
-      kdsId: kdsId == null && nullToAbsent
-          ? const Value.absent()
-          : Value(kdsId),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -4524,7 +4496,6 @@ class Station extends DataClass implements Insertable<Station> {
       id: serializer.fromJson<int>(json['id']),
       name: serializer.fromJson<String>(json['name']),
       description: serializer.fromJson<String?>(json['description']),
-      kdsId: serializer.fromJson<int?>(json['kdsId']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -4536,7 +4507,6 @@ class Station extends DataClass implements Insertable<Station> {
       'id': serializer.toJson<int>(id),
       'name': serializer.toJson<String>(name),
       'description': serializer.toJson<String?>(description),
-      'kdsId': serializer.toJson<int?>(kdsId),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -4546,14 +4516,12 @@ class Station extends DataClass implements Insertable<Station> {
     int? id,
     String? name,
     Value<String?> description = const Value.absent(),
-    Value<int?> kdsId = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Station(
     id: id ?? this.id,
     name: name ?? this.name,
     description: description.present ? description.value : this.description,
-    kdsId: kdsId.present ? kdsId.value : this.kdsId,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -4564,7 +4532,6 @@ class Station extends DataClass implements Insertable<Station> {
       description: data.description.present
           ? data.description.value
           : this.description,
-      kdsId: data.kdsId.present ? data.kdsId.value : this.kdsId,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -4576,7 +4543,6 @@ class Station extends DataClass implements Insertable<Station> {
           ..write('id: $id, ')
           ..write('name: $name, ')
           ..write('description: $description, ')
-          ..write('kdsId: $kdsId, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -4584,8 +4550,7 @@ class Station extends DataClass implements Insertable<Station> {
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, name, description, kdsId, createdAt, updatedAt);
+  int get hashCode => Object.hash(id, name, description, createdAt, updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4593,7 +4558,6 @@ class Station extends DataClass implements Insertable<Station> {
           other.id == this.id &&
           other.name == this.name &&
           other.description == this.description &&
-          other.kdsId == this.kdsId &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -4602,14 +4566,12 @@ class StationsCompanion extends UpdateCompanion<Station> {
   final Value<int> id;
   final Value<String> name;
   final Value<String?> description;
-  final Value<int?> kdsId;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const StationsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
     this.description = const Value.absent(),
-    this.kdsId = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -4617,7 +4579,6 @@ class StationsCompanion extends UpdateCompanion<Station> {
     this.id = const Value.absent(),
     required String name,
     this.description = const Value.absent(),
-    this.kdsId = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : name = Value(name);
@@ -4625,7 +4586,6 @@ class StationsCompanion extends UpdateCompanion<Station> {
     Expression<int>? id,
     Expression<String>? name,
     Expression<String>? description,
-    Expression<int>? kdsId,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -4633,7 +4593,6 @@ class StationsCompanion extends UpdateCompanion<Station> {
       if (id != null) 'id': id,
       if (name != null) 'name': name,
       if (description != null) 'description': description,
-      if (kdsId != null) 'kds_id': kdsId,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -4643,7 +4602,6 @@ class StationsCompanion extends UpdateCompanion<Station> {
     Value<int>? id,
     Value<String>? name,
     Value<String?>? description,
-    Value<int?>? kdsId,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -4651,7 +4609,6 @@ class StationsCompanion extends UpdateCompanion<Station> {
       id: id ?? this.id,
       name: name ?? this.name,
       description: description ?? this.description,
-      kdsId: kdsId ?? this.kdsId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -4669,9 +4626,6 @@ class StationsCompanion extends UpdateCompanion<Station> {
     if (description.present) {
       map['description'] = Variable<String>(description.value);
     }
-    if (kdsId.present) {
-      map['kds_id'] = Variable<int>(kdsId.value);
-    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -4687,7 +4641,6 @@ class StationsCompanion extends UpdateCompanion<Station> {
           ..write('id: $id, ')
           ..write('name: $name, ')
           ..write('description: $description, ')
-          ..write('kdsId: $kdsId, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -5267,6 +5220,17 @@ class $KDSsTable extends KDSs with TableInfo<$KDSsTable, KDS> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _stationIdMeta = const VerificationMeta(
+    'stationId',
+  );
+  @override
+  late final GeneratedColumn<int> stationId = GeneratedColumn<int>(
+    'station_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _ipMeta = const VerificationMeta('ip');
   @override
   late final GeneratedColumn<String> ip = GeneratedColumn<String>(
@@ -5340,6 +5304,7 @@ class $KDSsTable extends KDSs with TableInfo<$KDSsTable, KDS> {
     id,
     name,
     description,
+    stationId,
     ip,
     port,
     location,
@@ -5377,6 +5342,12 @@ class $KDSsTable extends KDSs with TableInfo<$KDSsTable, KDS> {
           data['description']!,
           _descriptionMeta,
         ),
+      );
+    }
+    if (data.containsKey('station_id')) {
+      context.handle(
+        _stationIdMeta,
+        stationId.isAcceptableOrUnknown(data['station_id']!, _stationIdMeta),
       );
     }
     if (data.containsKey('ip')) {
@@ -5433,6 +5404,10 @@ class $KDSsTable extends KDSs with TableInfo<$KDSsTable, KDS> {
         DriftSqlType.string,
         data['${effectivePrefix}description'],
       ),
+      stationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}station_id'],
+      ),
       ip: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}ip'],
@@ -5470,6 +5445,7 @@ class KDS extends DataClass implements Insertable<KDS> {
   final int id;
   final String name;
   final String? description;
+  final int? stationId;
   final String? ip;
   final int? port;
   final String? location;
@@ -5480,6 +5456,7 @@ class KDS extends DataClass implements Insertable<KDS> {
     required this.id,
     required this.name,
     this.description,
+    this.stationId,
     this.ip,
     this.port,
     this.location,
@@ -5494,6 +5471,9 @@ class KDS extends DataClass implements Insertable<KDS> {
     map['name'] = Variable<String>(name);
     if (!nullToAbsent || description != null) {
       map['description'] = Variable<String>(description);
+    }
+    if (!nullToAbsent || stationId != null) {
+      map['station_id'] = Variable<int>(stationId);
     }
     if (!nullToAbsent || ip != null) {
       map['ip'] = Variable<String>(ip);
@@ -5517,6 +5497,9 @@ class KDS extends DataClass implements Insertable<KDS> {
       description: description == null && nullToAbsent
           ? const Value.absent()
           : Value(description),
+      stationId: stationId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(stationId),
       ip: ip == null && nullToAbsent ? const Value.absent() : Value(ip),
       port: port == null && nullToAbsent ? const Value.absent() : Value(port),
       location: location == null && nullToAbsent
@@ -5537,6 +5520,7 @@ class KDS extends DataClass implements Insertable<KDS> {
       id: serializer.fromJson<int>(json['id']),
       name: serializer.fromJson<String>(json['name']),
       description: serializer.fromJson<String?>(json['description']),
+      stationId: serializer.fromJson<int?>(json['stationId']),
       ip: serializer.fromJson<String?>(json['ip']),
       port: serializer.fromJson<int?>(json['port']),
       location: serializer.fromJson<String?>(json['location']),
@@ -5552,6 +5536,7 @@ class KDS extends DataClass implements Insertable<KDS> {
       'id': serializer.toJson<int>(id),
       'name': serializer.toJson<String>(name),
       'description': serializer.toJson<String?>(description),
+      'stationId': serializer.toJson<int?>(stationId),
       'ip': serializer.toJson<String?>(ip),
       'port': serializer.toJson<int?>(port),
       'location': serializer.toJson<String?>(location),
@@ -5565,6 +5550,7 @@ class KDS extends DataClass implements Insertable<KDS> {
     int? id,
     String? name,
     Value<String?> description = const Value.absent(),
+    Value<int?> stationId = const Value.absent(),
     Value<String?> ip = const Value.absent(),
     Value<int?> port = const Value.absent(),
     Value<String?> location = const Value.absent(),
@@ -5575,6 +5561,7 @@ class KDS extends DataClass implements Insertable<KDS> {
     id: id ?? this.id,
     name: name ?? this.name,
     description: description.present ? description.value : this.description,
+    stationId: stationId.present ? stationId.value : this.stationId,
     ip: ip.present ? ip.value : this.ip,
     port: port.present ? port.value : this.port,
     location: location.present ? location.value : this.location,
@@ -5589,6 +5576,7 @@ class KDS extends DataClass implements Insertable<KDS> {
       description: data.description.present
           ? data.description.value
           : this.description,
+      stationId: data.stationId.present ? data.stationId.value : this.stationId,
       ip: data.ip.present ? data.ip.value : this.ip,
       port: data.port.present ? data.port.value : this.port,
       location: data.location.present ? data.location.value : this.location,
@@ -5604,6 +5592,7 @@ class KDS extends DataClass implements Insertable<KDS> {
           ..write('id: $id, ')
           ..write('name: $name, ')
           ..write('description: $description, ')
+          ..write('stationId: $stationId, ')
           ..write('ip: $ip, ')
           ..write('port: $port, ')
           ..write('location: $location, ')
@@ -5619,6 +5608,7 @@ class KDS extends DataClass implements Insertable<KDS> {
     id,
     name,
     description,
+    stationId,
     ip,
     port,
     location,
@@ -5633,6 +5623,7 @@ class KDS extends DataClass implements Insertable<KDS> {
           other.id == this.id &&
           other.name == this.name &&
           other.description == this.description &&
+          other.stationId == this.stationId &&
           other.ip == this.ip &&
           other.port == this.port &&
           other.location == this.location &&
@@ -5645,6 +5636,7 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
   final Value<int> id;
   final Value<String> name;
   final Value<String?> description;
+  final Value<int?> stationId;
   final Value<String?> ip;
   final Value<int?> port;
   final Value<String?> location;
@@ -5655,6 +5647,7 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
     this.id = const Value.absent(),
     this.name = const Value.absent(),
     this.description = const Value.absent(),
+    this.stationId = const Value.absent(),
     this.ip = const Value.absent(),
     this.port = const Value.absent(),
     this.location = const Value.absent(),
@@ -5666,6 +5659,7 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
     this.id = const Value.absent(),
     required String name,
     this.description = const Value.absent(),
+    this.stationId = const Value.absent(),
     this.ip = const Value.absent(),
     this.port = const Value.absent(),
     this.location = const Value.absent(),
@@ -5677,6 +5671,7 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
     Expression<int>? id,
     Expression<String>? name,
     Expression<String>? description,
+    Expression<int>? stationId,
     Expression<String>? ip,
     Expression<int>? port,
     Expression<String>? location,
@@ -5688,6 +5683,7 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
       if (id != null) 'id': id,
       if (name != null) 'name': name,
       if (description != null) 'description': description,
+      if (stationId != null) 'station_id': stationId,
       if (ip != null) 'ip': ip,
       if (port != null) 'port': port,
       if (location != null) 'location': location,
@@ -5701,6 +5697,7 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
     Value<int>? id,
     Value<String>? name,
     Value<String?>? description,
+    Value<int?>? stationId,
     Value<String?>? ip,
     Value<int?>? port,
     Value<String?>? location,
@@ -5712,6 +5709,7 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
       id: id ?? this.id,
       name: name ?? this.name,
       description: description ?? this.description,
+      stationId: stationId ?? this.stationId,
       ip: ip ?? this.ip,
       port: port ?? this.port,
       location: location ?? this.location,
@@ -5732,6 +5730,9 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
     }
     if (description.present) {
       map['description'] = Variable<String>(description.value);
+    }
+    if (stationId.present) {
+      map['station_id'] = Variable<int>(stationId.value);
     }
     if (ip.present) {
       map['ip'] = Variable<String>(ip.value);
@@ -5760,6 +5761,7 @@ class KDSsCompanion extends UpdateCompanion<KDS> {
           ..write('id: $id, ')
           ..write('name: $name, ')
           ..write('description: $description, ')
+          ..write('stationId: $stationId, ')
           ..write('ip: $ip, ')
           ..write('port: $port, ')
           ..write('location: $location, ')
@@ -13129,7 +13131,6 @@ typedef $$StationsTableCreateCompanionBuilder =
       Value<int> id,
       required String name,
       Value<String?> description,
-      Value<int?> kdsId,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -13138,7 +13139,6 @@ typedef $$StationsTableUpdateCompanionBuilder =
       Value<int> id,
       Value<String> name,
       Value<String?> description,
-      Value<int?> kdsId,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -13164,11 +13164,6 @@ class $$StationsTableFilterComposer
 
   ColumnFilters<String> get description => $composableBuilder(
     column: $table.description,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get kdsId => $composableBuilder(
-    column: $table.kdsId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -13207,11 +13202,6 @@ class $$StationsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get kdsId => $composableBuilder(
-    column: $table.kdsId,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -13242,9 +13232,6 @@ class $$StationsTableAnnotationComposer
     column: $table.description,
     builder: (column) => column,
   );
-
-  GeneratedColumn<int> get kdsId =>
-      $composableBuilder(column: $table.kdsId, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -13284,14 +13271,12 @@ class $$StationsTableTableManager
                 Value<int> id = const Value.absent(),
                 Value<String> name = const Value.absent(),
                 Value<String?> description = const Value.absent(),
-                Value<int?> kdsId = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => StationsCompanion(
                 id: id,
                 name: name,
                 description: description,
-                kdsId: kdsId,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -13300,14 +13285,12 @@ class $$StationsTableTableManager
                 Value<int> id = const Value.absent(),
                 required String name,
                 Value<String?> description = const Value.absent(),
-                Value<int?> kdsId = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => StationsCompanion.insert(
                 id: id,
                 name: name,
                 description: description,
-                kdsId: kdsId,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -13604,6 +13587,7 @@ typedef $$KDSsTableCreateCompanionBuilder =
       Value<int> id,
       required String name,
       Value<String?> description,
+      Value<int?> stationId,
       Value<String?> ip,
       Value<int?> port,
       Value<String?> location,
@@ -13616,6 +13600,7 @@ typedef $$KDSsTableUpdateCompanionBuilder =
       Value<int> id,
       Value<String> name,
       Value<String?> description,
+      Value<int?> stationId,
       Value<String?> ip,
       Value<int?> port,
       Value<String?> location,
@@ -13644,6 +13629,11 @@ class $$KDSsTableFilterComposer extends Composer<_$AppDatabase, $KDSsTable> {
 
   ColumnFilters<String> get description => $composableBuilder(
     column: $table.description,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get stationId => $composableBuilder(
+    column: $table.stationId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -13701,6 +13691,11 @@ class $$KDSsTableOrderingComposer extends Composer<_$AppDatabase, $KDSsTable> {
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get stationId => $composableBuilder(
+    column: $table.stationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get ip => $composableBuilder(
     column: $table.ip,
     builder: (column) => ColumnOrderings(column),
@@ -13752,6 +13747,9 @@ class $$KDSsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get stationId =>
+      $composableBuilder(column: $table.stationId, builder: (column) => column);
+
   GeneratedColumn<String> get ip =>
       $composableBuilder(column: $table.ip, builder: (column) => column);
 
@@ -13802,6 +13800,7 @@ class $$KDSsTableTableManager
                 Value<int> id = const Value.absent(),
                 Value<String> name = const Value.absent(),
                 Value<String?> description = const Value.absent(),
+                Value<int?> stationId = const Value.absent(),
                 Value<String?> ip = const Value.absent(),
                 Value<int?> port = const Value.absent(),
                 Value<String?> location = const Value.absent(),
@@ -13812,6 +13811,7 @@ class $$KDSsTableTableManager
                 id: id,
                 name: name,
                 description: description,
+                stationId: stationId,
                 ip: ip,
                 port: port,
                 location: location,
@@ -13824,6 +13824,7 @@ class $$KDSsTableTableManager
                 Value<int> id = const Value.absent(),
                 required String name,
                 Value<String?> description = const Value.absent(),
+                Value<int?> stationId = const Value.absent(),
                 Value<String?> ip = const Value.absent(),
                 Value<int?> port = const Value.absent(),
                 Value<String?> location = const Value.absent(),
@@ -13834,6 +13835,7 @@ class $$KDSsTableTableManager
                 id: id,
                 name: name,
                 description: description,
+                stationId: stationId,
                 ip: ip,
                 port: port,
                 location: location,

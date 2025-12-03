@@ -1,4 +1,6 @@
 // Model for current order item in cart
+import 'package:posecrea/data/database/app_database.dart';
+
 class OrderItem {
   final int? id;
   final int productId;
@@ -31,11 +33,13 @@ class OrderItem {
   }
 
   double get subtotalPerItem {
-    return unitPrice + componentTotal;
+
+    return unitPrice + componentTotal - tva;
   }
 
   double get totalPrice {
-    return (subtotalPerItem - discount + tva) * quantity;
+    // 7 - 12 = 5
+    return subtotalPerItem  * quantity;
   }
 
   double get totalDiscount {
@@ -209,6 +213,8 @@ class CurrentOrder {
   bool isSaved() {
     return orderId != null || orderCode != null;
   }
+
+
 }
 
 // Model for table with active order info
@@ -241,5 +247,59 @@ class OrderWithDetails {
   });
 }
 
+// Model for component details in order item
+class ComponentDetails {
+  final String name;
+  final int quantity;
 
+  ComponentDetails({
+    required this.name,
+    required this.quantity,
+  });
+}
 
+// Model for order item with all details for management screen
+class OrderItemDetails {
+  final String productName;
+  final int quantity;
+  final double totalPrice;
+  final bool isPaid;
+  final String? ticketNum;
+  final List<ComponentDetails> components;
+
+  OrderItemDetails({
+    required this.productName,
+    required this.quantity,
+    required this.totalPrice,
+    required this.isPaid,
+    this.ticketNum,
+    this.components = const [],
+  });
+}
+
+// Model for order with full details including all calculations
+class OrderFullDetails {
+  final dynamic order; // Order from database
+  final String? userName;
+  final String? tableName;
+  final int productCount;
+  final double subtotal;
+  final double totalDiscount;
+  final double totalTva;
+  final double total;
+  final double totalPaid;
+  final List<OrderItemDetails> items;
+
+  OrderFullDetails({
+    required this.order,
+    this.userName,
+    this.tableName,
+    required this.productCount,
+    required this.subtotal,
+    required this.totalDiscount,
+    required this.totalTva,
+    required this.total,
+    required this.totalPaid,
+    this.items = const [],
+  });
+}

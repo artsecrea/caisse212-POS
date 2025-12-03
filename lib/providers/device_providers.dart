@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/socket_models.dart';
 import 'database_providers.dart';
@@ -56,37 +57,45 @@ final stationProvider = StreamProvider.family<Station?, int>((ref, stationId) {
     ..watch()).watchSingleOrNull();
 });
 
-// Station with KDS info
-class StationWithKDS {
-  final Station station;
-  final KDS? kds;
+// KDS with Station info
+class KDSWithStation {
+  final KDS kds;
+  final Station? station;
 
-  StationWithKDS({required this.station, this.kds});
+  KDSWithStation({required this.kds, this.station});
 }
 
-final stationWithKdsProvider = StreamProvider.family<StationWithKDS?, int>((ref, stationId) async* {
+final kdsWithStationProvider = StreamProvider.family<KDSWithStation?, int>((ref, kdsId) async* {
   final database = ref.watch(databaseProvider);
 
-  await for (final station in (database.select(database.stations)
-    ..where((tbl) => tbl.id.equals(stationId))
+  await for (final kds in (database.select(database.kDSs)
+    ..where((tbl) => tbl.id.equals(kdsId))
     ..watch()).watchSingleOrNull()) {
 
-    if (station == null) {
+    if (kds == null) {
       yield null;
       continue;
     }
 
-    if (station.kdsId == null) {
-      yield StationWithKDS(station: station);
+    if (kds.stationId == null) {
+      yield KDSWithStation(kds: kds);
       continue;
     }
 
-    final kds = await (database.select(database.kDSs)
-      ..where((tbl) => tbl.id.equals(station.kdsId!)))
+    final station = await (database.select(database.stations)
+      ..where((tbl) => tbl.id.equals(kds.stationId!)))
         .getSingleOrNull();
 
-    yield StationWithKDS(station: station, kds: kds);
+    yield KDSWithStation(kds: kds, station: station);
   }
+});
+
+// Get all KDS devices for a specific station
+final kdsListByStationProvider = StreamProvider.family<List<KDS>, int>((ref, stationId) {
+  final database = ref.watch(databaseProvider);
+  return (database.select(database.kDSs)
+    ..where((tbl) => tbl.stationId.equals(stationId))
+    ..watch()).watch();
 });
 
 // Convert to Socket Models
@@ -149,20 +158,20 @@ final socketStationListProvider = StreamProvider<List<SocketStationModel>>((ref)
       final socketStations = <SocketStationModel>[];
 
       for (final station in stations) {
-        String? kdsName;
-        if (station.kdsId != null) {
-          final kds = await (database.select(database.kDSs)
-            ..where((tbl) => tbl.id.equals(station.kdsId!)))
-              .getSingleOrNull();
-          kdsName = kds?.name;
-        }
+        // Get all KDS devices assigned to this station
+        final kdsList = await (database.select(database.kDSs)
+          ..where((tbl) => tbl.stationId.equals(station.id)))
+            .get();
+
+        // Get the first active KDS for this station (if any)
+        final activeKds = kdsList.where((kds) => kds.isActive).firstOrNull;
 
         socketStations.add(SocketStationModel(
           id: station.id,
           name: station.name,
           description: station.description,
-          kdsId: station.kdsId,
-          kdsName: kdsName,
+          kdsId: activeKds?.id,
+          kdsName: activeKds?.name,
         ));
       }
 
@@ -185,5 +194,123 @@ final allSocketDevicesProvider = StreamProvider<List<SocketDeviceModel>>((ref) a
   if (kdsList.hasValue && kioskList.hasValue) {
     yield [...kdsList.value!, ...kioskList.value!];
   }
+});
+
+
+
+// Provider to track connected devices
+
+// Device Repository for CRUD operations
+class DeviceRepository {
+  final AppDatabase _database;
+
+  DeviceRepository(this._database);
+
+  // Add device
+  Future<int> addDevice({
+    required String name,
+    required String type,
+    String? ip,
+    int? port,
+    String? location,
+    String? description,
+    bool isActive = true,
+    int? stationId,
+  }) async {
+    if (type == 'KDS') {
+      // Get next ID
+      final maxId = await (_database.selectOnly(_database.kDSs)
+        ..addColumns([_database.kDSs.id.max()]))
+        .map((row) => row.read(_database.kDSs.id.max()))
+        .getSingleOrNull();
+      final newId = (maxId ?? 0) + 1;
+
+      return await _database.into(_database.kDSs).insert(
+        KDSsCompanion.insert(
+          id: Value(newId),
+          name: name,
+          description: Value(description),
+          stationId: Value(stationId),
+          ip: Value(ip),
+          port: Value(port),
+          location: Value(location),
+          isActive: Value(isActive),
+        ),
+      );
+    } else {
+      // Get next ID
+      final maxId = await (_database.selectOnly(_database.kiosks)
+        ..addColumns([_database.kiosks.id.max()]))
+        .map((row) => row.read(_database.kiosks.id.max()))
+        .getSingleOrNull();
+      final newId = (maxId ?? 0) + 1;
+
+      return await _database.into(_database.kiosks).insert(
+        KiosksCompanion.insert(
+          id: Value(newId),
+          name: name,
+          description: Value(description),
+          ip: Value(ip),
+          port: Value(port),
+          location: Value(location),
+          isActive: Value(isActive),
+        ),
+      );
+    }
+  }
+
+  // Update device
+  Future<void> updateDevice({
+    required int id,
+    required String type,
+    required String name,
+    String? ip,
+    int? port,
+    String? location,
+    String? description,
+    bool isActive = true,
+    int? stationId,
+  }) async {
+    if (type == 'KDS') {
+      await (_database.update(_database.kDSs)..where((tbl) => tbl.id.equals(id))).write(
+        KDSsCompanion(
+          name: Value(name),
+          description: Value(description),
+          stationId: Value(stationId),
+          ip: Value(ip),
+          port: Value(port),
+          location: Value(location),
+          isActive: Value(isActive),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+    } else {
+      await (_database.update(_database.kiosks)..where((tbl) => tbl.id.equals(id))).write(
+        KiosksCompanion(
+          name: Value(name),
+          description: Value(description),
+          ip: Value(ip),
+          port: Value(port),
+          location: Value(location),
+          isActive: Value(isActive),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+    }
+  }
+
+  // Delete device
+  Future<void> deleteDevice(int id, String type) async {
+    if (type == 'KDS') {
+      await (_database.delete(_database.kDSs)..where((tbl) => tbl.id.equals(id))).go();
+    } else {
+      await (_database.delete(_database.kiosks)..where((tbl) => tbl.id.equals(id))).go();
+    }
+  }
+}
+
+final deviceRepositoryProvider = Provider<DeviceRepository>((ref) {
+  final database = ref.watch(databaseProvider);
+  return DeviceRepository(database);
 });
 

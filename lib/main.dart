@@ -3,6 +3,7 @@ import 'package:cmdecrea/cmdecrea.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
+import 'package:posecrea/presentation/widgets/devices_management_screen.dart';
 import 'package:posecrea/presentation/widgets/orders_management_screen.dart';
 import 'package:posecrea/services/socket_service.dart';
 import 'package:posecrea/utils/sample_data_generator.dart';
@@ -81,6 +82,8 @@ class MyApp extends ConsumerWidget {
   @override
   Widget build( BuildContext context,WidgetRef ref,) {
     final s = ref.watch(socketServiceProvider);
+
+
     s.start(deviceId: "deviceId", deviceName: "POS", role: DeviceRole.host);
 
     return MaterialApp(
@@ -117,10 +120,12 @@ class MyApp extends ConsumerWidget {
         ),
       ),
       home: const LoginScreen(),
-      routes: {
+      routes:{
         '/login': (context) => const LoginScreen(),
         '/main': (context) => const MainScreen(),
         '/orders': (context) => const OrdersManagementScreen(),
+        '/devices': (context) => const DevicesManagementScreen(),
+
       },
     );
   }

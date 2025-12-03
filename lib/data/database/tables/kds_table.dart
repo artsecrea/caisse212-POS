@@ -7,6 +7,8 @@ class KDSs extends Table {
   @override
   Set<Column> get primaryKey => {id};
   TextColumn get description => text().nullable()();
+
+  IntColumn get stationId => integer().nullable()();
   TextColumn get ip => text().nullable()();
   IntColumn get port => integer().nullable()();
   TextColumn get location => text().nullable()();
@@ -15,3 +17,5 @@ class KDSs extends Table {
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }
 
+// run build_runner to generate the code
+// flutter pub run build_runner build --delete-conflicting-outputs

@@ -132,11 +132,13 @@ class KdsOrder {
 
 
 class KdsProduct {
+  final int id;
   final String name;
   final int quantity;
   final List<String> options;
 
   KdsProduct({
+    required this.id,
     required this.name,
     required this.quantity,
     this.options = const [],
@@ -152,6 +154,7 @@ class KdsProduct {
 
   factory KdsProduct.fromJson(Map<String, dynamic> json) {
     return KdsProduct(
+      id : json['id'] as int,
       name: json['name'] as String,
       quantity: json['quantity'] as int,
       options: (json['options'] as List<String>?) ??

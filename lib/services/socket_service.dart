@@ -65,7 +65,8 @@ class SocketService {
     required String deviceName,
     required DeviceRole role,
     int? port,
-  }) async {
+  }) async
+  {
     // Initialize socket client
     await _client.initialize(
       deviceId: deviceId,
@@ -91,6 +92,11 @@ class SocketService {
     _subscriptions.clear();
     _client.stopDiscovery();
     await _client.dispose();
+  }
+
+  // Scan network for available devices
+  Future<List<DeviceInfo>> scanNetwork() async {
+    return await CmdecreaClient.scanNetwork(timeout: Duration(seconds: 5));
   }
 
   void _listenToOrders() {
@@ -123,7 +129,6 @@ class SocketService {
 
   /// Called when a new order is inserted
   Future<void> _onOrderInserted(OrderInsertedEvent event) async {
-    print('🆕 New order inserted: ${event.orderCode} (ID: ${event.orderId}, Status: ${event.status})');
 
     // Get full order details
     final repository = _ref.read(socketOrderRepositoryProvider);
@@ -133,9 +138,7 @@ class SocketService {
       return;
     }
 
-    // ===== IMPLEMENT YOUR LOGIC HERE =====
-    await sendOrderToKDS(socketOrder, 0);
-    // Example: Send PENDING orders to kitchen stations
+
     if (event.status == 'PENDING') {
       final stationIds = socketOrder.products
           .where((p) => p.stationId != null)
@@ -147,7 +150,6 @@ class SocketService {
         return;
       }
 
-      print('📋 Order ${event.orderCode} will be sent to ${stationIds.length} station(s): $stationIds');
 
       for (final stationId in stationIds) {
         try {
@@ -159,7 +161,6 @@ class SocketService {
       }
     }
 
-    // ===== END OF YOUR LOGIC =====
   }
 
   /// Called when an order is updated
@@ -270,22 +271,29 @@ class SocketService {
   Future<void> sendOrderToKDS(SocketOrderModel order, int kdsId) async {
     try {
       // Get KDS device info from database
-      final kdsAsync = _ref.read(kdsProvider(kdsId).future);
-      final kds = KDS(id:1, name: "aha", isActive: true, createdAt: DateTime.now(), updatedAt: DateTime.now());
+      final kds = await _ref.read(kdsProvider(kdsId).future).timeout(
+        Duration(seconds: 5),
+        onTimeout: () => null,
+      );
 
-      if (kds == null || !kds.isActive) {
-        print('❌ KDS $kdsId not found or inactive');
+      if (kds == null) {
+        print('❌ KDS $kdsId not found');
+        return;
+      }
+
+      if (!kds.isActive) {
+        print('❌ KDS $kdsId is inactive');
         return;
       }
 
       final targetDeviceId = kds.name;
 
       // Check if device is connected
-      if (!_client.connectedDeviceIds.contains(targetDeviceId)) {
-        print('⚠️ KDS ${kds.name} (ID: $targetDeviceId) is NOT connected');
-        print('   Connected devices: ${_client.connectedDeviceIds}');
-        return;
-      }
+      // if (!_client.connectedDeviceIds.contains(targetDeviceId)) {
+      //   print('⚠️ KDS ${kds.name} (ID: $targetDeviceId) is NOT connected');
+      //   print('   Connected devices: ${_client.connectedDeviceIds}');
+      //   return;
+      // }
 
       // Verify connection is healthy before sending
       final isHealthy = await _client.testConnection();
@@ -294,7 +302,6 @@ class SocketService {
         return;
       }
 
-      print('📡 Sending order ${order.code} to KDS ${kds.name} (${targetDeviceId})');
 
       final command = Command(
         id: _uuid.v4(),
@@ -306,7 +313,7 @@ class SocketService {
       );
 
       // await _client.sendToDevice(targetDeviceId, command);
-      await _client.sendToGroup("test-group", command);
+      await _client.sendToDevice(targetDeviceId, command);
       print('✅ Order sent successfully to KDS ${kds.name}');
 
     } catch (e, stackTrace) {
@@ -315,54 +322,6 @@ class SocketService {
       // Don't rethrow - log and continue
     }
   }
-  // /// Send order to specific KDS
-  // Future<void> sendOrderToKDS(SocketOrderModel order, int kdsId) async {
-  //   try {
-  //     // Get KDS device info from database
-  //     final kdsAsync = _ref.read(kdsProvider(kdsId).future);
-  //     final kds = await kdsAsync;
-  //
-  //     if (kds == null || !kds.isActive) {
-  //       print('❌ KDS $kdsId not found or inactive');
-  //       return;
-  //     }
-  //
-  //     final targetDeviceId = kds.id.toString();
-  //
-  //     // Check if device is connected
-  //     if (!_client.connectedDeviceIds.contains(targetDeviceId)) {
-  //       print('⚠️ KDS ${kds.name} (ID: $targetDeviceId) is NOT connected');
-  //       print('   Connected devices: ${_client.connectedDeviceIds}');
-  //       return;
-  //     }
-  //
-  //     // Verify connection is healthy before sending
-  //     final isHealthy = await _client.testConnection();
-  //     if (!isHealthy) {
-  //       print('⚠️ Connection test failed for KDS ${kds.name}');
-  //       return;
-  //     }
-  //
-  //     print('📡 Sending order ${order.code} to KDS ${kds.name} (${targetDeviceId})');
-  //
-  //     final command = Command(
-  //       id: _uuid.v4(),
-  //       type: 'NEW_ORDER',
-  //       payload: order.toJson(),
-  //       timestamp: DateTime.now(),
-  //       senderId: _client.localDevice.id,
-  //       targetId: targetDeviceId,
-  //     );
-  //
-  //     await _client.sendToDevice(targetDeviceId, command);
-  //     print('✅ Order sent successfully to KDS ${kds.name}');
-  //
-  //   } catch (e, stackTrace) {
-  //     print('❌ Error sending order to KDS $kdsId: $e');
-  //     print('   Stack trace: $stackTrace');
-  //     // Don't rethrow - log and continue
-  //   }
-  // }
 
   /// Send order to specific Kiosk
   Future<void> sendOrderToKiosk(SocketOrderModel order, int kioskId) async {
@@ -403,18 +362,15 @@ class SocketService {
     await _client.sendToAll(command);
   }
 
-  /// Send order to station's KDS
+  /// Send order to station's KDS devices
   Future<void> sendOrderToStation(SocketOrderModel order, int stationId) async {
-    final stationWithKdsAsync = _ref.read(stationWithKdsProvider(stationId).future);
-    final stationWithKds = await stationWithKdsAsync;
+    // Get all KDS devices for this station
+    final kdsListAsync = _ref.read(kdsListByStationProvider(stationId).future);
+    final kdsList = await kdsListAsync;
 
-    if (stationWithKds == null || stationWithKds.kds == null) {
-      throw Exception('Station or KDS not found');
-    }
-
-    final kds = stationWithKds.kds!;
-    if (!kds.isActive) {
-      throw Exception('KDS is inactive');
+    if (kdsList.isEmpty) {
+      print('⚠️ No KDS devices found for station $stationId');
+      return;
     }
 
     // Filter order to only include products for this station
@@ -441,7 +397,12 @@ class SocketService {
       note: order.note,
     );
 
-    await sendOrderToKDS(filteredOrder, kds.id);
+    // Send to all active KDS devices for this station
+    for (final kds in kdsList) {
+      if (kds.isActive) {
+        await sendOrderToKDS(filteredOrder, kds.id);
+      }
+    }
   }
 
   /// Update order product state and notify devices

@@ -7,7 +7,6 @@ class Stations extends Table {
   @override
   Set<Column> get primaryKey => {id};
   TextColumn get description => text().nullable()();
-  IntColumn get kdsId => integer().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

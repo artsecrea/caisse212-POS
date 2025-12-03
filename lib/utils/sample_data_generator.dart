@@ -15,6 +15,7 @@ class SampleDataGenerator {
     await _generateAreas();
     await _generateCategories();
     await _generateComponentGroups();
+    await _generateStations();
     await _generateComponents();
     await _generateProducts();
     await _generateProductComponents();
@@ -186,6 +187,7 @@ class SampleDataGenerator {
         'name': 'Classic Burger',
         'price': 8.50,
         'categoryId': 1,
+        'stationId': 2,
         'imageUrl': 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=300',
         'discount': 0.0,
         'tva': 1.70
@@ -195,6 +197,7 @@ class SampleDataGenerator {
         'name': 'Cheese Burger',
         'price': 10.50,
         'categoryId': 1,
+        'stationId': 2,
         'imageUrl': 'https://images.unsplash.com/photo-1550547660-d9450f859349?w=300',
         'discount': 1.00,
         'tva': 2.10
@@ -204,6 +207,7 @@ class SampleDataGenerator {
         'name': 'Double Burger',
         'price': 12.50,
         'categoryId': 1,
+        'stationId': 2,
         'imageUrl': 'https://images.unsplash.com/photo-1606755962773-d324e0a13086?w=300',
         'discount': 0.0,
         'tva': 2.50
@@ -213,6 +217,7 @@ class SampleDataGenerator {
         'name': 'Chicken Burger',
         'price': 9.50,
         'categoryId': 1,
+        'stationId': 2,
         'imageUrl': 'https://images.unsplash.com/photo-1562547687-d607c2c218e0?w=300',
         'discount': 0.50,
         'tva': 1.90
@@ -264,6 +269,7 @@ class SampleDataGenerator {
         'categoryId': 3,
         'imageUrl': 'https://images.unsplash.com/photo-1554866585-cd94860890b7?w=300',
         'discount': 0.0,
+
         'tva': 0.50
       },
       {
@@ -329,6 +335,7 @@ class SampleDataGenerator {
         'name': 'Caesar Salad',
         'price': 9.00,
         'categoryId': 5,
+        'stationId': 3,
         'imageUrl': 'https://images.unsplash.com/photo-1546793665-c74683f339c1?w=300',
         'discount': 1.0,
         'tva': 1.80
@@ -338,6 +345,7 @@ class SampleDataGenerator {
         'name': 'Greek Salad',
         'price': 8.00,
         'categoryId': 5,
+        'stationId': 3,
         'imageUrl': 'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=300',
         'discount': 0.0,
         'tva': 1.60
@@ -347,6 +355,7 @@ class SampleDataGenerator {
         'name': 'Garden Salad',
         'price': 7.00,
         'categoryId': 5,
+        'stationId': 3,
         'imageUrl': 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=300',
         'discount': 12.0,
         'tva': 1.40
@@ -363,7 +372,7 @@ class SampleDataGenerator {
         ProductsCompanion.insert(
           id: Value(prod['id'] as int),
           name: prod['name'] as String,
-
+          stationId: Value(prod['stationId'] as int? ?? 1),
           price: price,
           finalPrice: finalPrice,
           categoryId: Value(prod['categoryId'] as int),
@@ -508,6 +517,25 @@ class SampleDataGenerator {
           firstName: commercial['firstName'] as String,
           lastName: commercial['lastName'] as String,
           cin: commercial['cin'] as String,
+        ),
+      );
+    }
+
+  }
+
+  Future<void> _generateStations() async {
+    final stations = [
+      {'id': 1, 'name': 'all', 'description': 'default station'},
+      {'id': 2, 'name': 'burgers', 'description': 'for burgers'},
+      {'id': 3, 'name': 'salads', 'description': 'for salads'},
+    ];
+
+    for (var station in stations) {
+      await database.into(database.stations).insert(
+        StationsCompanion.insert(
+          id: Value(station['id'] as int),
+          name: station['name'] as String,
+          description: Value(station['description'] as String),
         ),
       );
     }

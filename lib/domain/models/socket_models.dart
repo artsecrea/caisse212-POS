@@ -76,6 +76,7 @@ class SocketOrderModel {
       note: json['note'] as String?,
     );
   }
+
 }
 
 class SocketOrderProductModel {
@@ -263,7 +264,6 @@ class SocketStationModel {
   }
 }
 
-
 extension SocketOrderToKds on SocketOrderModel {
   KdsOrder toKdsOrder() {
     return KdsOrder(
@@ -326,6 +326,7 @@ extension SocketOrderToKds on SocketOrderModel {
 extension SocketOrderItemToKdsProduct on SocketOrderProductModel {
   KdsProduct toKdsProduct() {
     return KdsProduct(
+      id :id,
       name: productName,
       quantity: quantity,
       options: components.map((item){
@@ -336,8 +337,6 @@ extension SocketOrderItemToKdsProduct on SocketOrderProductModel {
 }
 
 // extension functions from order to socket models
-
-
 //#region from kds models to socket ones if needed in the future
 
 // extension KdsOrderToSocket on KdsOrder {

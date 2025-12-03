@@ -267,6 +267,14 @@ class OrderRepository {
     return await loadOrderDetails(order);
   }
 
+  Future<CurrentOrder?> getOrderById(int orderId) async {
+    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
+
+    if (order == null) return null;
+
+    return await loadOrderDetails(order);
+  }
+
   Future<CurrentOrder> loadOrderDetails(Order order) async {
     // Get order products
     final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
@@ -456,6 +464,203 @@ class OrderRepository {
 
   Future<void> setTableOrderId(int tableId, int? orderId) async {
     await (_database.update(_database.areaTables)..where((tbl) => tbl.id.equals(tableId))).write(AreaTablesCompanion(orderId: Value(orderId)));
+  }
+
+  // Get all orders with full details including user, products, discounts, TVA, and paid amounts
+  Future<List<OrderFullDetails>> getAllOrdersWithFullDetails() async {
+    final orders = await (_database.select(_database.orders)..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)])).get();
+
+    final result = <OrderFullDetails>[];
+    for (final order in orders) {
+      // Get order products
+      final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
+
+      // Get user name
+      String? userName;
+      if (order.takenBy != null) {
+        final user = await (_database.select(_database.users)..where((tbl) => tbl.id.equals(order.takenBy!))).getSingleOrNull();
+        userName = user?.username;
+      }
+
+      // Get table name
+      String? tableName;
+      if (order.tableId != null) {
+        final table = await (_database.select(_database.areaTables)..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull();
+        tableName = table?.name;
+      }
+
+      // Calculate totals
+      double subtotal = 0.0;
+      double totalDiscount = 0.0;
+      double totalTva = 0.0;
+      double totalPaid = 0.0;
+
+      final itemDetails = <OrderItemDetails>[];
+      for (final product in orderProducts) {
+        final productDetail = await (_database.select(_database.products)..where((tbl) => tbl.id.equals(product.productId))).getSingleOrNull();
+
+        final itemSubtotal = product.unitaryPrice - product.unitaryTva * product.quantity ;
+        final itemDiscount = product.unitaryDiscount * product.quantity;
+        final itemTva = product.unitaryTva * product.quantity;
+
+        subtotal += itemSubtotal;
+        totalDiscount += itemDiscount;
+        totalTva += itemTva;
+
+        // Check if item is paid (has a ticket)
+        bool isPaid = product.ticketId != null;
+        String? ticketNum;
+        if (isPaid) {
+          final ticket = await (_database.select(_database.tickets)..where((tbl) => tbl.id.equals(product.ticketId!))).getSingleOrNull();
+          ticketNum = ticket?.num;
+          totalPaid += itemSubtotal - itemDiscount + itemTva;
+        }
+
+        // Get components
+        final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
+        final components = <ComponentDetails>[];
+        for (final orderComp in orderComponents) {
+          final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
+          if (component != null) {
+            components.add(ComponentDetails(
+              name: component.name,
+              quantity: orderComp.quantity,
+            ));
+          }
+        }
+
+        itemDetails.add(OrderItemDetails(
+          productName: productDetail?.name ?? 'Unknown Product',
+          quantity: product.quantity,
+          totalPrice: itemSubtotal - itemDiscount,
+          isPaid: isPaid,
+          ticketNum: ticketNum,
+          components: components,
+        ));
+      }
+
+      final total = subtotal  + totalTva;
+
+      result.add(OrderFullDetails(
+        order: order,
+        userName: userName,
+        tableName: tableName,
+        productCount: orderProducts.length,
+        subtotal: subtotal,
+        totalDiscount: totalDiscount,
+        totalTva: totalTva,
+        total: total,
+        totalPaid: totalPaid,
+        items: itemDetails,
+      ));
+    }
+
+    return result;
+  }
+
+  // Get full details for a specific order
+  Future<OrderFullDetails> getOrderFullDetails(int orderId) async {
+    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingle();
+
+    // Get order products
+    final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
+
+    // Get user name
+    String? userName;
+    if (order.takenBy != null) {
+      final user = await (_database.select(_database.users)..where((tbl) => tbl.id.equals(order.takenBy!))).getSingleOrNull();
+      userName = user?.username;
+    }
+
+    // Get table name
+    String? tableName;
+    if (order.tableId != null) {
+      final table = await (_database.select(_database.areaTables)..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull();
+      tableName = table?.name;
+    }
+
+    // Calculate totals
+    double subtotal = 0.0;
+    double totalDiscount = 0.0;
+    double totalTva = 0.0;
+    double totalPaid = 0.0;
+
+    final itemDetails = <OrderItemDetails>[];
+    for (final product in orderProducts) {
+      final productDetail = await (_database.select(_database.products)..where((tbl) => tbl.id.equals(product.productId))).getSingleOrNull();
+
+      final itemSubtotal = product.unitaryPrice * product.quantity;
+      final itemDiscount = product.unitaryDiscount * product.quantity;
+      final itemTva = product.unitaryTva * product.quantity;
+
+      subtotal += itemSubtotal;
+      totalDiscount += itemDiscount;
+      totalTva += itemTva;
+
+      // Check if item is paid (has a ticket)
+      bool isPaid = product.ticketId != null;
+      String? ticketNum;
+      if (isPaid) {
+        final ticket = await (_database.select(_database.tickets)..where((tbl) => tbl.id.equals(product.ticketId!))).getSingleOrNull();
+        ticketNum = ticket?.num;
+        totalPaid += itemSubtotal - itemDiscount + itemTva;
+      }
+
+      // Get components
+      final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
+      final components = <ComponentDetails>[];
+      for (final orderComp in orderComponents) {
+        final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
+        if (component != null) {
+          components.add(ComponentDetails(
+            name: component.name,
+            quantity: orderComp.quantity,
+          ));
+        }
+      }
+
+      itemDetails.add(OrderItemDetails(
+        productName: productDetail?.name ?? 'Unknown Product',
+        quantity: product.quantity,
+        totalPrice: itemSubtotal - itemDiscount + itemTva,
+        isPaid: isPaid,
+        ticketNum: ticketNum,
+        components: components,
+      ));
+    }
+
+    final total = subtotal - totalDiscount + totalTva;
+
+    return OrderFullDetails(
+      order: order,
+      userName: userName,
+      tableName: tableName,
+      productCount: orderProducts.length,
+      subtotal: subtotal,
+      totalDiscount: totalDiscount,
+      totalTva: totalTva,
+      total: total,
+      totalPaid: totalPaid,
+      items: itemDetails,
+    );
+  }
+
+  // Delete an order
+  Future<void> deleteOrder(int orderId) async {
+    // Delete order product components first
+    final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))).get();
+    for (final product in orderProducts) {
+      await (_database.delete(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).go();
+    }
+
+    // Delete order products
+    await (_database.delete(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))).go();
+
+    // Delete the order
+    await (_database.delete(_database.orders)..where((tbl) => tbl.id.equals(orderId))).go();
+
+    // Emit event
+    _emitEvent(OrderDeletedEvent(orderId: orderId));
   }
 }
 
