@@ -50,7 +50,7 @@ class TicketData {
   double get subtotal => items.fold<double>(0.0, (sum, item) => sum + (item.subtotalPerItem * item.quantity));
   double get totalDiscount => items.fold<double>(0.0, (sum, item) => sum + item.totalDiscount);
   double get totalTva => items.fold<double>(0.0, (sum, item) => sum + item.totalTva);
-  double get total => subtotal - totalDiscount + totalTva;
+  double get total => subtotal - totalDiscount;
 }
 
 // Provider for managing tickets (split orders with payment methods)
@@ -116,7 +116,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       grouped.putIfAbsent(item.ticketId, () => []).add(item);
     }
 
-    // Create tickets: paid ones first (sorted by ticketId), then unpaid in first/next available
+    // Create tickets: paid ones first (sorted by ticketId), then unpaid in new ticket
     final tickets = <TicketData>[];
     final sortedKeys = grouped.keys.where((k) => k != null).toList()..sort();
 
@@ -130,27 +130,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       ));
     }
 
-    // Add unpaid items to first available ticket or create new one
+    // Add unpaid items to a new unpaid ticket (never add to paid tickets)
     if (grouped.containsKey(null) && grouped[null]!.isNotEmpty) {
-      if (tickets.isEmpty) {
-        tickets.add(TicketData(items: grouped[null]!));
-      } else {
-        // Add to first ticket or second if first is paid
-        final unpaidItems = grouped[null]!;
-        if (sortedKeys.contains(1)) {
-          // First ticket is paid, add to second ticket or create new
-          if (tickets.length > 1 && !sortedKeys.contains(2)) {
-            tickets[1] = tickets[1].copyWith(items: [...tickets[1].items, ...unpaidItems]);
-          } else {
-            tickets.add(TicketData(items: unpaidItems));
-          }
-        } else {
-          tickets[0] = tickets[0].copyWith(items: [...tickets[0].items, ...unpaidItems]);
-        }
-      }
+      // Always create a new ticket for unpaid items
+      tickets.add(TicketData(items: grouped[null]!));
     }
 
-    // If no tickets, create one empty
+    // If no tickets at all, create one empty
     if (tickets.isEmpty) {
       tickets.add(TicketData(items: []));
     }
@@ -295,14 +281,20 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   Widget _buildTicket(int ticketIndex, TicketData ticket) {
     return DragTarget<Map<String, dynamic>>(
+      onWillAcceptWithDetails: (details) {
+        // Don't accept items if this ticket is paid
+        return !ticket.isPaid;
+      },
       onAcceptWithDetails: (details) {
-        _moveItemToTicket(details.data, ticketIndex);
+        if (!ticket.isPaid) {
+          _moveItemToTicket(details.data, ticketIndex);
+        }
       },
       builder: (context, candidateData, rejectedData) {
-        final isDraggingOver = candidateData.isNotEmpty;
+        final isDraggingOver = candidateData.isNotEmpty && !ticket.isPaid;
 
         return Container(
-          width: 340,
+          width: 280,
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(2),
@@ -395,7 +387,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         elevation: 8,
         borderRadius: BorderRadius.circular(2),
         child: Container(
-          width: 300,
+          width: 260,
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
             color: Colors.white,
@@ -485,7 +477,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '\$${item.unitPrice.toStringAsFixed(2)} each',
+                    '\$${item.finalPrice.toStringAsFixed(2)} each',
                     style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                   ),
                 ],

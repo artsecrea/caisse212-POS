@@ -1,8 +1,11 @@
 // Models for socket communication
 
+import '../../core/enums.dart';
 import '../../data/database/app_database.dart';
 import 'kds-models.dart';
 import 'order_models.dart';
+
+
 
 class SocketOrderModel {
   final int id;
@@ -91,6 +94,8 @@ class SocketOrderProductModel {
   final String? stationName;
   final List<SocketOrderProductComponentModel> components;
   final String? note;
+  final double? tvaAmount;
+  final double? discountAmount;
 
   SocketOrderProductModel({
     required this.id,
@@ -104,6 +109,8 @@ class SocketOrderProductModel {
     this.stationName,
     required this.components,
     this.note,
+    this.tvaAmount,
+    this.discountAmount,
   });
 
   Map<String, dynamic> toJson() {
@@ -113,6 +120,8 @@ class SocketOrderProductModel {
       'productName': productName,
       'imageUrl': imageUrl,
       'quantity': quantity,
+      "tvaAmount": tvaAmount,
+      "discountAmount": discountAmount,
       'unitaryPrice': unitaryPrice,
       'state': state,
       'stationId': stationId,
@@ -129,6 +138,8 @@ class SocketOrderProductModel {
       productName: json['productName'] as String,
       imageUrl: json['imageUrl'] as String?,
       quantity: json['quantity'] as int,
+      tvaAmount: (json['tvaAmount'] as num?)?.toDouble(),
+      discountAmount: (json['discountAmount'] as num?)?.toDouble(),
       unitaryPrice: (json['unitaryPrice'] as num).toDouble(),
       state: json['state'] as String,
       stationId: json['stationId'] as int?,
@@ -147,12 +158,14 @@ class SocketOrderProductComponentModel {
   final String componentName;
   final int quantity;
   final bool isSpecial;
+  final double? extraPrice;
 
   SocketOrderProductComponentModel({
     required this.componentId,
     required this.componentName,
     required this.quantity,
     required this.isSpecial,
+    this.extraPrice,
   });
 
   Map<String, dynamic> toJson() {
@@ -161,6 +174,7 @@ class SocketOrderProductComponentModel {
       'componentName': componentName,
       'quantity': quantity,
       'isSpecial': isSpecial,
+      'extraPrice': extraPrice,
     };
   }
 
@@ -170,6 +184,7 @@ class SocketOrderProductComponentModel {
       componentName: json['componentName'] as String,
       quantity: json['quantity'] as int,
       isSpecial: json['isSpecial'] as bool,
+      extraPrice: (json['extraPrice'] as num?)?.toDouble(),
     );
   }
 
@@ -339,54 +354,43 @@ extension SocketOrderItemToKdsProduct on SocketOrderProductModel {
 // extension functions from order to socket models
 //#region from kds models to socket ones if needed in the future
 
-// extension KdsOrderToSocket on KdsOrder {
-//   SocketOrderModel toSocketOrder() {
-//     return SocketOrderModel(
-//       orderId: id,
-//       orderNumber: orderCode,
-//       tableNumber: tableName,
-//       orderType: _mapToSocketOrderType(orderType),
-//       numberOfGuests: numberOfPersons,
-//       customerName: clientName,
-//       items: products.map((p) => p.toOrderItem()).toList(),
-//       status: _mapToSocketStatus(status),
-//       createdAt: createdAt,
-//       updatedAt: updatedAt,
-//     );
-//   }
-//
-//   String _mapToSocketOrderType(KdsOrderType type) {
-//     switch (type) {
-//       case KdsOrderType.dineIn:
-//         return 'dine-in';
-//       case KdsOrderType.takeAway:
-//         return 'takeaway';
-//       case KdsOrderType.delivery:
-//         return 'delivery';
-//     }
-//   }
-//
-//   String _mapToSocketStatus(KdsOrderStatus status) {
-//     switch (status) {
-//       case KdsOrderStatus.pending:
-//         return 'pending';
-//       case KdsOrderStatus.preparing:
-//         return 'preparing';
-//       case KdsOrderStatus.complete:
-//         return 'complete';
-//       case KdsOrderStatus.canceled:
-//         return 'canceled';
-//     }
-//   }
-// }
-//
-// extension KdsProductToOrderItem on KdsProduct {
-//   OrderItem toOrderItem() {
-//     return OrderItem(
-//       name: name,
-//       quantity: quantity,
-//       modifiers: options.isNotEmpty ? options : null,
-//     );
-//   }
-// }
+extension SocketModelsToCurrentOrder on SocketOrderModel {
+  CurrentOrder toCurrentOrder() {
+    return CurrentOrder(
+      orderCode: code,
+      tableId: tableId,
+      tableName: tableName,
+      type: type,
+      customerId: clientId,
+      items: products.map((item) => item.toCurrentOrderItem()).toList(),
+      note: note,
+    );
+  }
+
+
+}
+
+extension SocketOrderProductToCurrentOrderItem on SocketOrderProductModel {
+  OrderItem toCurrentOrderItem() {
+    return OrderItem(
+      productId: productId,
+      productName: productName,
+      imageUrl: imageUrl,
+      finalPrice: unitaryPrice,
+      quantity: quantity,
+      tva: tvaAmount ?? 0,
+      discount: discountAmount ?? 0,
+      components: components.map((comp) {
+        return OrderItemComponent(
+          componentId: comp.componentId,
+          name: comp.componentName,
+          price: comp.extraPrice ?? 0.0,
+          quantity: comp.quantity,
+          isSpecial: comp.isSpecial,
+        );
+      }).toList(),
+    );
+  }
+}
+
 //#endregion

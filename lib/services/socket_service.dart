@@ -6,6 +6,7 @@ import 'package:posecrea/data/database/app_database.dart';
 import 'package:uuid/uuid.dart';
 import '../domain/models/socket_models.dart';
 import '../domain/models/order_events.dart';
+import '../providers/database_providers.dart';
 import '../providers/socket_order_providers.dart';
 import '../providers/device_providers.dart';
 import '../providers/order_provider.dart';
@@ -50,6 +51,20 @@ class DiscoveredDevicesNotifier extends StateNotifier<List<DeviceInfo>> {
     super.dispose();
   }
 }
+
+enum CommandTypes {
+
+
+  newOrder ('NEW_ORDER'),
+  orderUpdate ('ORDER_UPDATE'),
+  orderStatusChanged ('ORDER_STATUS_CHANGED'),
+  orderProductStateChanged ('ORDER_PRODUCT_STATE_CHANGED');
+  final String value;
+  const CommandTypes(this.value);
+}
+
+
+
 
 class SocketService {
   final CmdecreaClient _client;
@@ -259,8 +274,19 @@ class SocketService {
       print('Order state changed: ${command.payload}');
     });
 
+    _client.listenForCommand('new_order', (command) async {
+      // Handle order state changes from KDS
+      final repository = _ref.read(orderRepositoryProvider);
+      final currentUser = _ref.read(currentUserProvider);
+
+      repository.saveOrder(SocketOrderModel.fromJson(command.payload).toCurrentOrder(), currentUser!.id);
+      print("aha");
+    });
+
+
     _client.listenForAllCommands((cmd){
-      print('📨 Received command: Type=${cmd.type}, Payload=${cmd.payload}');
+
+
     });
   }
 

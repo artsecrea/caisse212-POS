@@ -1479,6 +1479,17 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     requiredDuringInsert: false,
     defaultValue: currentDateAndTime,
   );
+  static const VerificationMeta _lastLoginMeta = const VerificationMeta(
+    'lastLogin',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastLogin = GeneratedColumn<DateTime>(
+    'last_login',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -1493,6 +1504,7 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     permissions,
     createdAt,
     updatedAt,
+    lastLogin,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1594,6 +1606,12 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
     }
+    if (data.containsKey('last_login')) {
+      context.handle(
+        _lastLoginMeta,
+        lastLogin.isAcceptableOrUnknown(data['last_login']!, _lastLoginMeta),
+      );
+    }
     return context;
   }
 
@@ -1651,6 +1669,10 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
       )!,
+      lastLogin: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_login'],
+      ),
     );
   }
 
@@ -1673,6 +1695,7 @@ class User extends DataClass implements Insertable<User> {
   final String? permissions;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final DateTime? lastLogin;
   const User({
     required this.id,
     required this.username,
@@ -1686,6 +1709,7 @@ class User extends DataClass implements Insertable<User> {
     this.permissions,
     required this.createdAt,
     required this.updatedAt,
+    this.lastLogin,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1710,6 +1734,9 @@ class User extends DataClass implements Insertable<User> {
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
+    if (!nullToAbsent || lastLogin != null) {
+      map['last_login'] = Variable<DateTime>(lastLogin);
+    }
     return map;
   }
 
@@ -1735,6 +1762,9 @@ class User extends DataClass implements Insertable<User> {
           : Value(permissions),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
+      lastLogin: lastLogin == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastLogin),
     );
   }
 
@@ -1756,6 +1786,7 @@ class User extends DataClass implements Insertable<User> {
       permissions: serializer.fromJson<String?>(json['permissions']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      lastLogin: serializer.fromJson<DateTime?>(json['lastLogin']),
     );
   }
   @override
@@ -1774,6 +1805,7 @@ class User extends DataClass implements Insertable<User> {
       'permissions': serializer.toJson<String?>(permissions),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'lastLogin': serializer.toJson<DateTime?>(lastLogin),
     };
   }
 
@@ -1790,6 +1822,7 @@ class User extends DataClass implements Insertable<User> {
     Value<String?> permissions = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
+    Value<DateTime?> lastLogin = const Value.absent(),
   }) => User(
     id: id ?? this.id,
     username: username ?? this.username,
@@ -1803,6 +1836,7 @@ class User extends DataClass implements Insertable<User> {
     permissions: permissions.present ? permissions.value : this.permissions,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
+    lastLogin: lastLogin.present ? lastLogin.value : this.lastLogin,
   );
   User copyWithCompanion(UsersCompanion data) {
     return User(
@@ -1824,6 +1858,7 @@ class User extends DataClass implements Insertable<User> {
           : this.permissions,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      lastLogin: data.lastLogin.present ? data.lastLogin.value : this.lastLogin,
     );
   }
 
@@ -1841,7 +1876,8 @@ class User extends DataClass implements Insertable<User> {
           ..write('refreshToken: $refreshToken, ')
           ..write('permissions: $permissions, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('lastLogin: $lastLogin')
           ..write(')'))
         .toString();
   }
@@ -1860,6 +1896,7 @@ class User extends DataClass implements Insertable<User> {
     permissions,
     createdAt,
     updatedAt,
+    lastLogin,
   );
   @override
   bool operator ==(Object other) =>
@@ -1876,7 +1913,8 @@ class User extends DataClass implements Insertable<User> {
           other.refreshToken == this.refreshToken &&
           other.permissions == this.permissions &&
           other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
+          other.updatedAt == this.updatedAt &&
+          other.lastLogin == this.lastLogin);
 }
 
 class UsersCompanion extends UpdateCompanion<User> {
@@ -1892,6 +1930,7 @@ class UsersCompanion extends UpdateCompanion<User> {
   final Value<String?> permissions;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
+  final Value<DateTime?> lastLogin;
   const UsersCompanion({
     this.id = const Value.absent(),
     this.username = const Value.absent(),
@@ -1905,6 +1944,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     this.permissions = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.lastLogin = const Value.absent(),
   });
   UsersCompanion.insert({
     this.id = const Value.absent(),
@@ -1919,6 +1959,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     this.permissions = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.lastLogin = const Value.absent(),
   }) : username = Value(username),
        password = Value(password),
        firstName = Value(firstName),
@@ -1937,6 +1978,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     Expression<String>? permissions,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
+    Expression<DateTime>? lastLogin,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -1951,6 +1993,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       if (permissions != null) 'permissions': permissions,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (lastLogin != null) 'last_login': lastLogin,
     });
   }
 
@@ -1967,6 +2010,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     Value<String?>? permissions,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
+    Value<DateTime?>? lastLogin,
   }) {
     return UsersCompanion(
       id: id ?? this.id,
@@ -1981,6 +2025,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       permissions: permissions ?? this.permissions,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      lastLogin: lastLogin ?? this.lastLogin,
     );
   }
 
@@ -2023,6 +2068,9 @@ class UsersCompanion extends UpdateCompanion<User> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
+    if (lastLogin.present) {
+      map['last_login'] = Variable<DateTime>(lastLogin.value);
+    }
     return map;
   }
 
@@ -2040,7 +2088,8 @@ class UsersCompanion extends UpdateCompanion<User> {
           ..write('refreshToken: $refreshToken, ')
           ..write('permissions: $permissions, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('lastLogin: $lastLogin')
           ..write(')'))
         .toString();
   }
@@ -10544,10 +10593,6 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  List<Set<GeneratedColumn>> get uniqueKeys => [
-    {id, num},
-  ];
-  @override
   Ticket map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return Ticket(
@@ -11628,6 +11673,7 @@ typedef $$UsersTableCreateCompanionBuilder =
       Value<String?> permissions,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
+      Value<DateTime?> lastLogin,
     });
 typedef $$UsersTableUpdateCompanionBuilder =
     UsersCompanion Function({
@@ -11643,6 +11689,7 @@ typedef $$UsersTableUpdateCompanionBuilder =
       Value<String?> permissions,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
+      Value<DateTime?> lastLogin,
     });
 
 class $$UsersTableFilterComposer extends Composer<_$AppDatabase, $UsersTable> {
@@ -11710,6 +11757,11 @@ class $$UsersTableFilterComposer extends Composer<_$AppDatabase, $UsersTable> {
 
   ColumnFilters<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastLogin => $composableBuilder(
+    column: $table.lastLogin,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -11782,6 +11834,11 @@ class $$UsersTableOrderingComposer
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<DateTime> get lastLogin => $composableBuilder(
+    column: $table.lastLogin,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$UsersTableAnnotationComposer
@@ -11834,6 +11891,9 @@ class $$UsersTableAnnotationComposer
 
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastLogin =>
+      $composableBuilder(column: $table.lastLogin, builder: (column) => column);
 }
 
 class $$UsersTableTableManager
@@ -11876,6 +11936,7 @@ class $$UsersTableTableManager
                 Value<String?> permissions = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
+                Value<DateTime?> lastLogin = const Value.absent(),
               }) => UsersCompanion(
                 id: id,
                 username: username,
@@ -11889,6 +11950,7 @@ class $$UsersTableTableManager
                 permissions: permissions,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
+                lastLogin: lastLogin,
               ),
           createCompanionCallback:
               ({
@@ -11904,6 +11966,7 @@ class $$UsersTableTableManager
                 Value<String?> permissions = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
+                Value<DateTime?> lastLogin = const Value.absent(),
               }) => UsersCompanion.insert(
                 id: id,
                 username: username,
@@ -11917,6 +11980,7 @@ class $$UsersTableTableManager
                 permissions: permissions,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
+                lastLogin: lastLogin,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

@@ -216,6 +216,19 @@ class _TopBarState extends ConsumerState<TopBar> {
                 },
               ),
               PopupMenuItem(
+                value: 'tickets',
+                child: const Row(
+                  children: [
+                    Icon(Icons.receipt),
+                    SizedBox(width: 8),
+                    Text('Tickets'),
+                  ],
+                ),
+                onTap: (){
+                  Navigator.pushNamed(context, '/tickets');
+                },
+              ),
+              PopupMenuItem(
                 value: 'devices',
                 child: const Row(
                   children: [
@@ -226,6 +239,19 @@ class _TopBarState extends ConsumerState<TopBar> {
                 ),
                 onTap: (){
                   Navigator.pushNamed(context, '/devices');
+                },
+              ),
+              PopupMenuItem(
+                value: 'users',
+                child: const Row(
+                  children: [
+                    Icon(Icons.people),
+                    SizedBox(width: 8),
+                    Text('Users'),
+                  ],
+                ),
+                onTap: (){
+                  Navigator.pushNamed(context, '/users');
                 },
               ),
         ],)

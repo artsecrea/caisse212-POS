@@ -2,10 +2,33 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/order_provider.dart';
+import '../../domain/models/order_models.dart';
+import 'product_modification_dialog.dart';
 
 
 class OrderPanel extends ConsumerWidget {
   const OrderPanel({Key? key}) : super(key: key);
+
+  void _showItemOptions(BuildContext context, WidgetRef ref, int index, OrderItem item) async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => ProductModificationDialog(
+        product: item,
+        isEditMode: true,
+      ),
+    );
+
+    if (result != null) {
+      // Update the item with new modifications
+      final updatedItem = item.copyWith(
+        components: result['components'] as List<OrderItemComponent>?,
+        discount: result['discount'] as double?,
+        manualDiscount: result['manualDiscount'] as double?,
+        note: result['note'] as String?,
+      );
+      ref.read(orderProvider.notifier).updateItem(index, updatedItem);
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -104,158 +127,193 @@ class OrderPanel extends ConsumerWidget {
                         ),
                         child: Opacity(
                           opacity: isPaid ? 0.5 : 1.0,
-                          child: Card.filled(
-                            color: isPaid ? Colors.grey[200] : Colors.white,
-                            shadowColor: Colors.black,
-                            shape: BeveledRectangleBorder(
-                              borderRadius: BorderRadius.zero,
+                          child: Card(
+                            elevation: 2,
+                            color: isPaid ? Colors.grey[100] : Colors.white,
+                            margin: const EdgeInsets.only(bottom: 8, left: 4, right: 4),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: BorderSide(
+                                color: isPaid ? Colors.grey[400]! : Colors.grey[200]!,
+                                width: 1,
+                              ),
                             ),
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: InkWell(
-                                onTap: isPaid ? null : () {
-                                  ref.read(orderProvider.notifier).updateItemQuantity(index, item.quantity+1);
-                                },
+                            child: InkWell(
+                              onTap: isPaid ? null : () => _showItemOptions(context, ref, index, item),
+                              borderRadius: BorderRadius.circular(8),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
+                                    // Header: Name and Delete button
                                     Row(
                                       children: [
+                                        if (isPaid) ...[
+                                          Icon(Icons.lock, size: 14, color: Colors.grey[600]),
+                                          const SizedBox(width: 6),
+                                        ],
                                         Expanded(
-                                          child: Row(
-                                            children: [
-                                              if (isPaid) ...[
-                                                Icon(Icons.lock, size: 16, color: Colors.grey[600]),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Paid (T${item.ticketId}) ',
-                                                  style: TextStyle(
-                                                    fontSize: 11,
-                                                    color: Colors.grey[600],
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
-                                                ),
-                                              ],
-                                              Flexible(
-                                                child: Text(
-                                                  item.productName,
-                                                  style: TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 14,
-                                                    decoration: isPaid ? TextDecoration.lineThrough : null,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
+                                          child: Text(
+                                            item.productName,
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 15,
+                                              decoration: isPaid ? TextDecoration.lineThrough : null,
+                                              decorationColor: Colors.grey[600],
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
                                         if (!isPaid)
                                           IconButton(
                                             onPressed: () {
-                                              ref
-                                                  .read(orderProvider.notifier)
-                                                  .removeItem(index);
+                                              ref.read(orderProvider.notifier).removeItem(index);
                                             },
-                                            icon: const Icon(Icons.close, size: 18),
+                                            icon: Icon(Icons.close, size: 18, color: Colors.grey[600]),
                                             padding: EdgeInsets.zero,
                                             constraints: const BoxConstraints(),
+                                            visualDensity: VisualDensity.compact,
                                           ),
                                       ],
                                     ),
-                                  if (item.components.isNotEmpty) ...[
-                                    const SizedBox(height: 4),
-                                    ...item.components.map(
-                                          (comp) => Padding(
-                                        padding: const EdgeInsets.only(
-                                          left: 8,
-                                          top: 2,
+
+                                    // Paid status badge
+                                    if (isPaid) ...[
+                                      const SizedBox(height: 4),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green[50],
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: Colors.green[200]!),
                                         ),
                                         child: Text(
-                                          '+ ${comp.name} x${comp.quantity}',
+                                          'Paid - Ticket #${item.ticketId}',
                                           style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey[600],
+                                            fontSize: 10,
+                                            color: Colors.green[700],
+                                            fontWeight: FontWeight.w600,
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          border: Border.all(
-                                            color: Colors.grey[300]!,
-                                          ),
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
+                                    ],
+
+                                    // Components
+                                    if (item.components.isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      ...item.components.map((comp) => Padding(
+                                        padding: const EdgeInsets.only(left: 4, top: 2),
                                         child: Row(
                                           children: [
-                                            IconButton(
-                                              onPressed: isPaid ? null : () {
-                                                ref
-                                                    .read(orderProvider.notifier)
-                                                    .updateItemQuantity(
-                                                  index,
-                                                  item.quantity - 1,
-                                                );
-                                              },
-                                              icon: const Icon(
-                                                Icons.remove,
-                                                size: 16,
-                                              ),
-                                              padding: const EdgeInsets.all(4),
-                                              constraints: const BoxConstraints(),
-                                            ),
-                                            SizedBox(
-                                              width: 30,
+                                            Icon(Icons.add, size: 10, color: Colors.grey[500]),
+                                            const SizedBox(width: 4),
+                                            Expanded(
                                               child: Text(
-                                                item.quantity.toString(),
-                                                textAlign: TextAlign.center,
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
+                                                '${comp.name} x${comp.quantity}',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Colors.grey[600],
                                                 ),
                                               ),
                                             ),
-                                            IconButton(
-                                              onPressed: isPaid ? null : () {
-                                                ref
-                                                    .read(orderProvider.notifier)
-                                                    .updateItemQuantity(
-                                                  index,
-                                                  item.quantity + 1,
-                                                );
-                                              },
-                                              icon: const Icon(
-                                                Icons.add,
-                                                size: 16,
-                                              ),
-                                              padding: const EdgeInsets.all(4),
-                                              constraints: const BoxConstraints(),
-                                            ),
                                           ],
                                         ),
-                                      ),
-                                      const Spacer(),
-                                      Text(
-                                        '\$${item.totalPrice.toStringAsFixed(2)}',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: Theme.of(context).primaryColor,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      Spacer(),
-                                      Text("discount :\$${item.totalDiscount}")
+                                      )),
                                     ],
-                                  ),
-                                ],
+
+                                    const SizedBox(height: 10),
+                                    const Divider(height: 1),
+                                    const SizedBox(height: 10),
+
+                                    // Bottom: Quantity controls and Price
+                                    Row(
+                                      children: [
+                                        // Quantity controls
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            color: isPaid ? Colors.grey[200] : Colors.grey[50],
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(color: Colors.grey[300]!),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              IconButton(
+                                                onPressed: isPaid ? null : () {
+                                                  ref.read(orderProvider.notifier).updateItemQuantity(
+                                                    index,
+                                                    item.quantity - 1,
+                                                  );
+                                                },
+                                                icon: const Icon(Icons.remove, size: 16),
+                                                padding: const EdgeInsets.all(4),
+                                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                                visualDensity: VisualDensity.compact,
+                                              ),
+                                              Container(
+                                                constraints: const BoxConstraints(minWidth: 24),
+                                                child: Text(
+                                                  item.quantity.toString(),
+                                                  textAlign: TextAlign.center,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ),
+                                              IconButton(
+                                                onPressed: isPaid ? null : () {
+                                                  ref.read(orderProvider.notifier).updateItemQuantity(
+                                                    index,
+                                                    item.quantity + 1,
+                                                  );
+                                                },
+                                                icon: const Icon(Icons.add, size: 16),
+                                                padding: const EdgeInsets.all(4),
+                                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                                visualDensity: VisualDensity.compact,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+
+                                        const Spacer(),
+
+                                        // Price and discount
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          children: [
+                                            Text(
+                                              '\$${item.totalPrice.toStringAsFixed(2)}',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                color: Theme.of(context).primaryColor,
+                                                fontSize: 16,
+                                              ),
+                                            ),
+                                            if (item.totalDiscount > 0) ...[
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                'Discount: -\$${item.totalDiscount.toStringAsFixed(2)}',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Colors.orange[700],
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
-                            )
+                            ),
                           ),
-                        )),
+                        ),
                         onDismissed: (it) {
                           ref.read(orderProvider.notifier)
                               .removeItem(index);

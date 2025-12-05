@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:posecrea/presentation/widgets/devices_management_screen.dart';
 import 'package:posecrea/presentation/widgets/orders_management_screen.dart';
+import 'package:posecrea/presentation/widgets/users_management_screen.dart';
+import 'package:posecrea/presentation/widgets/tickets_management_screen.dart';
 import 'package:posecrea/services/socket_service.dart';
 import 'package:posecrea/utils/sample_data_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -125,6 +127,8 @@ class MyApp extends ConsumerWidget {
         '/main': (context) => const MainScreen(),
         '/orders': (context) => const OrdersManagementScreen(),
         '/devices': (context) => const DevicesManagementScreen(),
+        '/users': (context) => const UsersManagementScreen(),
+        '/tickets': (context) => const TicketsManagementScreen(),
 
       },
     );

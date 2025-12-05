@@ -58,7 +58,12 @@ class _ProductCard extends ConsumerWidget {
     return GestureDetector(
       onTap: () {
         // Quick add - add product to order without modifications
-        _addToOrder(context, ref, []);
+        _addToOrder(context, ref, {
+          'components': <OrderItemComponent>[],
+          'discount': product.discountAmount,
+          'manualDiscount': 0.0,
+          'note': null,
+        });
       },
       onLongPress: () {
         // Show modification dialog
@@ -141,17 +146,23 @@ class _ProductCard extends ConsumerWidget {
     );
   }
 
-  void _addToOrder(BuildContext context, WidgetRef ref, List<OrderItemComponent> components) {
+  void _addToOrder(BuildContext context, WidgetRef ref, Map<String, dynamic> modifications) {
+    final components = modifications['components'] as List<OrderItemComponent>? ?? [];
+    final discount = modifications['discount'] as double? ?? product.discountAmount;
+    final manualDiscount = modifications['manualDiscount'] as double? ?? 0.0;
+    final note = modifications['note'] as String?;
+
     final orderItem = OrderItem(
       productId: product.id,
       productName: product.name,
       imageUrl: product.imageUrl,
-      unitPrice: product.finalPrice,
+      finalPrice: product.finalPrice,
       quantity: 1,
       components: components,
       tva: product.tvaAmount,
-      discount: product.discountAmount,
-
+      discount: discount,
+      manualDiscount: manualDiscount,
+      note: note,
     );
 
     ref.read(orderProvider.notifier).addItem(orderItem);
@@ -166,7 +177,7 @@ class _ProductCard extends ConsumerWidget {
   }
 
   Future<void> _showModificationDialog(BuildContext context, WidgetRef ref) async {
-    final result = await showDialog<List<OrderItemComponent>>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => ProductModificationDialog(product: product),
     );

@@ -217,6 +217,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                     try {
                       print(currentOrder.orderId);
+                      print(currentOrder.items.first.totalPrice);
+                      print(currentOrder.items.first.totalTva);
+                      print(currentOrder.items.first.tva);
 
                       if (currentOrder.isSaved()) {
                         _logger.error("order updated");

@@ -366,15 +366,14 @@ class SampleDataGenerator {
       final price = prod['price'] as double;
       final discount = prod['discount'] as double;
       final tva = prod['tva'] as double;
-      final finalPrice = price - discount + tva;
 
       await database.into(database.products).insert(
         ProductsCompanion.insert(
           id: Value(prod['id'] as int),
           name: prod['name'] as String,
           stationId: Value(prod['stationId'] as int? ?? 1),
-          price: price,
-          finalPrice: finalPrice,
+          price: price - discount + tva,
+          finalPrice: price,
           categoryId: Value(prod['categoryId'] as int),
           imageUrl: Value(prod['imageUrl'] as String?),
           discountAmount: Value(discount),

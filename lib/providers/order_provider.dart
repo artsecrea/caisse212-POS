@@ -13,6 +13,11 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
   OrderNotifier() : super(CurrentOrder());
 
   void addItem(OrderItem item) {
+    // Check if trying to add an item that belongs to a paid ticket
+    if (item.ticketId != null) {
+      throw Exception('Cannot add items from paid tickets');
+    }
+
     state = state.copyWith(
       items: [...state.items, item],
     );
@@ -20,6 +25,12 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
 
   void removeItem(int index) {
     final items = List<OrderItem>.from(state.items);
+
+    // Don't allow removing items from paid tickets
+    if (items[index].ticketId != null) {
+      throw Exception('Cannot remove items from paid tickets');
+    }
+
     items.removeAt(index);
     state = state.copyWith(items: items);
   }
@@ -37,6 +48,12 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
 
   void updateItem(int index, OrderItem item) {
     final items = List<OrderItem>.from(state.items);
+
+    // Don't allow updating items from paid tickets
+    if (items[index].ticketId != null) {
+      throw Exception('Cannot update items from paid tickets');
+    }
+
     items[index] = item;
     state = state.copyWith(items: items);
   }
@@ -119,6 +136,7 @@ class OrderRepository {
     if (order.orderId != null) {
       throw Exception("Order already has an order code, use updateOrder instead.");
     }
+    print(order.items.first.toJson());
     // Generate order code
     final uuid = const Uuid();
     final orderCode = uuid.v4().substring(0, 8).toUpperCase();
@@ -151,7 +169,7 @@ class OrderRepository {
           orderId: orderId,
           productId: item.productId,
           quantity: Value(item.quantity),
-          unitaryPrice: item.unitPrice,
+          unitaryPrice: item.finalPrice,
           unitaryDiscount: Value(item.discount),
           unitaryTva: Value(item.tva),
           state: Value('PENDING'),
@@ -226,7 +244,7 @@ class OrderRepository {
           orderId: orderId,
           productId: item.productId,
           quantity: Value(item.quantity),
-          unitaryPrice: item.unitPrice,
+          unitaryPrice: item.finalPrice,
           unitaryDiscount: Value(item.discount),
           unitaryTva: Value(item.tva),
           state: Value('PENDING'),
@@ -309,7 +327,7 @@ class OrderRepository {
         productId: product.id,
         productName: product.name,
         imageUrl: product.imageUrl,
-        unitPrice: orderProduct.unitaryPrice,
+        finalPrice: orderProduct.unitaryPrice,
         quantity: orderProduct.quantity,
         components: components,
         discount: orderProduct.unitaryDiscount,

@@ -6,12 +6,13 @@ class OrderItem {
   final int productId;
   final String productName;
   final String? imageUrl;
-  final double unitPrice;
+  final double finalPrice; // final price per unit without components
   final int quantity;
   final List<OrderItemComponent> components;
   final String? note;
   final int? ticketId; // null = not paid, number = ticket ID (paid)
   final double discount; // discount amount per item
+  final double manualDiscount; // manual discount amount per item
   final double tva; // TVA amount per item
 
   OrderItem({
@@ -19,12 +20,13 @@ class OrderItem {
     required this.productId,
     required this.productName,
     this.imageUrl,
-    required this.unitPrice,
+    required this.finalPrice, // final price per unit without components
     this.quantity = 1,
     this.components = const [],
     this.note,
     this.ticketId,
     this.discount = 0.0,
+    this.manualDiscount = 0.0,
     this.tva = 0.0,
   });
 
@@ -33,17 +35,15 @@ class OrderItem {
   }
 
   double get subtotalPerItem {
-
-    return unitPrice + componentTotal - tva;
+    return (finalPrice - manualDiscount )+ componentTotal;
   }
 
   double get totalPrice {
-    // 7 - 12 = 5
     return subtotalPerItem  * quantity;
   }
 
   double get totalDiscount {
-    return discount * quantity;
+    return (discount + manualDiscount) * quantity;
   }
 
   double get totalTva {
@@ -61,6 +61,7 @@ class OrderItem {
     String? note,
     int? ticketId,
     double? discount,
+    double? manualDiscount,
     double? tva,
   }) {
     return OrderItem(
@@ -68,15 +69,41 @@ class OrderItem {
       productId: productId ?? this.productId,
       productName: productName ?? this.productName,
       imageUrl: imageUrl ?? this.imageUrl,
-      unitPrice: unitPrice ?? this.unitPrice,
+      finalPrice: unitPrice ?? this.finalPrice,
       quantity: quantity ?? this.quantity,
       components: components ?? this.components,
       note: note ?? this.note,
       ticketId: ticketId ?? this.ticketId,
       discount: discount ?? this.discount,
+      manualDiscount: manualDiscount ?? this.manualDiscount,
       tva: tva ?? this.tva,
     );
   }
+
+  // to Json
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'productId': productId,
+      'productName': productName,
+      'imageUrl': imageUrl,
+      'unitPrice': finalPrice,
+      'quantity': quantity,
+      'components': components.map((c) => {
+        'componentId': c.componentId,
+        'name': c.name,
+        'quantity': c.quantity,
+        'price': c.price,
+        'isSpecial': c.isSpecial,
+      }).toList(),
+      'note': note,
+      'ticketId': ticketId,
+      'discount': discount,
+      'tva': tva,
+    };
+  }
+
+
 }
 
 // Model for component modification
@@ -145,26 +172,21 @@ class CurrentOrder {
   });
 
   double get subtotal {
-    return items.fold(0.0,
-            (sum, item) => sum + item.totalPrice);
+    return total - tax;
   }
 
   double get tax {
-
-    print("Calculating tax for order with ${items.length} items.");
-
     final tax = items.fold(0.0,
             (sum, item) {
-            print(item.totalTva);
-            print(item.tva);
-              return sum + item.totalTva;
+              return sum + item.tva * item.quantity;
             });
 
     return tax;
   }
 
   double get total {
-    return subtotal + tax;
+    return      items.fold(0.0,
+            (sum, item) => sum + item.totalPrice);
   }
 
   // Get only unpaid items

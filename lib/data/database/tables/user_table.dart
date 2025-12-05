@@ -16,6 +16,7 @@ class Users extends Table {
   TextColumn get permissions => text().nullable()(); // JSON string of permissions
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get lastLogin => dateTime().nullable()();
 
 
 }
