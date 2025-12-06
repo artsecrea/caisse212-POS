@@ -264,9 +264,28 @@ class SocketService {
 
 
   void _listenToCommands() {
-    _client.listenForCommand('ORDER_UPDATE', (command) {
+    final repository = _ref.read(orderRepositoryProvider);
+    final currentUser = _ref.read(currentUserProvider);
+
+    _client.listenForCommand('UPDATE_ORDER', (command) {
+      print("new order update");
+
       // Handle order updates from other devices
-      print('Received order update: ${command.payload}');
+      final orderId =  int.parse(command.payload['id']);
+      final status = command.payload['status'] as String;
+      repository.updateOrderStatus(orderId, status.toUpperCase());
+    });
+
+    _client.listenForCommand('UPDATE_ORDER_PRODUCT', (command) async {
+      print("new product update");
+
+      // Handle order product updates from other devices
+      final orderId =  int.parse(command.payload['orderId']);
+      final productId = command.payload['productId'] as int;
+      final status = command.payload['status'] as String;
+      repository
+          .updateOrderProductState(orderId, productId,
+          status.toUpperCase());
     });
 
     _client.listenForCommand('ORDER_STATE_CHANGED', (command) {
@@ -276,16 +295,17 @@ class SocketService {
 
     _client.listenForCommand('new_order', (command) async {
       // Handle order state changes from KDS
-      final repository = _ref.read(orderRepositoryProvider);
-      final currentUser = _ref.read(currentUserProvider);
 
-      repository.saveOrder(SocketOrderModel.fromJson(command.payload).toCurrentOrder(), currentUser!.id);
+
+      repository.saveOrder(
+          SocketOrderModel.fromJson(command.payload).toCurrentOrder(),
+          currentUser!.id);
       print("aha");
     });
 
 
     _client.listenForAllCommands((cmd){
-
+        print(cmd.type);
 
     });
   }

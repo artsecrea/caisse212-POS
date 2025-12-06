@@ -146,6 +146,7 @@ class KdsProduct {
 
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'name': name,
       'quantity': quantity,
       'options': options.toList(),

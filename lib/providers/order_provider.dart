@@ -327,6 +327,15 @@ class OrderRepository {
     return await loadOrderDetails(order);
   }
 
+  Future<void> updateOrderProductState(int orderId, int productId, String newState) async {
+    await (_database.update(_database.orderProducts)
+          ..where((tbl) => tbl.orderId.equals(orderId) & tbl.id.equals(productId)))
+        .write(OrderProductsCompanion(
+      state: Value(newState),
+      updatedAt: Value(DateTime.now()),
+    ));
+
+  }
   Future<CurrentOrder?> getOrderById(int orderId) async {
     final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
 
