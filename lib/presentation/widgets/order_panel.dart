@@ -24,7 +24,6 @@ class OrderPanel extends ConsumerWidget {
         components: result['components'] as List<OrderItemComponent>?,
         discount: result['discount'] as double?,
         manualDiscount: result['manualDiscount'] as double?,
-        note: result['note'] as String?,
       );
       ref.read(orderProvider.notifier).updateItem(index, updatedItem);
     }
@@ -107,7 +106,8 @@ class OrderPanel extends ConsumerWidget {
                     itemBuilder: (context, index) {
                       final item = currentOrder.items[index];
                       final isPaid = item.ticketId != null;
-                      
+                      final isHeld = item.state == 'ONHOLD';
+
                       return Dismissible(
                         dragStartBehavior: DragStartBehavior.down,
                         key: ValueKey("${item.id}_$index"),
@@ -129,13 +129,21 @@ class OrderPanel extends ConsumerWidget {
                           opacity: isPaid ? 0.5 : 1.0,
                           child: Card(
                             elevation: 2,
-                            color: isPaid ? Colors.grey[100] : Colors.white,
+                            color: isPaid
+                                ? Colors.grey[100]
+                                : isHeld
+                                    ? Colors.orange[50]
+                                    : Colors.white,
                             margin: const EdgeInsets.only(bottom: 8, left: 4, right: 4),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                               side: BorderSide(
-                                color: isPaid ? Colors.grey[400]! : Colors.grey[200]!,
-                                width: 1,
+                                color: isPaid
+                                    ? Colors.grey[400]!
+                                    : isHeld
+                                        ? Colors.orange[300]!
+                                        : Colors.grey[200]!,
+                                width: isHeld ? 2 : 1,
                               ),
                             ),
                             child: InkWell(
@@ -196,6 +204,34 @@ class OrderPanel extends ConsumerWidget {
                                             color: Colors.green[700],
                                             fontWeight: FontWeight.w600,
                                           ),
+                                        ),
+                                      ),
+                                    ],
+
+                                    // Held status badge
+                                    if (isHeld && !isPaid) ...[
+                                      const SizedBox(height: 4),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.orange[50],
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: Colors.orange[300]!),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.pause_circle, size: 12, color: Colors.orange[700]),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              'On Hold',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.orange[700],
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ],

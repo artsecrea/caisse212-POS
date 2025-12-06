@@ -97,6 +97,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     );
   }
 
+
   void holdOrder() {
     // Save to held orders - will be implemented in repository
   }
@@ -162,7 +163,8 @@ class OrderRepository {
       ),
     );
 
-    // Insert order products
+    // Insert order products - set state based on order status
+    final itemState = status == 'ONHOLD' ? 'ONHOLD' : 'PENDING';
     for (final item in order.items) {
       final orderProductId = await _database.into(_database.orderProducts).insert(
         OrderProductsCompanion.insert(
@@ -171,8 +173,9 @@ class OrderRepository {
           quantity: Value(item.quantity),
           unitaryPrice: item.finalPrice,
           unitaryDiscount: Value(item.discount),
+          manualDiscount: Value(item.manualDiscount),
           unitaryTva: Value(item.tva),
-          state: Value('PENDING'),
+          state: Value(itemState),
         ),
       );
 
@@ -200,11 +203,49 @@ class OrderRepository {
   }
 
   Future<int> holdOrder(CurrentOrder order, int userId) async {
-    final orderId = await saveOrder(order, userId, status: 'ONHOLD');
+    // Check if order is already saved (has orderId)
+    if (order.isSaved()) {
+      // Check if there are new items added (items without IDs are new)
+      final hasNewItems = order.items.any((item) => item.id == null);
 
-    // Get order code
+      if (hasNewItems) {
+        // Cannot hold an order that has new unsaved items
+        // User must press "Proceed" first to save those items
+        throw Exception('Cannot hold order with new items. Press Proceed first to save them.');
+      }
+
+      // No new items, just update status to ONHOLD
+      final orderId = order.orderId!;
+      await updateOrderStatus(orderId, "ONHOLD");
+
+      // Update all unpaid items to ONHOLD state
+      for (final item in order.items) {
+        if (item.id != null && item.ticketId == null) {
+          await (_database.update(_database.orderProducts)
+            ..where((tbl) => tbl.id.equals(item.id!)))
+            .write(OrderProductsCompanion(
+              state: const Value('ONHOLD'),
+              updatedAt: Value(DateTime.now()),
+            ));
+        }
+      }
+
+      final savedOrder = await (_database.select(_database.orders)
+        ..where((tbl) => tbl.id.equals(orderId)))
+          .getSingle();
+
+      // Emit hold event
+      _emitEvent(OrderHeldEvent(
+        orderId: orderId,
+        orderCode: savedOrder.code,
+      ));
+      return order.orderId!;
+    }
+
+    // Save new order as ONHOLD
+    final orderId = await saveOrder(order, userId, status: 'ONHOLD');
     final savedOrder = await (_database.select(_database.orders)
-          ..where((tbl) => tbl.id.equals(orderId)))
+      ..where((tbl) => tbl.id.equals(orderId)))
         .getSingle();
 
     // Emit hold event
@@ -246,6 +287,7 @@ class OrderRepository {
           quantity: Value(item.quantity),
           unitaryPrice: item.finalPrice,
           unitaryDiscount: Value(item.discount),
+          manualDiscount: Value(item.manualDiscount),
           unitaryTva: Value(item.tva),
           state: Value('PENDING'),
         ),
@@ -331,8 +373,10 @@ class OrderRepository {
         quantity: orderProduct.quantity,
         components: components,
         discount: orderProduct.unitaryDiscount,
+        manualDiscount: orderProduct.manualDiscount,
         tva: orderProduct.unitaryTva,
         ticketId: orderProduct.ticketId,
+        state: orderProduct.state,
       ));
     }
 
@@ -531,7 +575,7 @@ class OrderRepository {
         if (isPaid) {
           final ticket = await (_database.select(_database.tickets)..where((tbl) => tbl.id.equals(product.ticketId!))).getSingleOrNull();
           ticketNum = ticket?.num;
-          totalPaid += itemSubtotal - itemDiscount + itemTva;
+          totalPaid += itemSubtotal + itemTva;
         }
 
         // Get components

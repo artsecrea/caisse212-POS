@@ -68,7 +68,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                 _buildActionButton(icon: Icons.table_bar_sharp, label: "Table", onPressed: () async {
                   final currentOrder = ref.read(orderProvider);
-                  final hasUnpaidItems = currentOrder.unpaidItems.isNotEmpty;
 
                   final result = await showDialog<Map<String, dynamic>>(
                     context: context,
@@ -180,7 +179,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     } catch (e) {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Error holding order: $e')),
+                          SnackBar(
+                            content: Text('$e'),
+                            backgroundColor: Colors.red,
+                          ),
                         );
                       }
                     }
@@ -193,13 +195,69 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   onPressed: currentOrder.items.isEmpty
                       ? null
                       : () async {
-                    final result = await showDialog<bool>(
-                      context: context,
-                      builder: (context) => PaymentScreen(order: currentOrder),
-                    );
+                    final orderRepo = ref.read(orderRepositoryProvider);
+                    final currentUser = ref.read(currentUserProvider);
 
-                    if (result == true && context.mounted) {
-                      ref.read(orderProvider.notifier).clearOrder();
+                    if (currentUser == null) return;
+
+                    try {
+                      int orderId;
+                      // Save or update order first
+                      if (currentOrder.isSaved()) {
+                        _logger.error("order updated before payment");
+                        await orderRepo.updateOrder(currentOrder);
+                        orderId = currentOrder.orderId!;
+                      } else {
+                        _logger.error("new order created before payment");
+                        orderId = await orderRepo.saveOrder(
+                          currentOrder,
+                          currentUser.id,
+                        );
+
+                        if (currentOrder.tableId != null) {
+                          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
+                        }
+                      }
+
+                      // Reload the order from database to get updated IDs and states
+                      final reloadedOrder = await orderRepo.getOrderById(orderId);
+                      if (reloadedOrder == null) {
+                        throw Exception('Failed to reload order');
+                      }
+
+                      if (context.mounted) {
+                        // Open payment screen with reloaded order
+                        final result = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => PaymentScreen(order: reloadedOrder),
+                        );
+
+                        if (result == true && context.mounted) {
+                          // Payment completed, clear order
+                          ref.read(orderProvider.notifier).clearOrder();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Payment completed successfully'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        } else if (context.mounted) {
+                          // Payment screen closed without completion, reload order to show updated state
+                          final updatedOrder = await orderRepo.getOrderById(orderId);
+                          if (updatedOrder != null) {
+                            ref.read(orderProvider.notifier).loadOrder(updatedOrder);
+                          }
+                        }
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error: $e'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
                     }
                   },
                 ),
@@ -216,19 +274,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     if (currentUser == null) return;
 
                     try {
-                      print(currentOrder.orderId);
-                      print(currentOrder.items.first.totalPrice);
-                      print(currentOrder.items.first.totalTva);
-                      print(currentOrder.items.first.tva);
-
+                      int orderId;
                       if (currentOrder.isSaved()) {
                         _logger.error("order updated");
                         await orderRepo.updateOrder(currentOrder);
+                        orderId = currentOrder.orderId!;
                       } else {
                         _logger.error("new order created");
-                        final orderId = await orderRepo.saveOrder(
+                        orderId = await orderRepo.saveOrder(
                           currentOrder,
                           currentUser.id,
+                          status: 'PENDING', // Explicitly set as PENDING
                         );
 
                         if (currentOrder.tableId != null) {
@@ -236,19 +292,27 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         }
                       }
 
-                      ref.read(orderProvider.notifier).clearOrder();
+                      // Reload the order from database to show it with updated IDs and states
+                      final reloadedOrder = await orderRepo.getOrderById(orderId);
+                      if (reloadedOrder != null) {
+                        ref.read(orderProvider.notifier).loadOrder(reloadedOrder);
+                      }
 
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('Order placed successfully'),
+                            content: Text('Order saved successfully'),
+                            backgroundColor: Colors.green,
                           ),
                         );
                       }
                     } catch (e) {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Error: $e')),
+                          SnackBar(
+                            content: Text('Error: $e'),
+                            backgroundColor: Colors.red,
+                          ),
                         );
                       }
                     }
@@ -263,6 +327,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       ),
     );
   }
+
+
 
   Widget _buildActionButton({
     required IconData icon,

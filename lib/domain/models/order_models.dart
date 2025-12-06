@@ -1,5 +1,4 @@
 // Model for current order item in cart
-import 'package:posecrea/data/database/app_database.dart';
 
 class OrderItem {
   final int? id;
@@ -14,6 +13,7 @@ class OrderItem {
   final double discount; // discount amount per item
   final double manualDiscount; // manual discount amount per item
   final double tva; // TVA amount per item
+  final String state; // PENDING, ONHOLD, PREPARING, READY, SERVED, etc.
 
   OrderItem({
     this.id,
@@ -28,6 +28,7 @@ class OrderItem {
     this.discount = 0.0,
     this.manualDiscount = 0.0,
     this.tva = 0.0,
+    this.state = 'PENDING',
   });
 
   double get componentTotal {
@@ -63,6 +64,7 @@ class OrderItem {
     double? discount,
     double? manualDiscount,
     double? tva,
+    String? state,
   }) {
     return OrderItem(
       id: id ?? this.id,
@@ -77,6 +79,7 @@ class OrderItem {
       discount: discount ?? this.discount,
       manualDiscount: manualDiscount ?? this.manualDiscount,
       tva: tva ?? this.tva,
+      state: state ?? this.state,
     );
   }
 
@@ -100,6 +103,7 @@ class OrderItem {
       'ticketId': ticketId,
       'discount': discount,
       'tva': tva,
+      'state': state,
     };
   }
 
@@ -154,6 +158,7 @@ class CurrentOrder {
   final double? couponDiscountAmount;
   final String? note;
   final String type;
+
 
   CurrentOrder({
     this.orderId,

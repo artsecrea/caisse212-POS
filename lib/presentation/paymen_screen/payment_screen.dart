@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:loggecrea/loggecrea.dart';
-import 'package:posecrea/providers/order_provider.dart' hide CurrentOrder;
 import 'package:posecrea/providers/database_providers.dart';
 import 'package:posecrea/data/database/app_database.dart';
 import '../../domain/models/order_models.dart';
@@ -50,7 +49,7 @@ class TicketData {
   double get subtotal => items.fold<double>(0.0, (sum, item) => sum + (item.subtotalPerItem * item.quantity));
   double get totalDiscount => items.fold<double>(0.0, (sum, item) => sum + item.totalDiscount);
   double get totalTva => items.fold<double>(0.0, (sum, item) => sum + item.totalTva);
-  double get total => subtotal - totalDiscount;
+  double get total => subtotal;
 }
 
 // Provider for managing tickets (split orders with payment methods)
@@ -1009,16 +1008,17 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       _logger.info('Inserted ticket #$ticketNumStr with ID $ticketId');
       _logger.info('Inserted ticket amount #$ticketNumStr with ID ${ticket.total}');
 
-      // Update all order items in this ticket with the ticket ID
+      // Update all order items in this ticket with the ticket ID and set state to PAID
       for (final item in ticket.items) {
         if (item.id != null) {
           await (database.update(database.orderProducts)
                 ..where((tbl) => tbl.id.equals(item.id!)))
               .write(OrderProductsCompanion(
             ticketId: Value(ticketId),
+            state: const Value('PAID'),
             updatedAt: Value(DateTime.now()),
           ));
-          Logger.instance.info('Updated order item ${item.id} with ticket ID $ticketId');
+          Logger.instance.info('Updated order item ${item.id} with ticket ID $ticketId and state PAID');
         }
       }
 
@@ -1030,8 +1030,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         ticketNum: ticketNumStr,
       );
 
-      // Update order items in the ticket to have the ticket ID
-      final updatedItems = ticket.items.map((item) => item.copyWith(ticketId: newTicketNum)).toList();
+      // Update order items in the ticket to have the ticket ID and state PAID
+      final updatedItems = ticket.items.map((item) => item.copyWith(
+        ticketId: newTicketNum,
+        state: 'PAID',
+      )).toList();
       updatedTickets[ticketIndex] = updatedTickets[ticketIndex].copyWith(items: updatedItems);
 
       ref.read(ticketsProvider.notifier).state = updatedTickets;
