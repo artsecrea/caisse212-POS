@@ -1,6 +1,7 @@
 
 import 'package:cmdecrea/cmdecrea.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:posecrea/presentation/widgets/devices_management_screen.dart';
@@ -90,6 +91,10 @@ class MyApp extends ConsumerWidget {
 
     return MaterialApp(
       title: 'POSECREA',
+      builder : OnscreenKeyboard.builder(
+        width: (context) => MediaQuery.sizeOf(context).width / 2,
+
+      ),
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
