@@ -3,11 +3,72 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database/app_database.dart';
 import '../data/database/app_database.dart' as db;
+import '../services/session_service.dart';
 
 // Database Provider
 final databaseProvider = Provider<AppDatabase>((ref) {
   return AppDatabase();
 });
+
+// Session Service Provider
+final sessionServiceProvider = Provider<SessionService>((ref) {
+  final database = ref.watch(databaseProvider);
+  return SessionService(database);
+});
+
+// Current Session Provider
+final currentSessionProvider = StateProvider<db.CashSession?>((ref) => null);
+
+class CurrentUser{
+  final int id;
+  final String username;
+  final String password;
+  final String firstName;
+  final String lastName;
+  final String type;
+  final String? imageUrl;
+  final String? accessToken;
+  final String? refreshToken;
+  final String permissions;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final DateTime? lastLogin;
+
+  late final List<String> _perms;
+
+  CurrentUser(this.id, this.username, this.password, this.firstName,
+      this.lastName, this.type, this.imageUrl, this.accessToken,
+      this.refreshToken, this.permissions, this.createdAt, this.updatedAt,
+      this.lastLogin){
+    _perms = permissions.split(",");
+  }
+
+  static CurrentUser fromUser(db.User user) {
+    return CurrentUser(
+        user.id,
+        user.username,
+        user.password,
+        user.firstName,
+        user.lastName,
+        user.type,
+        user.imageUrl,
+        user.accessToken,
+        user.refreshToken,
+        user.permissions ?? "",
+        user.createdAt,
+        user.updatedAt,
+        user.lastLogin,
+    );
+  }
+
+  bool hasPermission(String perm){
+    return _perms.contains(perm);
+  }
+
+
+
+}
+
 
 // Shared Preferences Provider
 final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
@@ -15,7 +76,7 @@ final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
 });
 
 // Current User Provider
-final currentUserProvider = StateProvider<db.User?>((ref) => null);
+final currentUserProvider = StateProvider<CurrentUser?>((ref) => null);
 
 // Network State Provider
 final networkStateProvider = StateProvider<bool>((ref) => true);

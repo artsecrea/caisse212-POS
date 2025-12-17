@@ -1,5 +1,7 @@
 // Model for current order item in cart
 
+import '../../data/database/app_database.dart';
+
 class OrderItem {
   final int? id;
   final int productId;
@@ -35,19 +37,29 @@ class OrderItem {
     return components.fold(0.0, (sum, comp) => sum + (comp.price * comp.quantity));
   }
 
+  // Base price per item without tax or any discount (but with components)
+  // finalPrice = basePrice + tva - prediscount, so: basePrice = finalPrice - tva + prediscount
   double get subtotalPerItem {
-    return (finalPrice - manualDiscount )+ componentTotal;
+    print('finalPrice: $finalPrice, tva: $tva, discount: $discount, componentTotal: $componentTotal');
+    return ((finalPrice - tva) + discount) + componentTotal;
   }
 
+  // Price per item with all discounts applied (including manual discount)
+  // finalPrice already has tva and prediscount applied, add components, then subtract manual discount
   double get totalPrice {
-    return subtotalPerItem  * quantity;
+    print('finalPrice: $finalPrice, componentTotal: $componentTotal, manualDiscount: $manualDiscount, quantity: $quantity');
+    return ((finalPrice + componentTotal) - manualDiscount) * quantity;
   }
 
+  // Total discount per all quantities (pre-discount + manual discount)
   double get totalDiscount {
+    print('discount: $discount, manualDiscount: $manualDiscount, quantity: $quantity');
     return (discount + manualDiscount) * quantity;
   }
 
+  // Total TVA for all quantities
   double get totalTva {
+    print('tva: $tva, quantity: $quantity');
     return tva * quantity;
   }
 
@@ -155,9 +167,10 @@ class CurrentOrder {
   final int? commercialId;
   final String? commercialName;
   final String? coupon;
-  final double? couponDiscountAmount;
+  final double discountPercentage; // Manual discount percentage (0-100)
   final String? note;
   final String type;
+  final int numberOfPersons; // Number of persons for the order
 
 
   CurrentOrder({
@@ -171,27 +184,35 @@ class CurrentOrder {
     this.commercialId,
     this.commercialName,
     this.coupon,
-    this.couponDiscountAmount,
+    this.discountPercentage = 0.0,
     this.note,
     this.type = 'DINE_IN',
+    this.numberOfPersons = 1,
   });
 
+  // Subtotal: sum of all base prices (no tax, no discounts)
   double get subtotal {
-    return total - tax;
+    return items.fold(0.0, (sum, item) => sum + (item.subtotalPerItem * item.quantity));
   }
 
+  // Total tax for all items
   double get tax {
-    final tax = items.fold(0.0,
-            (sum, item) {
-              return sum + item.tva * item.quantity;
-            });
-
-    return tax;
+    return items.fold(0.0, (sum, item) => sum + item.totalTva);
   }
 
+  // Total before order-level discount (includes item prices with components, tva, pre-discounts, and manual discounts)
+  double get totalBeforeDiscount {
+    return items.fold(0.0, (sum, item) => sum + item.totalPrice);
+  }
+
+  // Order-level discount amount calculated from percentage
+  double get discountAmount {
+    return totalBeforeDiscount * (discountPercentage / 100);
+  }
+
+  // Final total with order-level discount applied
   double get total {
-    return      items.fold(0.0,
-            (sum, item) => sum + item.totalPrice);
+    return totalBeforeDiscount - discountAmount;
   }
 
   // Get only unpaid items
@@ -209,6 +230,8 @@ class CurrentOrder {
     return items.any((item) => item.ticketId != null);
   }
 
+
+
   CurrentOrder copyWith({
     int? orderId,
     List<OrderItem>? items,
@@ -219,8 +242,10 @@ class CurrentOrder {
     int? commercialId,
     String? commercialName,
     String? coupon,
+    double? discountPercentage,
     String? note,
     String? type,
+    int? numberOfPersons,
   }) {
     return CurrentOrder(
       orderId: orderId ?? this.orderId,
@@ -232,8 +257,10 @@ class CurrentOrder {
       commercialId: commercialId ?? this.commercialId,
       commercialName: commercialName ?? this.commercialName,
       coupon: coupon ?? this.coupon,
+      discountPercentage: discountPercentage ?? this.discountPercentage,
       note: note ?? this.note,
       type: type ?? this.type,
+      numberOfPersons: numberOfPersons ?? this.numberOfPersons,
     );
   }
 
@@ -306,12 +333,15 @@ class OrderItemDetails {
 
 // Model for order with full details including all calculations
 class OrderFullDetails {
-  final dynamic order; // Order from database
+  final Order order; // Order from database
   final String? userName;
   final String? tableName;
   final int productCount;
   final double subtotal;
-  final double totalDiscount;
+  final double itemDiscount; // Total item-level discounts
+  final double discountPercentage; // Manual discount percentage
+  final double manualDiscountAmount; // Calculated from percentage
+  final double totalDiscount; // itemDiscount + manualDiscountAmount
   final double totalTva;
   final double total;
   final double totalPaid;
@@ -323,6 +353,9 @@ class OrderFullDetails {
     this.tableName,
     required this.productCount,
     required this.subtotal,
+    this.itemDiscount = 0.0,
+    this.discountPercentage = 0.0,
+    this.manualDiscountAmount = 0.0,
     required this.totalDiscount,
     required this.totalTva,
     required this.total,

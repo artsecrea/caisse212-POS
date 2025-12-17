@@ -5,6 +5,7 @@ class Tickets extends Table {
   TextColumn get num => text()(); // Format: 0001, 0002, etc.
   DateTimeColumn get date => dateTime().withDefault(currentDateAndTime)();
   IntColumn get orderId => integer()();
+  IntColumn get sessionId => integer().nullable()(); // Link to cash session
   IntColumn get printCount => integer().withDefault(const Constant(0))();
   TextColumn get paymentMethod => text()(); // TransactionType enum value
   RealColumn get amount => real()();

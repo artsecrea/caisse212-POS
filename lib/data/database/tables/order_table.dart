@@ -13,7 +13,7 @@ class Orders extends Table {
   IntColumn get tableId => integer().nullable()();
   TextColumn get source => text().nullable()(); // Source of the order (table, kiosk, etc.)
   IntColumn get sourceId => integer().nullable()();
-  RealColumn get manualDiscount => real().withDefault(const Constant(0.0))();
+  RealColumn get discountPercentage => real().withDefault(const Constant(0.0))(); // Manual discount percentage (0-100)
   IntColumn get createdBy => integer().nullable()(); // User who created the order
   IntColumn get takenBy => integer().nullable()(); // User who took the order
   IntColumn get clientId => integer().nullable()();

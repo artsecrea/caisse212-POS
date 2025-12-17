@@ -225,6 +225,9 @@ class _AvailableTablesTab extends ConsumerWidget {
       onTap: () async {
         await _handleTableSelection(context, ref, table);
       },
+      onLongPress: hasOrder ? () async {
+        await _handleClearTable(context, ref, table);
+      } : null,
       child: Card(
         color: hasOrder ? Colors.orange[50] : Colors.green[50],
         elevation: 2,
@@ -292,6 +295,9 @@ class _AvailableTablesTab extends ConsumerWidget {
         onTap: () async {
           await _handleTableSelection(context, ref, table);
         },
+        onLongPress: hasOrder ? () async {
+          await _handleClearTable(context, ref, table);
+        } : null,
         leading: CircleAvatar(
           backgroundColor: hasOrder ? Colors.orange[100] : Colors.green[100],
           child: Icon(
@@ -343,6 +349,121 @@ class _AvailableTablesTab extends ConsumerWidget {
         'name': table.name,
         'existingOrder': existingOrder,
       });
+    }
+  }
+
+  Future<void> _handleClearTable(BuildContext context, WidgetRef ref, dynamic table) async {
+    try {
+      final orderRepo = ref.read(orderRepositoryProvider);
+      final order = await orderRepo.getOrderByTable(table.id);
+
+      if (order == null || order.orderId == null) return;
+
+      // Check if there are unpaid items
+      final hasUnpaidItems = order.items.any((item) => item.ticketId == null);
+
+      if (hasUnpaidItems) {
+        // Show dialog with options to pay or clear
+        final action = await showDialog<String>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Clear Table'),
+            content: Text(
+              '${table.name} has unpaid items. What would you like to do?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, 'cancel'),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, 'clear'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Just Clear'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, 'pay'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Pay First'),
+              ),
+            ],
+          ),
+        );
+
+        if (action == 'pay' && context.mounted) {
+          // Navigate back with pay action
+          Navigator.of(context).pop({
+            'id': table.id,
+            'name': table.name,
+            'action': 'pay',
+            'order': order,
+          });
+          return;
+        } else if (action != 'clear') {
+          return; // User cancelled
+        }
+      } else {
+        // All items are paid, just confirm
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Clear Table'),
+            content: Text(
+              'Are you sure you want to clear ${table.name}? The order will remain but the table will be freed.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Clear'),
+              ),
+            ],
+          ),
+        );
+
+        if (confirmed != true) return;
+      }
+
+      // Clear the table by setting orderId to null
+      if (context.mounted) {
+        await orderRepo.clearTableOrder(table.id);
+
+        // Refresh the tables list
+        ref.invalidate(areaTablesProvider);
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${table.name} has been cleared'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error clearing table: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 }
@@ -503,38 +624,114 @@ class _ActiveOrdersTab extends ConsumerWidget {
                         const SizedBox(width: 8),
                         IconButton(
                           onPressed: () async {
-                            // Clear table - mark order as cancelled or remove
-                            final confirmed = await showDialog<bool>(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                title: const Text('Clear Table'),
-                                content: Text(
-                                  'Are you sure you want to clear ${table.name}? This will remove all pending orders.',
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(context, false),
-                                    child: const Text('Cancel'),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed: () => Navigator.pop(context, true),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.red,
-                                      foregroundColor: Colors.white,
-                                    ),
-                                    child: const Text('Clear'),
-                                  ),
-                                ],
-                              ),
-                            );
+                            try {
+                              final orderRepo = ref.read(orderRepositoryProvider);
+                              final order = await orderRepo.getOrderByTable(table.id);
 
-                            if (confirmed == true && context.mounted) {
-                              // TODO: Implement clear table logic
-                              Navigator.of(context).pop({
-                                'id': table.id,
-                                'name': table.name,
-                                'action': 'clear',
-                              });
+                              if (order == null || order.orderId == null) return;
+
+                              // Check if there are unpaid items
+                              final hasUnpaidItems = order.items.any((item) => item.ticketId == null);
+
+                              if (hasUnpaidItems) {
+                                // Show dialog with options to pay or clear
+                                final action = await showDialog<String>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('Clear Table'),
+                                    content: Text(
+                                      '${table.name} has unpaid items. What would you like to do?',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context, 'cancel'),
+                                        child: const Text('Cancel'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.pop(context, 'clear'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.orange,
+                                          foregroundColor: Colors.white,
+                                        ),
+                                        child: const Text('Just Clear'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.pop(context, 'pay'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.green,
+                                          foregroundColor: Colors.white,
+                                        ),
+                                        child: const Text('Pay First'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+
+                                if (action == 'pay' && context.mounted) {
+                                  // Navigate back with pay action
+                                  Navigator.of(context).pop({
+                                    'id': table.id,
+                                    'name': table.name,
+                                    'action': 'pay',
+                                    'order': order,
+                                  });
+                                  return;
+                                } else if (action != 'clear') {
+                                  return; // User cancelled
+                                }
+                              } else {
+                                // All items are paid, just confirm
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('Clear Table'),
+                                    content: Text(
+                                      'Are you sure you want to clear ${table.name}? The order will remain but the table will be freed.',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context, false),
+                                        child: const Text('Cancel'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.pop(context, true),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.orange,
+                                          foregroundColor: Colors.white,
+                                        ),
+                                        child: const Text('Clear'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+
+                                if (confirmed != true) return;
+                              }
+
+                              // Clear the table by setting orderId to null
+                              if (context.mounted) {
+                                await orderRepo.clearTableOrder(table.id);
+
+                                // Refresh and close dialog
+                                ref.invalidate(areaTablesProvider);
+
+                                if (context.mounted) {
+                                  Navigator.of(context).pop({
+                                    'action': 'cleared',
+                                    'tableName': table.name,
+                                  });
+                                }
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Error clearing table: $e'),
+                                    backgroundColor: Colors.red,
+                                    duration: const Duration(seconds: 3),
+                                  ),
+                                );
+                              }
                             }
                           },
                           icon: const Icon(Icons.clear),

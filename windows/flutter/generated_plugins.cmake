@@ -3,8 +3,8 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  charset_converter
   connectivity_plus
-  printing
   sqlite3_flutter_libs
 )
 

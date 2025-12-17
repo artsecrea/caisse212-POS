@@ -67,12 +67,21 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = state.copyWith(customerId: customerId, customerName: customerName);
   }
 
+  void clearCustomer() {
+
+    state.copyWith(customerName: null, customerId: null);
+  }
+
   void setCommercial(int? commercialId, String? commercialName) {
     state = state.copyWith(commercialId: commercialId, commercialName: commercialName);
   }
 
-  void setCoupon(String? coupon) {
-    state = state.copyWith(coupon: coupon);
+  void clearCommercial() {
+    state = state.copyWith(commercialId: null,commercialName: null);
+  }
+
+  void setDiscountPercentage(double percentage) {
+    state = state.copyWith(discountPercentage: percentage);
   }
 
   void setNote(String? note) {
@@ -81,6 +90,10 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
 
   void setOrderType(String type) {
     state = state.copyWith(type: type);
+  }
+
+  void setNumberOfPersons(int count) {
+    state = state.copyWith(numberOfPersons: count);
   }
 
   void clearOrder() {
@@ -149,20 +162,22 @@ class OrderRepository {
         status: Value(status),
         type: Value(order.type),
         priority: Value(0),
-        coupon: Value(order.coupon),
         note: Value(order.note),
         tableId: Value(order.tableId),
         source: Value('POS'),
         sourceId: Value(null),
+        discountPercentage: Value(order.discountPercentage),
         createdBy: Value(userId),
         takenBy: Value(userId),
+        persons: Value(order.numberOfPersons),
+
         clientId: Value(order.customerId),
         commercialId: Value(order.commercialId),
         createdAt: Value(DateTime.now()),
         updatedAt: Value(DateTime.now()),
       ),
     );
-
+// flutter pub run build_runner build --delete-conflicting-outputs
     // Insert order products - set state based on order status
     final itemState = status == 'ONHOLD' ? 'ONHOLD' : 'PENDING';
     for (final item in order.items) {
@@ -265,7 +280,7 @@ class OrderRepository {
       tableId: Value(order.tableId),
       clientId: Value(order.customerId),
       commercialId: Value(order.commercialId),
-      coupon: Value(order.coupon),
+      discountPercentage: Value(order.discountPercentage),
       note: Value(order.note),
       updatedAt: Value(DateTime.now()),
     ));
@@ -336,6 +351,7 @@ class OrderRepository {
     ));
 
   }
+
   Future<CurrentOrder?> getOrderById(int orderId) async {
     final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
 
@@ -419,7 +435,7 @@ class OrderRepository {
       customerName: customerName,
       commercialId: order.commercialId,
       commercialName: commercialName,
-      coupon: order.coupon,
+      discountPercentage: order.discountPercentage,
       note: order.note,
       type: order.type,
     );
@@ -537,6 +553,11 @@ class OrderRepository {
     await (_database.update(_database.areaTables)..where((tbl) => tbl.id.equals(tableId))).write(AreaTablesCompanion(orderId: Value(orderId)));
   }
 
+  // Clear table order assignment (set orderId to null)
+  Future<void> clearTableOrder(int tableId) async {
+    await setTableOrderId(tableId, null);
+  }
+
   // Get all orders with full details including user, products, discounts, TVA, and paid amounts
   Future<List<OrderFullDetails>> getAllOrdersWithFullDetails() async {
     final orders = await (_database.select(_database.orders)..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)])).get();
@@ -562,21 +583,26 @@ class OrderRepository {
 
       // Calculate totals
       double subtotal = 0.0;
-      double totalDiscount = 0.0;
+      double itemDiscount = 0.0;
       double totalTva = 0.0;
       double totalPaid = 0.0;
-
+      int? ticketId;
+    print(order.id);
       final itemDetails = <OrderItemDetails>[];
       for (final product in orderProducts) {
-        final productDetail = await (_database.select(_database.products)..where((tbl) => tbl.id.equals(product.productId))).getSingleOrNull();
 
-        final itemSubtotal = product.unitaryPrice - product.unitaryTva * product.quantity ;
-        final itemDiscount = product.unitaryDiscount * product.quantity;
+        final productDetail = await (_database.select(_database.products)
+          ..where((tbl) => tbl.id.equals(product.productId)))
+            .getSingleOrNull();
+
+        final productDiscount = ((product.manualDiscount + product.unitaryDiscount ) * product.quantity) ;
+        final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) * product.quantity) ;
         final itemTva = product.unitaryTva * product.quantity;
 
         subtotal += itemSubtotal;
-        totalDiscount += itemDiscount;
+        itemDiscount += productDiscount ;
         totalTva += itemTva;
+
 
         // Check if item is paid (has a ticket)
         bool isPaid = product.ticketId != null;
@@ -584,7 +610,11 @@ class OrderRepository {
         if (isPaid) {
           final ticket = await (_database.select(_database.tickets)..where((tbl) => tbl.id.equals(product.ticketId!))).getSingleOrNull();
           ticketNum = ticket?.num;
-          totalPaid += itemSubtotal + itemTva;
+          if( ticketId == null || ticketId != ticket?.id){
+            totalPaid += ticket?.amount ?? 0.0;
+            ticketId = ticket?.id;
+          }
+
         }
 
         // Get components
@@ -603,14 +633,22 @@ class OrderRepository {
         itemDetails.add(OrderItemDetails(
           productName: productDetail?.name ?? 'Unknown Product',
           quantity: product.quantity,
-          totalPrice: itemSubtotal - itemDiscount,
+          totalPrice: itemSubtotal - productDiscount,
           isPaid: isPaid,
           ticketNum: ticketNum,
           components: components,
         ));
       }
 
-      final total = subtotal  + totalTva;
+      // Calculate manual discount from percentage
+      final discountPercentage = order.discountPercentage;
+      final manualDiscountAmount = (subtotal  + totalTva - itemDiscount) * (discountPercentage / 100);
+      final totalDiscount = itemDiscount + manualDiscountAmount;
+
+      // Calculate final total
+      final total = subtotal + totalTva - totalDiscount;
+      print("$total = $subtotal $totalTva - $totalDiscount");
+
 
       result.add(OrderFullDetails(
         order: order,
@@ -618,6 +656,9 @@ class OrderRepository {
         tableName: tableName,
         productCount: orderProducts.length,
         subtotal: subtotal,
+        itemDiscount: itemDiscount,
+        discountPercentage: discountPercentage,
+        manualDiscountAmount: manualDiscountAmount,
         totalDiscount: totalDiscount,
         totalTva: totalTva,
         total: total,
@@ -652,20 +693,21 @@ class OrderRepository {
 
     // Calculate totals
     double subtotal = 0.0;
-    double totalDiscount = 0.0;
+    double itemDiscount = 0.0;
     double totalTva = 0.0;
     double totalPaid = 0.0;
+    int? ticketId;
 
     final itemDetails = <OrderItemDetails>[];
     for (final product in orderProducts) {
       final productDetail = await (_database.select(_database.products)..where((tbl) => tbl.id.equals(product.productId))).getSingleOrNull();
 
-      final itemSubtotal = product.unitaryPrice * product.quantity;
-      final itemDiscount = product.unitaryDiscount * product.quantity;
+      final productDiscount = ((product.manualDiscount + product.unitaryDiscount) * product.quantity);
+      final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) * product.quantity);
       final itemTva = product.unitaryTva * product.quantity;
 
       subtotal += itemSubtotal;
-      totalDiscount += itemDiscount;
+      itemDiscount += productDiscount;
       totalTva += itemTva;
 
       // Check if item is paid (has a ticket)
@@ -674,7 +716,10 @@ class OrderRepository {
       if (isPaid) {
         final ticket = await (_database.select(_database.tickets)..where((tbl) => tbl.id.equals(product.ticketId!))).getSingleOrNull();
         ticketNum = ticket?.num;
-        totalPaid += itemSubtotal - itemDiscount + itemTva;
+        if (ticketId == null || ticketId != ticket?.id) {
+          totalPaid += ticket?.amount ?? 0.0;
+          ticketId = ticket?.id;
+        }
       }
 
       // Get components
@@ -693,14 +738,20 @@ class OrderRepository {
       itemDetails.add(OrderItemDetails(
         productName: productDetail?.name ?? 'Unknown Product',
         quantity: product.quantity,
-        totalPrice: itemSubtotal - itemDiscount + itemTva,
+        totalPrice: itemSubtotal - productDiscount,
         isPaid: isPaid,
         ticketNum: ticketNum,
         components: components,
       ));
     }
 
-    final total = subtotal - totalDiscount + totalTva;
+    // Calculate manual discount from percentage
+    final discountPercentage = order.discountPercentage;
+    final manualDiscountAmount = (subtotal + totalTva - itemDiscount) * (discountPercentage / 100);
+    final totalDiscount = itemDiscount + manualDiscountAmount;
+
+    // Calculate final total
+    final total = subtotal + totalTva - totalDiscount;
 
     return OrderFullDetails(
       order: order,
@@ -708,9 +759,12 @@ class OrderRepository {
       tableName: tableName,
       productCount: orderProducts.length,
       subtotal: subtotal,
+      itemDiscount: itemDiscount,
+      discountPercentage: discountPercentage,
+      manualDiscountAmount: manualDiscountAmount,
       totalDiscount: totalDiscount,
       totalTva: totalTva,
-      total: total,
+      total: total < 0 ? 0.0 : total,
       totalPaid: totalPaid,
       items: itemDetails,
     );

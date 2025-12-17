@@ -116,6 +116,18 @@ class _CommercialSelectionDialogState extends ConsumerState<CommercialSelectionD
                 error: (error, stack) => Center(child: Text('Error: $error')),
               ),
             ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.of(context).pop({'id': null, 'name': null});
+              },
+              icon: const Icon(Icons.clear),
+              label: const Text('Unselect Commercial'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.red,
+                side: const BorderSide(color: Colors.red),
+              ),
+            ),
           ],
         ),
       ),

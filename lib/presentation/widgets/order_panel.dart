@@ -33,6 +33,7 @@ class OrderPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final currentOrder = ref.watch(orderProvider);
 
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -110,12 +111,11 @@ class OrderPanel extends ConsumerWidget {
 
                       return Dismissible(
                         dragStartBehavior: DragStartBehavior.down,
-                        key: ValueKey("${item.id}_$index"),
+                        key: ValueKey("${item.hashCode}"),
                         // Disable dismiss for paid items
                         confirmDismiss: isPaid
                             ? (_) async => false
                             : (direction) async {
-                          // Return true to confirm dismissal
                           return true;
                         },
                         direction: isPaid ? DismissDirection.none : DismissDirection.endToStart,
@@ -351,8 +351,11 @@ class OrderPanel extends ConsumerWidget {
                           ),
                         ),
                         onDismissed: (it) {
+
+
                           ref.read(orderProvider.notifier)
                               .removeItem(index);
+
                         },
                       );
                     },
@@ -367,17 +370,55 @@ class OrderPanel extends ConsumerWidget {
             ),
             child: Column(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Subtotal:'),
-                    Text(
-                      '\$${currentOrder.subtotal.toStringAsFixed(2)}',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
+                // Show subtotal before discount if discount is applied
+                if (currentOrder.discountPercentage > 0) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Subtotal:'),
+                      Text(
+                        '\$${currentOrder.subtotal.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.percent, size: 14, color: Colors.orange[700]),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Discount (${currentOrder.discountPercentage.toStringAsFixed(0)}%):',
+                            style: TextStyle(color: Colors.orange[700]),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        '-\$${currentOrder.discountAmount.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange[700],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ] else ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Subtotal:'),
+                      Text(
+                        '\$${currentOrder.subtotal.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [

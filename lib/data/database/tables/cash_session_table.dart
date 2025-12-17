@@ -8,8 +8,10 @@ class CashSessions extends Table {
   Set<Column> get primaryKey => {id};
   DateTimeColumn get startedAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get endedAt => dateTime().nullable()();
+  DateTimeColumn get pausedAt => dateTime().nullable()();
   RealColumn get moneyAtStart => real()();
   RealColumn get moneyAtEnd => real().nullable()();
+  TextColumn get status => text().withDefault(const Constant('active'))(); // 'active', 'paused', 'ended'
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

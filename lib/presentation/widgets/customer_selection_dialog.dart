@@ -74,12 +74,32 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
               child: _buildCustomerList(database),
             ),
             const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () {
-                _showAddCustomerDialog(context);
-              },
-              icon: const Icon(Icons.add),
-              label: const Text('Add New Customer'),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop({'id': null, 'name': null});
+                    },
+                    icon: const Icon(Icons.clear),
+                    label: const Text('Unselect Customer'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      _showAddCustomerDialog(context);
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add New Customer'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

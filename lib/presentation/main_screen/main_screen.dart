@@ -7,6 +7,7 @@ import '../paymen_screen/payment_screen.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/commercial_selection_dialog.dart';
 import '../widgets/customer_selection_dialog.dart';
+import '../widgets/manual_discount_dialog.dart';
 import '../widgets/product_grid.dart';
 import '../widgets/order_panel.dart';
 import '../widgets/table_selection_dialog.dart';
@@ -62,12 +63,38 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               mainAxisAlignment: MainAxisAlignment.end,
               spacing: 8,
               children: [
-
-
-
-
-                _buildActionButton(icon: Icons.table_bar_sharp, label: "Table", onPressed: () async {
-                  final currentOrder = ref.read(orderProvider);
+                // Number of persons button
+                _buildActionButton(
+                  icon: Icons.people,
+                  label: "${currentOrder.numberOfPersons} ${currentOrder.numberOfPersons == 1 ? 'Person' : 'Persons'}",
+                  color: currentOrder.numberOfPersons > 1 ? Colors.blue : null,
+                  onPressed: () async {
+                    final result = await showDialog<int>(
+                      context: context,
+                      builder: (context) => _NumberOfPersonsDialog(
+                        currentNumber: currentOrder.numberOfPersons,
+                      ),
+                    );
+                    if (result != null) {
+                      ref.read(orderProvider.notifier).setNumberOfPersons(result);
+                    }
+                  },
+                ),
+                // Order type toggle button
+                _buildActionButton(
+                  icon: currentOrder.type == 'DINE_IN' ? Icons.restaurant : Icons.takeout_dining,
+                  label: currentOrder.type == 'DINE_IN' ? 'Dine In' : 'Take Away',
+                  color: currentOrder.type == 'TAKE_AWAY' ? Colors.orange : Colors.green,
+                  onPressed: () {
+                    final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
+                    ref.read(orderProvider.notifier).setOrderType(newType);
+                  },
+                ),
+                _buildActionButton(
+                  icon: Icons.table_bar_sharp,
+                  label: currentOrder.tableName ?? "Table",
+                  color: currentOrder.tableId != null ? Colors.blue : null,
+                  onPressed: () async {
 
                   final result = await showDialog<Map<String, dynamic>>(
                     context: context,
@@ -82,21 +109,52 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                     // Handle different actions
                     if (action == 'pay' && result['order'] != null) {
-                      // Open payment screen
-                      // TODO: Navigate to payment screen with order
+                      // Open payment screen with the order
+                      final order = result['order'];
+                      final paymentResult = await showDialog<bool>(
+                        context: context,
+                        builder: (context) => PaymentScreen(order: order),
+                      );
+
+                      if (paymentResult == true && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Payment completed successfully'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                      return;
+                    }
+
+                    if (action == 'cleared') {
+                      // Table was cleared
+                      final clearedTableName = result['tableName'];
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Payment screen - coming soon')),
+                        SnackBar(
+                          content: Text('$clearedTableName has been cleared'),
+                          backgroundColor: Colors.green,
+                        ),
                       );
                       return;
                     }
 
-                    if (action == 'clear') {
-                      // Clear table
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Table $tableName cleared')),
-                      );
+                    if (action == 'addItems') {
+                      // Add items to existing order
+                      if (existingOrder != null) {
+                        ref.read(orderProvider.notifier).loadOrder(existingOrder);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Adding items to $tableName order'),
+                              backgroundColor: Colors.blue,
+                            ),
+                          );
+                        }
+                      }
                       return;
                     }
+
                     if (existingOrder != null) {
                       // No current items, just load existing order
                       ref.read(orderProvider.notifier).loadOrder(existingOrder);
@@ -114,7 +172,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     }
                   }
                 },),
-                _buildActionButton(icon: Icons.person, label: "Customer", onPressed: () async {
+                _buildActionButton(
+                  icon: Icons.person,
+                  label: currentOrder.customerName ?? "Customer",
+                  color: currentOrder.customerId != null ? Colors.green : null,
+                  onPressed: () async {
                   final result =
                   await showDialog<Map<String, dynamic>>(
                     context: context,
@@ -122,12 +184,21 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     const CustomerSelectionDialog(),
                   );
                   if (result != null) {
-                    ref
-                        .read(orderProvider.notifier)
-                        .setCustomer(result['id'], result['name']);
+                    if (result['id'] == null) {
+                      // Unselect customer
+                      ref.read(orderProvider.notifier).clearCustomer();
+                    } else {
+                      ref
+                          .read(orderProvider.notifier)
+                          .setCustomer(result['id'], result['name']);
+                    }
                   }
                 },),
-                _buildActionButton(icon: Icons.badge, label: "Commercial", onPressed:() async {
+                _buildActionButton(
+                  icon: Icons.badge,
+                  label: currentOrder.commercialName ?? "Commercial",
+                  color: currentOrder.commercialId != null ? Colors.purple : null,
+                  onPressed:() async {
                   final result =
                   await showDialog<Map<String, dynamic>>(
                     context: context,
@@ -135,13 +206,37 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     const CommercialSelectionDialog(),
                   );
                   if (result != null) {
-                    ref
-                        .read(orderProvider.notifier)
-                        .setCommercial(result['id'], result['name']);
+                    if (result['id'] == null) {
+                      // Unselect commercial
+                      ref.read(orderProvider.notifier).clearCommercial();
+                    } else {
+                      ref
+                          .read(orderProvider.notifier)
+                          .setCommercial(result['id'], result['name']);
+                    }
                   }
                 },),
                 _buildActionButton(icon: Icons.discount, label: "Coupon", onPressed: (){}),
-                _buildActionButton(icon: Icons.discount, label: "Manual Discount", onPressed: (){}),
+                _buildActionButton(
+                  icon: Icons.percent,
+                  label: currentOrder.discountPercentage > 0
+                    ? "Discount ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
+                    : "Manual Discount",
+                  color: currentOrder.discountPercentage > 0 ? Colors.orange : null,
+                  onPressed: currentOrder.hasPaidItems
+                    ? null  // Disable if any item is paid
+                    : () async {
+                    final result = await showDialog<double>(
+                      context: context,
+                      builder: (context) => ManualDiscountDialog(
+                        currentPercentage: currentOrder.discountPercentage,
+                      ),
+                    );
+                    if (result != null) {
+                      ref.read(orderProvider.notifier).setDiscountPercentage(result);
+                    }
+                  },
+                ),
                 _buildActionButton(
                   icon: Icons.print,
                   label: 'Print',
@@ -153,41 +248,41 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     );
                   },
                 ),
-                _buildActionButton(
-                  icon: Icons.pause_circle_outline,
-                  label: 'Hold',
-                  onPressed: currentOrder.items.isEmpty
-                      ? null
-                      : () async {
-                    final orderRepo = ref.read(orderRepositoryProvider);
-                    final currentUser = ref.read(currentUserProvider);
-
-                    if (currentUser == null) return;
-
-                    try {
-                      await orderRepo.holdOrder(currentOrder, currentUser.id);
-                      ref.read(orderProvider.notifier).clearOrder();
-
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Order held successfully'),
-                            backgroundColor: Colors.orange,
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('$e'),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
-                    }
-                  },
-                ),
+                // _buildActionButton(
+                //   icon: Icons.pause_circle_outline,
+                //   label: 'Hold',
+                //   onPressed: currentOrder.items.isEmpty
+                //       ? null
+                //       : () async {
+                //     final orderRepo = ref.read(orderRepositoryProvider);
+                //     final currentUser = ref.read(currentUserProvider);
+                //
+                //     if (currentUser == null) return;
+                //
+                //     try {
+                //       await orderRepo.holdOrder(currentOrder, currentUser.id);
+                //       ref.read(orderProvider.notifier).clearOrder();
+                //
+                //       if (context.mounted) {
+                //         ScaffoldMessenger.of(context).showSnackBar(
+                //           const SnackBar(
+                //             content: Text('Order held successfully'),
+                //             backgroundColor: Colors.orange,
+                //           ),
+                //         );
+                //       }
+                //     } catch (e) {
+                //       if (context.mounted) {
+                //         ScaffoldMessenger.of(context).showSnackBar(
+                //           SnackBar(
+                //             content: Text('$e'),
+                //             backgroundColor: Colors.red,
+                //           ),
+                //         );
+                //       }
+                //     }
+                //   },
+                // ),
                 _buildActionButton(
                   icon: Icons.payment,
                   label: 'Pay',
@@ -294,8 +389,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                       // Reload the order from database to show it with updated IDs and states
                       final reloadedOrder = await orderRepo.getOrderById(orderId);
+
                       if (reloadedOrder != null) {
-                        ref.read(orderProvider.notifier).loadOrder(reloadedOrder);
+                        ref.read(orderProvider.notifier).clearOrder();
                       }
 
                       if (context.mounted) {
@@ -381,3 +477,106 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
 }
 
+// Dialog for selecting number of persons
+class _NumberOfPersonsDialog extends StatefulWidget {
+  final int currentNumber;
+
+  const _NumberOfPersonsDialog({required this.currentNumber});
+
+  @override
+  State<_NumberOfPersonsDialog> createState() => _NumberOfPersonsDialogState();
+}
+
+class _NumberOfPersonsDialogState extends State<_NumberOfPersonsDialog> {
+  late int _selectedNumber;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedNumber = widget.currentNumber;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Number of Persons'),
+      content: SizedBox(
+        width: 300,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  onPressed: _selectedNumber > 1
+                      ? () {
+                          setState(() {
+                            _selectedNumber--;
+                          });
+                        }
+                      : null,
+                  icon: const Icon(Icons.remove_circle_outline),
+                  iconSize: 40,
+                ),
+                Container(
+                  width: 80,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    '$_selectedNumber',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _selectedNumber < 99
+                      ? () {
+                          setState(() {
+                            _selectedNumber++;
+                          });
+                        }
+                      : null,
+                  icon: const Icon(Icons.add_circle_outline),
+                  iconSize: 40,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                for (int i in [1, 2, 3, 4, 5, 6, 8, 10])
+                  ChoiceChip(
+                    label: Text('$i'),
+                    selected: _selectedNumber == i,
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _selectedNumber = i;
+                        });
+                      }
+                    },
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, _selectedNumber),
+          child: const Text('OK'),
+        ),
+      ],
+    );
+  }
+}

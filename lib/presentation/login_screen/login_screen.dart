@@ -4,10 +4,9 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show O
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../providers/stat_provider.dart';
-import '../../services/auth_service.dart';
+import '../../services/session_service.dart';
 import '../../providers/database_providers.dart';
 import '../main_screen/main_screen.dart';
-
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -19,6 +18,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _startingBalanceController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
@@ -67,8 +67,65 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
       if (user != null) {
         // Local authentication successful
-        ref.read(currentUserProvider.notifier).state = user;
+        ref.read(currentUserProvider.notifier).state = CurrentUser.fromUser(user);
         
+        // Handle cash session - resume paused or create new
+        try {
+          final sessionService = SessionService(database);
+          final startingBalance = double.tryParse(_startingBalanceController.text) ?? 0.0;
+
+          // Check if user has a paused session
+          final existingSession = await sessionService.getActiveSession(user.id);
+
+          if (existingSession != null) {
+            // Resume existing session (either active or paused)
+            if (existingSession.status == 'paused') {
+              await sessionService.resumeSession(existingSession.id);
+              // Reload to get updated status
+              final resumedSession = await sessionService.getSessionById(existingSession.id);
+              ref.read(currentSessionProvider.notifier).state = resumedSession;
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Resumed your previous session #${existingSession.id}'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            } else {
+              // Session is already active
+              ref.read(currentSessionProvider.notifier).state = existingSession;
+            }
+          } else {
+            // No existing session, create new one
+            final newSession = await sessionService.startSession(
+              cashierId: user.id,
+              moneyAtStart: startingBalance,
+            );
+            ref.read(currentSessionProvider.notifier).state = newSession;
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Started new session #${newSession.id}'),
+                  backgroundColor: Colors.blue,
+                ),
+              );
+            }
+          }
+        } catch (e) {
+          print('Session error: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Session error: $e'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+        }
+
         if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const MainScreen()),
@@ -207,6 +264,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             }
                             return null;
                           },
+                        ),
+                        const SizedBox(height: 16),
+                        OnscreenKeyboardTextField(
+                          controller: _startingBalanceController,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'Starting Balance',
+                            prefixIcon: const Icon(Icons.account_balance_wallet),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          )
                         ),
                         if (_errorMessage != null) ...[
                           const SizedBox(height: 16),

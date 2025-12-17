@@ -680,6 +680,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                             _buildInfoRow('Order Code', order.code),
                             _buildInfoRow('Status', order.status),
                             _buildInfoRow('Type', order.type.replaceAll('_', ' ')),
+                            _buildInfoRow('Number of Persons', '${order.persons ?? 1}'),
                             if (fullDetails.tableName != null)
                               _buildInfoRow('Table', fullDetails.tableName!),
                             _buildInfoRow('Username', fullDetails.userName ?? 'N/A'),
@@ -844,7 +845,16 @@ class _OrderDetailsDialog extends StatelessWidget {
             _buildFinancialRow('Product Count', fullDetails.productCount.toString(), isBold: false),
             const Divider(height: 20),
             _buildFinancialRow('Subtotal', '\$${fullDetails.subtotal.toStringAsFixed(2)}'),
-            _buildFinancialRow('Total Discount', '-\$${fullDetails.totalDiscount.toStringAsFixed(2)}', color: Colors.red),
+            if (fullDetails.itemDiscount > 0)
+              _buildFinancialRow('Item Discounts', '-\$${fullDetails.itemDiscount.toStringAsFixed(2)}', color: Colors.orange),
+            if (fullDetails.discountPercentage > 0)
+              _buildFinancialRow(
+                'Manual Discount (${fullDetails.discountPercentage.toStringAsFixed(0)}%)',
+                '-\$${fullDetails.manualDiscountAmount.toStringAsFixed(2)}',
+                color: Colors.deepOrange,
+              ),
+            if (fullDetails.totalDiscount > 0)
+              _buildFinancialRow('Total Discount', '-\$${fullDetails.totalDiscount.toStringAsFixed(2)}', color: Colors.red),
             _buildFinancialRow('Total TVA', '\$${fullDetails.totalTva.toStringAsFixed(2)}'),
             const Divider(height: 20, thickness: 2),
             _buildFinancialRow('Total', '\$${fullDetails.total.toStringAsFixed(2)}', fontSize: 18, isBold: true),

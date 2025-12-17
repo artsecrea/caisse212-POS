@@ -18,6 +18,7 @@ class TicketData {
   final TransactionType paymentMethod;
   final bool isPaid;
   final int printCount;
+  final double discountPercentage; // Manual discount percentage from order
 
   TicketData({
     this.ticketId,
@@ -26,6 +27,7 @@ class TicketData {
     this.paymentMethod = TransactionType.cash,
     this.isPaid = false,
     this.printCount = 0,
+    this.discountPercentage = 0.0,
   });
 
   TicketData copyWith({
@@ -35,6 +37,7 @@ class TicketData {
     TransactionType? paymentMethod,
     bool? isPaid,
     int? printCount,
+    double? discountPercentage,
   }) {
     return TicketData(
       ticketId: ticketId ?? this.ticketId,
@@ -43,13 +46,28 @@ class TicketData {
       paymentMethod: paymentMethod ?? this.paymentMethod,
       isPaid: isPaid ?? this.isPaid,
       printCount: printCount ?? this.printCount,
+      discountPercentage: discountPercentage ?? this.discountPercentage,
     );
   }
 
   double get subtotal => items.fold<double>(0.0, (sum, item) => sum + (item.subtotalPerItem * item.quantity));
-  double get totalDiscount => items.fold<double>(0.0, (sum, item) => sum + item.totalDiscount);
+  double get finalePrice => items.fold<double>(0.0, (sum, item) => sum + (item.totalPrice * item.quantity));
+  double get itemDiscount => items.fold<double>(0.0, (sum, item) => sum + item.totalDiscount);
   double get totalTva => items.fold<double>(0.0, (sum, item) => sum + item.totalTva);
-  double get total => subtotal;
+
+  // Calculate manual discount amount based on percentage
+  double get manualDiscountAmount {
+    final base = (subtotal + totalTva - itemDiscount);
+    if (base <= 0 || discountPercentage <= 0) return 0.0;
+    return base * (discountPercentage / 100.0);
+  }
+  // Total discount includes both item-level discounts and manual discount
+  double get totalDiscount => itemDiscount + manualDiscountAmount;
+
+  double get total {
+    final result = (subtotal + totalTva - itemDiscount) - manualDiscountAmount;
+    return result < 0 ? 0.0 : result;
+  }
 }
 
 // Provider for managing tickets (split orders with payment methods)
@@ -108,6 +126,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   void _initializeTickets() {
     final items = widget.order.items;
+    final discountPercentage = widget.order.discountPercentage;
 
     // Group items by ticketId
     final Map<int?, List<OrderItem>> grouped = {};
@@ -126,18 +145,25 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         isPaid: true,
         ticketNum: ticketId.toString().padLeft(4, '0'),
         ticketId: ticketId,
+        discountPercentage: discountPercentage,
       ));
     }
 
     // Add unpaid items to a new unpaid ticket (never add to paid tickets)
     if (grouped.containsKey(null) && grouped[null]!.isNotEmpty) {
       // Always create a new ticket for unpaid items
-      tickets.add(TicketData(items: grouped[null]!));
+      tickets.add(TicketData(
+        items: grouped[null]!,
+        discountPercentage: discountPercentage,
+      ));
     }
 
     // If no tickets at all, create one empty
     if (tickets.isEmpty) {
-      tickets.add(TicketData(items: []));
+      tickets.add(TicketData(
+        items: [],
+        discountPercentage: discountPercentage,
+      ));
     }
 
     ref.read(ticketsProvider.notifier).state = tickets;
@@ -574,7 +600,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         children: [
           // Totals breakdown
           _buildTotalRow('Subtotal:', ticket.subtotal, false),
-          if (ticket.totalDiscount > 0) _buildTotalRow('Discount:', -ticket.totalDiscount, false, color: Colors.orange[700]),
+          if (ticket.itemDiscount > 0) _buildTotalRow('Item Discount:', -ticket.itemDiscount, false, color: Colors.orange[700]),
+          if (ticket.discountPercentage > 0) _buildTotalRow('Manual (${ticket.discountPercentage.toStringAsFixed(0)}%):', -ticket.manualDiscountAmount, false, color: Colors.deepOrange[700]),
           if (ticket.totalTva > 0) _buildTotalRow('TVA:', ticket.totalTva, false, color: Colors.blue[700]),
           const Divider(height: 12, thickness: 1),
           _buildTotalRow('Total:', ticket.total, true),
@@ -905,7 +932,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   void _addNewTicket() {
     final tickets = ref.read(ticketsProvider);
-    ref.read(ticketsProvider.notifier).state = [...tickets, TicketData(items: [])];
+    ref.read(ticketsProvider.notifier).state = [
+      ...tickets,
+      TicketData(
+        items: [],
+        discountPercentage: widget.order.discountPercentage,
+      )
+    ];
   }
 
   void _removeTicket(int ticketIndex) {
@@ -972,8 +1005,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   void _payTicket(int ticketIndex) async {
     final tickets = ref.read(ticketsProvider);
+    final session = ref.read(currentSessionProvider);
     final ticket = tickets[ticketIndex];
-
+    if (ticket.isPaid) return;
     if (ticket.items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No items in ticket')),
@@ -1001,6 +1035,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           orderId: currentOrder.orderId ?? 0,
           paymentMethod: ticket.paymentMethod.value,
           amount: ticket.total,
+          sessionId: Value(session?.id),
           isPaid: const Value(true),
           printCount: const Value(0),
         ),
@@ -1084,7 +1119,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
           ElevatedButton(
             onPressed: () {
-              // TODO: Implement complete payment logic - mark all items with their ticketNum
+              // pay all the tickets
+              for (int i = 0; i < tickets.length; i++) {
+                _payTicket(i);
+              }
               Navigator.pop(context);
               Navigator.pop(context, true);
               ScaffoldMessenger.of(context).showSnackBar(

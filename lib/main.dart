@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
+import 'package:posecrea/presentation/tenant_screen/tenant_screen.dart';
 import 'package:posecrea/presentation/widgets/devices_management_screen.dart';
 import 'package:posecrea/presentation/widgets/orders_management_screen.dart';
+import 'package:posecrea/presentation/widgets/sessions_management_screen.dart';
 import 'package:posecrea/presentation/widgets/users_management_screen.dart';
 import 'package:posecrea/presentation/widgets/tickets_management_screen.dart';
 import 'package:posecrea/services/socket_service.dart';
+import 'package:posecrea/services/session_service.dart';
 import 'package:posecrea/utils/sample_data_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'data/database/app_database.dart';
@@ -35,32 +38,32 @@ void main() async {
   print('devices count: ${devices.length}');
 
 
-    // Clear all tables before seeding
-    print('Clearing database...');
-    await database.delete(database.tickets).go();
-    await database.delete(database.orderProductComponents).go();
-    await database.delete(database.orderProducts).go();
-    await database.delete(database.orders).go();
-    await database.delete(database.transactions).go();
-    await database.delete(database.payments).go();
-    await database.delete(database.cashSessions).go();
-    await database.delete(database.customers).go();
-    await database.delete(database.commercials).go();
-    await database.delete(database.kDSs).go();
-    await database.delete(database.kiosks).go();
-    await database.delete(database.stations).go();
-    await database.delete(database.areaTables).go();
-    await database.delete(database.areas).go();
-    await database.delete(database.productComponents).go();
-    await database.delete(database.componentGroups).go();
-    await database.delete(database.components).go();
-    await database.delete(database.users).go();
-    await database.delete(database.products).go();
-    await database.delete(database.categories).go();
+    // // Clear all tables before seeding
+    // print('Clearing database...');
+    // await database.delete(database.tickets).go();
+    // await database.delete(database.orderProductComponents).go();
+    // await database.delete(database.orderProducts).go();
+    // await database.delete(database.orders).go();
+    // await database.delete(database.transactions).go();
+    // await database.delete(database.payments).go();
+    // await database.delete(database.cashSessions).go();
+    // await database.delete(database.customers).go();
+    // await database.delete(database.commercials).go();
+    // await database.delete(database.kDSs).go();
+    // await database.delete(database.kiosks).go();
+    // await database.delete(database.stations).go();
+    // await database.delete(database.areaTables).go();
+    // await database.delete(database.areas).go();
+    // await database.delete(database.productComponents).go();
+    // await database.delete(database.componentGroups).go();
+    // await database.delete(database.components).go();
+    // await database.delete(database.users).go();
+    // await database.delete(database.products).go();
+    // await database.delete(database.categories).go();
 
-    // Generate sample data
-    await generator.generateAll();
-    print('Sample data generated!');
+    // // Generate sample data
+    // await generator.generateAll();
+    // print('Sample data generated!');
 
 
 
@@ -79,13 +82,64 @@ void main() async {
   );
 }
 
-class MyApp extends ConsumerWidget {
+class MyApp extends ConsumerStatefulWidget {
   const MyApp({super.key});
 
   @override
-  Widget build( BuildContext context,WidgetRef ref,) {
-    final s = ref.watch(socketServiceProvider);
+  ConsumerState<MyApp> createState() => _MyAppState();
+}
 
+class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    // Auto-pause session when app goes to background or is paused
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _autoPauseSession();
+    }
+  }
+
+  Future<void> _autoPauseSession() async {
+    try {
+      final currentUser = ref.read(currentUserProvider);
+      if (currentUser != null) {
+        final database = ref.read(databaseProvider);
+        final sessionService = SessionService(database);
+        final session = await sessionService.getActiveSession(currentUser.id);
+
+        if (session != null && session.status == 'active') {
+          await sessionService.pauseSession(session.id);
+          print('Session ${session.id} auto-paused due to app lifecycle change');
+        }
+      }
+    } catch (e) {
+      print('Auto-pause error: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = ref.watch(socketServiceProvider);
+    final sharedPreferences = ref.watch(sharedPreferencesProvider);
+
+    // Check if tenant_id exists
+    final tenantId = sharedPreferences.getString('tenant_id');
+    final initialRoute = tenantId != null ? '/login' : '/tenant';
 
     s.start(deviceId: "deviceId", deviceName: "POS", role: DeviceRole.host);
 
@@ -126,16 +180,22 @@ class MyApp extends ConsumerWidget {
           fillColor: Colors.grey[50],
         ),
       ),
-      home: const LoginScreen(),
+      initialRoute: initialRoute,
       routes:{
+        '/tenant': (context) => const TenantScreen(),
         '/login': (context) => const LoginScreen(),
         '/main': (context) => const MainScreen(),
         '/orders': (context) => const OrdersManagementScreen(),
         '/devices': (context) => const DevicesManagementScreen(),
         '/users': (context) => const UsersManagementScreen(),
         '/tickets': (context) => const TicketsManagementScreen(),
-
+        '/sessions': (context) => const SessionsManagementScreen(),
       },
     );
   }
 }
+
+//run flutter pub run build_runner build --delete-conflicting-outputs
+
+// ignore_for_file: depend_on_referenced_packages
+

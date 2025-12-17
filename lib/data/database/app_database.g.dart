@@ -6836,6 +6836,18 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _discountPercentageMeta =
+      const VerificationMeta('discountPercentage');
+  @override
+  late final GeneratedColumn<double> discountPercentage =
+      GeneratedColumn<double>(
+        'discount_percentage',
+        aliasedName,
+        false,
+        type: DriftSqlType.double,
+        requiredDuringInsert: false,
+        defaultValue: const Constant(0.0),
+      );
   static const VerificationMeta _createdByMeta = const VerificationMeta(
     'createdBy',
   );
@@ -6927,6 +6939,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     tableId,
     source,
     sourceId,
+    discountPercentage,
     createdBy,
     takenBy,
     clientId,
@@ -7016,6 +7029,15 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
       context.handle(
         _sourceIdMeta,
         sourceId.isAcceptableOrUnknown(data['source_id']!, _sourceIdMeta),
+      );
+    }
+    if (data.containsKey('discount_percentage')) {
+      context.handle(
+        _discountPercentageMeta,
+        discountPercentage.isAcceptableOrUnknown(
+          data['discount_percentage']!,
+          _discountPercentageMeta,
+        ),
       );
     }
     if (data.containsKey('created_by')) {
@@ -7120,6 +7142,10 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         DriftSqlType.int,
         data['${effectivePrefix}source_id'],
       ),
+      discountPercentage: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}discount_percentage'],
+      )!,
       createdBy: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}created_by'],
@@ -7170,6 +7196,7 @@ class Order extends DataClass implements Insertable<Order> {
   final int? tableId;
   final String? source;
   final int? sourceId;
+  final double discountPercentage;
   final int? createdBy;
   final int? takenBy;
   final int? clientId;
@@ -7190,6 +7217,7 @@ class Order extends DataClass implements Insertable<Order> {
     this.tableId,
     this.source,
     this.sourceId,
+    required this.discountPercentage,
     this.createdBy,
     this.takenBy,
     this.clientId,
@@ -7223,6 +7251,7 @@ class Order extends DataClass implements Insertable<Order> {
     if (!nullToAbsent || sourceId != null) {
       map['source_id'] = Variable<int>(sourceId);
     }
+    map['discount_percentage'] = Variable<double>(discountPercentage);
     if (!nullToAbsent || createdBy != null) {
       map['created_by'] = Variable<int>(createdBy);
     }
@@ -7267,6 +7296,7 @@ class Order extends DataClass implements Insertable<Order> {
       sourceId: sourceId == null && nullToAbsent
           ? const Value.absent()
           : Value(sourceId),
+      discountPercentage: Value(discountPercentage),
       createdBy: createdBy == null && nullToAbsent
           ? const Value.absent()
           : Value(createdBy),
@@ -7303,6 +7333,9 @@ class Order extends DataClass implements Insertable<Order> {
       tableId: serializer.fromJson<int?>(json['tableId']),
       source: serializer.fromJson<String?>(json['source']),
       sourceId: serializer.fromJson<int?>(json['sourceId']),
+      discountPercentage: serializer.fromJson<double>(
+        json['discountPercentage'],
+      ),
       createdBy: serializer.fromJson<int?>(json['createdBy']),
       takenBy: serializer.fromJson<int?>(json['takenBy']),
       clientId: serializer.fromJson<int?>(json['clientId']),
@@ -7328,6 +7361,7 @@ class Order extends DataClass implements Insertable<Order> {
       'tableId': serializer.toJson<int?>(tableId),
       'source': serializer.toJson<String?>(source),
       'sourceId': serializer.toJson<int?>(sourceId),
+      'discountPercentage': serializer.toJson<double>(discountPercentage),
       'createdBy': serializer.toJson<int?>(createdBy),
       'takenBy': serializer.toJson<int?>(takenBy),
       'clientId': serializer.toJson<int?>(clientId),
@@ -7351,6 +7385,7 @@ class Order extends DataClass implements Insertable<Order> {
     Value<int?> tableId = const Value.absent(),
     Value<String?> source = const Value.absent(),
     Value<int?> sourceId = const Value.absent(),
+    double? discountPercentage,
     Value<int?> createdBy = const Value.absent(),
     Value<int?> takenBy = const Value.absent(),
     Value<int?> clientId = const Value.absent(),
@@ -7371,6 +7406,7 @@ class Order extends DataClass implements Insertable<Order> {
     tableId: tableId.present ? tableId.value : this.tableId,
     source: source.present ? source.value : this.source,
     sourceId: sourceId.present ? sourceId.value : this.sourceId,
+    discountPercentage: discountPercentage ?? this.discountPercentage,
     createdBy: createdBy.present ? createdBy.value : this.createdBy,
     takenBy: takenBy.present ? takenBy.value : this.takenBy,
     clientId: clientId.present ? clientId.value : this.clientId,
@@ -7393,6 +7429,9 @@ class Order extends DataClass implements Insertable<Order> {
       tableId: data.tableId.present ? data.tableId.value : this.tableId,
       source: data.source.present ? data.source.value : this.source,
       sourceId: data.sourceId.present ? data.sourceId.value : this.sourceId,
+      discountPercentage: data.discountPercentage.present
+          ? data.discountPercentage.value
+          : this.discountPercentage,
       createdBy: data.createdBy.present ? data.createdBy.value : this.createdBy,
       takenBy: data.takenBy.present ? data.takenBy.value : this.takenBy,
       clientId: data.clientId.present ? data.clientId.value : this.clientId,
@@ -7420,6 +7459,7 @@ class Order extends DataClass implements Insertable<Order> {
           ..write('tableId: $tableId, ')
           ..write('source: $source, ')
           ..write('sourceId: $sourceId, ')
+          ..write('discountPercentage: $discountPercentage, ')
           ..write('createdBy: $createdBy, ')
           ..write('takenBy: $takenBy, ')
           ..write('clientId: $clientId, ')
@@ -7445,6 +7485,7 @@ class Order extends DataClass implements Insertable<Order> {
     tableId,
     source,
     sourceId,
+    discountPercentage,
     createdBy,
     takenBy,
     clientId,
@@ -7469,6 +7510,7 @@ class Order extends DataClass implements Insertable<Order> {
           other.tableId == this.tableId &&
           other.source == this.source &&
           other.sourceId == this.sourceId &&
+          other.discountPercentage == this.discountPercentage &&
           other.createdBy == this.createdBy &&
           other.takenBy == this.takenBy &&
           other.clientId == this.clientId &&
@@ -7491,6 +7533,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
   final Value<int?> tableId;
   final Value<String?> source;
   final Value<int?> sourceId;
+  final Value<double> discountPercentage;
   final Value<int?> createdBy;
   final Value<int?> takenBy;
   final Value<int?> clientId;
@@ -7511,6 +7554,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.tableId = const Value.absent(),
     this.source = const Value.absent(),
     this.sourceId = const Value.absent(),
+    this.discountPercentage = const Value.absent(),
     this.createdBy = const Value.absent(),
     this.takenBy = const Value.absent(),
     this.clientId = const Value.absent(),
@@ -7532,6 +7576,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.tableId = const Value.absent(),
     this.source = const Value.absent(),
     this.sourceId = const Value.absent(),
+    this.discountPercentage = const Value.absent(),
     this.createdBy = const Value.absent(),
     this.takenBy = const Value.absent(),
     this.clientId = const Value.absent(),
@@ -7553,6 +7598,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Expression<int>? tableId,
     Expression<String>? source,
     Expression<int>? sourceId,
+    Expression<double>? discountPercentage,
     Expression<int>? createdBy,
     Expression<int>? takenBy,
     Expression<int>? clientId,
@@ -7574,6 +7620,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       if (tableId != null) 'table_id': tableId,
       if (source != null) 'source': source,
       if (sourceId != null) 'source_id': sourceId,
+      if (discountPercentage != null) 'discount_percentage': discountPercentage,
       if (createdBy != null) 'created_by': createdBy,
       if (takenBy != null) 'taken_by': takenBy,
       if (clientId != null) 'client_id': clientId,
@@ -7597,6 +7644,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Value<int?>? tableId,
     Value<String?>? source,
     Value<int?>? sourceId,
+    Value<double>? discountPercentage,
     Value<int?>? createdBy,
     Value<int?>? takenBy,
     Value<int?>? clientId,
@@ -7618,6 +7666,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       tableId: tableId ?? this.tableId,
       source: source ?? this.source,
       sourceId: sourceId ?? this.sourceId,
+      discountPercentage: discountPercentage ?? this.discountPercentage,
       createdBy: createdBy ?? this.createdBy,
       takenBy: takenBy ?? this.takenBy,
       clientId: clientId ?? this.clientId,
@@ -7667,6 +7716,9 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     if (sourceId.present) {
       map['source_id'] = Variable<int>(sourceId.value);
     }
+    if (discountPercentage.present) {
+      map['discount_percentage'] = Variable<double>(discountPercentage.value);
+    }
     if (createdBy.present) {
       map['created_by'] = Variable<int>(createdBy.value);
     }
@@ -7706,6 +7758,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
           ..write('tableId: $tableId, ')
           ..write('source: $source, ')
           ..write('sourceId: $sourceId, ')
+          ..write('discountPercentage: $discountPercentage, ')
           ..write('createdBy: $createdBy, ')
           ..write('takenBy: $takenBy, ')
           ..write('clientId: $clientId, ')
@@ -9922,6 +9975,17 @@ class $CashSessionsTable extends CashSessions
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _pausedAtMeta = const VerificationMeta(
+    'pausedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> pausedAt = GeneratedColumn<DateTime>(
+    'paused_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _moneyAtStartMeta = const VerificationMeta(
     'moneyAtStart',
   );
@@ -9943,6 +10007,16 @@ class $CashSessionsTable extends CashSessions
     true,
     type: DriftSqlType.double,
     requiredDuringInsert: false,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('active'),
   );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
@@ -9974,8 +10048,10 @@ class $CashSessionsTable extends CashSessions
     cashierId,
     startedAt,
     endedAt,
+    pausedAt,
     moneyAtStart,
     moneyAtEnd,
+    status,
     createdAt,
     updatedAt,
   ];
@@ -10014,6 +10090,12 @@ class $CashSessionsTable extends CashSessions
         endedAt.isAcceptableOrUnknown(data['ended_at']!, _endedAtMeta),
       );
     }
+    if (data.containsKey('paused_at')) {
+      context.handle(
+        _pausedAtMeta,
+        pausedAt.isAcceptableOrUnknown(data['paused_at']!, _pausedAtMeta),
+      );
+    }
     if (data.containsKey('money_at_start')) {
       context.handle(
         _moneyAtStartMeta,
@@ -10032,6 +10114,12 @@ class $CashSessionsTable extends CashSessions
           data['money_at_end']!,
           _moneyAtEndMeta,
         ),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
       );
     }
     if (data.containsKey('created_at')) {
@@ -10071,6 +10159,10 @@ class $CashSessionsTable extends CashSessions
         DriftSqlType.dateTime,
         data['${effectivePrefix}ended_at'],
       ),
+      pausedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}paused_at'],
+      ),
       moneyAtStart: attachedDatabase.typeMapping.read(
         DriftSqlType.double,
         data['${effectivePrefix}money_at_start'],
@@ -10079,6 +10171,10 @@ class $CashSessionsTable extends CashSessions
         DriftSqlType.double,
         data['${effectivePrefix}money_at_end'],
       ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -10101,8 +10197,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
   final int cashierId;
   final DateTime startedAt;
   final DateTime? endedAt;
+  final DateTime? pausedAt;
   final double moneyAtStart;
   final double? moneyAtEnd;
+  final String status;
   final DateTime createdAt;
   final DateTime updatedAt;
   const CashSession({
@@ -10110,8 +10208,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     required this.cashierId,
     required this.startedAt,
     this.endedAt,
+    this.pausedAt,
     required this.moneyAtStart,
     this.moneyAtEnd,
+    required this.status,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -10124,10 +10224,14 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     if (!nullToAbsent || endedAt != null) {
       map['ended_at'] = Variable<DateTime>(endedAt);
     }
+    if (!nullToAbsent || pausedAt != null) {
+      map['paused_at'] = Variable<DateTime>(pausedAt);
+    }
     map['money_at_start'] = Variable<double>(moneyAtStart);
     if (!nullToAbsent || moneyAtEnd != null) {
       map['money_at_end'] = Variable<double>(moneyAtEnd);
     }
+    map['status'] = Variable<String>(status);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -10141,10 +10245,14 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       endedAt: endedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(endedAt),
+      pausedAt: pausedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(pausedAt),
       moneyAtStart: Value(moneyAtStart),
       moneyAtEnd: moneyAtEnd == null && nullToAbsent
           ? const Value.absent()
           : Value(moneyAtEnd),
+      status: Value(status),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -10160,8 +10268,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       cashierId: serializer.fromJson<int>(json['cashierId']),
       startedAt: serializer.fromJson<DateTime>(json['startedAt']),
       endedAt: serializer.fromJson<DateTime?>(json['endedAt']),
+      pausedAt: serializer.fromJson<DateTime?>(json['pausedAt']),
       moneyAtStart: serializer.fromJson<double>(json['moneyAtStart']),
       moneyAtEnd: serializer.fromJson<double?>(json['moneyAtEnd']),
+      status: serializer.fromJson<String>(json['status']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -10174,8 +10284,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       'cashierId': serializer.toJson<int>(cashierId),
       'startedAt': serializer.toJson<DateTime>(startedAt),
       'endedAt': serializer.toJson<DateTime?>(endedAt),
+      'pausedAt': serializer.toJson<DateTime?>(pausedAt),
       'moneyAtStart': serializer.toJson<double>(moneyAtStart),
       'moneyAtEnd': serializer.toJson<double?>(moneyAtEnd),
+      'status': serializer.toJson<String>(status),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -10186,8 +10298,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     int? cashierId,
     DateTime? startedAt,
     Value<DateTime?> endedAt = const Value.absent(),
+    Value<DateTime?> pausedAt = const Value.absent(),
     double? moneyAtStart,
     Value<double?> moneyAtEnd = const Value.absent(),
+    String? status,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => CashSession(
@@ -10195,8 +10309,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     cashierId: cashierId ?? this.cashierId,
     startedAt: startedAt ?? this.startedAt,
     endedAt: endedAt.present ? endedAt.value : this.endedAt,
+    pausedAt: pausedAt.present ? pausedAt.value : this.pausedAt,
     moneyAtStart: moneyAtStart ?? this.moneyAtStart,
     moneyAtEnd: moneyAtEnd.present ? moneyAtEnd.value : this.moneyAtEnd,
+    status: status ?? this.status,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -10206,12 +10322,14 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       cashierId: data.cashierId.present ? data.cashierId.value : this.cashierId,
       startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
       endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
+      pausedAt: data.pausedAt.present ? data.pausedAt.value : this.pausedAt,
       moneyAtStart: data.moneyAtStart.present
           ? data.moneyAtStart.value
           : this.moneyAtStart,
       moneyAtEnd: data.moneyAtEnd.present
           ? data.moneyAtEnd.value
           : this.moneyAtEnd,
+      status: data.status.present ? data.status.value : this.status,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -10224,8 +10342,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           ..write('cashierId: $cashierId, ')
           ..write('startedAt: $startedAt, ')
           ..write('endedAt: $endedAt, ')
+          ..write('pausedAt: $pausedAt, ')
           ..write('moneyAtStart: $moneyAtStart, ')
           ..write('moneyAtEnd: $moneyAtEnd, ')
+          ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -10238,8 +10358,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     cashierId,
     startedAt,
     endedAt,
+    pausedAt,
     moneyAtStart,
     moneyAtEnd,
+    status,
     createdAt,
     updatedAt,
   );
@@ -10251,8 +10373,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           other.cashierId == this.cashierId &&
           other.startedAt == this.startedAt &&
           other.endedAt == this.endedAt &&
+          other.pausedAt == this.pausedAt &&
           other.moneyAtStart == this.moneyAtStart &&
           other.moneyAtEnd == this.moneyAtEnd &&
+          other.status == this.status &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -10262,8 +10386,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
   final Value<int> cashierId;
   final Value<DateTime> startedAt;
   final Value<DateTime?> endedAt;
+  final Value<DateTime?> pausedAt;
   final Value<double> moneyAtStart;
   final Value<double?> moneyAtEnd;
+  final Value<String> status;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const CashSessionsCompanion({
@@ -10271,8 +10397,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     this.cashierId = const Value.absent(),
     this.startedAt = const Value.absent(),
     this.endedAt = const Value.absent(),
+    this.pausedAt = const Value.absent(),
     this.moneyAtStart = const Value.absent(),
     this.moneyAtEnd = const Value.absent(),
+    this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -10281,8 +10409,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     required int cashierId,
     this.startedAt = const Value.absent(),
     this.endedAt = const Value.absent(),
+    this.pausedAt = const Value.absent(),
     required double moneyAtStart,
     this.moneyAtEnd = const Value.absent(),
+    this.status = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : cashierId = Value(cashierId),
@@ -10292,8 +10422,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     Expression<int>? cashierId,
     Expression<DateTime>? startedAt,
     Expression<DateTime>? endedAt,
+    Expression<DateTime>? pausedAt,
     Expression<double>? moneyAtStart,
     Expression<double>? moneyAtEnd,
+    Expression<String>? status,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -10302,8 +10434,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
       if (cashierId != null) 'cashier_id': cashierId,
       if (startedAt != null) 'started_at': startedAt,
       if (endedAt != null) 'ended_at': endedAt,
+      if (pausedAt != null) 'paused_at': pausedAt,
       if (moneyAtStart != null) 'money_at_start': moneyAtStart,
       if (moneyAtEnd != null) 'money_at_end': moneyAtEnd,
+      if (status != null) 'status': status,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -10314,8 +10448,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     Value<int>? cashierId,
     Value<DateTime>? startedAt,
     Value<DateTime?>? endedAt,
+    Value<DateTime?>? pausedAt,
     Value<double>? moneyAtStart,
     Value<double?>? moneyAtEnd,
+    Value<String>? status,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -10324,8 +10460,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
       cashierId: cashierId ?? this.cashierId,
       startedAt: startedAt ?? this.startedAt,
       endedAt: endedAt ?? this.endedAt,
+      pausedAt: pausedAt ?? this.pausedAt,
       moneyAtStart: moneyAtStart ?? this.moneyAtStart,
       moneyAtEnd: moneyAtEnd ?? this.moneyAtEnd,
+      status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -10346,11 +10484,17 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     if (endedAt.present) {
       map['ended_at'] = Variable<DateTime>(endedAt.value);
     }
+    if (pausedAt.present) {
+      map['paused_at'] = Variable<DateTime>(pausedAt.value);
+    }
     if (moneyAtStart.present) {
       map['money_at_start'] = Variable<double>(moneyAtStart.value);
     }
     if (moneyAtEnd.present) {
       map['money_at_end'] = Variable<double>(moneyAtEnd.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
     }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
@@ -10368,8 +10512,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
           ..write('cashierId: $cashierId, ')
           ..write('startedAt: $startedAt, ')
           ..write('endedAt: $endedAt, ')
+          ..write('pausedAt: $pausedAt, ')
           ..write('moneyAtStart: $moneyAtStart, ')
           ..write('moneyAtEnd: $moneyAtEnd, ')
+          ..write('status: $status, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -10424,6 +10570,17 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     false,
     type: DriftSqlType.int,
     requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sessionIdMeta = const VerificationMeta(
+    'sessionId',
+  );
+  @override
+  late final GeneratedColumn<int> sessionId = GeneratedColumn<int>(
+    'session_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
   );
   static const VerificationMeta _printCountMeta = const VerificationMeta(
     'printCount',
@@ -10500,6 +10657,7 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     num,
     date,
     orderId,
+    sessionId,
     printCount,
     paymentMethod,
     amount,
@@ -10543,6 +10701,12 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
       );
     } else if (isInserting) {
       context.missing(_orderIdMeta);
+    }
+    if (data.containsKey('session_id')) {
+      context.handle(
+        _sessionIdMeta,
+        sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
+      );
     }
     if (data.containsKey('print_count')) {
       context.handle(
@@ -10612,6 +10776,10 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
         DriftSqlType.int,
         data['${effectivePrefix}order_id'],
       )!,
+      sessionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}session_id'],
+      ),
       printCount: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}print_count'],
@@ -10650,6 +10818,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
   final String num;
   final DateTime date;
   final int orderId;
+  final int? sessionId;
   final int printCount;
   final String paymentMethod;
   final double amount;
@@ -10661,6 +10830,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     required this.num,
     required this.date,
     required this.orderId,
+    this.sessionId,
     required this.printCount,
     required this.paymentMethod,
     required this.amount,
@@ -10675,6 +10845,9 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     map['num'] = Variable<String>(num);
     map['date'] = Variable<DateTime>(date);
     map['order_id'] = Variable<int>(orderId);
+    if (!nullToAbsent || sessionId != null) {
+      map['session_id'] = Variable<int>(sessionId);
+    }
     map['print_count'] = Variable<int>(printCount);
     map['payment_method'] = Variable<String>(paymentMethod);
     map['amount'] = Variable<double>(amount);
@@ -10690,6 +10863,9 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       num: Value(num),
       date: Value(date),
       orderId: Value(orderId),
+      sessionId: sessionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sessionId),
       printCount: Value(printCount),
       paymentMethod: Value(paymentMethod),
       amount: Value(amount),
@@ -10709,6 +10885,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       num: serializer.fromJson<String>(json['num']),
       date: serializer.fromJson<DateTime>(json['date']),
       orderId: serializer.fromJson<int>(json['orderId']),
+      sessionId: serializer.fromJson<int?>(json['sessionId']),
       printCount: serializer.fromJson<int>(json['printCount']),
       paymentMethod: serializer.fromJson<String>(json['paymentMethod']),
       amount: serializer.fromJson<double>(json['amount']),
@@ -10725,6 +10902,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       'num': serializer.toJson<String>(num),
       'date': serializer.toJson<DateTime>(date),
       'orderId': serializer.toJson<int>(orderId),
+      'sessionId': serializer.toJson<int?>(sessionId),
       'printCount': serializer.toJson<int>(printCount),
       'paymentMethod': serializer.toJson<String>(paymentMethod),
       'amount': serializer.toJson<double>(amount),
@@ -10739,6 +10917,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     String? num,
     DateTime? date,
     int? orderId,
+    Value<int?> sessionId = const Value.absent(),
     int? printCount,
     String? paymentMethod,
     double? amount,
@@ -10750,6 +10929,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     num: num ?? this.num,
     date: date ?? this.date,
     orderId: orderId ?? this.orderId,
+    sessionId: sessionId.present ? sessionId.value : this.sessionId,
     printCount: printCount ?? this.printCount,
     paymentMethod: paymentMethod ?? this.paymentMethod,
     amount: amount ?? this.amount,
@@ -10763,6 +10943,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       num: data.num.present ? data.num.value : this.num,
       date: data.date.present ? data.date.value : this.date,
       orderId: data.orderId.present ? data.orderId.value : this.orderId,
+      sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
       printCount: data.printCount.present
           ? data.printCount.value
           : this.printCount,
@@ -10783,6 +10964,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           ..write('num: $num, ')
           ..write('date: $date, ')
           ..write('orderId: $orderId, ')
+          ..write('sessionId: $sessionId, ')
           ..write('printCount: $printCount, ')
           ..write('paymentMethod: $paymentMethod, ')
           ..write('amount: $amount, ')
@@ -10799,6 +10981,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     num,
     date,
     orderId,
+    sessionId,
     printCount,
     paymentMethod,
     amount,
@@ -10814,6 +10997,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           other.num == this.num &&
           other.date == this.date &&
           other.orderId == this.orderId &&
+          other.sessionId == this.sessionId &&
           other.printCount == this.printCount &&
           other.paymentMethod == this.paymentMethod &&
           other.amount == this.amount &&
@@ -10827,6 +11011,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
   final Value<String> num;
   final Value<DateTime> date;
   final Value<int> orderId;
+  final Value<int?> sessionId;
   final Value<int> printCount;
   final Value<String> paymentMethod;
   final Value<double> amount;
@@ -10838,6 +11023,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     this.num = const Value.absent(),
     this.date = const Value.absent(),
     this.orderId = const Value.absent(),
+    this.sessionId = const Value.absent(),
     this.printCount = const Value.absent(),
     this.paymentMethod = const Value.absent(),
     this.amount = const Value.absent(),
@@ -10850,6 +11036,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     required String num,
     this.date = const Value.absent(),
     required int orderId,
+    this.sessionId = const Value.absent(),
     this.printCount = const Value.absent(),
     required String paymentMethod,
     required double amount,
@@ -10865,6 +11052,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Expression<String>? num,
     Expression<DateTime>? date,
     Expression<int>? orderId,
+    Expression<int>? sessionId,
     Expression<int>? printCount,
     Expression<String>? paymentMethod,
     Expression<double>? amount,
@@ -10877,6 +11065,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       if (num != null) 'num': num,
       if (date != null) 'date': date,
       if (orderId != null) 'order_id': orderId,
+      if (sessionId != null) 'session_id': sessionId,
       if (printCount != null) 'print_count': printCount,
       if (paymentMethod != null) 'payment_method': paymentMethod,
       if (amount != null) 'amount': amount,
@@ -10891,6 +11080,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Value<String>? num,
     Value<DateTime>? date,
     Value<int>? orderId,
+    Value<int?>? sessionId,
     Value<int>? printCount,
     Value<String>? paymentMethod,
     Value<double>? amount,
@@ -10903,6 +11093,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       num: num ?? this.num,
       date: date ?? this.date,
       orderId: orderId ?? this.orderId,
+      sessionId: sessionId ?? this.sessionId,
       printCount: printCount ?? this.printCount,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       amount: amount ?? this.amount,
@@ -10926,6 +11117,9 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     }
     if (orderId.present) {
       map['order_id'] = Variable<int>(orderId.value);
+    }
+    if (sessionId.present) {
+      map['session_id'] = Variable<int>(sessionId.value);
     }
     if (printCount.present) {
       map['print_count'] = Variable<int>(printCount.value);
@@ -10955,6 +11149,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
           ..write('num: $num, ')
           ..write('date: $date, ')
           ..write('orderId: $orderId, ')
+          ..write('sessionId: $sessionId, ')
           ..write('printCount: $printCount, ')
           ..write('paymentMethod: $paymentMethod, ')
           ..write('amount: $amount, ')
@@ -14401,6 +14596,7 @@ typedef $$OrdersTableCreateCompanionBuilder =
       Value<int?> tableId,
       Value<String?> source,
       Value<int?> sourceId,
+      Value<double> discountPercentage,
       Value<int?> createdBy,
       Value<int?> takenBy,
       Value<int?> clientId,
@@ -14423,6 +14619,7 @@ typedef $$OrdersTableUpdateCompanionBuilder =
       Value<int?> tableId,
       Value<String?> source,
       Value<int?> sourceId,
+      Value<double> discountPercentage,
       Value<int?> createdBy,
       Value<int?> takenBy,
       Value<int?> clientId,
@@ -14498,6 +14695,11 @@ class $$OrdersTableFilterComposer
 
   ColumnFilters<int> get sourceId => $composableBuilder(
     column: $table.sourceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get discountPercentage => $composableBuilder(
+    column: $table.discountPercentage,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -14606,6 +14808,11 @@ class $$OrdersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get discountPercentage => $composableBuilder(
+    column: $table.discountPercentage,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get createdBy => $composableBuilder(
     column: $table.createdBy,
     builder: (column) => ColumnOrderings(column),
@@ -14687,6 +14894,11 @@ class $$OrdersTableAnnotationComposer
   GeneratedColumn<int> get sourceId =>
       $composableBuilder(column: $table.sourceId, builder: (column) => column);
 
+  GeneratedColumn<double> get discountPercentage => $composableBuilder(
+    column: $table.discountPercentage,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get createdBy =>
       $composableBuilder(column: $table.createdBy, builder: (column) => column);
 
@@ -14751,6 +14963,7 @@ class $$OrdersTableTableManager
                 Value<int?> tableId = const Value.absent(),
                 Value<String?> source = const Value.absent(),
                 Value<int?> sourceId = const Value.absent(),
+                Value<double> discountPercentage = const Value.absent(),
                 Value<int?> createdBy = const Value.absent(),
                 Value<int?> takenBy = const Value.absent(),
                 Value<int?> clientId = const Value.absent(),
@@ -14771,6 +14984,7 @@ class $$OrdersTableTableManager
                 tableId: tableId,
                 source: source,
                 sourceId: sourceId,
+                discountPercentage: discountPercentage,
                 createdBy: createdBy,
                 takenBy: takenBy,
                 clientId: clientId,
@@ -14793,6 +15007,7 @@ class $$OrdersTableTableManager
                 Value<int?> tableId = const Value.absent(),
                 Value<String?> source = const Value.absent(),
                 Value<int?> sourceId = const Value.absent(),
+                Value<double> discountPercentage = const Value.absent(),
                 Value<int?> createdBy = const Value.absent(),
                 Value<int?> takenBy = const Value.absent(),
                 Value<int?> clientId = const Value.absent(),
@@ -14813,6 +15028,7 @@ class $$OrdersTableTableManager
                 tableId: tableId,
                 source: source,
                 sourceId: sourceId,
+                discountPercentage: discountPercentage,
                 createdBy: createdBy,
                 takenBy: takenBy,
                 clientId: clientId,
@@ -15939,8 +16155,10 @@ typedef $$CashSessionsTableCreateCompanionBuilder =
       required int cashierId,
       Value<DateTime> startedAt,
       Value<DateTime?> endedAt,
+      Value<DateTime?> pausedAt,
       required double moneyAtStart,
       Value<double?> moneyAtEnd,
+      Value<String> status,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -15950,8 +16168,10 @@ typedef $$CashSessionsTableUpdateCompanionBuilder =
       Value<int> cashierId,
       Value<DateTime> startedAt,
       Value<DateTime?> endedAt,
+      Value<DateTime?> pausedAt,
       Value<double> moneyAtStart,
       Value<double?> moneyAtEnd,
+      Value<String> status,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -15985,6 +16205,11 @@ class $$CashSessionsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<DateTime> get pausedAt => $composableBuilder(
+    column: $table.pausedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<double> get moneyAtStart => $composableBuilder(
     column: $table.moneyAtStart,
     builder: (column) => ColumnFilters(column),
@@ -15992,6 +16217,11 @@ class $$CashSessionsTableFilterComposer
 
   ColumnFilters<double> get moneyAtEnd => $composableBuilder(
     column: $table.moneyAtEnd,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -16035,6 +16265,11 @@ class $$CashSessionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get pausedAt => $composableBuilder(
+    column: $table.pausedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<double> get moneyAtStart => $composableBuilder(
     column: $table.moneyAtStart,
     builder: (column) => ColumnOrderings(column),
@@ -16042,6 +16277,11 @@ class $$CashSessionsTableOrderingComposer
 
   ColumnOrderings<double> get moneyAtEnd => $composableBuilder(
     column: $table.moneyAtEnd,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -16077,6 +16317,9 @@ class $$CashSessionsTableAnnotationComposer
   GeneratedColumn<DateTime> get endedAt =>
       $composableBuilder(column: $table.endedAt, builder: (column) => column);
 
+  GeneratedColumn<DateTime> get pausedAt =>
+      $composableBuilder(column: $table.pausedAt, builder: (column) => column);
+
   GeneratedColumn<double> get moneyAtStart => $composableBuilder(
     column: $table.moneyAtStart,
     builder: (column) => column,
@@ -16086,6 +16329,9 @@ class $$CashSessionsTableAnnotationComposer
     column: $table.moneyAtEnd,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -16129,8 +16375,10 @@ class $$CashSessionsTableTableManager
                 Value<int> cashierId = const Value.absent(),
                 Value<DateTime> startedAt = const Value.absent(),
                 Value<DateTime?> endedAt = const Value.absent(),
+                Value<DateTime?> pausedAt = const Value.absent(),
                 Value<double> moneyAtStart = const Value.absent(),
                 Value<double?> moneyAtEnd = const Value.absent(),
+                Value<String> status = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => CashSessionsCompanion(
@@ -16138,8 +16386,10 @@ class $$CashSessionsTableTableManager
                 cashierId: cashierId,
                 startedAt: startedAt,
                 endedAt: endedAt,
+                pausedAt: pausedAt,
                 moneyAtStart: moneyAtStart,
                 moneyAtEnd: moneyAtEnd,
+                status: status,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -16149,8 +16399,10 @@ class $$CashSessionsTableTableManager
                 required int cashierId,
                 Value<DateTime> startedAt = const Value.absent(),
                 Value<DateTime?> endedAt = const Value.absent(),
+                Value<DateTime?> pausedAt = const Value.absent(),
                 required double moneyAtStart,
                 Value<double?> moneyAtEnd = const Value.absent(),
+                Value<String> status = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => CashSessionsCompanion.insert(
@@ -16158,8 +16410,10 @@ class $$CashSessionsTableTableManager
                 cashierId: cashierId,
                 startedAt: startedAt,
                 endedAt: endedAt,
+                pausedAt: pausedAt,
                 moneyAtStart: moneyAtStart,
                 moneyAtEnd: moneyAtEnd,
+                status: status,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -16194,6 +16448,7 @@ typedef $$TicketsTableCreateCompanionBuilder =
       required String num,
       Value<DateTime> date,
       required int orderId,
+      Value<int?> sessionId,
       Value<int> printCount,
       required String paymentMethod,
       required double amount,
@@ -16207,6 +16462,7 @@ typedef $$TicketsTableUpdateCompanionBuilder =
       Value<String> num,
       Value<DateTime> date,
       Value<int> orderId,
+      Value<int?> sessionId,
       Value<int> printCount,
       Value<String> paymentMethod,
       Value<double> amount,
@@ -16241,6 +16497,11 @@ class $$TicketsTableFilterComposer
 
   ColumnFilters<int> get orderId => $composableBuilder(
     column: $table.orderId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sessionId => $composableBuilder(
+    column: $table.sessionId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -16304,6 +16565,11 @@ class $$TicketsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get sessionId => $composableBuilder(
+    column: $table.sessionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get printCount => $composableBuilder(
     column: $table.printCount,
     builder: (column) => ColumnOrderings(column),
@@ -16355,6 +16621,9 @@ class $$TicketsTableAnnotationComposer
 
   GeneratedColumn<int> get orderId =>
       $composableBuilder(column: $table.orderId, builder: (column) => column);
+
+  GeneratedColumn<int> get sessionId =>
+      $composableBuilder(column: $table.sessionId, builder: (column) => column);
 
   GeneratedColumn<int> get printCount => $composableBuilder(
     column: $table.printCount,
@@ -16411,6 +16680,7 @@ class $$TicketsTableTableManager
                 Value<String> num = const Value.absent(),
                 Value<DateTime> date = const Value.absent(),
                 Value<int> orderId = const Value.absent(),
+                Value<int?> sessionId = const Value.absent(),
                 Value<int> printCount = const Value.absent(),
                 Value<String> paymentMethod = const Value.absent(),
                 Value<double> amount = const Value.absent(),
@@ -16422,6 +16692,7 @@ class $$TicketsTableTableManager
                 num: num,
                 date: date,
                 orderId: orderId,
+                sessionId: sessionId,
                 printCount: printCount,
                 paymentMethod: paymentMethod,
                 amount: amount,
@@ -16435,6 +16706,7 @@ class $$TicketsTableTableManager
                 required String num,
                 Value<DateTime> date = const Value.absent(),
                 required int orderId,
+                Value<int?> sessionId = const Value.absent(),
                 Value<int> printCount = const Value.absent(),
                 required String paymentMethod,
                 required double amount,
@@ -16446,6 +16718,7 @@ class $$TicketsTableTableManager
                 num: num,
                 date: date,
                 orderId: orderId,
+                sessionId: sessionId,
                 printCount: printCount,
                 paymentMethod: paymentMethod,
                 amount: amount,

@@ -79,7 +79,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         ? (widget.product as OrderItem).productName 
         : widget.product.name;
     final productPrice = widget.product is OrderItem 
-        ? (widget.product as OrderItem).finalPrice 
+        ? (widget.product as OrderItem).subtotalPerItem
         : widget.product.finalPrice;
     final productImageUrl = widget.product is OrderItem 
         ? (widget.product as OrderItem).imageUrl 
@@ -373,7 +373,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           Card(
             color: Colors.blue[50],
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(6),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -394,7 +394,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             ),
           ),
           
-          const SizedBox(height: 24),
+          const SizedBox(height: 2),
           
           // Product Discount (Read-only)
           if (_productDiscount > 0) ...[
@@ -406,7 +406,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             Card(
               color: Colors.green[50],
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(6),
                 child: Row(
                   children: [
                     Icon(Icons.local_offer, color: Colors.green[700]),
@@ -445,7 +445,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 2),
           ],
 
           // Manual Discount Section
@@ -458,7 +458,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             'Apply an extra discount to this item',
             style: TextStyle(fontSize: 13, color: Colors.grey[600]),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 2),
           
           Row(
             children: [
@@ -476,7 +476,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   onChanged: (value) => setState(() {}),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 2),
               Expanded(
                 child: SegmentedButton<bool>(
                   segments: const [
@@ -509,7 +509,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             'Note',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 2),
           
           TextField(
             controller: _noteController,
@@ -522,7 +522,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             maxLines: 3,
           ),
           
-          const SizedBox(height: 24),
+          const SizedBox(height: 2),
           
           // Preview
           Card(
@@ -614,7 +614,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         // Calculate manual discount
         final productPrice = widget.product is OrderItem
             ? (widget.product as OrderItem).finalPrice 
-            : widget.product.finalPrice;
+            : widget.product.price;
         final manualDiscount = _calculateManualDiscount(productPrice);
 
         Navigator.of(context).pop({
