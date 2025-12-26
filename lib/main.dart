@@ -1,4 +1,3 @@
-
 import 'package:cmdecrea/cmdecrea.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
@@ -14,10 +13,12 @@ import 'package:posecrea/services/socket_service.dart';
 import 'package:posecrea/services/session_service.dart';
 import 'package:posecrea/utils/sample_data_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'core/theme/app_theme.dart';
 import 'data/database/app_database.dart';
 import 'presentation/login_screen/login_screen.dart';
 import 'presentation/main_screen/main_screen.dart';
 import 'providers/database_providers.dart';
+import 'providers/settings_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,13 +70,10 @@ void main() async {
 
   // final s = SocketService();
   // await s.connect();
-
-
   runApp(
     ProviderScope(
       overrides: [
         sharedPreferencesProvider.overrideWithValue(sharedPreferences),
-
       ],
       child: const MyApp(),
     ),
@@ -136,6 +134,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final s = ref.watch(socketServiceProvider);
     final sharedPreferences = ref.watch(sharedPreferencesProvider);
+    final settings = ref.watch(settingsProvider);
 
     // Check if tenant_id exists
     final tenantId = sharedPreferences.getString('tenant_id');
@@ -150,36 +149,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
       ),
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepOrange,
-
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-        cardTheme: const CardThemeData(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(12)),
-          ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            elevation: 2,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          filled: true,
-          fillColor: Colors.grey[50],
-        ),
-      ),
+      theme: AppTheme.lightTheme(),
+      darkTheme: AppTheme.darkTheme(),
+      themeMode: settings.isDarkMode ? ThemeMode.dark : ThemeMode.light,
       initialRoute: initialRoute,
       routes:{
         '/tenant': (context) => const TenantScreen(),

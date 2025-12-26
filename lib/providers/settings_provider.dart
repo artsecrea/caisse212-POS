@@ -1,0 +1,78 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../domain/models/app_settings.dart';
+import 'database_providers.dart' show sharedPreferencesProvider;
+
+// Keys for SharedPreferences
+class SettingsKeys {
+  static const String isDarkMode = 'is_dark_mode';
+  static const String defaultOrderType = 'default_order_type';
+  static const String showProductImages = 'show_product_images';
+}
+
+// Settings Notifier
+class SettingsNotifier extends StateNotifier<AppSettings> {
+  final SharedPreferences _prefs;
+
+  SettingsNotifier(this._prefs) : super(const AppSettings()) {
+    _loadSettings();
+  }
+
+  void _loadSettings() {
+    state = AppSettings(
+      isDarkMode: _prefs.getBool(SettingsKeys.isDarkMode) ?? false,
+      defaultOrderType: _prefs.getString(SettingsKeys.defaultOrderType) ?? 'DINE_IN',
+      showProductImages: _prefs.getBool(SettingsKeys.showProductImages) ?? true,
+    );
+  }
+
+  Future<void> setDarkMode(bool value) async {
+    await _prefs.setBool(SettingsKeys.isDarkMode, value);
+    state = state.copyWith(isDarkMode: value);
+  }
+
+  Future<void> toggleDarkMode() async {
+    await setDarkMode(!state.isDarkMode);
+  }
+
+  Future<void> setDefaultOrderType(String type) async {
+    await _prefs.setString(SettingsKeys.defaultOrderType, type);
+    state = state.copyWith(defaultOrderType: type);
+  }
+
+  Future<void> setShowProductImages(bool value) async {
+    await _prefs.setBool(SettingsKeys.showProductImages, value);
+    state = state.copyWith(showProductImages: value);
+  }
+
+  Future<void> toggleShowProductImages() async {
+    await setShowProductImages(!state.showProductImages);
+  }
+
+  Future<void> resetToDefaults() async {
+    await _prefs.remove(SettingsKeys.isDarkMode);
+    await _prefs.remove(SettingsKeys.defaultOrderType);
+    await _prefs.remove(SettingsKeys.showProductImages);
+    state = const AppSettings();
+  }
+}
+
+// Settings provider
+final settingsProvider = StateNotifierProvider<SettingsNotifier, AppSettings>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  return SettingsNotifier(prefs);
+});
+
+// Convenience providers for specific settings
+final isDarkModeProvider = Provider<bool>((ref) {
+  return ref.watch(settingsProvider).isDarkMode;
+});
+
+final defaultOrderTypeProvider = Provider<String>((ref) {
+  return ref.watch(settingsProvider).defaultOrderType;
+});
+
+final showProductImagesProvider = Provider<bool>((ref) {
+  return ref.watch(settingsProvider).showProductImages;
+});
+

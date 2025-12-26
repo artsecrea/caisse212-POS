@@ -36,10 +36,10 @@ class OrderPanel extends ConsumerWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Theme.of(context).shadowColor.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(-2, 0),
           ),
@@ -51,19 +51,19 @@ class OrderPanel extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Theme.of(context).primaryColor.withOpacity(0.1),
-              border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+              color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
             ),
             child: Row(
               children: [
                 Icon(
                   Icons.shopping_cart,
-                  color: Theme.of(context).primaryColor,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
                 Text(
                   currentOrder.orderId?.toString() ?? 'Current Order*',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
                 if (currentOrder.items.isNotEmpty)
@@ -88,14 +88,14 @@ class OrderPanel extends ConsumerWidget {
                         Icon(
                           Icons.shopping_cart_outlined,
                           size: 80,
-                          color: Colors.grey[300],
+                          color: Theme.of(context).colorScheme.outlineVariant,
                         ),
                         const SizedBox(height: 16),
                         Text(
                           'click a product to start new order',
                           style: TextStyle(
                             fontSize: 16,
-                            color: Colors.grey[500],
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -130,19 +130,19 @@ class OrderPanel extends ConsumerWidget {
                           child: Card(
                             elevation: 2,
                             color: isPaid
-                                ? Colors.grey[100]
+                                ? Theme.of(context).colorScheme.surfaceContainerHighest
                                 : isHeld
                                     ? Colors.orange[50]
-                                    : Colors.white,
+                                    : Theme.of(context).cardColor,
                             margin: const EdgeInsets.only(bottom: 8, left: 4, right: 4),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                               side: BorderSide(
                                 color: isPaid
-                                    ? Colors.grey[400]!
+                                    ? Theme.of(context).colorScheme.outline
                                     : isHeld
                                         ? Colors.orange[300]!
-                                        : Colors.grey[200]!,
+                                        : Theme.of(context).dividerColor,
                                 width: isHeld ? 2 : 1,
                               ),
                             ),
@@ -158,7 +158,7 @@ class OrderPanel extends ConsumerWidget {
                                     Row(
                                       children: [
                                         if (isPaid) ...[
-                                          Icon(Icons.lock, size: 14, color: Colors.grey[600]),
+                                          Icon(Icons.lock, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
                                           const SizedBox(width: 6),
                                         ],
                                         Expanded(
@@ -168,7 +168,7 @@ class OrderPanel extends ConsumerWidget {
                                               fontWeight: FontWeight.w600,
                                               fontSize: 15,
                                               decoration: isPaid ? TextDecoration.lineThrough : null,
-                                              decorationColor: Colors.grey[600],
+                                              decorationColor: Theme.of(context).colorScheme.onSurfaceVariant,
                                             ),
                                             maxLines: 2,
                                             overflow: TextOverflow.ellipsis,
@@ -179,7 +179,7 @@ class OrderPanel extends ConsumerWidget {
                                             onPressed: () {
                                               ref.read(orderProvider.notifier).removeItem(index);
                                             },
-                                            icon: Icon(Icons.close, size: 18, color: Colors.grey[600]),
+                                            icon: Icon(Icons.close, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
                                             padding: EdgeInsets.zero,
                                             constraints: const BoxConstraints(),
                                             visualDensity: VisualDensity.compact,
@@ -243,14 +243,14 @@ class OrderPanel extends ConsumerWidget {
                                         padding: const EdgeInsets.only(left: 4, top: 2),
                                         child: Row(
                                           children: [
-                                            Icon(Icons.add, size: 10, color: Colors.grey[500]),
+                                            Icon(Icons.add, size: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
                                             const SizedBox(width: 4),
                                             Expanded(
                                               child: Text(
                                                 '${comp.name} x${comp.quantity}',
                                                 style: TextStyle(
                                                   fontSize: 11,
-                                                  color: Colors.grey[600],
+                                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                                                 ),
                                               ),
                                             ),
@@ -269,9 +269,11 @@ class OrderPanel extends ConsumerWidget {
                                         // Quantity controls
                                         Container(
                                           decoration: BoxDecoration(
-                                            color: isPaid ? Colors.grey[200] : Colors.grey[50],
+                                            color: isPaid
+                                                ? Theme.of(context).colorScheme.surfaceContainerHighest
+                                                : Theme.of(context).colorScheme.surfaceContainerLow,
                                             borderRadius: BorderRadius.circular(6),
-                                            border: Border.all(color: Colors.grey[300]!),
+                                            border: Border.all(color: Theme.of(context).dividerColor),
                                           ),
                                           child: Row(
                                             mainAxisSize: MainAxisSize.min,
@@ -365,8 +367,8 @@ class OrderPanel extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.grey[50],
-              border: Border(top: BorderSide(color: Colors.grey[300]!)),
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
             ),
             child: Column(
               children: [

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../paymen_screen/payment_screen.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/commercial_selection_dialog.dart';

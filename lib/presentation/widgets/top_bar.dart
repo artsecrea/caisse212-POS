@@ -4,6 +4,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:posecrea/providers/stat_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../services/session_service.dart';
+import '../settings/settings_screen.dart';
 
 class TopBar extends ConsumerStatefulWidget {
   const TopBar({Key? key}) : super(key: key);
@@ -511,15 +512,24 @@ class _TopBarState extends ConsumerState<TopBar> {
                   ],
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'settings',
-                child: Row(
+                child: const Row(
                   children: [
                     Icon(Icons.settings),
                     SizedBox(width: 8),
                     Text('Settings'),
                   ],
                 ),
+                onTap: () {
+                  // Use Future.delayed to allow menu to close first
+                  Future.delayed(Duration.zero, () {
+                    showDialog(
+                      context: context,
+                      builder: (context) => const SettingsScreen(),
+                    );
+                  });
+                },
               ),
               PopupMenuItem(
                 value: 'sessions',

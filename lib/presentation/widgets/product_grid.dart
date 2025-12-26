@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:posecrea/data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
 import 'product_modification_dialog.dart';
 
@@ -15,9 +16,10 @@ class ProductGrid extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final productsAsync = ref.watch(productsByCategoryProvider(selectedCategory));
+    final showImages = ref.watch(showProductImagesProvider);
 
     return Container(
-      color: Colors.grey[50],
+      color: Theme.of(context).scaffoldBackgroundColor,
       child: productsAsync.when(
         data: (products) {
           if (products.isEmpty) {
@@ -28,9 +30,11 @@ class ProductGrid extends ConsumerWidget {
 
           return GridView.builder(
             padding: const EdgeInsets.all(16),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              mainAxisExtent: 200,
-              maxCrossAxisExtent: 200,
+            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+              mainAxisExtent: showImages ? 200 : 80,
+              maxCrossAxisExtent: showImages ? 200 : 150,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
             ),
             itemCount: products.length,
             itemBuilder: (context, index) {
@@ -55,6 +59,8 @@ class _ProductCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final showImages = ref.watch(showProductImagesProvider);
+
     return GestureDetector(
       onTap: () {
         // Quick add - add product to order without modifications
@@ -72,76 +78,105 @@ class _ProductCard extends ConsumerWidget {
       child: Card(
         elevation: 2,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(0),
+          borderRadius: BorderRadius.circular(4),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              flex: 3,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(0)),
-                child: product.imageUrl != null
-                    ? CachedNetworkImage(
-                        imageUrl : product.imageUrl!,
-                        fit: BoxFit.cover,
-                        errorWidget : (context, error, stack) {
-                          return Container(
-                            color: Colors.grey[200],
-                            child: Icon(
-                              Icons.fastfood,
-                              size: 48,
-                              color: Colors.grey[400],
-                            ),
-                          );
-                        },
-                      )
-                    : Container(
-                        color: Colors.grey[200],
+        child: showImages ? _buildWithImage(context) : _buildCompact(context),
+      ),
+    );
+  }
+
+  Widget _buildWithImage(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 3,
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+            child: product.imageUrl != null
+                ? CachedNetworkImage(
+                    imageUrl: product.imageUrl!,
+                    fit: BoxFit.cover,
+                    errorWidget: (context, error, stack) {
+                      return Container(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
                         child: Icon(
                           Icons.fastfood,
                           size: 48,
-                          color: Colors.grey[400],
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
-                      ),
-              ),
-            ),
-            Expanded(
-              flex: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      product.name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      );
+                    },
+                  )
+                : Container(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: Icon(
+                      Icons.fastfood,
+                      size: 48,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '${product.finalPrice.toStringAsFixed(2)} \$',
-                          style: TextStyle(
-                            color: Theme.of(context).primaryColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+                  ),
+          ),
         ),
+        Expanded(
+          flex: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  product.name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  '${product.finalPrice.toStringAsFixed(2)} \$',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompact(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              product.name,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${product.finalPrice.toStringAsFixed(2)} \$',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+        ],
       ),
     );
   }

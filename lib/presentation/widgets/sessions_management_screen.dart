@@ -557,7 +557,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 key: ValueKey('row_${session.id}'),
                 cells: [
                   DataCell(Text('#${session.id}')),
-                  DataCell(Text('User ${session.cashierId}')),
+                  DataCell(Text('#${session.cashierId}')),
                   DataCell(Text(_formatDateTime(session.startedAt))),
                   DataCell(
                     Container(

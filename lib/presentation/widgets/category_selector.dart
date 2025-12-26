@@ -14,10 +14,10 @@ class CategorySelector extends ConsumerWidget {
     return Container(
       height: 100,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Theme.of(context).shadowColor.withValues(alpha: 0.05),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -165,7 +165,7 @@ class _CategoryChip extends StatelessWidget {
                 child: Text(
                   name,
                   style: TextStyle(
-                    color: isSelected ? Colors.white : Colors.black87,
+                    color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
                     fontSize: 20,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   ),

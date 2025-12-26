@@ -183,11 +183,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         width: MediaQuery.of(context).size.width * 0.95,
         height: MediaQuery.of(context).size.height * 0.95,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).dialogBackgroundColor,
           borderRadius: BorderRadius.circular(4),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.2),
+              color: Theme.of(context).shadowColor.withValues(alpha: 0.2),
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -321,10 +321,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         return Container(
           width: 280,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(2),
             border: Border.all(
-              color: isDraggingOver ? Colors.grey[900]! : Colors.grey[300]!,
+              color: isDraggingOver
+                  ? Theme.of(context).colorScheme.onSurface
+                  : Theme.of(context).dividerColor,
               width: isDraggingOver ? 2 : 1,
             ),
           ),
@@ -415,9 +417,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           width: 260,
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(2),
-            border: Border.all(color: Colors.grey[900]!, width: 2),
+            border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
           ),
           child: _buildOrderItemContent(item),
         ),
@@ -435,8 +437,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: isPaid ? Colors.green[50] : Colors.white,
-        border: Border.all(color: isPaid ? Colors.green[300]! : Colors.grey[300]!),
+        color: isPaid ? Colors.green[50] : Theme.of(context).cardColor,
+        border: Border.all(color: isPaid ? Colors.green[300]! : Theme.of(context).dividerColor),
         borderRadius: BorderRadius.circular(2),
       ),
       child: Stack(
@@ -736,7 +738,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final totalAmount = tickets.fold<double>(0.0, (sum, ticket) => sum + ticket.total);
 
     return Container(
-      color: Colors.white,
+      color: Theme.of(context).cardColor,
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
@@ -745,8 +747,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.grey[900],
+              color: Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(2),
+              border: Border.all(color: Theme.of(context).dividerColor),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
