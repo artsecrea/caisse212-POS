@@ -316,8 +316,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     return Padding(
       padding: const EdgeInsets.all(16),
       child: componentsAsync.when(
-        data: (components) {
-          if (components.isEmpty) {
+        data: (componentsData) {
+          if (componentsData.isEmpty) {
             return const Center(
               child: Text('No modifications available'),
             );
@@ -326,13 +326,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           return componentGroupsAsync.when(
             data: (groups) {
               // Group components by their group
-              final Map<int?, List<dynamic>> groupedComponents = {};
-              for (var component in components) {
+              final Map<int?, List<Map<String, dynamic>>> groupedComponents = {};
+              for (var componentData in componentsData) {
+                final component = componentData['component'];
                 final groupId = component.componentGroupId;
                 if (!groupedComponents.containsKey(groupId)) {
                   groupedComponents[groupId] = [];
                 }
-                groupedComponents[groupId]!.add(component);
+                groupedComponents[groupId]!.add(componentData);
               }
 
               return ListView.builder(
@@ -363,11 +364,26 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                           ),
                         ),
                       ],
-                      ...groupComponents.map((component) {
-                        final quantity = _componentQuantities[component.id] ?? 0;
+                      ...groupComponents.map((componentData) {
+                        final component = componentData['component'];
+                        final isRequired = componentData['isRequired'] as bool;
+                        final minQuantity = componentData['minQuantity'] as int;
+                        final maxQuantity = componentData['maxQuantity'] as int;
+                        final quantity = _componentQuantities[component.id] ?? minQuantity;
+
+                        // Initialize required components to minimum quantity
+                        if (isRequired && !_componentQuantities.containsKey(component.id)) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            setState(() {
+                              _componentQuantities[component.id] = minQuantity;
+                            });
+                          });
+                        }
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 8),
+                          elevation: isRequired ? 3 : 1,
+                          color: isRequired ? Colors.orange.withValues(alpha: 0.05) : null,
                           child: Padding(
                             padding: const EdgeInsets.all(12),
                             child: Row(
@@ -376,38 +392,78 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        component.name,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      if (component.price > 0)
-                                        Text(
-                                          '+\$${component.price.toStringAsFixed(2)}',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey[600],
+                                      Row(
+                                        children: [
+                                          Text(
+                                            component.name,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
                                           ),
-                                        ),
+                                          if (isRequired) ...[
+                                            const SizedBox(width: 8),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: Colors.orange,
+                                                borderRadius: BorderRadius.circular(4),
+                                              ),
+                                              child: const Text(
+                                                'REQUIRED',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          if (component.price > 0)
+                                            Text(
+                                              '+\$${component.price.toStringAsFixed(2)}',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey[600],
+                                              ),
+                                            ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Min: $minQuantity, Max: $maxQuantity',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey[600],
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ],
                                   ),
                                 ),
                                 Row(
                                   children: [
                                     IconButton(
-                                      onPressed: quantity > 0
+                                      onPressed: quantity > minQuantity
                                           ? () {
                                               setState(() {
                                                 _componentQuantities[component.id] = quantity - 1;
-                                                if (_componentQuantities[component.id]! <= 0) {
+                                                // Don't remove if required and at minimum
+                                                if (!isRequired && _componentQuantities[component.id]! < minQuantity) {
                                                   _componentQuantities.remove(component.id);
                                                   _componentSpecial.remove(component.id);
                                                 }
                                               });
                                             }
                                           : null,
-                                      icon: const Icon(Icons.remove_circle_outline),
+                                      icon: Icon(
+                                        Icons.remove_circle_outline,
+                                        color: quantity > minQuantity ? null : Colors.grey,
+                                      ),
                                     ),
                                     SizedBox(
                                       width: 30,
@@ -420,14 +476,18 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                       ),
                                     ),
                                     IconButton(
-                                      onPressed: () {
-                                        setState(() {
-                                          _componentQuantities[component.id] = quantity + 1;
-                                        });
-                                      },
+                                      onPressed: quantity < maxQuantity
+                                          ? () {
+                                              setState(() {
+                                                _componentQuantities[component.id] = quantity + 1;
+                                              });
+                                            }
+                                          : null,
                                       icon: Icon(
                                         Icons.add_circle,
-                                        color: Theme.of(context).primaryColor,
+                                        color: quantity < maxQuantity
+                                            ? Theme.of(context).primaryColor
+                                            : Colors.grey,
                                       ),
                                     ),
                                   ],
@@ -701,19 +761,59 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       return;
     }
 
-    final componentsAsync = ref.read(componentsProvider);
-    componentsAsync.when(
-      data: (components) {
+    // Get product ID
+    final productId = widget.product is OrderItem
+        ? (widget.product as OrderItem).productId
+        : widget.product.id;
+
+    final componentsDataAsync = ref.read(productComponentsProvider(productId));
+    componentsDataAsync.when(
+      data: (componentsData) {
+        // Validate required components
+        for (var componentData in componentsData) {
+          final component = componentData['component'];
+          final isRequired = componentData['isRequired'] as bool;
+          final minQuantity = componentData['minQuantity'] as int;
+
+          if (isRequired) {
+            final currentQuantity = _componentQuantities[component.id] ?? 0;
+            if (currentQuantity < minQuantity) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('${component.name} is required (minimum: $minQuantity)'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+          }
+        }
+
+        // Only include components where quantity differs from default minimum
         final selectedComponents = <OrderItemComponent>[];
         for (final entry in _componentQuantities.entries) {
-          final component = components.firstWhere((c) => c.id == entry.key);
-          selectedComponents.add(OrderItemComponent(
-            componentId: component.id,
-            name: component.name,
-            quantity: entry.value,
-            price: component.price,
-            isSpecial: _componentSpecial[component.id] ?? false,
-          ));
+          final componentData = componentsData.firstWhere(
+            (cd) => cd['component'].id == entry.key,
+            orElse: () => {},
+          );
+
+          if (componentData.isEmpty) continue;
+
+          final component = componentData['component'];
+          final minQuantity = componentData['minQuantity'] as int;
+          final componentQuantity = entry.value;
+
+          // Only add if quantity is different from minimum (default)
+          // This way, required components at minimum quantity are shown but not saved
+          if (componentQuantity > minQuantity || componentQuantity > 0 && minQuantity == 0) {
+            selectedComponents.add(OrderItemComponent(
+              componentId: component.id,
+              name: component.name,
+              quantity: componentQuantity,
+              price: component.price,
+              isSpecial: _componentSpecial[component.id] ?? false,
+            ));
+          }
         }
         
         // Calculate manual discount
@@ -730,8 +830,19 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           'quantity': quantity, // Added quantity
         });
       },
-      loading: () {},
-      error: (_, __) {},
+      loading: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Loading components...')),
+        );
+      },
+      error: (error, _) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $error'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      },
     );
   }
 }

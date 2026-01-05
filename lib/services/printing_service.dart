@@ -375,8 +375,8 @@ class PrintingService {
       bytes += generator.hr();
 
       // Order info
-      bytes += generator.text('Order #${order.orderId ?? "N/A"}',
-          styles: const PosStyles(align: PosAlign.center, bold: true));
+      bytes += generator.text('Order #${order.orderCode ?? "N/A"}',
+          styles: const PosStyles(align: PosAlign.left, bold: true));
       bytes += generator.text('Date: ${_formatDateTime(DateTime.now())}',
           styles: const PosStyles(align: PosAlign.left));
       if (cashierName != null) {

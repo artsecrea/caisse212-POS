@@ -3,6 +3,7 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:posecrea/providers/stat_provider.dart';
+import 'package:posecrea/providers/order_provider.dart';
 import 'package:posecrea/services/api_service.dart';
 import 'package:posecrea/services/data_sync_service.dart';
 import '../../providers/database_providers.dart';
@@ -326,8 +327,11 @@ class _TopBarState extends ConsumerState<TopBar> {
   }
 
   void _doLogout() {
+    // Clear user and session state
     ref.read(currentUserProvider.notifier).state = null;
     ref.read(currentSessionProvider.notifier).state = null;
+    // Clear current order state
+    ref.read(orderProvider.notifier).clearOrder();
     if (mounted) {
       Navigator.of(context).pushReplacementNamed('/login');
     }
@@ -364,6 +368,8 @@ class _TopBarState extends ConsumerState<TopBar> {
       // Clear current user and session
       ref.read(currentUserProvider.notifier).state = null;
       ref.read(currentSessionProvider.notifier).state = null;
+      // Clear current order state
+      ref.read(orderProvider.notifier).clearOrder();
 
       // Clear API service data
       final prefs = ref.read(sharedPreferencesProvider);

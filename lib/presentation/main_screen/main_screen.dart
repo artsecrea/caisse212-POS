@@ -303,7 +303,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           context,
                           order: orderToPrint,
                           cashierName: currentUser?.firstName,
-                          storeName: 'POS Store', // TODO: Get from settings
+                          storeName: "", // TODO: Get from settings
                         );
                       }
                     }
@@ -429,6 +429,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     final orderRepo = ref.read(orderRepositoryProvider);
                     final currentUser = ref.read(currentUserProvider);
                     final settings = ref.read(settingsProvider);
+                    final printingService = ref.read(printingServiceProvider);
 
                     if (currentUser == null) return;
 
@@ -454,7 +455,28 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       // Reload the order from database to show it with updated IDs and states
                       final reloadedOrder = await orderRepo.getOrderById(orderId);
 
+                      // Print order receipt and KDS ticket
                       if (reloadedOrder != null) {
+                        try {
+                          // Print receipt
+                          await printingService.printOrderReceipt(
+                            order: reloadedOrder,
+                            cashierName: currentUser.firstName,
+                            storeName: 'POS Store',
+                          );
+
+                          // Print KDS ticket if enabled
+                          if (printingService.config.kdsEnabled) {
+                            await printingService.printKdsTicket(
+                              order: reloadedOrder,
+                              cashierName: currentUser.firstName,
+                            );
+                          }
+                        } catch (printError) {
+                          _logger.error('Print error on proceed: $printError');
+                          // Don't fail if printing fails
+                        }
+
                         ref.read(orderProvider.notifier).clearOrder();
                       }
 

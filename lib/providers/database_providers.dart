@@ -187,10 +187,11 @@ final componentGroupsProvider = StreamProvider<List<db.ComponentGroup>>((ref) {
 });
 
 // Product Components by Product ID Provider (components available for a product)
-final productComponentsProvider = StreamProvider.autoDispose.family<List<db.Component>, int>((ref, productId) async* {
+// Returns a list of maps containing both Component and ProductComponent data
+final productComponentsProvider = StreamProvider.autoDispose.family<List<Map<String, dynamic>>, int>((ref, productId) async* {
   final database = ref.watch(databaseProvider);
 
-  // Get product-component relationships
+  // Get product-component relationships with constraints
   final productComponents = await (database.select(database.productComponents)
     ..where((tbl) => tbl.productId.equals(productId))).get();
 
@@ -199,11 +200,26 @@ final productComponentsProvider = StreamProvider.autoDispose.family<List<db.Comp
     return;
   }
 
-  // Get the actual components
+  // Get the actual components with their constraints
   final componentIds = productComponents.map((pc) => pc.componentId).toList();
   final components = await (database.select(database.components)
     ..where((tbl) => tbl.id.isIn(componentIds))).get();
 
-  yield components;
+  // Combine component data with relationship constraints
+  final result = components.map((component) {
+    final productComponent = productComponents.firstWhere(
+      (pc) => pc.componentId == component.id,
+    );
+
+    return {
+      'component': component,
+      'isRequired': productComponent.isRequired,
+      'minQuantity': productComponent.minQuantity,
+      'maxQuantity': productComponent.maxQuantity,
+      'defaultPrice': productComponent.defaultPrice,
+    };
+  }).toList();
+
+  yield result;
 });
 

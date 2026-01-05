@@ -387,31 +387,45 @@ class SampleDataGenerator {
     print('Linking products to components...');
 
     // Burgers (products 1-4) can have all toppings, sauces, extras, and sides
+    // Make cheese required (component 1) with min 1, max 3
+    // Make sauce required (component 6 - Ketchup) with min 1, max 2
     final burgerComponents = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
     for (int productId = 1; productId <= 4; productId++) {
       for (var componentId in burgerComponents) {
+        final isRequired = componentId == 1 || componentId == 6; // Cheese or Ketchup required
+        final minQty = isRequired ? 1 : 0;
+        final maxQty = componentId == 1 ? 3 : (componentId == 6 ? 2 : 5);
+
         await database.into(database.productComponents).insert(
           ProductComponentsCompanion.insert(
             productId: productId,
             componentId: componentId,
             defaultPrice: const Value(0.0), // Use component's own price
-            isRequired: const Value(false),
+            isRequired: Value(isRequired),
+            minQuantity: Value(minQty),
+            maxQuantity: Value(maxQty),
           ),
         );
       }
     }
 
     // Pizzas (products 5-8) can have toppings and some extras
+    // Make cheese required (component 1) with min 1, max 4
     final pizzaComponents = [1, 2, 3, 4, 5, 9, 10, 13];
     for (int productId = 5; productId <= 8; productId++) {
       for (var componentId in pizzaComponents) {
+        final isRequired = componentId == 1; // Cheese required for pizza
+        final minQty = isRequired ? 1 : 0;
+        final maxQty = componentId == 1 ? 4 : 3;
+
         await database.into(database.productComponents).insert(
           ProductComponentsCompanion.insert(
             productId: productId,
-
             componentId: componentId,
             defaultPrice: const Value(0.0),
-            isRequired: const Value(false),
+            isRequired: Value(isRequired),
+            minQuantity: Value(minQty),
+            maxQuantity: Value(maxQty),
           ),
         );
       }
@@ -429,6 +443,8 @@ class SampleDataGenerator {
             componentId: componentId,
             defaultPrice: const Value(0.0),
             isRequired: const Value(false),
+            minQuantity: const Value(0),
+            maxQuantity: const Value(3),
           ),
         );
       }
@@ -444,6 +460,8 @@ class SampleDataGenerator {
             componentId: componentId,
             defaultPrice: const Value(0.0),
             isRequired: const Value(false),
+            minQuantity: const Value(0),
+            maxQuantity: const Value(5),
           ),
         );
       }

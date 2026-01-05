@@ -68,8 +68,22 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
   }
 
   void clearCustomer() {
-
-    state.copyWith(customerName: null, customerId: null);
+    state = CurrentOrder(
+      orderId: state.orderId,
+      orderCode: state.orderCode,
+      items: state.items,
+      tableId: state.tableId,
+      tableName: state.tableName,
+      customerId: null,
+      customerName: null,
+      commercialId: state.commercialId,
+      commercialName: state.commercialName,
+      coupon: state.coupon,
+      discountPercentage: state.discountPercentage,
+      note: state.note,
+      type: state.type,
+      numberOfPersons: state.numberOfPersons,
+    );
   }
 
   void setCommercial(int? commercialId, String? commercialName) {
@@ -77,7 +91,22 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
   }
 
   void clearCommercial() {
-    state = state.copyWith(commercialId: null,commercialName: null);
+    state = CurrentOrder(
+      orderId: state.orderId,
+      orderCode: state.orderCode,
+      items: state.items,
+      tableId: state.tableId,
+      tableName: state.tableName,
+      customerId: state.customerId,
+      customerName: state.customerName,
+      commercialId: null,
+      commercialName: null,
+      coupon: state.coupon,
+      discountPercentage: state.discountPercentage,
+      note: state.note,
+      type: state.type,
+      numberOfPersons: state.numberOfPersons,
+    );
   }
 
   void setDiscountPercentage(double percentage) {

@@ -8,6 +8,8 @@ class ProductComponents extends Table {
   IntColumn get componentId => integer()();
   RealColumn get defaultPrice => real().withDefault(const Constant(0.0))(); // Default price for this component on this product
   BoolColumn get isRequired => boolean().withDefault(const Constant(false))(); // If component is required for this product
+  IntColumn get minQuantity => integer().withDefault(const Constant(0))(); // Minimum quantity required
+  IntColumn get maxQuantity => integer().withDefault(const Constant(10))(); // Maximum quantity allowed
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import 'package:drift/drift.dart' hide Column;
@@ -6,6 +7,7 @@ import '../../data/database/app_database.dart';
 import '../../providers/ticket_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../services/printing_service.dart';
 
 class TicketsManagementScreen extends ConsumerStatefulWidget {
   const TicketsManagementScreen({super.key});
@@ -133,7 +135,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
   Widget _buildStatusDropdown() {
     return DropdownButtonFormField<String>(
-      value: _statusFilter,
+      initialValue: _statusFilter,
       decoration: InputDecoration(
         labelText: 'Status',
         border: OutlineInputBorder(
@@ -563,7 +565,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 }
 
 // Ticket Details Dialog
-class _TicketDetailsDialog extends StatelessWidget {
+class _TicketDetailsDialog extends ConsumerWidget {
   final Ticket ticket;
   final int itemCount;
   final List<Map<String, dynamic>> items; // Changed to Map to include product name
@@ -577,7 +579,7 @@ class _TicketDetailsDialog extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Dialog(
       child: Container(
         width: 600,
@@ -702,15 +704,104 @@ class _TicketDetailsDialog extends StatelessWidget {
             ),
             Padding(
               padding: const EdgeInsets.all(16),
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _printTicketFromDetails(context, ref, ticket, items),
+                      icon: const Icon(Icons.print),
+                      label: Text('Print ${ticket.isPaid ? "(Paid)" : "(Unpaid)"}'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: ticket.isPaid ? Colors.green : Colors.orange,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Close'),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _printTicketFromDetails(
+    BuildContext context,
+    WidgetRef ref,
+    Ticket ticket,
+    List<Map<String, dynamic>> items,
+  ) async {
+    final printingService = ref.read(printingServiceProvider);
+    final currentUser = ref.read(currentUserProvider);
+    final database = ref.read(databaseProvider);
+
+    // Build items list for printing
+    final itemsForPrint = items.map((itemData) {
+      final item = itemData['product'] as OrderProduct;
+      final productName = itemData['productName'] as String;
+      return {
+        'name': productName,
+        'quantity': item.quantity,
+        'price': item.unitaryPrice * item.quantity,
+      };
+    }).toList();
+
+    try {
+      final success = await printingService.printTicketReceipt(
+        ticketId: ticket.id,
+        ticketNumber: ticket.num,
+        amount: ticket.amount,
+        paymentMethod: ticket.paymentMethod,
+        createdAt: ticket.date,
+        items: itemsForPrint,
+        cashierName: currentUser?.firstName,
+        storeName: 'POS Store',
+      );
+
+      if (success) {
+        // Update print count in database
+        await database.customStatement(
+          'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
+          [ticket.id],
+        );
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Ticket #${ticket.num} printed successfully${ticket.isPaid ? " (Paid)" : " (Unpaid)"}'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          // Refresh the screen
+        }
+      } else {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to print. Check printer connection.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Print error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildInfoRow(String label, String value) {
@@ -780,7 +871,7 @@ class _EditTicketDialogState extends State<_EditTicketDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           DropdownButtonFormField<String>(
-            value: _paymentMethod,
+            initialValue: _paymentMethod,
             decoration: const InputDecoration(
               labelText: 'Payment Method',
               border: OutlineInputBorder(),
@@ -798,7 +889,8 @@ class _EditTicketDialogState extends State<_EditTicketDialog> {
             },
           ),
           const SizedBox(height: 16),
-          TextField(
+
+          OnscreenKeyboardTextField(
             controller: _amountController,
             decoration: const InputDecoration(
               labelText: 'Amount',

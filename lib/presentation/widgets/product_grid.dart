@@ -88,15 +88,29 @@ class _ProductCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final showImages = ref.watch(showProductImagesProvider);
+    final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
 
     return GestureDetector(
       onTap: () {
-        // Quick add - add product to order without modifications
-        _addToOrder(context, ref, {
-          'components': <OrderItemComponent>[],
-          'discount': product.discountAmount,
-          'manualDiscount': 0.0,
-          'note': null,
+        // Check if product has required components
+        componentsDataAsync.whenData((componentsData) {
+          final hasRequiredComponents = componentsData.any(
+            (data) => data['isRequired'] as bool
+          );
+
+          if (hasRequiredComponents) {
+            // Show dialog for required components
+            _showModificationDialog(context, ref);
+          } else {
+            // Quick add - add product to order without modifications
+            _addToOrder(context, ref, {
+              'components': <OrderItemComponent>[],
+              'discount': product.discountAmount,
+              'manualDiscount': 0.0,
+              'note': null,
+              'quantity': 1,
+            });
+          }
         });
       },
       onLongPress: () {

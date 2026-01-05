@@ -7,6 +7,8 @@ import 'package:drift/drift.dart' hide Column;
 import 'package:loggecrea/loggecrea.dart';
 import 'package:posecrea/providers/database_providers.dart';
 import 'package:posecrea/data/database/app_database.dart';
+import 'package:posecrea/providers/settings_provider.dart';
+import 'package:posecrea/services/printing_service.dart';
 import '../../domain/models/order_models.dart';
 import '../../core/enums.dart';
 
@@ -999,17 +1001,94 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     ref.read(ticketsProvider.notifier).state = updatedTickets;
   }
 
-  void _printTicket(int ticketIndex) {
-    // TODO: Implement printing logic
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Printing ticket #${ticketIndex + 1}...')),
-    );
+  void _printTicket(int ticketIndex) async {
+    final tickets = ref.read(ticketsProvider);
+    final ticket = tickets[ticketIndex];
+    final currentUser = ref.read(currentUserProvider);
+    final printingService = ref.read(printingServiceProvider);
+    final database = ref.read(databaseProvider);
+
+    if (ticket.items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No items in ticket')),
+      );
+      return;
+    }
+
+    // Build items list for printing
+    final itemsForPrint = ticket.items.map((item) => {
+      'name': item.productName,
+      'quantity': item.quantity,
+      'price': item.totalPrice,
+    }).toList();
+
+    final ticketNum = ticket.ticketNum ?? '${ticketIndex + 1}'.padLeft(4, '0');
+
+    try {
+      final success = await printingService.printTicketReceipt(
+        ticketId: ticket.ticketId ?? ticketIndex,
+        ticketNumber: ticketNum,
+        amount: ticket.total,
+        paymentMethod: ticket.paymentMethod.value,
+        createdAt: DateTime.now(),
+        items: itemsForPrint,
+        cashierName: currentUser?.firstName,
+        storeName: 'POS Store',
+      );
+
+      if (success) {
+        // Update print count in database if ticket is saved
+        if (ticket.ticketId != null) {
+          await database.customStatement(
+            'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
+            [ticket.ticketId],
+          );
+        }
+
+        // Update local state
+        final updatedTickets = List<TicketData>.from(tickets);
+        updatedTickets[ticketIndex] = ticket.copyWith(
+          printCount: ticket.printCount + 1,
+        );
+        ref.read(ticketsProvider.notifier).state = updatedTickets;
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Ticket #$ticketNum printed successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to print. Check printer connection.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Print error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _payTicket(int ticketIndex) async {
     final tickets = ref.read(ticketsProvider);
     final session = ref.read(currentSessionProvider);
     final ticket = tickets[ticketIndex];
+    final printingService = ref.read(printingServiceProvider);
+    final currentUser = ref.read(currentUserProvider);
+
     if (ticket.isPaid) return;
     if (ticket.items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1064,7 +1143,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       final updatedTickets = List<TicketData>.from(tickets);
       updatedTickets[ticketIndex] = ticket.copyWith(
         isPaid: true,
-        ticketId: newTicketNum,
+        ticketId: ticketId,
         ticketNum: ticketNumStr,
       );
 
@@ -1085,6 +1164,35 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           backgroundColor: Colors.green[700],
         ),
       );
+
+      // Print the ticket after successful payment
+      try {
+        final itemsForPrint = ticket.items.map((item) => {
+          'name': item.productName,
+          'quantity': item.quantity,
+          'price': item.totalPrice,
+        }).toList();
+
+        await printingService.printTicketReceipt(
+          ticketId: ticketId,
+          ticketNumber: ticketNumStr,
+          amount: ticket.total,
+          paymentMethod: ticket.paymentMethod.value,
+          createdAt: DateTime.now(),
+          items: itemsForPrint,
+          cashierName: currentUser?.firstName,
+          storeName: 'POS Store',
+        );
+
+        // Update print count
+        await database.customStatement(
+          'UPDATE tickets SET print_count = 1 WHERE id = ?',
+          [ticketId],
+        );
+      } catch (printError) {
+        _logger.error('Failed to print ticket: $printError');
+        // Don't fail the payment if printing fails
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1095,9 +1203,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
   }
 
-  void _confirmPayment(BuildContext context) {
+  void _confirmPayment(BuildContext context) async {
     final tickets = ref.read(ticketsProvider);
     final allItems = tickets.expand((ticket) => ticket.items).toList();
+    final printingService = ref.read(printingServiceProvider);
+    final currentUser = ref.read(currentUserProvider);
 
     if (allItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1108,7 +1218,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     final totalAmount = tickets.fold<double>(0.0, (sum, ticket) => sum + ticket.total);
 
-    showDialog(
+    final shouldProceed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Confirm Payment'),
@@ -1117,21 +1227,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
-              // pay all the tickets
-              for (int i = 0; i < tickets.length; i++) {
-                _payTicket(i);
-              }
-              Navigator.pop(context);
-              Navigator.pop(context, true);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Payment processed successfully')),
-              );
-            },
+            onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green[700],
               foregroundColor: Colors.white,
@@ -1141,6 +1241,43 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         ],
       ),
     );
+
+    if (shouldProceed != true) return;
+
+    // Pay all the tickets
+    for (int i = 0; i < tickets.length; i++) {
+      await Future(() => _payTicket(i));
+    }
+
+    // Print order receipt and KDS ticket
+    try {
+      // Print receipt
+      await printingService.printOrderReceipt(
+        order: widget.order,
+        cashierName: currentUser?.firstName,
+        storeName: 'POS Store',
+      );
+
+      // Print KDS ticket if enabled
+      if (printingService.config.kdsEnabled) {
+        await printingService.printKdsTicket(
+          order: widget.order,
+          cashierName: currentUser?.firstName,
+        );
+      }
+    } catch (e) {
+      _logger.error('Failed to print after payment: $e');
+    }
+
+    if (mounted) {
+      Navigator.pop(context, true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Payment processed successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
   }
 }
 
