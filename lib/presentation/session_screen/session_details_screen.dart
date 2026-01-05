@@ -377,16 +377,17 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
                             // Action Button
                             if (_currentSession!.endedAt == null)
                               ElevatedButton.icon(
-                                onPressed: _endSession,
-                                icon: const Icon(Icons.stop),
-                                label: const Text('End Session & Logout'),
+                                onPressed: _currentSession!.status.toLowerCase() == 'active' ? _pauseSession : _resumeSession,
+                                icon: Icon(_currentSession!.status.toLowerCase() == 'active' ? Icons.pause : Icons.play_arrow),
+                                label: Text(_currentSession!.status.toLowerCase() == 'active' ? 'Pause Session' : 'Resume Session'),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.red,
                                   foregroundColor: Colors.white,
+                                  side: const BorderSide(color: Colors.red, width: 2),
                                   padding: const EdgeInsets.symmetric(vertical: 16),
                                 ),
                               ),
-                          ],
+                            ],
                         ),
                       ),
                     ),

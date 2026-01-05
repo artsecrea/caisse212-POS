@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/settings_provider.dart';
+import '../../domain/models/app_settings.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -14,33 +15,46 @@ class SettingsScreen extends ConsumerWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         width: 500,
-        padding: const EdgeInsets.all(24),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.85,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const Icon(Icons.settings, size: 28),
-                const SizedBox(width: 12),
-                const Text(
-                  'Settings',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
+            // Header (non-scrollable)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.settings, size: 28),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Settings',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close),
-                ),
-              ],
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
-
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: Divider(),
+            ),
+            // Scrollable content
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
             // Appearance Section
             const Text(
               'Appearance',
@@ -80,6 +94,12 @@ class SettingsScreen extends ConsumerWidget {
               value: settings.showProductImages,
               onChanged: (value) => settingsNotifier.setShowProductImages(value),
             ),
+            const SizedBox(height: 12),
+            _buildCategoryDisplayModeSelector(
+              context: context,
+              currentMode: settings.categoryDisplayMode,
+              onChanged: (value) => settingsNotifier.setCategoryDisplayMode(value),
+            ),
 
             const SizedBox(height: 24),
 
@@ -97,6 +117,12 @@ class SettingsScreen extends ConsumerWidget {
               context: context,
               currentType: settings.defaultOrderType,
               onChanged: (value) => settingsNotifier.setDefaultOrderType(value),
+            ),
+            const SizedBox(height: 12),
+            _buildOrderStatusSelector(
+              context: context,
+              currentStatus: settings.defaultOrderStatus,
+              onChanged: (value) => settingsNotifier.setDefaultOrderStatus(value),
             ),
 
             const SizedBox(height: 32),
@@ -143,6 +169,10 @@ class SettingsScreen extends ConsumerWidget {
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.red,
                   side: const BorderSide(color: Colors.red),
+                ),
+              ),
+            ),
+                  ],
                 ),
               ),
             ),
@@ -283,6 +313,266 @@ class SettingsScreen extends ConsumerWidget {
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 color: isSelected ? color : null,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderStatusSelector({
+    required BuildContext context,
+    required String currentStatus,
+    required ValueChanged<String> onChanged,
+  }) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.pending_actions),
+                const SizedBox(width: 12),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Default Order Status',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      'Initial status for new orders (syncs when COMPLETED)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.pause_circle,
+                  label: 'On Hold',
+                  value: 'ONHOLD',
+                  currentValue: currentStatus,
+                  color: Colors.grey,
+                  onTap: () => onChanged('ONHOLD'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.pending,
+                  label: 'Pending',
+                  value: 'PENDING',
+                  currentValue: currentStatus,
+                  color: Colors.orange,
+                  onTap: () => onChanged('PENDING'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.restaurant,
+                  label: 'Preparing',
+                  value: 'PREPARING',
+                  currentValue: currentStatus,
+                  color: Colors.blue,
+                  onTap: () => onChanged('PREPARING'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.check_circle,
+                  label: 'Completed',
+                  value: 'COMPLETED',
+                  currentValue: currentStatus,
+                  color: Colors.green,
+                  onTap: () => onChanged('COMPLETED'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderStatusOption({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required String value,
+    required String currentValue,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    final isSelected = value == currentValue;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.2) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? color : Colors.grey.withValues(alpha: 0.3),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 24,
+              color: isSelected ? color : Colors.grey,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                color: isSelected ? color : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryDisplayModeSelector({
+    required BuildContext context,
+    required CategoryDisplayMode currentMode,
+    required ValueChanged<CategoryDisplayMode> onChanged,
+  }) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.view_module),
+                const SizedBox(width: 12),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Category Display Mode',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      'How to display categories on main screen',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildCategoryModeOption(
+                    context: context,
+                    icon: Icons.view_headline,
+                    label: 'Top Bar',
+                    subtitle: 'Categories in horizontal bar',
+                    value: CategoryDisplayMode.topBar,
+                    currentValue: currentMode,
+                    onTap: () => onChanged(CategoryDisplayMode.topBar),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildCategoryModeOption(
+                    context: context,
+                    icon: Icons.grid_view,
+                    label: 'Full Page',
+                    subtitle: 'Select category first',
+                    value: CategoryDisplayMode.fullPage,
+                    currentValue: currentMode,
+                    onTap: () => onChanged(CategoryDisplayMode.fullPage),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryModeOption({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required String subtitle,
+    required CategoryDisplayMode value,
+    required CategoryDisplayMode currentValue,
+    required VoidCallback onTap,
+  }) {
+    final isSelected = value == currentValue;
+    final color = Theme.of(context).primaryColor;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.2) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? color : Colors.grey.withValues(alpha: 0.3),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              size: 32,
+              color: isSelected ? color : Colors.grey,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                color: isSelected ? color : null,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 11,
+                color: isSelected ? color.withValues(alpha: 0.8) : Colors.grey,
+              ),
+              textAlign: TextAlign.center,
             ),
           ],
         ),

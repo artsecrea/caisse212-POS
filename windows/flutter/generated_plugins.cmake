@@ -3,9 +3,10 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  charset_converter
   connectivity_plus
+  flutter_thermal_printer
   sqlite3_flutter_libs
+  universal_ble
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

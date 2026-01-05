@@ -230,6 +230,9 @@ class CurrentOrder {
     return items.any((item) => item.ticketId != null);
   }
 
+  double get totalDiscount {
+    return items.fold(0.0, (sum, item) => sum + item.totalDiscount) + discountAmount;
+  }
 
 
   CurrentOrder copyWith({

@@ -3,15 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
-import 'package:posecrea/presentation/tenant_screen/tenant_screen.dart';
+import 'package:posecrea/presentation/tenant_login_screen/tenant_login_screen.dart';
 import 'package:posecrea/presentation/widgets/devices_management_screen.dart';
 import 'package:posecrea/presentation/widgets/orders_management_screen.dart';
+import 'package:posecrea/presentation/widgets/printers_management_screen.dart';
 import 'package:posecrea/presentation/widgets/sessions_management_screen.dart';
 import 'package:posecrea/presentation/widgets/users_management_screen.dart';
 import 'package:posecrea/presentation/widgets/tickets_management_screen.dart';
 import 'package:posecrea/services/socket_service.dart';
 import 'package:posecrea/services/session_service.dart';
-import 'package:posecrea/utils/sample_data_generator.dart';
+import 'package:posecrea/services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme/app_theme.dart';
 import 'data/database/app_database.dart';
@@ -29,47 +30,6 @@ void main() async {
 
   final sharedPreferences = await SharedPreferences.getInstance();
 
-  final database = AppDatabase();
-  final generator = SampleDataGenerator(database);
-
-  // Check if database is empty
-  final users = await database.select(database.users).get();
-  final devices = await database.select(database.kDSs).get();
-  print('Users count: ${users.length}');
-  print('devices count: ${devices.length}');
-
-
-    // // Clear all tables before seeding
-    // print('Clearing database...');
-    // await database.delete(database.tickets).go();
-    // await database.delete(database.orderProductComponents).go();
-    // await database.delete(database.orderProducts).go();
-    // await database.delete(database.orders).go();
-    // await database.delete(database.transactions).go();
-    // await database.delete(database.payments).go();
-    // await database.delete(database.cashSessions).go();
-    // await database.delete(database.customers).go();
-    // await database.delete(database.commercials).go();
-    // await database.delete(database.kDSs).go();
-    // await database.delete(database.kiosks).go();
-    // await database.delete(database.stations).go();
-    // await database.delete(database.areaTables).go();
-    // await database.delete(database.areas).go();
-    // await database.delete(database.productComponents).go();
-    // await database.delete(database.componentGroups).go();
-    // await database.delete(database.components).go();
-    // await database.delete(database.users).go();
-    // await database.delete(database.products).go();
-    // await database.delete(database.categories).go();
-
-    // // Generate sample data
-    // await generator.generateAll();
-    // print('Sample data generated!');
-
-
-
-  // final s = SocketService();
-  // await s.connect();
   runApp(
     ProviderScope(
       overrides: [
@@ -136,9 +96,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     final sharedPreferences = ref.watch(sharedPreferencesProvider);
     final settings = ref.watch(settingsProvider);
 
-    // Check if tenant_id exists
-    final tenantId = sharedPreferences.getString('tenant_id');
-    final initialRoute = tenantId != null ? '/login' : '/tenant';
+    // Check if user has already authenticated with server (has access token or is in demo mode)
+    final accessToken = sharedPreferences.getString('server_access_token');
+    final isDemoMode = sharedPreferences.getBool('is_demo_mode') ?? false;
+    final hasSetup = accessToken != null || isDemoMode;
+
+    final initialRoute = hasSetup ? '/login' : '/tenant';
 
     s.start(deviceId: "deviceId", deviceName: "POS", role: DeviceRole.host);
 
@@ -154,7 +117,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       themeMode: settings.isDarkMode ? ThemeMode.dark : ThemeMode.light,
       initialRoute: initialRoute,
       routes:{
-        '/tenant': (context) => const TenantScreen(),
+        '/tenant': (context) => const TenantLoginScreen(),
         '/login': (context) => const LoginScreen(),
         '/main': (context) => const MainScreen(),
         '/orders': (context) => const OrdersManagementScreen(),
@@ -162,6 +125,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         '/users': (context) => const UsersManagementScreen(),
         '/tickets': (context) => const TicketsManagementScreen(),
         '/sessions': (context) => const SessionsManagementScreen(),
+        '/printers': (context) => const PrintersManagementScreen(),
       },
     );
   }

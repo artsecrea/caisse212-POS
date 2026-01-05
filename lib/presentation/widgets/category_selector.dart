@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/settings_provider.dart';
+import '../../domain/models/app_settings.dart';
 
 class CategorySelector extends ConsumerWidget {
   const CategorySelector({Key? key}) : super(key: key);
@@ -10,6 +12,7 @@ class CategorySelector extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final categoriesAsync = ref.watch(categoriesProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
+    final displayMode = ref.watch(categoryDisplayModeProvider);
 
     return Container(
       height: 100,
@@ -68,46 +71,164 @@ class CategorySelector extends ConsumerWidget {
               ),
             ),
           ),
-          // Categories list
+          // Categories list or "Select Category" button based on display mode
           Expanded(
-            child: categoriesAsync.when(
-              data: (categories) {
-                return ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.only(right: 16, top: 12, bottom: 12),
-                  itemCount: categories.length + 1, // +1 for "All" category
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      // "All" category
-                      return _CategoryChip(
-                        name: 'All',
-                        imageUrl: null,
-                        isSelected: selectedCategory == null,
-                        onTap: () {
-                          ref.read(selectedCategoryProvider.notifier).state = null;
-                        },
-                      );
-                    }
-
-                    final category = categories[index - 1];
-                    return _CategoryChip(
-                      name: category.name,
-                      imageUrl: category.imageUrl,
-                      isSelected: selectedCategory == category.id,
-                      onTap: () {
-                        ref.read(selectedCategoryProvider.notifier).state = category.id;
-                      },
-                    );
-                  },
-                );
-              },
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, stack) => Center(
-                child: Text('Error loading categories: $error'),
-              ),
-            ),
+            child: displayMode == CategoryDisplayMode.topBar
+                ? _buildTopBarCategories(context, ref, categoriesAsync, selectedCategory)
+                : _buildFullPageModeButton(context, ref, categoriesAsync, selectedCategory),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTopBarCategories(BuildContext context, WidgetRef ref,
+      AsyncValue<List<dynamic>> categoriesAsync, int? selectedCategory) {
+    return categoriesAsync.when(
+      data: (categories) {
+        return ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.only(right: 16, top: 12, bottom: 12),
+          itemCount: categories.length + 1, // +1 for "All" category
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              // "All" category
+              return _CategoryChip(
+                name: 'All',
+                imageUrl: null,
+                isSelected: selectedCategory == null,
+                onTap: () {
+                  ref.read(selectedCategoryProvider.notifier).state = null;
+                },
+              );
+            }
+
+            final category = categories[index - 1];
+            return _CategoryChip(
+              name: category.name,
+              imageUrl: category.imageUrl,
+              isSelected: selectedCategory == category.id,
+              onTap: () {
+                ref.read(selectedCategoryProvider.notifier).state = category.id;
+              },
+            );
+          },
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, stack) => Center(
+        child: Text('Error loading categories: $error'),
+      ),
+    );
+  }
+
+  Widget _buildFullPageModeButton(BuildContext context, WidgetRef ref,
+      AsyncValue<List<dynamic>> categoriesAsync, int? selectedCategory) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 16, top: 12, bottom: 12),
+      child: categoriesAsync.when(
+        data: (categories) {
+          String selectedCategoryName = 'All Categories';
+
+          if (selectedCategory != null && categories.isNotEmpty) {
+            final foundCategory = categories.where((c) => c.id == selectedCategory).firstOrNull;
+            if (foundCategory != null) {
+              selectedCategoryName = foundCategory.name;
+            }
+          }
+
+          return Row(
+            children: [
+              if (selectedCategory != null) ...[
+                // Back button to show all categories
+                InkWell(
+                  onTap: () {
+                    ref.read(selectedCategoryProvider.notifier).state = null;
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.arrow_back, size: 20, color: Theme.of(context).colorScheme.onSurface),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Back',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              // Current category indicator / Select category button
+              Expanded(
+                child: InkWell(
+                  onTap: selectedCategory == null
+                      ? null // Don't do anything when in category selection mode
+                      : () {
+                          // Go back to category selection
+                          ref.read(selectedCategoryProvider.notifier).state = null;
+                        },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Theme.of(context).primaryColor,
+                        width: 2,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          selectedCategory == null ? Icons.category : Icons.label,
+                          color: Theme.of(context).primaryColor,
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            selectedCategoryName,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Theme.of(context).primaryColor,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (selectedCategory != null) ...[
+                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.swap_horiz,
+                            size: 20,
+                            color: Theme.of(context).primaryColor,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, stack) => Center(
+          child: Text('Error loading categories: $error'),
+        ),
       ),
     );
   }

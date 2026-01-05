@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../providers/stat_provider.dart';
 import '../../services/session_service.dart';
+import '../../services/api_service.dart';
+import '../../services/data_sync_service.dart';
 import '../../providers/database_providers.dart';
 import '../main_screen/main_screen.dart';
 class LoginScreen extends ConsumerStatefulWidget {
@@ -50,11 +52,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final users = await database.select(database.users).get();
       final isFirstTime = users.isEmpty;
 
-      if (isFirstTime && !hasInternet) {
-        setState(() {
-          _errorMessage = 'Internet connection required for first login';
-          _isLoading = false;
-        });
+      // If no users exist, this means the database is corrupted or cleared
+      // Logout entirely and go back to tenant login
+      if (isFirstTime) {
+        if (mounted) {
+          await _performFullLogout(
+            'Database is empty. Please reconnect to server or use demo mode.',
+          );
+        }
         return;
       }
 
@@ -154,6 +159,61 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() {
       _isLoading = false;
     });
+  }
+
+  /// Perform full logout - clear all tenant data and redirect to tenant login
+  Future<void> _performFullLogout(String message) async {
+    try {
+      // Show dialog informing user
+      final shouldLogout = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text('Database Error'),
+          content: Text(message),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Reconnect'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldLogout != true) return;
+
+      // Clear current user and session
+      ref.read(currentUserProvider.notifier).state = null;
+      ref.read(currentSessionProvider.notifier).state = null;
+
+      // Clear API service data
+      final prefs = ref.read(sharedPreferencesProvider);
+      final apiService = ApiService(prefs);
+      await apiService.clearAuthData();
+
+      // Clear the database
+      final database = ref.read(databaseProvider);
+      final syncService = DataSyncService(database, apiService);
+      await syncService.clearAllData();
+
+      if (mounted) {
+        // Navigate to tenant login screen
+        Navigator.of(context).pushNamedAndRemoveUntil('/tenant', (route) => false);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error during logout: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   String _formatTime(DateTime dt) {

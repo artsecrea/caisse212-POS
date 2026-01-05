@@ -10,7 +10,7 @@ class Products extends Table {
   TextColumn get imageUrl => text().nullable()();
   TextColumn get description => text().nullable()();
   RealColumn get price => real()();
-  TextColumn get uom => text().withDefault(const Constant('unit'))(); // Unit of measurement
+  TextColumn get uom => text().withDefault(const Constant('unit'))();
   IntColumn get categoryId => integer().nullable()();
   IntColumn get stationId => integer().nullable()();
   RealColumn get tvaAmount => real().withDefault(const Constant(0.0))();

@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../domain/models/app_settings.dart';
+import '../domain/models/app_settings.dart';
 import 'database_providers.dart' show sharedPreferencesProvider;
 
 // Keys for SharedPreferences
@@ -8,6 +8,8 @@ class SettingsKeys {
   static const String isDarkMode = 'is_dark_mode';
   static const String defaultOrderType = 'default_order_type';
   static const String showProductImages = 'show_product_images';
+  static const String defaultOrderStatus = 'default_order_status';
+  static const String categoryDisplayMode = 'category_display_mode';
 }
 
 // Settings Notifier
@@ -19,10 +21,18 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   }
 
   void _loadSettings() {
+    final categoryModeStr = _prefs.getString(SettingsKeys.categoryDisplayMode);
+    final categoryMode = CategoryDisplayMode.values.firstWhere(
+      (e) => e.name == categoryModeStr,
+      orElse: () => CategoryDisplayMode.topBar,
+    );
+
     state = AppSettings(
       isDarkMode: _prefs.getBool(SettingsKeys.isDarkMode) ?? false,
       defaultOrderType: _prefs.getString(SettingsKeys.defaultOrderType) ?? 'DINE_IN',
       showProductImages: _prefs.getBool(SettingsKeys.showProductImages) ?? true,
+      defaultOrderStatus: _prefs.getString(SettingsKeys.defaultOrderStatus) ?? 'PENDING',
+      categoryDisplayMode: categoryMode,
     );
   }
 
@@ -49,10 +59,22 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await setShowProductImages(!state.showProductImages);
   }
 
+  Future<void> setDefaultOrderStatus(String status) async {
+    await _prefs.setString(SettingsKeys.defaultOrderStatus, status);
+    state = state.copyWith(defaultOrderStatus: status);
+  }
+
+  Future<void> setCategoryDisplayMode(CategoryDisplayMode mode) async {
+    await _prefs.setString(SettingsKeys.categoryDisplayMode, mode.name);
+    state = state.copyWith(categoryDisplayMode: mode);
+  }
+
   Future<void> resetToDefaults() async {
     await _prefs.remove(SettingsKeys.isDarkMode);
     await _prefs.remove(SettingsKeys.defaultOrderType);
     await _prefs.remove(SettingsKeys.showProductImages);
+    await _prefs.remove(SettingsKeys.defaultOrderStatus);
+    await _prefs.remove(SettingsKeys.categoryDisplayMode);
     state = const AppSettings();
   }
 }
@@ -74,5 +96,13 @@ final defaultOrderTypeProvider = Provider<String>((ref) {
 
 final showProductImagesProvider = Provider<bool>((ref) {
   return ref.watch(settingsProvider).showProductImages;
+});
+
+final defaultOrderStatusProvider = Provider<String>((ref) {
+  return ref.watch(settingsProvider).defaultOrderStatus;
+});
+
+final categoryDisplayModeProvider = Provider<CategoryDisplayMode>((ref) {
+  return ref.watch(settingsProvider).categoryDisplayMode;
 });
 

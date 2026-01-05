@@ -4,10 +4,34 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database/app_database.dart';
 import '../data/database/app_database.dart' as db;
 import '../services/session_service.dart';
+import '../services/api_service.dart';
+import '../services/data_sync_service.dart';
+import '../services/printing_service.dart';
 
 // Database Provider
 final databaseProvider = Provider<AppDatabase>((ref) {
   return AppDatabase();
+});
+
+// API Service Provider
+final apiServiceProvider = Provider<ApiService>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  return ApiService(prefs);
+});
+
+// Data Sync Service Provider
+final dataSyncServiceProvider = Provider<DataSyncService>((ref) {
+  final database = ref.watch(databaseProvider);
+  final apiService = ref.watch(apiServiceProvider);
+  return DataSyncService(database, apiService);
+});
+
+// Printing Service Provider
+final printingServiceProvider = Provider<PrintingService>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  final service = PrintingService();
+  service.initialize(prefs);
+  return service;
 });
 
 // Session Service Provider
@@ -93,6 +117,9 @@ final categoriesProvider = StreamProvider<List<db.Category>>((ref) {
 // Selected Category Provider
 final selectedCategoryProvider = StateProvider<int?>((ref) => null);
 
+// Product Search Query Provider
+final productSearchQueryProvider = StateProvider<String>((ref) => '');
+
 // Products by Category Provider
 final productsByCategoryProvider = StreamProvider.autoDispose.family<List<db.Product>, int?>((ref, categoryId) {
   final database = ref.watch(databaseProvider);
@@ -106,6 +133,31 @@ final productsByCategoryProvider = StreamProvider.autoDispose.family<List<db.Pro
   return (database.select(database.products)
     ..where((tbl) => tbl.isActive.equals(true) & tbl.categoryId.equals(categoryId))
     ..watch()).watch();
+});
+
+// Filtered Products Provider (with search query)
+final filteredProductsProvider = Provider.autoDispose<AsyncValue<List<db.Product>>>((ref) {
+  final selectedCategory = ref.watch(selectedCategoryProvider);
+  final searchQuery = ref.watch(productSearchQueryProvider).trim().toLowerCase();
+  final productsAsync = ref.watch(productsByCategoryProvider(selectedCategory));
+
+  return productsAsync.when(
+    data: (products) {
+      if (searchQuery.isEmpty) {
+        return AsyncValue.data(products);
+      }
+
+      final filtered = products.where((product) {
+        final nameMatch = product.name.toLowerCase().contains(searchQuery);
+        final barcodeMatch = product.barcode?.toLowerCase().contains(searchQuery) ?? false;
+        return nameMatch || barcodeMatch;
+      }).toList();
+
+      return AsyncValue.data(filtered);
+    },
+    loading: () => const AsyncValue.loading(),
+    error: (error, stack) => AsyncValue.error(error, stack),
+  );
 });
 
 // Area Tables Provider

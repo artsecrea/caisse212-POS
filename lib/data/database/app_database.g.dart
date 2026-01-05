@@ -6268,6 +6268,21 @@ class $CustomersTable extends Customers
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _isSyncedMeta = const VerificationMeta(
+    'isSynced',
+  );
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+    'is_synced',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_synced" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _joinedAtMeta = const VerificationMeta(
     'joinedAt',
   );
@@ -6311,6 +6326,7 @@ class $CustomersTable extends Customers
     lastName,
     phone,
     email,
+    isSynced,
     joinedAt,
     createdAt,
     updatedAt,
@@ -6356,6 +6372,12 @@ class $CustomersTable extends Customers
       context.handle(
         _emailMeta,
         email.isAcceptableOrUnknown(data['email']!, _emailMeta),
+      );
+    }
+    if (data.containsKey('is_synced')) {
+      context.handle(
+        _isSyncedMeta,
+        isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta),
       );
     }
     if (data.containsKey('joined_at')) {
@@ -6405,6 +6427,10 @@ class $CustomersTable extends Customers
         DriftSqlType.string,
         data['${effectivePrefix}email'],
       ),
+      isSynced: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_synced'],
+      )!,
       joinedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}joined_at'],
@@ -6432,6 +6458,7 @@ class Customer extends DataClass implements Insertable<Customer> {
   final String lastName;
   final String? phone;
   final String? email;
+  final bool isSynced;
   final DateTime joinedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -6441,6 +6468,7 @@ class Customer extends DataClass implements Insertable<Customer> {
     required this.lastName,
     this.phone,
     this.email,
+    required this.isSynced,
     required this.joinedAt,
     required this.createdAt,
     required this.updatedAt,
@@ -6457,6 +6485,7 @@ class Customer extends DataClass implements Insertable<Customer> {
     if (!nullToAbsent || email != null) {
       map['email'] = Variable<String>(email);
     }
+    map['is_synced'] = Variable<bool>(isSynced);
     map['joined_at'] = Variable<DateTime>(joinedAt);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -6474,6 +6503,7 @@ class Customer extends DataClass implements Insertable<Customer> {
       email: email == null && nullToAbsent
           ? const Value.absent()
           : Value(email),
+      isSynced: Value(isSynced),
       joinedAt: Value(joinedAt),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -6491,6 +6521,7 @@ class Customer extends DataClass implements Insertable<Customer> {
       lastName: serializer.fromJson<String>(json['lastName']),
       phone: serializer.fromJson<String?>(json['phone']),
       email: serializer.fromJson<String?>(json['email']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
       joinedAt: serializer.fromJson<DateTime>(json['joinedAt']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -6505,6 +6536,7 @@ class Customer extends DataClass implements Insertable<Customer> {
       'lastName': serializer.toJson<String>(lastName),
       'phone': serializer.toJson<String?>(phone),
       'email': serializer.toJson<String?>(email),
+      'isSynced': serializer.toJson<bool>(isSynced),
       'joinedAt': serializer.toJson<DateTime>(joinedAt),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -6517,6 +6549,7 @@ class Customer extends DataClass implements Insertable<Customer> {
     String? lastName,
     Value<String?> phone = const Value.absent(),
     Value<String?> email = const Value.absent(),
+    bool? isSynced,
     DateTime? joinedAt,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -6526,6 +6559,7 @@ class Customer extends DataClass implements Insertable<Customer> {
     lastName: lastName ?? this.lastName,
     phone: phone.present ? phone.value : this.phone,
     email: email.present ? email.value : this.email,
+    isSynced: isSynced ?? this.isSynced,
     joinedAt: joinedAt ?? this.joinedAt,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -6537,6 +6571,7 @@ class Customer extends DataClass implements Insertable<Customer> {
       lastName: data.lastName.present ? data.lastName.value : this.lastName,
       phone: data.phone.present ? data.phone.value : this.phone,
       email: data.email.present ? data.email.value : this.email,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
       joinedAt: data.joinedAt.present ? data.joinedAt.value : this.joinedAt,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -6551,6 +6586,7 @@ class Customer extends DataClass implements Insertable<Customer> {
           ..write('lastName: $lastName, ')
           ..write('phone: $phone, ')
           ..write('email: $email, ')
+          ..write('isSynced: $isSynced, ')
           ..write('joinedAt: $joinedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -6565,6 +6601,7 @@ class Customer extends DataClass implements Insertable<Customer> {
     lastName,
     phone,
     email,
+    isSynced,
     joinedAt,
     createdAt,
     updatedAt,
@@ -6578,6 +6615,7 @@ class Customer extends DataClass implements Insertable<Customer> {
           other.lastName == this.lastName &&
           other.phone == this.phone &&
           other.email == this.email &&
+          other.isSynced == this.isSynced &&
           other.joinedAt == this.joinedAt &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -6589,6 +6627,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
   final Value<String> lastName;
   final Value<String?> phone;
   final Value<String?> email;
+  final Value<bool> isSynced;
   final Value<DateTime> joinedAt;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
@@ -6598,6 +6637,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
     this.lastName = const Value.absent(),
     this.phone = const Value.absent(),
     this.email = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.joinedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -6608,6 +6648,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
     required String lastName,
     this.phone = const Value.absent(),
     this.email = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.joinedAt = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -6619,6 +6660,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
     Expression<String>? lastName,
     Expression<String>? phone,
     Expression<String>? email,
+    Expression<bool>? isSynced,
     Expression<DateTime>? joinedAt,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
@@ -6629,6 +6671,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
       if (lastName != null) 'last_name': lastName,
       if (phone != null) 'phone': phone,
       if (email != null) 'email': email,
+      if (isSynced != null) 'is_synced': isSynced,
       if (joinedAt != null) 'joined_at': joinedAt,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -6641,6 +6684,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
     Value<String>? lastName,
     Value<String?>? phone,
     Value<String?>? email,
+    Value<bool>? isSynced,
     Value<DateTime>? joinedAt,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
@@ -6651,6 +6695,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
       lastName: lastName ?? this.lastName,
       phone: phone ?? this.phone,
       email: email ?? this.email,
+      isSynced: isSynced ?? this.isSynced,
       joinedAt: joinedAt ?? this.joinedAt,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -6675,6 +6720,9 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
     if (email.present) {
       map['email'] = Variable<String>(email.value);
     }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
     if (joinedAt.present) {
       map['joined_at'] = Variable<DateTime>(joinedAt.value);
     }
@@ -6695,6 +6743,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
           ..write('lastName: $lastName, ')
           ..write('phone: $phone, ')
           ..write('email: $email, ')
+          ..write('isSynced: $isSynced, ')
           ..write('joinedAt: $joinedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -6901,6 +6950,21 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _isSyncedMeta = const VerificationMeta(
+    'isSynced',
+  );
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+    'is_synced',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_synced" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -6945,6 +7009,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     clientId,
     commercialId,
     note,
+    isSynced,
     createdAt,
     updatedAt,
   ];
@@ -7073,6 +7138,12 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         note.isAcceptableOrUnknown(data['note']!, _noteMeta),
       );
     }
+    if (data.containsKey('is_synced')) {
+      context.handle(
+        _isSyncedMeta,
+        isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -7166,6 +7237,10 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         DriftSqlType.string,
         data['${effectivePrefix}note'],
       ),
+      isSynced: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_synced'],
+      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -7202,6 +7277,7 @@ class Order extends DataClass implements Insertable<Order> {
   final int? clientId;
   final int? commercialId;
   final String? note;
+  final bool isSynced;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Order({
@@ -7223,6 +7299,7 @@ class Order extends DataClass implements Insertable<Order> {
     this.clientId,
     this.commercialId,
     this.note,
+    required this.isSynced,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -7267,6 +7344,7 @@ class Order extends DataClass implements Insertable<Order> {
     if (!nullToAbsent || note != null) {
       map['note'] = Variable<String>(note);
     }
+    map['is_synced'] = Variable<bool>(isSynced);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -7310,6 +7388,7 @@ class Order extends DataClass implements Insertable<Order> {
           ? const Value.absent()
           : Value(commercialId),
       note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      isSynced: Value(isSynced),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -7341,6 +7420,7 @@ class Order extends DataClass implements Insertable<Order> {
       clientId: serializer.fromJson<int?>(json['clientId']),
       commercialId: serializer.fromJson<int?>(json['commercialId']),
       note: serializer.fromJson<String?>(json['note']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -7367,6 +7447,7 @@ class Order extends DataClass implements Insertable<Order> {
       'clientId': serializer.toJson<int?>(clientId),
       'commercialId': serializer.toJson<int?>(commercialId),
       'note': serializer.toJson<String?>(note),
+      'isSynced': serializer.toJson<bool>(isSynced),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -7391,6 +7472,7 @@ class Order extends DataClass implements Insertable<Order> {
     Value<int?> clientId = const Value.absent(),
     Value<int?> commercialId = const Value.absent(),
     Value<String?> note = const Value.absent(),
+    bool? isSynced,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Order(
@@ -7412,6 +7494,7 @@ class Order extends DataClass implements Insertable<Order> {
     clientId: clientId.present ? clientId.value : this.clientId,
     commercialId: commercialId.present ? commercialId.value : this.commercialId,
     note: note.present ? note.value : this.note,
+    isSynced: isSynced ?? this.isSynced,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -7439,6 +7522,7 @@ class Order extends DataClass implements Insertable<Order> {
           ? data.commercialId.value
           : this.commercialId,
       note: data.note.present ? data.note.value : this.note,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -7465,6 +7549,7 @@ class Order extends DataClass implements Insertable<Order> {
           ..write('clientId: $clientId, ')
           ..write('commercialId: $commercialId, ')
           ..write('note: $note, ')
+          ..write('isSynced: $isSynced, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -7472,7 +7557,7 @@ class Order extends DataClass implements Insertable<Order> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     code,
     status,
@@ -7491,9 +7576,10 @@ class Order extends DataClass implements Insertable<Order> {
     clientId,
     commercialId,
     note,
+    isSynced,
     createdAt,
     updatedAt,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -7516,6 +7602,7 @@ class Order extends DataClass implements Insertable<Order> {
           other.clientId == this.clientId &&
           other.commercialId == this.commercialId &&
           other.note == this.note &&
+          other.isSynced == this.isSynced &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -7539,6 +7626,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
   final Value<int?> clientId;
   final Value<int?> commercialId;
   final Value<String?> note;
+  final Value<bool> isSynced;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const OrdersCompanion({
@@ -7560,6 +7648,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.clientId = const Value.absent(),
     this.commercialId = const Value.absent(),
     this.note = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -7582,6 +7671,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.clientId = const Value.absent(),
     this.commercialId = const Value.absent(),
     this.note = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : code = Value(code);
@@ -7604,6 +7694,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Expression<int>? clientId,
     Expression<int>? commercialId,
     Expression<String>? note,
+    Expression<bool>? isSynced,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -7626,6 +7717,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       if (clientId != null) 'client_id': clientId,
       if (commercialId != null) 'commercial_id': commercialId,
       if (note != null) 'note': note,
+      if (isSynced != null) 'is_synced': isSynced,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -7650,6 +7742,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Value<int?>? clientId,
     Value<int?>? commercialId,
     Value<String?>? note,
+    Value<bool>? isSynced,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -7672,6 +7765,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       clientId: clientId ?? this.clientId,
       commercialId: commercialId ?? this.commercialId,
       note: note ?? this.note,
+      isSynced: isSynced ?? this.isSynced,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -7734,6 +7828,9 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     if (note.present) {
       map['note'] = Variable<String>(note.value);
     }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -7764,6 +7861,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
           ..write('clientId: $clientId, ')
           ..write('commercialId: $commercialId, ')
           ..write('note: $note, ')
+          ..write('isSynced: $isSynced, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -10018,6 +10116,21 @@ class $CashSessionsTable extends CashSessions
     requiredDuringInsert: false,
     defaultValue: const Constant('active'),
   );
+  static const VerificationMeta _isSyncedMeta = const VerificationMeta(
+    'isSynced',
+  );
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+    'is_synced',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_synced" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -10052,6 +10165,7 @@ class $CashSessionsTable extends CashSessions
     moneyAtStart,
     moneyAtEnd,
     status,
+    isSynced,
     createdAt,
     updatedAt,
   ];
@@ -10122,6 +10236,12 @@ class $CashSessionsTable extends CashSessions
         status.isAcceptableOrUnknown(data['status']!, _statusMeta),
       );
     }
+    if (data.containsKey('is_synced')) {
+      context.handle(
+        _isSyncedMeta,
+        isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -10175,6 +10295,10 @@ class $CashSessionsTable extends CashSessions
         DriftSqlType.string,
         data['${effectivePrefix}status'],
       )!,
+      isSynced: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_synced'],
+      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -10201,6 +10325,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
   final double moneyAtStart;
   final double? moneyAtEnd;
   final String status;
+  final bool isSynced;
   final DateTime createdAt;
   final DateTime updatedAt;
   const CashSession({
@@ -10212,6 +10337,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     required this.moneyAtStart,
     this.moneyAtEnd,
     required this.status,
+    required this.isSynced,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -10232,6 +10358,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       map['money_at_end'] = Variable<double>(moneyAtEnd);
     }
     map['status'] = Variable<String>(status);
+    map['is_synced'] = Variable<bool>(isSynced);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -10253,6 +10380,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           ? const Value.absent()
           : Value(moneyAtEnd),
       status: Value(status),
+      isSynced: Value(isSynced),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -10272,6 +10400,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       moneyAtStart: serializer.fromJson<double>(json['moneyAtStart']),
       moneyAtEnd: serializer.fromJson<double?>(json['moneyAtEnd']),
       status: serializer.fromJson<String>(json['status']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -10288,6 +10417,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       'moneyAtStart': serializer.toJson<double>(moneyAtStart),
       'moneyAtEnd': serializer.toJson<double?>(moneyAtEnd),
       'status': serializer.toJson<String>(status),
+      'isSynced': serializer.toJson<bool>(isSynced),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -10302,6 +10432,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     double? moneyAtStart,
     Value<double?> moneyAtEnd = const Value.absent(),
     String? status,
+    bool? isSynced,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => CashSession(
@@ -10313,6 +10444,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     moneyAtStart: moneyAtStart ?? this.moneyAtStart,
     moneyAtEnd: moneyAtEnd.present ? moneyAtEnd.value : this.moneyAtEnd,
     status: status ?? this.status,
+    isSynced: isSynced ?? this.isSynced,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -10330,6 +10462,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           ? data.moneyAtEnd.value
           : this.moneyAtEnd,
       status: data.status.present ? data.status.value : this.status,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -10346,6 +10479,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           ..write('moneyAtStart: $moneyAtStart, ')
           ..write('moneyAtEnd: $moneyAtEnd, ')
           ..write('status: $status, ')
+          ..write('isSynced: $isSynced, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -10362,6 +10496,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     moneyAtStart,
     moneyAtEnd,
     status,
+    isSynced,
     createdAt,
     updatedAt,
   );
@@ -10377,6 +10512,7 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           other.moneyAtStart == this.moneyAtStart &&
           other.moneyAtEnd == this.moneyAtEnd &&
           other.status == this.status &&
+          other.isSynced == this.isSynced &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -10390,6 +10526,7 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
   final Value<double> moneyAtStart;
   final Value<double?> moneyAtEnd;
   final Value<String> status;
+  final Value<bool> isSynced;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const CashSessionsCompanion({
@@ -10401,6 +10538,7 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     this.moneyAtStart = const Value.absent(),
     this.moneyAtEnd = const Value.absent(),
     this.status = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -10413,6 +10551,7 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     required double moneyAtStart,
     this.moneyAtEnd = const Value.absent(),
     this.status = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : cashierId = Value(cashierId),
@@ -10426,6 +10565,7 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     Expression<double>? moneyAtStart,
     Expression<double>? moneyAtEnd,
     Expression<String>? status,
+    Expression<bool>? isSynced,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -10438,6 +10578,7 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
       if (moneyAtStart != null) 'money_at_start': moneyAtStart,
       if (moneyAtEnd != null) 'money_at_end': moneyAtEnd,
       if (status != null) 'status': status,
+      if (isSynced != null) 'is_synced': isSynced,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -10452,6 +10593,7 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     Value<double>? moneyAtStart,
     Value<double?>? moneyAtEnd,
     Value<String>? status,
+    Value<bool>? isSynced,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -10464,6 +10606,7 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
       moneyAtStart: moneyAtStart ?? this.moneyAtStart,
       moneyAtEnd: moneyAtEnd ?? this.moneyAtEnd,
       status: status ?? this.status,
+      isSynced: isSynced ?? this.isSynced,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -10496,6 +10639,9 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     if (status.present) {
       map['status'] = Variable<String>(status.value);
     }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -10516,6 +10662,7 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
           ..write('moneyAtStart: $moneyAtStart, ')
           ..write('moneyAtEnd: $moneyAtEnd, ')
           ..write('status: $status, ')
+          ..write('isSynced: $isSynced, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -10627,6 +10774,21 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _isSyncedMeta = const VerificationMeta(
+    'isSynced',
+  );
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+    'is_synced',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_synced" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -10662,6 +10824,7 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     paymentMethod,
     amount,
     isPaid,
+    isSynced,
     createdAt,
     updatedAt,
   ];
@@ -10739,6 +10902,12 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
         isPaid.isAcceptableOrUnknown(data['is_paid']!, _isPaidMeta),
       );
     }
+    if (data.containsKey('is_synced')) {
+      context.handle(
+        _isSyncedMeta,
+        isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -10796,6 +10965,10 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
         DriftSqlType.bool,
         data['${effectivePrefix}is_paid'],
       )!,
+      isSynced: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_synced'],
+      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -10823,6 +10996,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
   final String paymentMethod;
   final double amount;
   final bool isPaid;
+  final bool isSynced;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Ticket({
@@ -10835,6 +11009,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     required this.paymentMethod,
     required this.amount,
     required this.isPaid,
+    required this.isSynced,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -10852,6 +11027,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     map['payment_method'] = Variable<String>(paymentMethod);
     map['amount'] = Variable<double>(amount);
     map['is_paid'] = Variable<bool>(isPaid);
+    map['is_synced'] = Variable<bool>(isSynced);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -10870,6 +11046,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       paymentMethod: Value(paymentMethod),
       amount: Value(amount),
       isPaid: Value(isPaid),
+      isSynced: Value(isSynced),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -10890,6 +11067,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       paymentMethod: serializer.fromJson<String>(json['paymentMethod']),
       amount: serializer.fromJson<double>(json['amount']),
       isPaid: serializer.fromJson<bool>(json['isPaid']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -10907,6 +11085,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       'paymentMethod': serializer.toJson<String>(paymentMethod),
       'amount': serializer.toJson<double>(amount),
       'isPaid': serializer.toJson<bool>(isPaid),
+      'isSynced': serializer.toJson<bool>(isSynced),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -10922,6 +11101,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     String? paymentMethod,
     double? amount,
     bool? isPaid,
+    bool? isSynced,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Ticket(
@@ -10934,6 +11114,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     paymentMethod: paymentMethod ?? this.paymentMethod,
     amount: amount ?? this.amount,
     isPaid: isPaid ?? this.isPaid,
+    isSynced: isSynced ?? this.isSynced,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -10952,6 +11133,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           : this.paymentMethod,
       amount: data.amount.present ? data.amount.value : this.amount,
       isPaid: data.isPaid.present ? data.isPaid.value : this.isPaid,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -10969,6 +11151,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           ..write('paymentMethod: $paymentMethod, ')
           ..write('amount: $amount, ')
           ..write('isPaid: $isPaid, ')
+          ..write('isSynced: $isSynced, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -10986,6 +11169,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     paymentMethod,
     amount,
     isPaid,
+    isSynced,
     createdAt,
     updatedAt,
   );
@@ -11002,6 +11186,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           other.paymentMethod == this.paymentMethod &&
           other.amount == this.amount &&
           other.isPaid == this.isPaid &&
+          other.isSynced == this.isSynced &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -11016,6 +11201,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
   final Value<String> paymentMethod;
   final Value<double> amount;
   final Value<bool> isPaid;
+  final Value<bool> isSynced;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const TicketsCompanion({
@@ -11028,6 +11214,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     this.paymentMethod = const Value.absent(),
     this.amount = const Value.absent(),
     this.isPaid = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -11041,6 +11228,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     required String paymentMethod,
     required double amount,
     this.isPaid = const Value.absent(),
+    this.isSynced = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : num = Value(num),
@@ -11057,6 +11245,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Expression<String>? paymentMethod,
     Expression<double>? amount,
     Expression<bool>? isPaid,
+    Expression<bool>? isSynced,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -11070,6 +11259,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       if (paymentMethod != null) 'payment_method': paymentMethod,
       if (amount != null) 'amount': amount,
       if (isPaid != null) 'is_paid': isPaid,
+      if (isSynced != null) 'is_synced': isSynced,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -11085,6 +11275,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Value<String>? paymentMethod,
     Value<double>? amount,
     Value<bool>? isPaid,
+    Value<bool>? isSynced,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -11098,6 +11289,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       paymentMethod: paymentMethod ?? this.paymentMethod,
       amount: amount ?? this.amount,
       isPaid: isPaid ?? this.isPaid,
+      isSynced: isSynced ?? this.isSynced,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -11133,6 +11325,9 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     if (isPaid.present) {
       map['is_paid'] = Variable<bool>(isPaid.value);
     }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -11154,6 +11349,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
           ..write('paymentMethod: $paymentMethod, ')
           ..write('amount: $amount, ')
           ..write('isPaid: $isPaid, ')
+          ..write('isSynced: $isSynced, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -14344,6 +14540,7 @@ typedef $$CustomersTableCreateCompanionBuilder =
       required String lastName,
       Value<String?> phone,
       Value<String?> email,
+      Value<bool> isSynced,
       Value<DateTime> joinedAt,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -14355,6 +14552,7 @@ typedef $$CustomersTableUpdateCompanionBuilder =
       Value<String> lastName,
       Value<String?> phone,
       Value<String?> email,
+      Value<bool> isSynced,
       Value<DateTime> joinedAt,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -14391,6 +14589,11 @@ class $$CustomersTableFilterComposer
 
   ColumnFilters<String> get email => $composableBuilder(
     column: $table.email,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -14444,6 +14647,11 @@ class $$CustomersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get joinedAt => $composableBuilder(
     column: $table.joinedAt,
     builder: (column) => ColumnOrderings(column),
@@ -14483,6 +14691,9 @@ class $$CustomersTableAnnotationComposer
 
   GeneratedColumn<String> get email =>
       $composableBuilder(column: $table.email, builder: (column) => column);
+
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
 
   GeneratedColumn<DateTime> get joinedAt =>
       $composableBuilder(column: $table.joinedAt, builder: (column) => column);
@@ -14527,6 +14738,7 @@ class $$CustomersTableTableManager
                 Value<String> lastName = const Value.absent(),
                 Value<String?> phone = const Value.absent(),
                 Value<String?> email = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> joinedAt = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -14536,6 +14748,7 @@ class $$CustomersTableTableManager
                 lastName: lastName,
                 phone: phone,
                 email: email,
+                isSynced: isSynced,
                 joinedAt: joinedAt,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -14547,6 +14760,7 @@ class $$CustomersTableTableManager
                 required String lastName,
                 Value<String?> phone = const Value.absent(),
                 Value<String?> email = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> joinedAt = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -14556,6 +14770,7 @@ class $$CustomersTableTableManager
                 lastName: lastName,
                 phone: phone,
                 email: email,
+                isSynced: isSynced,
                 joinedAt: joinedAt,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -14602,6 +14817,7 @@ typedef $$OrdersTableCreateCompanionBuilder =
       Value<int?> clientId,
       Value<int?> commercialId,
       Value<String?> note,
+      Value<bool> isSynced,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -14625,6 +14841,7 @@ typedef $$OrdersTableUpdateCompanionBuilder =
       Value<int?> clientId,
       Value<int?> commercialId,
       Value<String?> note,
+      Value<bool> isSynced,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -14725,6 +14942,11 @@ class $$OrdersTableFilterComposer
 
   ColumnFilters<String> get note => $composableBuilder(
     column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -14838,6 +15060,11 @@ class $$OrdersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -14916,6 +15143,9 @@ class $$OrdersTableAnnotationComposer
   GeneratedColumn<String> get note =>
       $composableBuilder(column: $table.note, builder: (column) => column);
 
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -14969,6 +15199,7 @@ class $$OrdersTableTableManager
                 Value<int?> clientId = const Value.absent(),
                 Value<int?> commercialId = const Value.absent(),
                 Value<String?> note = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrdersCompanion(
@@ -14990,6 +15221,7 @@ class $$OrdersTableTableManager
                 clientId: clientId,
                 commercialId: commercialId,
                 note: note,
+                isSynced: isSynced,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -15013,6 +15245,7 @@ class $$OrdersTableTableManager
                 Value<int?> clientId = const Value.absent(),
                 Value<int?> commercialId = const Value.absent(),
                 Value<String?> note = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrdersCompanion.insert(
@@ -15034,6 +15267,7 @@ class $$OrdersTableTableManager
                 clientId: clientId,
                 commercialId: commercialId,
                 note: note,
+                isSynced: isSynced,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -16159,6 +16393,7 @@ typedef $$CashSessionsTableCreateCompanionBuilder =
       required double moneyAtStart,
       Value<double?> moneyAtEnd,
       Value<String> status,
+      Value<bool> isSynced,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -16172,6 +16407,7 @@ typedef $$CashSessionsTableUpdateCompanionBuilder =
       Value<double> moneyAtStart,
       Value<double?> moneyAtEnd,
       Value<String> status,
+      Value<bool> isSynced,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -16222,6 +16458,11 @@ class $$CashSessionsTableFilterComposer
 
   ColumnFilters<String> get status => $composableBuilder(
     column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -16285,6 +16526,11 @@ class $$CashSessionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -16333,6 +16579,9 @@ class $$CashSessionsTableAnnotationComposer
   GeneratedColumn<String> get status =>
       $composableBuilder(column: $table.status, builder: (column) => column);
 
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -16379,6 +16628,7 @@ class $$CashSessionsTableTableManager
                 Value<double> moneyAtStart = const Value.absent(),
                 Value<double?> moneyAtEnd = const Value.absent(),
                 Value<String> status = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => CashSessionsCompanion(
@@ -16390,6 +16640,7 @@ class $$CashSessionsTableTableManager
                 moneyAtStart: moneyAtStart,
                 moneyAtEnd: moneyAtEnd,
                 status: status,
+                isSynced: isSynced,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -16403,6 +16654,7 @@ class $$CashSessionsTableTableManager
                 required double moneyAtStart,
                 Value<double?> moneyAtEnd = const Value.absent(),
                 Value<String> status = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => CashSessionsCompanion.insert(
@@ -16414,6 +16666,7 @@ class $$CashSessionsTableTableManager
                 moneyAtStart: moneyAtStart,
                 moneyAtEnd: moneyAtEnd,
                 status: status,
+                isSynced: isSynced,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -16453,6 +16706,7 @@ typedef $$TicketsTableCreateCompanionBuilder =
       required String paymentMethod,
       required double amount,
       Value<bool> isPaid,
+      Value<bool> isSynced,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -16467,6 +16721,7 @@ typedef $$TicketsTableUpdateCompanionBuilder =
       Value<String> paymentMethod,
       Value<double> amount,
       Value<bool> isPaid,
+      Value<bool> isSynced,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -16522,6 +16777,11 @@ class $$TicketsTableFilterComposer
 
   ColumnFilters<bool> get isPaid => $composableBuilder(
     column: $table.isPaid,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -16590,6 +16850,11 @@ class $$TicketsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -16641,6 +16906,9 @@ class $$TicketsTableAnnotationComposer
   GeneratedColumn<bool> get isPaid =>
       $composableBuilder(column: $table.isPaid, builder: (column) => column);
 
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -16685,6 +16953,7 @@ class $$TicketsTableTableManager
                 Value<String> paymentMethod = const Value.absent(),
                 Value<double> amount = const Value.absent(),
                 Value<bool> isPaid = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => TicketsCompanion(
@@ -16697,6 +16966,7 @@ class $$TicketsTableTableManager
                 paymentMethod: paymentMethod,
                 amount: amount,
                 isPaid: isPaid,
+                isSynced: isSynced,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -16711,6 +16981,7 @@ class $$TicketsTableTableManager
                 required String paymentMethod,
                 required double amount,
                 Value<bool> isPaid = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => TicketsCompanion.insert(
@@ -16723,6 +16994,7 @@ class $$TicketsTableTableManager
                 paymentMethod: paymentMethod,
                 amount: amount,
                 isPaid: isPaid,
+                isSynced: isSynced,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),

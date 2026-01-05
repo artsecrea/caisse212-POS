@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import '../../providers/database_providers.dart';
 import '../../domain/models/order_models.dart';
 
@@ -24,9 +25,11 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   // Price modification fields
   late TextEditingController _manualDiscountController;
   late TextEditingController _noteController;
+  late TextEditingController _quantityController;
   bool _isPercentageDiscount = false;
   late TabController _tabController;
   double _productDiscount = 0.0; // Product's built-in discount
+  int _quantity = 1;
 
   @override
   void initState() {
@@ -34,11 +37,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     _tabController = TabController(length: 2, vsync: this);
     _manualDiscountController = TextEditingController();
     _noteController = TextEditingController();
-    
+    _quantityController = TextEditingController(text: '1');
+
     // Get product discount from product data
     if (widget.product is OrderItem) {
       final item = widget.product as OrderItem;
       _productDiscount = item.discount;
+      _quantity = item.quantity;
+      _quantityController.text = item.quantity.toString();
 
       // Populate components
       for (var comp in item.components) {
@@ -66,6 +72,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     _tabController.dispose();
     _manualDiscountController.dispose();
     _noteController.dispose();
+    _quantityController.dispose();
     super.dispose();
   }
 
@@ -107,53 +114,139 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   topRight: Radius.circular(16),
                 ),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  if (productImageUrl != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        productImageUrl!,
-                        width: 60,
-                        height: 60,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stack) {
-                          return Container(
+                  Row(
+                    children: [
+                      if (productImageUrl != null)
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            productImageUrl!,
                             width: 60,
                             height: 60,
-                            color: Colors.grey[200],
-                            child: const Icon(Icons.fastfood),
-                          );
-                        },
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stack) {
+                              return Container(
+                                width: 60,
+                                height: 60,
+                                color: Colors.grey[200],
+                                child: const Icon(Icons.fastfood),
+                              );
+                            },
+                          ),
+                        ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              productName,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '\$${productPrice.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Theme.of(context).primaryColor,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          productName,
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Quantity Row with on-screen keyboard
+                  Row(
+                    children: [
+                      const Text(
+                        'Quantity:',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Decrease button
+                      IconButton(
+                        onPressed: _quantity > 1
+                            ? () {
+                                setState(() {
+                                  _quantity--;
+                                  _quantityController.text = _quantity.toString();
+                                });
+                              }
+                            : null,
+                        icon: Icon(
+                          Icons.remove_circle,
+                          color: _quantity > 1 ? Colors.red : Colors.grey,
+                          size: 32,
+                        ),
+                      ),
+                      // Quantity input with on-screen keyboard
+                      SizedBox(
+                        width: 100,
+                        child: OnscreenKeyboardTextField(
+                          controller: _quantityController,
+                          keyboardType: TextInputType.number,
+                          textAlign: TextAlign.center,
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '\$${productPrice.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Theme.of(context).primaryColor,
-                            fontWeight: FontWeight.bold,
+                          decoration: InputDecoration(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            isDense: true,
                           ),
+                          onChanged: (value) {
+                            final parsed = int.tryParse(value);
+                            if (parsed != null && parsed > 0) {
+                              setState(() {
+                                _quantity = parsed;
+                              });
+                            }
+                          },
                         ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close),
+                      ),
+                      // Increase button
+                      IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _quantity++;
+                            _quantityController.text = _quantity.toString();
+                          });
+                        },
+                        icon: Icon(
+                          Icons.add_circle,
+                          color: Theme.of(context).primaryColor,
+                          size: 32,
+                        ),
+                      ),
+                      const Spacer(),
+                      // Total for quantity
+                      Text(
+                        'Total: \$${(productPrice * _quantity).toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).primaryColor,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -596,6 +689,18 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   }
 
   void _handleSave(BuildContext context) {
+    // Validate quantity
+    final quantity = int.tryParse(_quantityController.text) ?? 1;
+    if (quantity < 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Quantity must be at least 1'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final componentsAsync = ref.read(componentsProvider);
     componentsAsync.when(
       data: (components) {
@@ -622,6 +727,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           'discount': _productDiscount, // Product's built-in discount
           'manualDiscount': manualDiscount, // Manual additional discount
           'note': _noteController.text.isEmpty ? null : _noteController.text,
+          'quantity': quantity, // Added quantity
         });
       },
       loading: () {},

@@ -14,17 +14,45 @@ class ProductGrid extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final selectedCategory = ref.watch(selectedCategoryProvider);
-    final productsAsync = ref.watch(productsByCategoryProvider(selectedCategory));
+    final productsAsync = ref.watch(filteredProductsProvider);
     final showImages = ref.watch(showProductImagesProvider);
+    final searchQuery = ref.watch(productSearchQueryProvider);
 
     return Container(
       color: Theme.of(context).scaffoldBackgroundColor,
       child: productsAsync.when(
         data: (products) {
           if (products.isEmpty) {
-            return const Center(
-              child: Text('No products available'),
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    searchQuery.isNotEmpty ? Icons.search_off : Icons.inventory_2_outlined,
+                    size: 64,
+                    color: Colors.grey,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    searchQuery.isNotEmpty
+                        ? 'No products found for "$searchQuery"'
+                        : 'No products available',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey,
+                    ),
+                  ),
+                  if (searchQuery.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () {
+                        ref.read(productSearchQueryProvider.notifier).state = '';
+                      },
+                      child: const Text('Clear search'),
+                    ),
+                  ],
+                ],
+              ),
             );
           }
 
@@ -186,13 +214,14 @@ class _ProductCard extends ConsumerWidget {
     final discount = modifications['discount'] as double? ?? product.discountAmount;
     final manualDiscount = modifications['manualDiscount'] as double? ?? 0.0;
     final note = modifications['note'] as String?;
+    final quantity = modifications['quantity'] as int? ?? 1;
 
     final orderItem = OrderItem(
       productId: product.id,
       productName: product.name,
       imageUrl: product.imageUrl,
       finalPrice: product.finalPrice,
-      quantity: 1,
+      quantity: quantity,
       components: components,
       tva: product.tvaAmount,
       discount: discount,

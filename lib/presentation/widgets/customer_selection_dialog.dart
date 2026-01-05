@@ -273,6 +273,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                       lastName: lastNameController.text,
                       phone: Value(phoneController.text.isEmpty ? null : phoneController.text),
                       email: Value(emailController.text.isEmpty ? null : emailController.text),
+                      isSynced: const Value(false), // New local customer, needs to be synced
                     ),
                   );
 

@@ -497,6 +497,7 @@ class SampleDataGenerator {
           firstName: customer['firstName'] as String,
           lastName: customer['lastName'] as String,
           phone: Value(customer['phone'] as String?),
+          isSynced: const Value(true), // Sample data is considered synced
         ),
       );
     }

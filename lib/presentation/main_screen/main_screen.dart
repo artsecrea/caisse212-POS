@@ -4,11 +4,14 @@ import 'package:loggecrea/loggecrea.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../domain/models/app_settings.dart';
 import '../paymen_screen/payment_screen.dart';
 import '../widgets/category_selector.dart';
+import '../widgets/category_grid.dart';
 import '../widgets/commercial_selection_dialog.dart';
 import '../widgets/customer_selection_dialog.dart';
 import '../widgets/manual_discount_dialog.dart';
+import '../widgets/print_options_dialog.dart';
 import '../widgets/product_grid.dart';
 import '../widgets/order_panel.dart';
 import '../widgets/table_selection_dialog.dart';
@@ -27,6 +30,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final currentOrder = ref.watch(orderProvider);
+    final displayMode = ref.watch(categoryDisplayModeProvider);
+    final selectedCategory = ref.watch(selectedCategoryProvider);
+
+    // In fullPage mode, show CategoryGrid when no category selected, otherwise ProductGrid
+    final showCategoryGrid = displayMode == CategoryDisplayMode.fullPage &&
+                             selectedCategory == null;
+
     return Scaffold(
       body: Column(
         children: [
@@ -42,9 +52,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     children: [
                       // Category selector (horizontal scroll)
                       const CategorySelector(),
-                      // Products grid
-                      const Expanded(
-                        child: ProductGrid(),
+                      // Products grid or Category grid based on display mode
+                      Expanded(
+                        child: showCategoryGrid
+                            ? const CategoryGrid()
+                            : const ProductGrid(),
                       ),
                     ],
                   ),
@@ -243,10 +255,58 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   label: 'Print',
                   onPressed: currentOrder.items.isEmpty
                       ? null
-                      : () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Printing...')),
-                    );
+                      : () async {
+                    final currentUser = ref.read(currentUserProvider);
+                    final orderRepo = ref.read(orderRepositoryProvider);
+                    final settings = ref.read(settingsProvider);
+
+                    // Save order first if not saved
+                    int? orderId = currentOrder.orderId;
+                    if (!currentOrder.isSaved() && currentUser != null) {
+                      try {
+                        orderId = await orderRepo.saveOrder(
+                          currentOrder,
+                          currentUser.id,
+                          status: settings.defaultOrderStatus,
+                        );
+
+                        if (currentOrder.tableId != null) {
+                          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
+                        }
+
+                        // Reload the order
+                        final reloadedOrder = await orderRepo.getOrderById(orderId);
+                        if (reloadedOrder != null) {
+                          ref.read(orderProvider.notifier).loadOrder(reloadedOrder);
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error saving order: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                        return;
+                      }
+                    }
+
+                    // Show print options dialog
+                    if (context.mounted) {
+                      final orderToPrint = currentOrder.isSaved()
+                          ? currentOrder
+                          : (orderId != null ? await orderRepo.getOrderById(orderId) : null);
+
+                      if (orderToPrint != null) {
+                        await showPrintOptionsDialog(
+                          context,
+                          order: orderToPrint,
+                          cashierName: currentUser?.firstName,
+                          storeName: 'POS Store', // TODO: Get from settings
+                        );
+                      }
+                    }
                   },
                 ),
                 // _buildActionButton(
@@ -293,6 +353,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       : () async {
                     final orderRepo = ref.read(orderRepositoryProvider);
                     final currentUser = ref.read(currentUserProvider);
+                    final settings = ref.read(settingsProvider);
 
                     if (currentUser == null) return;
 
@@ -308,6 +369,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         orderId = await orderRepo.saveOrder(
                           currentOrder,
                           currentUser.id,
+                          status: settings.defaultOrderStatus, // Use default status from settings
                         );
 
                         if (currentOrder.tableId != null) {
@@ -366,6 +428,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       : () async {
                     final orderRepo = ref.read(orderRepositoryProvider);
                     final currentUser = ref.read(currentUserProvider);
+                    final settings = ref.read(settingsProvider);
 
                     if (currentUser == null) return;
 
@@ -380,7 +443,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         orderId = await orderRepo.saveOrder(
                           currentOrder,
                           currentUser.id,
-                          status: 'PENDING', // Explicitly set as PENDING
+                          status: settings.defaultOrderStatus, // Use default status from settings
                         );
 
                         if (currentOrder.tableId != null) {

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:posecrea/providers/stat_provider.dart';
+import 'package:posecrea/services/api_service.dart';
+import 'package:posecrea/services/data_sync_service.dart';
 import '../../providers/database_providers.dart';
 import '../../services/session_service.dart';
 import '../settings/settings_screen.dart';
@@ -15,6 +18,9 @@ class TopBar extends ConsumerStatefulWidget {
 
 class _TopBarState extends ConsumerState<TopBar> {
   bool _isOnline = true;
+  bool _isSearchExpanded = false;
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -26,6 +32,108 @@ class _TopBarState extends ConsumerState<TopBar> {
       });
       ref.read(networkStateProvider.notifier).state = _isOnline;
     });
+
+    // Sync search controller with provider
+    _searchController.text = ref.read(productSearchQueryProvider);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    super.dispose();
+  }
+
+  Widget _buildSearchBar() {
+    final searchQuery = ref.watch(productSearchQueryProvider);
+
+    // Sync controller with provider if changed externally
+    if (_searchController.text != searchQuery) {
+      _searchController.text = searchQuery;
+    }
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: _isSearchExpanded ? 300 : 45,
+      height: 40,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          // Search icon button
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isSearchExpanded = !_isSearchExpanded;
+                if (_isSearchExpanded) {
+                  _searchFocusNode.requestFocus();
+                } else {
+                  _searchFocusNode.unfocus();
+                  // Clear search when closing
+                  _searchController.clear();
+                  ref.read(productSearchQueryProvider.notifier).state = '';
+                }
+              });
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              width: 45,
+              height: 40,
+              alignment: Alignment.center,
+              child: Icon(
+                _isSearchExpanded ? Icons.close : Icons.search,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+          ),
+          // Search text field
+          if (_isSearchExpanded)
+            Expanded(
+              child: OnscreenKeyboardTextField(
+                controller: _searchController,
+                focusNode: _searchFocusNode,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                decoration: const InputDecoration(
+                  hintText: 'Search products...',
+                  hintStyle: TextStyle(color: Colors.white70, fontSize: 14),
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                  isDense: true,
+                ),
+                onChanged: (value) {
+                  ref.read(productSearchQueryProvider.notifier).state = value;
+                },
+                onSubmitted: (_) {
+                  // Keep search open after submit
+                },
+              ),
+            ),
+          // Clear button when there's text
+          if (_isSearchExpanded && searchQuery.isNotEmpty)
+            InkWell(
+              onTap: () {
+                _searchController.clear();
+                ref.read(productSearchQueryProvider.notifier).state = '';
+                _searchFocusNode.requestFocus();
+              },
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                width: 30,
+                height: 40,
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.clear,
+                  color: Colors.white70,
+                  size: 18,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   Future<void> _checkConnectivity() async {
@@ -225,6 +333,133 @@ class _TopBarState extends ConsumerState<TopBar> {
     }
   }
 
+  /// Full logout - clears tenant data and goes back to server login
+  Future<void> _handleFullLogout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Full Logout'),
+        content: const Text(
+          'This will clear all server authentication data and local database.\n\n'
+          'You will need to reconnect to the server or use demo mode again.\n\n'
+          'Are you sure?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Full Logout'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      // Clear current user and session
+      ref.read(currentUserProvider.notifier).state = null;
+      ref.read(currentSessionProvider.notifier).state = null;
+
+      // Clear API service data
+      final prefs = ref.read(sharedPreferencesProvider);
+      final apiService = ApiService(prefs);
+      await apiService.clearAuthData();
+
+      // Clear the database
+      final database = ref.read(databaseProvider);
+      final syncService = DataSyncService(database, apiService);
+      await syncService.clearAllData();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Logged out completely. All data cleared.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        // Navigate to tenant login screen
+        Navigator.of(context).pushNamedAndRemoveUntil('/tenant', (route) => false);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error during logout: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Sync data from server
+  Future<void> _handleSync() async {
+    final prefs = ref.read(sharedPreferencesProvider);
+    final apiService = ApiService(prefs);
+
+    // Check if in demo mode
+    if (apiService.isDemoMode()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Demo mode: Sync not available'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 20),
+            Text('Syncing data...'),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final database = ref.read(databaseProvider);
+      final syncService = DataSyncService(database, apiService);
+
+      // First upload local data
+      await syncService.uploadLocalData();
+
+      // Then download fresh data
+      await syncService.syncAllData();
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Data synced successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _pauseCurrentSession(int sessionId) async {
     try {
       final database = ref.read(databaseProvider);
@@ -392,6 +627,9 @@ class _TopBarState extends ConsumerState<TopBar> {
             _formatTime(time),
             style: const TextStyle(color: Colors.white, fontSize: 20),
           ),
+          const SizedBox(width: 20),
+          // Search bar
+          _buildSearchBar(),
           const Spacer(),
           // Session icon - shows current session details
           IconButton(
@@ -452,14 +690,7 @@ class _TopBarState extends ConsumerState<TopBar> {
           const SizedBox(width: 16),
           // Update button
           ElevatedButton.icon(
-            onPressed: _isOnline
-                ? () {
-                    // TODO: Implement sync functionality
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Syncing data...')),
-                    );
-                  }
-                : null,
+            onPressed: _isOnline ? _handleSync : null,
             icon: const Icon(Icons.sync, size: 18),
             label: const Text('Update'),
             style: ElevatedButton.styleFrom(
@@ -499,6 +730,8 @@ class _TopBarState extends ConsumerState<TopBar> {
                 // Navigate to settings
               } else if (value == 'logout') {
                 await _handleLogout();
+              } else if (value == 'full_logout') {
+                await _handleFullLogout();
               }
             },
             itemBuilder: (context) => [
@@ -584,6 +817,19 @@ class _TopBarState extends ConsumerState<TopBar> {
                 },
               ),
               PopupMenuItem(
+                value: 'printers',
+                child: const Row(
+                  children: [
+                    Icon(Icons.print),
+                    SizedBox(width: 8),
+                    Text('Printers'),
+                  ],
+                ),
+                onTap: (){
+                  Navigator.pushNamed(context, '/printers');
+                },
+              ),
+              PopupMenuItem(
                 value: 'users',
                 child: const Row(
                   children: [
@@ -601,9 +847,19 @@ class _TopBarState extends ConsumerState<TopBar> {
                 value: 'logout',
                 child: const Row(
                   children: [
+                    Icon(Icons.logout, color: Colors.orange),
+                    SizedBox(width: 8),
+                    Text('Logout', style: TextStyle(color: Colors.orange)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'full_logout',
+                child: const Row(
+                  children: [
                     Icon(Icons.logout, color: Colors.red),
                     SizedBox(width: 8),
-                    Text('Logout', style: TextStyle(color: Colors.red)),
+                    Text('Full Logout (Clear All)', style: TextStyle(color: Colors.red)),
                   ],
                 ),
               ),
