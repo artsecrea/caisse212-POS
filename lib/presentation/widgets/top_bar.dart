@@ -6,6 +6,7 @@ import 'package:posecrea/providers/stat_provider.dart';
 import 'package:posecrea/providers/order_provider.dart';
 import 'package:posecrea/services/api_service.dart';
 import 'package:posecrea/services/data_sync_service.dart';
+import 'package:posecrea/services/permission_service.dart';
 import '../../providers/database_providers.dart';
 import '../../services/session_service.dart';
 import '../settings/settings_screen.dart';
@@ -740,8 +741,12 @@ class _TopBarState extends ConsumerState<TopBar> {
                 await _handleFullLogout();
               }
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
+            itemBuilder: (context) {
+              final permissionService = ref.read(permissionServiceProvider);
+              final items = <PopupMenuEntry<String>>[];
+
+              // Profile - always visible
+              items.add(const PopupMenuItem(
                 value: 'profile',
                 child: Row(
                   children: [
@@ -750,126 +755,163 @@ class _TopBarState extends ConsumerState<TopBar> {
                     Text('Profile'),
                   ],
                 ),
-              ),
-              PopupMenuItem(
-                value: 'settings',
-                child: const Row(
-                  children: [
-                    Icon(Icons.settings),
-                    SizedBox(width: 8),
-                    Text('Settings'),
-                  ],
-                ),
-                onTap: () {
-                  // Use Future.delayed to allow menu to close first
-                  Future.delayed(Duration.zero, () {
-                    showDialog(
-                      context: context,
-                      builder: (context) => const SettingsScreen(),
-                    );
-                  });
-                },
-              ),
-              PopupMenuItem(
-                value: 'sessions',
-                child: const Row(
-                  children: [
-                    Icon(Icons.access_time),
-                    SizedBox(width: 8),
-                    Text('Sessions'),
-                  ],
-                ),
-                onTap: (){
-                  Navigator.pushNamed(context, '/sessions');
-                },
-              ),
-              PopupMenuItem(
-                value: 'orders',
-                child: const Row(
-                  children: [
-                    Icon(Icons.list),
-                    SizedBox(width: 8),
-                    Text('Orders'),
-                  ],
-                ),
-                onTap: (){
-                  Navigator.pushNamed(context, '/orders');
-                },
-              ),
-              PopupMenuItem(
-                value: 'tickets',
-                child: const Row(
-                  children: [
-                    Icon(Icons.receipt),
-                    SizedBox(width: 8),
-                    Text('Tickets'),
-                  ],
-                ),
-                onTap: (){
-                  Navigator.pushNamed(context, '/tickets');
-                },
-              ),
-              PopupMenuItem(
-                value: 'devices',
-                child: const Row(
-                  children: [
-                    Icon(Icons.devices),
-                    SizedBox(width: 8),
-                    Text('Devices'),
-                  ],
-                ),
-                onTap: (){
-                  Navigator.pushNamed(context, '/devices');
-                },
-              ),
-              PopupMenuItem(
-                value: 'printers',
-                child: const Row(
-                  children: [
-                    Icon(Icons.print),
-                    SizedBox(width: 8),
-                    Text('Printers'),
-                  ],
-                ),
-                onTap: (){
-                  Navigator.pushNamed(context, '/printers');
-                },
-              ),
-              PopupMenuItem(
-                value: 'users',
-                child: const Row(
-                  children: [
-                    Icon(Icons.people),
-                    SizedBox(width: 8),
-                    Text('Users'),
-                  ],
-                ),
-                onTap: (){
-                  Navigator.pushNamed(context, '/users');
-                },
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem(
+              ));
+
+              // Settings - permission protected
+              if (permissionService.hasPermission(Permissions.settingsView)) {
+                items.add(PopupMenuItem(
+                  value: 'settings',
+                  child: const Row(
+                    children: [
+                      Icon(Icons.settings),
+                      SizedBox(width: 8),
+                      Text('Settings'),
+                    ],
+                  ),
+                  onTap: () {
+                    Future.delayed(Duration.zero, () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => const SettingsScreen(),
+                      );
+                    });
+                  },
+                ));
+              }
+
+              // Sessions - permission protected
+              if (permissionService.hasPermission(Permissions.sessionsView)) {
+                items.add(PopupMenuItem(
+                  value: 'sessions',
+                  child: const Row(
+                    children: [
+                      Icon(Icons.access_time),
+                      SizedBox(width: 8),
+                      Text('Sessions'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/sessions');
+                  },
+                ));
+              }
+
+              // Orders - permission protected
+              if (permissionService.hasPermission(Permissions.ordersView)) {
+                items.add(PopupMenuItem(
+                  value: 'orders',
+                  child: const Row(
+                    children: [
+                      Icon(Icons.list),
+                      SizedBox(width: 8),
+                      Text('Orders'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/orders');
+                  },
+                ));
+              }
+
+              // Tickets - permission protected
+              if (permissionService.hasPermission(Permissions.ticketsView)) {
+                items.add(PopupMenuItem(
+                  value: 'tickets',
+                  child: const Row(
+                    children: [
+                      Icon(Icons.receipt),
+                      SizedBox(width: 8),
+                      Text('Tickets'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/tickets');
+                  },
+                ));
+              }
+
+              // Devices - permission protected
+              if (permissionService.hasPermission(Permissions.devicesView)) {
+                items.add(PopupMenuItem(
+                  value: 'devices',
+                  child: const Row(
+                    children: [
+                      Icon(Icons.devices),
+                      SizedBox(width: 8),
+                      Text('Devices'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/devices');
+                  },
+                ));
+              }
+
+              // Printers - permission protected
+              if (permissionService.hasPermission(Permissions.devicesView)) {
+                items.add(PopupMenuItem(
+                  value: 'printers',
+                  child: const Row(
+                    children: [
+                      Icon(Icons.print),
+                      SizedBox(width: 8),
+                      Text('Printers'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/printers');
+                  },
+                ));
+              }
+
+              // Users - permission protected (admin only typically)
+              if (permissionService.hasPermission('pos:users:view')) {
+                items.add(PopupMenuItem(
+                  value: 'users',
+                  child: const Row(
+                    children: [
+                      Icon(Icons.people),
+                      SizedBox(width: 8),
+                      Text('Users'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/users');
+                  },
+                ));
+              }
+
+              // Divider before logout
+              items.add(const PopupMenuDivider());
+
+              // Logout - always visible
+              items.add(const PopupMenuItem(
                 value: 'logout',
-                child: const Row(
+                child: Row(
                   children: [
                     Icon(Icons.logout, color: Colors.orange),
                     SizedBox(width: 8),
                     Text('Logout', style: TextStyle(color: Colors.orange)),
                   ],
                 ),
-              ),
-              PopupMenuItem(
-                value: 'full_logout',
-                child: const Row(
-                  children: [
-                    Icon(Icons.logout, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Full Logout (Clear All)', style: TextStyle(color: Colors.red)),
-                  ],
-                ),
-              ),
-            ],
+              ));
+
+              // Full logout - permission protected (admin only)
+              if (permissionService.hasPermission('pos:admin')) {
+                items.add(const PopupMenuItem(
+                  value: 'full_logout',
+                  child: Row(
+                    children: [
+                      Icon(Icons.logout, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Full Logout (Clear All)', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ));
+              }
+
+              return items;
+            },
           ),
         ],
       ),

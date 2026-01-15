@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:posecrea/services/api_service.dart';
 import 'package:posecrea/services/data_sync_service.dart';
 import 'package:posecrea/utils/sample_data_generator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/database_providers.dart';
 
 class TenantLoginScreen extends ConsumerStatefulWidget {
@@ -55,7 +56,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     });
 
     try {
-      final prefs = ref.read(sharedPreferencesProvider);
+      final prefs = await SharedPreferences.getInstance();
       final apiService = ApiService(prefs);
 
       // Set the base URL
@@ -112,7 +113,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     });
 
     try {
-      final prefs = ref.read(sharedPreferencesProvider);
+      final prefs = await SharedPreferences.getInstance();
       final apiService = ApiService(prefs);
 
       // Set demo mode
@@ -250,17 +251,17 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                         Text(
                           'POS System Setup',
                           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: Theme.of(context).primaryColor,
-                              ),
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).primaryColor,
+                          ),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'Connect to your server or use demo mode',
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Colors.grey[600],
-                              ),
+                            color: Colors.grey[600],
+                          ),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 32),
@@ -274,7 +275,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            hintText: 'https://api.yourserver.com',
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -290,6 +290,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                             ),
                             hintText: 'POS-1',
                           ),
+
                         ),
                         const SizedBox(height: 16),
 
@@ -329,6 +330,15 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Please enter password';
+                            }
+                            if (value.length < 3) {
+                              return 'Password must be at least 3 characters';
+                            }
+                            return null;
+                          },
                         ),
 
                         if (_errorMessage != null) ...[
@@ -362,12 +372,12 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                           onPressed: _isLoading ? null : _handleServerLogin,
                           icon: _isLoading
                               ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          )
                               : const Icon(Icons.cloud_done),
                           label: Text(
                             _isLoading ? 'Connecting...' : 'Connect to Server',
@@ -419,14 +429,25 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                           ),
                         ),
 
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 8),
 
-                        Text(
-                          'Demo mode uses sample data for testing.\nNo server connection required.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
+                        // API Tester button
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.of(context).pushNamed('/api-tester');
+                          },
+                          icon: const Icon(Icons.bug_report),
+                          label: const Text(
+                            'Test API Endpoints',
+                            style: TextStyle(fontSize: 16),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            side: BorderSide(color: Colors.orange[700]!),
+                            foregroundColor: Colors.orange[700],
                           ),
                         ),
                       ],
@@ -441,4 +462,3 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     );
   }
 }
-

@@ -197,6 +197,8 @@ class DataSyncService {
           componentId: pc['componentId'],
           defaultPrice: Value((pc['defaultPrice'] as num?)?.toDouble() ?? 0.0),
           isRequired: Value(pc['isRequired'] ?? false),
+          minQuantity: Value(pc['minQuantity'] ?? 0),
+          maxQuantity: Value(pc['maxQuantity'] ?? 10),
         ),
         mode: InsertMode.insertOrReplace,
       );

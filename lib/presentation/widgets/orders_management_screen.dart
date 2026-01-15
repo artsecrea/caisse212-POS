@@ -6,6 +6,8 @@ import 'package:data_table_2/data_table_2.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/order_provider.dart';
 import '../../data/database/app_database.dart';
+import '../../services/permission_service.dart';
+import 'permission_guard.dart';
 
 class OrdersManagementScreen extends ConsumerStatefulWidget {
   const OrdersManagementScreen({super.key});
@@ -274,12 +276,16 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 onPressed: () => _showOrderDetails(order),
                 tooltip: 'View Details',
               ),
-              IconButton(
+              // Edit - Protected by permission
+              PermissionIconButton(
+                permission: Permissions.ordersUpdate,
                 icon: const Icon(Icons.edit, size: 20),
                 onPressed: () => _editOrder(order),
                 tooltip: 'Edit Order',
               ),
-              IconButton(
+              // Delete - Protected by permission
+              PermissionIconButton(
+                permission: Permissions.ordersDelete,
                 icon: const Icon(Icons.delete, size: 20, color: Colors.red),
                 onPressed: () => _deleteOrder(order),
                 tooltip: 'Delete Order',

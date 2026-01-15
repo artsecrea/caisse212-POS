@@ -5,6 +5,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
+import '../../services/permission_service.dart';
 import '../paymen_screen/payment_screen.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/category_grid.dart';
@@ -185,38 +186,42 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     }
                   }
                 },),
-                _buildActionButton(
-                  icon: Icons.person,
-                  label: currentOrder.customerName ?? "Customer",
-                  color: currentOrder.customerId != null ? Colors.green : null,
-                  onPressed: () async {
-                  final result =
-                  await showDialog<Map<String, dynamic>>(
-                    context: context,
-                    builder: (context) =>
-                    const CustomerSelectionDialog(),
-                  );
-                  if (result != null) {
-                    if (result['id'] == null) {
-                      // Unselect customer
-                      ref.read(orderProvider.notifier).clearCustomer();
-                    } else {
-                      ref
-                          .read(orderProvider.notifier)
-                          .setCustomer(result['id'], result['name']);
+                // Customer - Protected by permission
+                if (ref.read(permissionServiceProvider).hasPermission(Permissions.customerSet))
+                  _buildActionButton(
+                    icon: Icons.person,
+                    label: currentOrder.customerName ?? "Customer",
+                    color: currentOrder.customerId != null ? Colors.green : null,
+                    onPressed: () async {
+                    final result =
+                    await showDialog<Map<String, dynamic>>(
+                      context: context,
+                      builder: (context) =>
+                      const CustomerSelectionDialog(),
+                    );
+                    if (result != null) {
+                      if (result['id'] == null) {
+                        // Unselect customer
+                        ref.read(orderProvider.notifier).clearCustomer();
+                      } else {
+                        ref
+                            .read(orderProvider.notifier)
+                            .setCustomer(result['id'], result['name']);
+                      }
                     }
-                  }
-                },),
-                _buildActionButton(
-                  icon: Icons.badge,
-                  label: currentOrder.commercialName ?? "Commercial",
-                  color: currentOrder.commercialId != null ? Colors.purple : null,
-                  onPressed:() async {
-                  final result =
-                  await showDialog<Map<String, dynamic>>(
-                    context: context,
-                    builder: (context) =>
-                    const CommercialSelectionDialog(),
+                  },),
+                // Commercial - Protected by permission
+                if (ref.read(permissionServiceProvider).hasPermission(Permissions.commercialSet))
+                  _buildActionButton(
+                    icon: Icons.badge,
+                    label: currentOrder.commercialName ?? "Commercial",
+                    color: currentOrder.commercialId != null ? Colors.purple : null,
+                    onPressed:() async {
+                    final result =
+                    await showDialog<Map<String, dynamic>>(
+                      context: context,
+                      builder: (context) =>
+                      const CommercialSelectionDialog(),
                   );
                   if (result != null) {
                     if (result['id'] == null) {
@@ -230,33 +235,37 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   }
                 },),
                 _buildActionButton(icon: Icons.discount, label: "Coupon", onPressed: (){}),
-                _buildActionButton(
-                  icon: Icons.percent,
-                  label: currentOrder.discountPercentage > 0
-                    ? "Discount ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
-                    : "Manual Discount",
-                  color: currentOrder.discountPercentage > 0 ? Colors.orange : null,
-                  onPressed: currentOrder.hasPaidItems
-                    ? null  // Disable if any item is paid
-                    : () async {
-                    final result = await showDialog<double>(
-                      context: context,
-                      builder: (context) => ManualDiscountDialog(
-                        currentPercentage: currentOrder.discountPercentage,
-                      ),
-                    );
-                    if (result != null) {
-                      ref.read(orderProvider.notifier).setDiscountPercentage(result);
-                    }
-                  },
-                ),
-                _buildActionButton(
-                  icon: Icons.print,
-                  label: 'Print',
-                  onPressed: currentOrder.items.isEmpty
-                      ? null
+                // Manual Discount - Protected by permission
+                if (ref.read(permissionServiceProvider).hasPermission(Permissions.manualDiscount))
+                  _buildActionButton(
+                    icon: Icons.percent,
+                    label: currentOrder.discountPercentage > 0
+                      ? "Discount ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
+                      : "Manual Discount",
+                    color: currentOrder.discountPercentage > 0 ? Colors.orange : null,
+                    onPressed: currentOrder.hasPaidItems
+                      ? null  // Disable if any item is paid
                       : () async {
-                    final currentUser = ref.read(currentUserProvider);
+                      final result = await showDialog<double>(
+                        context: context,
+                        builder: (context) => ManualDiscountDialog(
+                          currentPercentage: currentOrder.discountPercentage,
+                        ),
+                      );
+                      if (result != null) {
+                        ref.read(orderProvider.notifier).setDiscountPercentage(result);
+                      }
+                    },
+                  ),
+                // Print - Protected by permission
+                if (ref.read(permissionServiceProvider).hasPermission(Permissions.printing))
+                  _buildActionButton(
+                    icon: Icons.print,
+                    label: 'Print',
+                    onPressed: currentOrder.items.isEmpty
+                        ? null
+                        : () async {
+                      final currentUser = ref.read(currentUserProvider);
                     final orderRepo = ref.read(orderRepositoryProvider);
                     final settings = ref.read(settingsProvider);
 

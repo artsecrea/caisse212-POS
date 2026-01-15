@@ -28,6 +28,7 @@ class SampleDataGenerator {
 
   Future<void> _generateUsers() async {
     print('Creating users...');
+    // Admin user - has all permissions automatically by type
     await database.into(database.users).insert(
       UsersCompanion.insert(
         id: const Value(1),
@@ -36,9 +37,11 @@ class SampleDataGenerator {
         firstName: 'Admin',
         lastName: 'User',
         type: 'admin',
+        permissions: const Value('pos:*'), // All permissions
       ),
     );
 
+    // Cashier with full permissions
     await database.into(database.users).insert(
       UsersCompanion.insert(
         id: const Value(2),
@@ -47,6 +50,20 @@ class SampleDataGenerator {
         firstName: 'John',
         lastName: 'Doe',
         type: 'cashier',
+        permissions: const Value('pos:products:view,pos:orders:view,pos:orders:create,pos:tickets:create,pos:tickets:view,pos:customer:set,pos:commercial:set,pos:tables:set,pos:printing'),
+      ),
+    );
+
+    // Supervisor with extended permissions
+    await database.into(database.users).insert(
+      UsersCompanion.insert(
+        id: const Value(3),
+        username: 'supervisor',
+        password: 'super123',
+        firstName: 'Jane',
+        lastName: 'Smith',
+        type: 'cashier',
+        permissions: const Value('pos:products:view,pos:orders:*,pos:tickets:*,pos:sessions:view,pos:customer:*,pos:commercial:*,pos:tables:*,pos:printing,pos:manualDiscount,pos:reports:view'),
       ),
     );
   }

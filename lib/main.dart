@@ -4,6 +4,7 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:posecrea/presentation/tenant_login_screen/tenant_login_screen.dart';
+import 'package:posecrea/presentation/api_tester/api_tester_screen.dart';
 import 'package:posecrea/presentation/widgets/devices_management_screen.dart';
 import 'package:posecrea/presentation/widgets/orders_management_screen.dart';
 import 'package:posecrea/presentation/widgets/printers_management_screen.dart';
@@ -81,8 +82,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         final session = await sessionService.getActiveSession(currentUser.id);
 
         if (session != null && session.status == 'active') {
-          await sessionService.pauseSession(session.id);
-          print('Session ${session.id} auto-paused due to app lifecycle change');
+          // await sessionService.pauseSession(session.id);
+          // print('Session ${session.id} auto-paused due to app lifecycle change');
         }
       }
     } catch (e) {
@@ -126,6 +127,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         '/tickets': (context) => const TicketsManagementScreen(),
         '/sessions': (context) => const SessionsManagementScreen(),
         '/printers': (context) => const PrintersManagementScreen(),
+        '/api-tester': (context) => const ApiTesterScreen(),
       },
     );
   }

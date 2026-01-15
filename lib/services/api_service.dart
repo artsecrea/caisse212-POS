@@ -12,6 +12,9 @@ class ApiService {
   static const String _tenantIdKey = 'tenant_id';
   static const String _isDemoModeKey = 'is_demo_mode';
 
+  // Public getter for Dio instance (for testing/debugging)
+  Dio get dio => _dio;
+
   ApiService(this._prefs) {
     _dio = Dio();
     _setupInterceptors();
@@ -21,7 +24,7 @@ class ApiService {
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) {
         // Add base URL
-        final baseUrl = _prefs.getString(_baseUrlKey) ?? '';
+        final baseUrl = "${_prefs.getString(_baseUrlKey) ?? ''}/api";
         if (baseUrl.isNotEmpty && !options.path.startsWith('http')) {
           options.path = '$baseUrl${options.path}';
         }
@@ -100,8 +103,9 @@ class ApiService {
     required String posName,
   }) async {
     try {
-      final response = await _dio.post('/auth/pos-login', data: {
+      final response = await _dio.post('/pos/login', data: {
         'username': username,
+        'posName': posName,
         'password': password,
       }, options: Options(headers: {'X-POS-Name': posName}));
 

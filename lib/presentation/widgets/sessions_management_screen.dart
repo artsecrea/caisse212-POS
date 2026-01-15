@@ -4,6 +4,8 @@ import 'package:data_table_2/data_table_2.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../services/session_service.dart';
+import '../../services/permission_service.dart';
+import 'permission_guard.dart';
 
 class SessionsManagementScreen extends ConsumerStatefulWidget {
   const SessionsManagementScreen({super.key});
@@ -590,13 +592,16 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                           onPressed: () => _showSessionDetails(session),
                         ),
                         if (session.status != 'ended')
-                          IconButton(
+                          PermissionIconButton(
+                            permission: Permissions.sessionsEnd,
                             icon: const Icon(Icons.stop, size: 20),
                             color: Colors.red,
                             tooltip: 'End Session',
                             onPressed: () => _endSession(session),
                           ),
-                        IconButton(
+                        // Delete - Protected by permission
+                        PermissionIconButton(
+                          permission: Permissions.sessionsDelete,
                           icon: const Icon(Icons.delete, size: 20),
                           color: Colors.grey,
                           tooltip: 'Delete',

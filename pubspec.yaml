@@ -35,7 +35,7 @@ dependencies:
   dio: ^5.4.1
 
   connectivity_plus: ^5.0.2
-
+  bcrypt: ^1.2.0
 
   # UI Components
   getwidget: ^4.0.0

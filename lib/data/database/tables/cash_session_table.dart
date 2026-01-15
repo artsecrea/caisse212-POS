@@ -13,7 +13,6 @@ class CashSessions extends Table {
   RealColumn get moneyAtEnd => real().nullable()();
   TextColumn get status => text().withDefault(const Constant('active'))(); // 'active', 'paused', 'ended'
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server (only ended sessions sync)
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }
 

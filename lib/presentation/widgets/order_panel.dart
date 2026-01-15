@@ -24,6 +24,8 @@ class OrderPanel extends ConsumerWidget {
         components: result['components'] as List<OrderItemComponent>?,
         discount: result['discount'] as double?,
         manualDiscount: result['manualDiscount'] as double?,
+        quantity: result['quantity'] as int?,
+        note: result['note'] as String?,
       );
       ref.read(orderProvider.notifier).updateItem(index, updatedItem);
     }
@@ -104,6 +106,7 @@ class OrderPanel extends ConsumerWidget {
                 : ListView.builder(
                     padding: const EdgeInsets.all(2),
                     itemCount: currentOrder.items.length,
+                    reverse: true,
                     itemBuilder: (context, index) {
                       final item = currentOrder.items[index];
                       final isPaid = item.ticketId != null;

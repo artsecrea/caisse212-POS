@@ -1,3 +1,4 @@
+import 'package:bcrypt/bcrypt.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
@@ -47,10 +48,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final connectivityResult = await Connectivity().checkConnectivity();
       final hasInternet = connectivityResult != ConnectivityResult.none;
 
+
       // Check if database is empty (first time login)
       final database = ref.read(databaseProvider);
       final users = await database.select(database.users).get();
       final isFirstTime = users.isEmpty;
+
+      users.forEach((u){
+        print(u.username);
+        print(u.password);
+      });
 
       // If no users exist, this means the database is corrupted or cleared
       // Logout entirely and go back to tenant login
@@ -62,15 +69,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         }
         return;
       }
+      final username = _usernameController.text;
+      final password = _passwordController.text;
+
+
 
       // Try local authentication first
       final user = await (database.select(database.users)
             ..where((tbl) =>
-                tbl.username.equals(_usernameController.text) &
-                tbl.password.equals(_passwordController.text)))
+                tbl.username.equals(username)))
           .getSingleOrNull();
+      final hash = user?.password ?? '';
 
-      if (user != null) {
+      final verified  = BCrypt.checkpw(password,hash);
+
+      if (user != null && verified) {
         // Local authentication successful
         ref.read(currentUserProvider.notifier).state = CurrentUser.fromUser(user);
         

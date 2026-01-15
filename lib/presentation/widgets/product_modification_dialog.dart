@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import '../../providers/database_providers.dart';
 import '../../domain/models/order_models.dart';
+import '../../services/permission_service.dart';
+import 'permission_guard.dart';
 
 class ProductModificationDialog extends ConsumerStatefulWidget {
   final dynamic product;
@@ -21,7 +23,7 @@ class ProductModificationDialog extends ConsumerStatefulWidget {
 class _ProductModificationDialogState extends ConsumerState<ProductModificationDialog> with SingleTickerProviderStateMixin {
   final Map<int, int> _componentQuantities = {};
   final Map<int, bool> _componentSpecial = {};
-  
+
   // Price modification fields
   late TextEditingController _manualDiscountController;
   late TextEditingController _noteController;
@@ -51,12 +53,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         _componentQuantities[comp.componentId] = comp.quantity;
         _componentSpecial[comp.componentId] = comp.isSpecial;
       }
-      
+
       // Populate manual discount
       if (item.manualDiscount > 0) {
         _manualDiscountController.text = item.manualDiscount.toStringAsFixed(2);
       }
-      
+
       // Populate note
       if (item.note != null) {
         _noteController.text = item.note!;
@@ -79,19 +81,19 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   @override
   Widget build(BuildContext context) {
     // Get product details
-    final productId = widget.product is OrderItem 
-        ? (widget.product as OrderItem).productId 
+    final productId = widget.product is OrderItem
+        ? (widget.product as OrderItem).productId
         : widget.product.id;
-    final productName = widget.product is OrderItem 
-        ? (widget.product as OrderItem).productName 
+    final productName = widget.product is OrderItem
+        ? (widget.product as OrderItem).productName
         : widget.product.name;
-    final productPrice = widget.product is OrderItem 
+    final productPrice = widget.product is OrderItem
         ? (widget.product as OrderItem).subtotalPerItem
         : widget.product.finalPrice;
-    final productImageUrl = widget.product is OrderItem 
-        ? (widget.product as OrderItem).imageUrl 
+    final productImageUrl = widget.product is OrderItem
+        ? (widget.product as OrderItem).imageUrl
         : widget.product.imageUrl;
-    
+
     // Get components available for this product
     final componentsAsync = ref.watch(productComponentsProvider(productId));
     final componentGroupsAsync = ref.watch(componentGroupsProvider);
@@ -108,7 +110,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                color: Theme.of(context).primaryColor.withOpacity(0.1),
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
@@ -182,11 +184,11 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                       IconButton(
                         onPressed: _quantity > 1
                             ? () {
-                                setState(() {
-                                  _quantity--;
-                                  _quantityController.text = _quantity.toString();
-                                });
-                              }
+                          setState(() {
+                            _quantity--;
+                            _quantityController.text = _quantity.toString();
+                          });
+                        }
                             : null,
                         icon: Icon(
                           Icons.remove_circle,
@@ -251,7 +253,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 ],
               ),
             ),
-            
+
             // TabBar
             TabBar(
               controller: _tabController,
@@ -269,7 +271,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 ),
               ],
             ),
-            
+
             // TabBarView
             Expanded(
               child: TabBarView(
@@ -277,13 +279,13 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 children: [
                   // Components Tab
                   _buildComponentsTab(componentsAsync, componentGroupsAsync),
-                  
+
                   // Price & Discount Tab
                   _buildPriceDiscountTab(productPrice),
                 ],
               ),
             ),
-            
+
             // Bottom buttons
             Padding(
               padding: const EdgeInsets.all(16),
@@ -312,7 +314,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 
-  Widget _buildComponentsTab(AsyncValue componentsAsync, AsyncValue componentGroupsAsync) {
+  Widget _buildComponentsTab(AsyncValue<List<dynamic>> componentsAsync, AsyncValue<List<dynamic>> componentGroupsAsync) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: componentsAsync.when(
@@ -329,7 +331,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               final Map<int?, List<Map<String, dynamic>>> groupedComponents = {};
               for (var componentData in componentsData) {
                 final component = componentData['component'];
-                final groupId = component.componentGroupId;
+                final groupId = component?.componentGroupId;
                 if (!groupedComponents.containsKey(groupId)) {
                   groupedComponents[groupId] = [];
                 }
@@ -342,10 +344,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   final groupId = groupedComponents.keys.elementAt(groupIndex);
                   final groupComponents = groupedComponents[groupId]!;
                   final group = groupId != null
-                      ? groups.cast<dynamic>().firstWhere(
-                          (g) => g.id == groupId,
-                          orElse: () => null,
-                        )
+                      ? (groups as List).firstWhere(
+                        (g) => g.id == groupId,
+                    orElse: () => null,
+                  )
                       : null;
 
                   return Column(
@@ -369,21 +371,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                         final isRequired = componentData['isRequired'] as bool;
                         final minQuantity = componentData['minQuantity'] as int;
                         final maxQuantity = componentData['maxQuantity'] as int;
-                        final quantity = _componentQuantities[component.id] ?? minQuantity;
 
-                        // Initialize required components to minimum quantity
-                        if (isRequired && !_componentQuantities.containsKey(component.id)) {
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            setState(() {
-                              _componentQuantities[component.id] = minQuantity;
-                            });
-                          });
-                        }
+                        // Get current quantity for this component
+                        final quantity = _componentQuantities[component.id] ?? minQuantity;
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 8),
                           elevation: isRequired ? 3 : 1,
-                          color: isRequired ? Colors.orange.withValues(alpha: 0.05) : null,
+                          color: isRequired ? Colors.orange.withOpacity(0.05) : null,
                           child: Padding(
                             padding: const EdgeInsets.all(12),
                             child: Row(
@@ -427,7 +422,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                             Text(
                                               '+\$${component.price.toStringAsFixed(2)}',
                                               style: TextStyle(
-                                                fontSize: 12,
                                                 color: Colors.grey[600],
                                               ),
                                             ),
@@ -450,15 +444,15 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                     IconButton(
                                       onPressed: quantity > minQuantity
                                           ? () {
-                                              setState(() {
-                                                _componentQuantities[component.id] = quantity - 1;
-                                                // Don't remove if required and at minimum
-                                                if (!isRequired && _componentQuantities[component.id]! < minQuantity) {
-                                                  _componentQuantities.remove(component.id);
-                                                  _componentSpecial.remove(component.id);
-                                                }
-                                              });
-                                            }
+                                        setState(() {
+                                          _componentQuantities[component.id] = quantity - 1;
+                                          // Don't remove if required and at minimum
+                                          if (!isRequired && _componentQuantities[component.id]! < minQuantity) {
+                                            _componentQuantities.remove(component.id);
+                                            _componentSpecial.remove(component.id);
+                                          }
+                                        });
+                                      }
                                           : null,
                                       icon: Icon(
                                         Icons.remove_circle_outline,
@@ -478,10 +472,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                     IconButton(
                                       onPressed: quantity < maxQuantity
                                           ? () {
-                                              setState(() {
-                                                _componentQuantities[component.id] = quantity + 1;
-                                              });
-                                            }
+                                        setState(() {
+                                          _componentQuantities[component.id] = quantity + 1;
+                                        });
+                                      }
                                           : null,
                                       icon: Icon(
                                         Icons.add_circle,
@@ -496,7 +490,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                             ),
                           ),
                         );
-                      }),
+                      }).toList(),
                     ],
                   );
                 },
@@ -509,9 +503,13 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(
-          child: Text('Error loading components: $error'),
-        ),
+        error: (error, stack) {
+          print(error);
+          print(stack);
+          return Center(
+            child: Text('Error loading components: $error'),
+          );
+        },
       ),
     );
   }
@@ -546,9 +544,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               ),
             ),
           ),
-          
+
           const SizedBox(height: 2),
-          
+
           // Product Discount (Read-only)
           if (_productDiscount > 0) ...[
             const Text(
@@ -601,69 +599,76 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             const SizedBox(height: 2),
           ],
 
-          // Manual Discount Section
-          const Text(
-            'Additional Discount',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Apply an extra discount to this item',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 2),
-          
-          Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: TextField(
-                  controller: _manualDiscountController,
-                  decoration: InputDecoration(
-                    labelText: _isPercentageDiscount ? 'Manual Discount (%)' : 'Manual Discount (\$)',
-                    border: const OutlineInputBorder(),
-                    prefixIcon: Icon(_isPercentageDiscount ? Icons.percent : Icons.attach_money),
-                    hintText: '0.00',
-                  ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  onChanged: (value) => setState(() {}),
+          // Manual Discount Section - Protected by permission
+          PermissionGuard(
+            permission: Permissions.manualDiscount,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Additional Discount',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-              ),
-              const SizedBox(width: 2),
-              Expanded(
-                child: SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(
-                      value: false,
-                      label: Text('\$'),
-                      icon: Icon(Icons.attach_money, size: 16),
+                const SizedBox(height: 8),
+                Text(
+                  'Apply an extra discount to this item',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 2),
+
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: _manualDiscountController,
+                        decoration: InputDecoration(
+                          labelText: _isPercentageDiscount ? 'Manual Discount (%)' : 'Manual Discount (\$)',
+                          border: const OutlineInputBorder(),
+                          prefixIcon: Icon(_isPercentageDiscount ? Icons.percent : Icons.attach_money),
+                          hintText: '0.00',
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        onChanged: (value) => setState(() {}),
+                      ),
                     ),
-                    ButtonSegment(
-                      value: true,
-                      label: Text('%'),
-                      icon: Icon(Icons.percent, size: 16),
+                    const SizedBox(width: 2),
+                    Expanded(
+                      child: SegmentedButton<bool>(
+                        segments: const [
+                          ButtonSegment(
+                            value: false,
+                            label: Text('\$'),
+                            icon: Icon(Icons.attach_money, size: 16),
+                          ),
+                          ButtonSegment(
+                            value: true,
+                            label: Text('%'),
+                            icon: Icon(Icons.percent, size: 16),
+                          ),
+                        ],
+                        selected: {_isPercentageDiscount},
+                        onSelectionChanged: (Set<bool> newSelection) {
+                          setState(() {
+                            _isPercentageDiscount = newSelection.first;
+                          });
+                        },
+                      ),
                     ),
                   ],
-                  selected: {_isPercentageDiscount},
-                  onSelectionChanged: (Set<bool> newSelection) {
-                    setState(() {
-                      _isPercentageDiscount = newSelection.first;
-                    });
-                  },
                 ),
-              ),
-            ],
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
-          
-          const SizedBox(height: 24),
-          
+
           // Note Section
           const Text(
             'Note',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 2),
-          
+
           TextField(
             controller: _noteController,
             decoration: const InputDecoration(
@@ -674,9 +679,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             ),
             maxLines: 3,
           ),
-          
+
           const SizedBox(height: 2),
-          
+
           // Preview
           Card(
             color: Colors.orange[50],
@@ -697,9 +702,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                     _buildPreviewRow('Manual Discount', _calculateManualDiscount(basePrice), isDiscount: true),
                   const Divider(),
                   _buildPreviewRow(
-                    'Final Price',
-                    basePrice - _productDiscount - _calculateManualDiscount(basePrice),
-                    isFinal: true
+                      'Final Price',
+                      basePrice - _productDiscount - _calculateManualDiscount(basePrice),
+                      isFinal: true
                   ),
                 ],
               ),
@@ -728,11 +733,11 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             style: TextStyle(
               fontSize: isFinal ? 18 : 14,
               fontWeight: isFinal ? FontWeight.bold : FontWeight.w600,
-              color: isDiscount 
-                  ? Colors.orange[700] 
-                  : isFinal 
-                      ? Theme.of(context).primaryColor 
-                      : Colors.black,
+              color: isDiscount
+                  ? Colors.orange[700]
+                  : isFinal
+                  ? Theme.of(context).primaryColor
+                  : Colors.black,
             ),
           ),
         ],
@@ -766,8 +771,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         ? (widget.product as OrderItem).productId
         : widget.product.id;
 
-    final componentsDataAsync = ref.read(productComponentsProvider(productId));
-    componentsDataAsync.when(
+    // Get components async data
+    final componentsAsync = ref.read(productComponentsProvider(productId));
+
+    componentsAsync.when(
       data: (componentsData) {
         // Validate required components
         for (var componentData in componentsData) {
@@ -780,7 +787,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             if (currentQuantity < minQuantity) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('${component.name} is required (minimum: $minQuantity)'),
+                  content: Text('${component.name ?? 'Component'} is required (minimum: $minQuantity)'),
                   backgroundColor: Colors.red,
                 ),
               );
@@ -789,36 +796,40 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           }
         }
 
-        // Only include components where quantity differs from default minimum
+        // Build selected components list
         final selectedComponents = <OrderItemComponent>[];
         for (final entry in _componentQuantities.entries) {
           final componentData = componentsData.firstWhere(
-            (cd) => cd['component'].id == entry.key,
-            orElse: () => {},
+                (cd) {
+              final comp = cd['component'];
+              return comp != null && comp.id == entry.key;
+            },
+            orElse: () => <String, dynamic>{},
           );
 
           if (componentData.isEmpty) continue;
 
           final component = componentData['component'];
-          final minQuantity = componentData['minQuantity'] as int;
+          if (component == null) continue;
+
+          final minQuantity = (componentData['minQuantity'] as int?) ?? 0;
           final componentQuantity = entry.value;
 
           // Only add if quantity is different from minimum (default)
-          // This way, required components at minimum quantity are shown but not saved
-          if (componentQuantity > minQuantity || componentQuantity > 0 && minQuantity == 0) {
+          if (componentQuantity > minQuantity || (componentQuantity > 0 && minQuantity == 0)) {
             selectedComponents.add(OrderItemComponent(
               componentId: component.id,
-              name: component.name,
+              name: component.name ?? 'Unknown',
               quantity: componentQuantity,
-              price: component.price,
+              price: component.price ?? 0.0,
               isSpecial: _componentSpecial[component.id] ?? false,
             ));
           }
         }
-        
+
         // Calculate manual discount
         final productPrice = widget.product is OrderItem
-            ? (widget.product as OrderItem).finalPrice 
+            ? (widget.product as OrderItem).finalPrice
             : widget.product.price;
         final manualDiscount = _calculateManualDiscount(productPrice);
 
@@ -846,4 +857,3 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 }
-

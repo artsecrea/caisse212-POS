@@ -95,7 +95,7 @@ class _ProductCard extends ConsumerWidget {
         // Check if product has required components
         componentsDataAsync.whenData((componentsData) {
           final hasRequiredComponents = componentsData.any(
-            (data) => data['isRequired'] as bool
+            (data) => (data['isRequired'] as bool?) ?? false
           );
 
           if (hasRequiredComponents) {
