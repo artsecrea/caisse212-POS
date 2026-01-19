@@ -1,5 +1,4 @@
 import 'package:bcrypt/bcrypt.dart';
-import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +8,7 @@ import '../../services/session_service.dart';
 import '../../services/api_service.dart';
 import '../../services/data_sync_service.dart';
 import '../../providers/database_providers.dart';
+import '../../utils/app_localizations.dart';
 import '../main_screen/main_screen.dart';
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -221,7 +221,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error during logout: $e'),
+            content: Text('can\'t logout: please check you username and password'),
             backgroundColor: Colors.red,
           ),
         );
@@ -236,39 +236,138 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return '$h:$m:$s';
   }
 
+  /// Handle exit to tenant screen - requires tenant password verification
+  Future<void> _handleExitToTenant() async {
+    final prefs = ref.read(sharedPreferencesProvider);
+    final tenantPasswordHash = prefs.getString('tenant_password_hash');
+
+    if (tenantPasswordHash == null) {
+      // No tenant password set, just go back
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/tenant');
+      }
+      return;
+    }
+
+    // Show password dialog
+    final passwordController = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        bool obscurePassword = true;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Exit to Tenant Login'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Enter tenant password to continue:'),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    decoration: InputDecoration(
+                      labelText: 'Tenant Password',
+                      prefixIcon: const Icon(Icons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            obscurePassword = !obscurePassword;
+                          });
+                        },
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                    autofocus: true,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final password = passwordController.text.trim();
+                    final verified = BCrypt.checkpw(password, tenantPasswordHash);
+                    Navigator.of(context).pop(verified);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Verify'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+
+    if (result == true) {
+      // Password verified, navigate to tenant screen
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/tenant');
+      }
+    } else if (result == false) {
+      // Password verification failed
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid tenant password'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final time = ref.watch(timeProvider).value ?? DateTime.now();
+    final l10n = AppLocalizations.of(context)!;
+
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Theme.of(context).primaryColor,
-              Theme.of(context).primaryColor.withOpacity(0.7),
-            ],
-          ),
-        ),
-        child: Center(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(32.0),
-              child: Card(
-                elevation: 8,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 450),
-                  padding: const EdgeInsets.all(40.0),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
+      body: Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Theme.of(context).primaryColor,
+                  Theme.of(context).primaryColor.withOpacity(0.7),
+                ],
+              ),
+            ),
+            child: Center(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(32.0),
+                  child: Card(
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 450),
+                      padding: const EdgeInsets.all(40.0),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
                         Icon(
                           Icons.point_of_sale,
                           size: 80,
@@ -280,7 +379,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                         const SizedBox(height: 16),
                         Text(
-                          'POS System',
+                          l10n.translate('app_title'),
                           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                                 fontWeight: FontWeight.bold,
                                 color: Theme.of(context).primaryColor,
@@ -289,7 +388,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Sign in to continue',
+                          l10n.translate('sign_in'),
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                 color: Colors.grey[600],
                               ),
@@ -297,11 +396,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                         const SizedBox(height: 32),
                         OnscreenKeyboardTextField(
-
                           controller: _usernameController,
                           decoration: InputDecoration(
-
-                            labelText: 'Username',
+                            labelText: l10n.translate('username'),
                             prefixIcon: const Icon(Icons.person),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
@@ -309,11 +406,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-                        TextFormField(
+                        OnscreenKeyboardTextField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
                           decoration: InputDecoration(
-                            labelText: 'Password',
+                            labelText: l10n.translate('password'),
                             prefixIcon: const Icon(Icons.lock),
                             suffixIcon: IconButton(
                               icon: Icon(
@@ -331,19 +428,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Please enter password';
-                            }
-                            return null;
-                          },
                         ),
                         const SizedBox(height: 16),
                         OnscreenKeyboardTextField(
                           controller: _startingBalanceController,
                           keyboardType: TextInputType.number,
                           decoration: InputDecoration(
-                            labelText: 'Starting Balance',
+                            labelText: l10n.translate('starting_balance'),
                             prefixIcon: const Icon(Icons.account_balance_wallet),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
@@ -390,21 +481,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     strokeWidth: 2,
                                   ),
                                 )
-                              : const Text(
-                                  'Sign In',
-                                  style: TextStyle(fontSize: 16),
+                              : Text(
+                                  l10n.translate('sign_in'),
+                                  style: const TextStyle(fontSize: 16),
                                 ),
                         ),
-                      ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
+        // Exit button positioned at top-left
+        Positioned(
+          top: 16,
+          left: 16,
+          child: Material(
+            color: Colors.black26,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              onTap: _handleExitToTenant,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                child: const Icon(
+                  Icons.exit_to_app,
+                  size: 32,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
         ),
-      ),
-    );
-  }
+      ],
+    ),
+  );
+}
 }
 

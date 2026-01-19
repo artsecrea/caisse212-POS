@@ -7,6 +7,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
+import '../../utils/currency_formatter.dart';
 import 'product_modification_dialog.dart';
 
 class ProductGrid extends ConsumerWidget {
@@ -122,12 +123,14 @@ class _ProductCard extends ConsumerWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(4),
         ),
-        child: showImages ? _buildWithImage(context) : _buildCompact(context),
+        child: showImages ? _buildWithImage(context, ref) : _buildCompact(context, ref),
       ),
     );
   }
 
-  Widget _buildWithImage(BuildContext context) {
+  Widget _buildWithImage(BuildContext context, WidgetRef ref) {
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -178,7 +181,7 @@ class _ProductCard extends ConsumerWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  '${product.finalPrice.toStringAsFixed(2)} \$',
+                  currencyFormatter.format(product.finalPrice),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.bold,
@@ -193,7 +196,8 @@ class _ProductCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildCompact(BuildContext context) {
+  Widget _buildCompact(BuildContext context, WidgetRef ref) {
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
@@ -211,7 +215,7 @@ class _ProductCard extends ConsumerWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            '${product.finalPrice.toStringAsFixed(2)} \$',
+            currencyFormatter.format(product.finalPrice),
             style: TextStyle(
               color: Theme.of(context).colorScheme.primary,
               fontWeight: FontWeight.bold,

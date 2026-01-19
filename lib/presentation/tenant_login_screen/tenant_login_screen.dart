@@ -288,7 +288,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            hintText: 'POS-1',
                           ),
 
                         ),
@@ -308,7 +307,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                         const SizedBox(height: 16),
 
                         // Password
-                        TextFormField(
+                        OnscreenKeyboardTextField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
                           decoration: InputDecoration(
@@ -330,15 +329,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Please enter password';
-                            }
-                            if (value.length < 3) {
-                              return 'Password must be at least 3 characters';
-                            }
-                            return null;
-                          },
+
                         ),
 
                         if (_errorMessage != null) ...[

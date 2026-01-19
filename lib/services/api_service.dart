@@ -94,6 +94,7 @@ class ApiService {
     await _prefs.remove(_tenantIdKey);
     await _prefs.remove(_baseUrlKey);
     await _prefs.remove(_isDemoModeKey);
+    await _prefs.remove('tenant_password_hash');
   }
 
   /// Login to the server with username, password, and POS name
@@ -276,7 +277,7 @@ class ApiService {
   /// Sync orders to server
   Future<void> syncOrders(List<Map<String, dynamic>> orders) async {
     try {
-      await _dio.post('/pos/sync/orders', data: {'orders': orders});
+      await _dio.post('/pos/orders/bulk', data: {'orders': orders});
     } on DioException catch (e) {
       throw Exception('Failed to sync orders: ${e.message}');
     }

@@ -4,6 +4,7 @@ import 'package:data_table_2/data_table_2.dart';
 import 'dart:convert';
 import '../../data/database/app_database.dart';
 import '../../providers/user_provider.dart';
+import '../../utils/app_localizations.dart';
 
 class UsersManagementScreen extends ConsumerStatefulWidget {
   const UsersManagementScreen({super.key});
@@ -72,13 +73,14 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   PreferredSizeWidget _buildAppBar() {
+    final l10n = AppLocalizations.of(context)!;
     return AppBar(
-      title: const Text('Users Management'),
+      title: Text(l10n.translate('users_management')),
       actions: [
         IconButton(
           icon: const Icon(Icons.refresh),
           onPressed: () => setState(() {}),
-          tooltip: 'Refresh',
+          tooltip: l10n.translate('refresh'),
         ),
         const SizedBox(width: 8),
       ],
@@ -86,6 +88,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   Widget _buildFiltersBar() {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -105,7 +108,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search by name, username...',
+                hintText: l10n.translate('search_by_name'),
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -130,20 +133,21 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   Widget _buildTypeDropdown() {
+    final l10n = AppLocalizations.of(context)!;
     return DropdownButtonFormField<String>(
       value: _typeFilter,
       decoration: InputDecoration(
-        labelText: 'User Type',
+        labelText: l10n.translate('user_type'),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
-      items: const [
-        DropdownMenuItem(value: 'ALL', child: Text('All Types')),
-        DropdownMenuItem(value: 'admin', child: Text('Admin')),
-        DropdownMenuItem(value: 'cashier', child: Text('Cashier')),
-        DropdownMenuItem(value: 'waiter', child: Text('Waiter')),
+      items: [
+        DropdownMenuItem(value: 'ALL', child: Text(l10n.translate('all_types'))),
+        DropdownMenuItem(value: 'admin', child: Text(l10n.translate('admin'))),
+        DropdownMenuItem(value: 'cashier', child: Text(l10n.translate('cashier'))),
+        DropdownMenuItem(value: 'waiter', child: Text(l10n.translate('waiter'))),
       ],
       onChanged: (value) {
         setState(() {
@@ -155,6 +159,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   Widget _buildUsersTable(List<User> users) {
+    final l10n = AppLocalizations.of(context)!;
     final paginatedUsers = _paginateUsers(users);
     final totalPages = (users.length / _rowsPerPage).ceil();
 
@@ -170,37 +175,37 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
             headingRowColor: MaterialStateProperty.all(Colors.grey[200]),
             columns: [
               DataColumn2(
-                label: const Text('ID', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('user_id'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
                 onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
               ),
               DataColumn2(
-                label: const Text('Username', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('username'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.M,
                 onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
               ),
               DataColumn2(
-                label: const Text('Full Name', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('full_name'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.L,
                 onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
               ),
               DataColumn2(
-                label: const Text('Type', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('user_type'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.M,
                 onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
               ),
               DataColumn2(
-                label: const Text('Created At', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('created_at'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.M,
                 onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
               ),
               DataColumn2(
-                label: const Text('Last Login', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('last_login'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.M,
                 onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending),
               ),
               DataColumn2(
-                label: const Text('Actions', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('actions'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
                 fixedWidth: 80,
               ),
@@ -214,6 +219,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   DataRow _buildDataRow(User user) {
+    final l10n = AppLocalizations.of(context)!;
     return DataRow(
       cells: [
         DataCell(Text(user.id.toString())),
@@ -221,12 +227,12 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         DataCell(Text('${user.firstName} ${user.lastName}')),
         DataCell(_buildTypeChip(user.type)),
         DataCell(Text(_formatDate(user.createdAt))),
-        DataCell(Text(user.lastLogin != null ? _formatDate(user.lastLogin!) : 'Never')),
+        DataCell(Text(user.lastLogin != null ? _formatDate(user.lastLogin!) : l10n.translate('never'))),
         DataCell(
           IconButton(
             icon: const Icon(Icons.visibility, size: 20),
             onPressed: () => _showUserDetails(user),
-            tooltip: 'View Details',
+            tooltip: l10n.translate('view_details'),
           ),
         ),
       ],
@@ -268,6 +274,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   Widget _buildPaginationControls(int totalItems, int totalPages) {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -278,7 +285,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            'Showing ${_currentPage * _rowsPerPage + 1}-${((_currentPage + 1) * _rowsPerPage).clamp(0, totalItems)} of $totalItems users',
+            '${l10n.translate('showing')} ${_currentPage * _rowsPerPage + 1}-${((_currentPage + 1) * _rowsPerPage).clamp(0, totalItems)} ${l10n.translate('of')} $totalItems ${l10n.translate('users').toLowerCase()}',
             style: TextStyle(color: Colors.grey[700]),
           ),
           Row(
@@ -292,7 +299,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                 onPressed: _currentPage > 0 ? () => setState(() => _currentPage--) : null,
               ),
               Text(
-                'Page ${_currentPage + 1} of $totalPages',
+                '${l10n.translate('page')} ${_currentPage + 1} ${l10n.translate('of')} $totalPages',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               IconButton(
@@ -311,6 +318,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   Widget _buildEmptyView() {
+    final l10n = AppLocalizations.of(context)!;
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -318,12 +326,12 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
           Icon(Icons.people_outline, size: 64, color: Colors.grey[400]),
           const SizedBox(height: 16),
           Text(
-            'No users found',
+            l10n.translate('no_users_found'),
             style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
-            'Try adjusting your filters',
+            l10n.translate('try_adjusting_filters'),
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
         ],
@@ -332,6 +340,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   Widget _buildErrorView(String error) {
+    final l10n = AppLocalizations.of(context)!;
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -339,7 +348,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
           Icon(Icons.error_outline, size: 64, color: Colors.red[400]),
           const SizedBox(height: 16),
           Text(
-            'Error loading users',
+            l10n.translate('error_loading_users'),
             style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),

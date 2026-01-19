@@ -12,18 +12,9 @@ class DataSyncService {
   /// Callback for progress updates
   Function(String message, double progress)? onProgress;
 
-  /// Clear all data from the database
-  Future<void> clearAllData() async {
-    // Delete in order to respect foreign key constraints
-    await _database.delete(_database.tickets).go();
-    await _database.delete(_database.orderProductComponents).go();
-    await _database.delete(_database.orderProducts).go();
-    await _database.delete(_database.orders).go();
-    await _database.delete(_database.transactions).go();
-    await _database.delete(_database.payments).go();
-    await _database.delete(_database.cashSessions).go();
-    await _database.delete(_database.customers).go();
-    await _database.delete(_database.commercials).go();
+  /// Clear only master data (not transactional data like orders, tickets, sessions)
+  Future<void> clearMasterData() async {
+    // Only clear reference/master data, preserve transactional data
     await _database.delete(_database.kDSs).go();
     await _database.delete(_database.kiosks).go();
     await _database.delete(_database.productComponents).go();
@@ -37,12 +28,58 @@ class DataSyncService {
     await _database.delete(_database.users).go();
   }
 
+  /// Clear old synced data based on retention period
+  Future<void> clearOldSyncedData(int retentionDays) async {
+    final cutoffDate = DateTime.now().subtract(Duration(days: retentionDays));
+
+    // Delete old synced orders
+    await (_database.delete(_database.orders)
+      ..where((o) => o.isSynced.equals(true) & o.updatedAt.isSmallerThanValue(cutoffDate)))
+      .go();
+
+    // Delete old synced tickets
+    await (_database.delete(_database.tickets)
+      ..where((t) => t.isSynced.equals(true) & t.createdAt.isSmallerThanValue(cutoffDate)))
+      .go();
+
+    // Delete old synced sessions
+    await (_database.delete(_database.cashSessions)
+      ..where((s) => s.isSynced.equals(true) & s.endedAt.isSmallerThanValue(cutoffDate)))
+      .go();
+
+    // Delete old synced customers
+    await (_database.delete(_database.customers)
+      ..where((c) => c.isSynced.equals(true) & c.createdAt.isSmallerThanValue(cutoffDate)))
+      .go();
+  }
+
+  /// Clear all data from the database (for demo mode or full reset)
+  Future<void> clearAllData() async {
+    // Delete in order to respect foreign key constraints
+    await _database.delete(_database.tickets).go();
+    await _database.delete(_database.orderProductComponents).go();
+    await _database.delete(_database.orderProducts).go();
+    await _database.delete(_database.orders).go();
+    await _database.delete(_database.transactions).go();
+    await _database.delete(_database.payments).go();
+    await _database.delete(_database.cashSessions).go();
+    await _database.delete(_database.customers).go();
+    await _database.delete(_database.commercials).go();
+    await clearMasterData();
+  }
+
   /// Sync all data from the server
-  Future<void> syncAllData() async {
+  Future<void> syncAllData({int? dataRetentionDays}) async {
     try {
-      // Clear existing data first
-      onProgress?.call('Clearing existing data...', 0.0);
-      await clearAllData();
+      // Clear only master data (keep transactional data like orders, tickets)
+      onProgress?.call('Clearing master data...', 0.0);
+      await clearMasterData();
+
+      // Optionally clear old synced data based on retention period
+      if (dataRetentionDays != null && dataRetentionDays > 0) {
+        onProgress?.call('Clearing old synced data...', 0.05);
+        await clearOldSyncedData(dataRetentionDays);
+      }
 
       // Sync in order to respect foreign key constraints
       onProgress?.call('Fetching users...', 0.1);
@@ -273,22 +310,67 @@ class DataSyncService {
     final orders = await (_database.select(_database.orders)
       ..where((o) => o.status.equals('COMPLETED') & o.isSynced.equals(false)))
       .get();
-    return orders.map((o) => {
-      'id': o.id,
-      'code': o.code,
-      'status': o.status,
-      'type': o.type,
-      'priority': o.priority,
-      'coupon': o.coupon,
-      'persons': o.persons,
-      'tableId': o.tableId,
-      'clientId': o.clientId,
-      'commercialId': o.commercialId,
-      'discountPercentage': o.discountPercentage,
-      'note': o.note,
-      'createdAt': o.createdAt.toIso8601String(),
-      'updatedAt': o.updatedAt.toIso8601String(),
-    }).toList();
+
+    // Build order list with products
+    final ordersList = <Map<String, dynamic>>[];
+
+    for (final order in orders) {
+      // Get all products for this order
+      final orderProducts = await (_database.select(_database.orderProducts)
+        ..where((op) => op.orderId.equals(order.id)))
+        .get();
+
+      // Build products list
+      final productsList = <Map<String, dynamic>>[];
+
+      for (final product in orderProducts) {
+        // Get components for this product
+        final productComponents = await (_database.select(_database.orderProductComponents)
+          ..where((opc) => opc.orderProductId.equals(product.id)))
+          .get();
+
+        // Build components list
+        final componentsList = productComponents.map((comp) => {
+          'componentId': comp.componentId,
+          'quantity': comp.quantity,
+          'isSpecial': comp.isSpecial,
+        }).toList();
+
+        // Build product map
+        productsList.add({
+          'productId': product.productId,
+          'quantity': product.quantity,
+          'unitaryPrice': product.unitaryPrice,
+          'unitaryDiscount': product.unitaryDiscount,
+          'unitaryTva': product.unitaryTva,
+          'manualDiscount': product.manualDiscount,
+          'manualDiscountReason': product.manualDiscountReason,
+          'state': product.state,
+          'components': componentsList,
+        });
+      }
+
+      // Build order map with products
+      ordersList.add({
+        'id': order.id,
+        'code': order.code,
+        'status': order.status,
+        'type': order.type,
+        'priority': order.priority,
+        'coupon': order.coupon,
+        'persons': order.persons,
+        'tableId': order.tableId,
+        'clientId': order.clientId,
+        'commercialId': order.commercialId,
+        'discountPercentage': order.discountPercentage,
+        'note': order.note,
+        'products': productsList,
+        'createdAt': order.createdAt.toIso8601String(),
+        'updatedAt': order.updatedAt.toIso8601String(),
+      });
+    }
+
+    return ordersList;
   }
 
   /// Get all tickets for completed, synced orders that haven't been synced yet
@@ -417,6 +499,109 @@ class DataSyncService {
     if (sessions.isNotEmpty) {
       await _apiService.syncSessions(sessions);
       await markSessionsAsSynced(sessions.map((s) => s['id'] as int).toList());
+    }
+  }
+
+  /// Sync a single order immediately (for online auto-sync)
+  Future<bool> syncSingleOrder(int orderId) async {
+    try {
+      // Get the specific order with products
+      final order = await (_database.select(_database.orders)
+        ..where((o) => o.id.equals(orderId)))
+        .getSingleOrNull();
+
+      if (order == null || order.isSynced) {
+        return false; // Order doesn't exist or already synced
+      }
+
+      // Get all products for this order
+      final orderProducts = await (_database.select(_database.orderProducts)
+        ..where((op) => op.orderId.equals(order.id)))
+        .get();
+
+      // Build products list with components
+      final productsList = <Map<String, dynamic>>[];
+
+      for (final product in orderProducts) {
+        final productComponents = await (_database.select(_database.orderProductComponents)
+          ..where((opc) => opc.orderProductId.equals(product.id)))
+          .get();
+
+        final componentsList = productComponents.map((comp) => {
+          'componentId': comp.componentId,
+          'quantity': comp.quantity,
+          'isSpecial': comp.isSpecial,
+        }).toList();
+
+        productsList.add({
+          'productId': product.productId,
+          'quantity': product.quantity,
+          'unitaryPrice': product.unitaryPrice,
+          'unitaryDiscount': product.unitaryDiscount,
+          'unitaryTva': product.unitaryTva,
+          'manualDiscount': product.manualDiscount,
+          'manualDiscountReason': product.manualDiscountReason,
+          'state': product.state,
+          'components': componentsList,
+        });
+      }
+
+      // Build order map
+      final orderData = {
+        'id': order.id,
+        'code': order.code,
+        'status': order.status,
+        'type': order.type,
+        'priority': order.priority,
+        'coupon': order.coupon,
+        'persons': order.persons,
+        'tableId': order.tableId,
+        'clientId': order.clientId,
+        'commercialId': order.commercialId,
+        'discountPercentage': order.discountPercentage,
+        'note': order.note,
+        'products': productsList,
+        'createdAt': order.createdAt.toIso8601String(),
+        'updatedAt': order.updatedAt.toIso8601String(),
+      };
+
+      // Sync to server
+      await _apiService.syncOrders([orderData]);
+
+      // Mark as synced
+      await markOrdersAsSynced([orderId]);
+
+      return true;
+    } catch (e) {
+      print('Error syncing single order: $e');
+      return false;
+    }
+  }
+
+  /// Sync orders in bulk with limited batch size
+  Future<int> syncOrdersBulk({int batchSize = 50}) async {
+    try {
+      // Get unsynced orders
+      final orders = await getOrdersForSync();
+
+      if (orders.isEmpty) {
+        return 0;
+      }
+
+      // Take only the specified batch size
+      final batch = orders.take(batchSize).toList();
+
+      // Sync the batch
+      await _apiService.syncOrders(batch);
+
+      // Mark as synced
+      final syncedIds = batch.map((o) => o['id'] as int).toList();
+      await markOrdersAsSynced(syncedIds);
+
+      return batch.length;
+    } catch (e) {
+      print('Error syncing orders bulk: $e');
+      return 0;
     }
   }
 

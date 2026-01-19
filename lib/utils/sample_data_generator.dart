@@ -1,3 +1,4 @@
+import 'package:bcrypt/bcrypt.dart';
 import 'package:posecrea/data/database/app_database.dart';
 import 'package:drift/drift.dart';
 
@@ -33,7 +34,7 @@ class SampleDataGenerator {
       UsersCompanion.insert(
         id: const Value(1),
         username: 'admin',
-        password: 'admin123',
+        password: BCrypt.hashpw("admin123",BCrypt.gensalt()),
         firstName: 'Admin',
         lastName: 'User',
         type: 'admin',

@@ -5,6 +5,7 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../services/session_service.dart';
 import '../../services/permission_service.dart';
+import '../../utils/app_localizations.dart';
 import 'permission_guard.dart';
 
 class SessionsManagementScreen extends ConsumerStatefulWidget {
@@ -65,20 +66,21 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   }
 
   Future<void> _deleteSession(CashSession session) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Session'),
-        content: Text('Are you sure you want to delete session #${session.id}?\nThis action cannot be undone.'),
+        title: Text(l10n.translate('delete')),
+        content: Text('${l10n.translate('are_you_sure')} ${l10n.translate('session')} #${session.id}?\n${l10n.translate('delete_confirm')}'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(l10n.translate('cancel')),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete'),
+            child: Text(l10n.translate('delete')),
           ),
         ],
       ),
@@ -92,13 +94,13 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         await _loadSessions();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Session deleted')),
+            SnackBar(content: Text(l10n.translate('success'))),
           );
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete session: $e')),
+            SnackBar(content: Text('${l10n.translate('error')}: $e')),
           );
         }
       }

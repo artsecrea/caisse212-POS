@@ -1,5 +1,6 @@
 import 'package:cmdecrea/cmdecrea.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
@@ -21,6 +22,7 @@ import 'presentation/login_screen/login_screen.dart';
 import 'presentation/main_screen/main_screen.dart';
 import 'providers/database_providers.dart';
 import 'providers/settings_provider.dart';
+import 'utils/app_localizations.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -106,13 +108,30 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     s.start(deviceId: "deviceId", deviceName: "POS", role: DeviceRole.host);
 
+    // Get locale from settings
+    final locale = Locale(settings.language);
+
     return MaterialApp(
       title: 'POSECREA',
       builder : OnscreenKeyboard.builder(
         width: (context) => MediaQuery.sizeOf(context).width / 2,
-
       ),
       debugShowCheckedModeBanner: false,
+
+      // Localization configuration
+      locale: locale,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('en', ''), // English
+        Locale('ar', ''), // Arabic
+        Locale('fr', ''), // French
+      ],
+
       theme: AppTheme.lightTheme(),
       darkTheme: AppTheme.darkTheme(),
       themeMode: settings.isDarkMode ? ThemeMode.dark : ThemeMode.light,

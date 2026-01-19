@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
+import '../../utils/app_localizations.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -10,6 +11,7 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
     final settingsNotifier = ref.read(settingsProvider.notifier);
+    final l10n = AppLocalizations.of(context)!;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -29,9 +31,9 @@ class SettingsScreen extends ConsumerWidget {
                 children: [
                   const Icon(Icons.settings, size: 28),
                   const SizedBox(width: 12),
-                  const Text(
-                    'Settings',
-                    style: TextStyle(
+                  Text(
+                    l10n.translate('settings'),
+                    style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
                     ),
@@ -56,9 +58,9 @@ class SettingsScreen extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
             // Appearance Section
-            const Text(
-              'Appearance',
-              style: TextStyle(
+            Text(
+              l10n.translate('appearance'),
+              style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: Colors.grey,
@@ -68,18 +70,24 @@ class SettingsScreen extends ConsumerWidget {
             _buildSwitchTile(
               context: context,
               icon: Icons.dark_mode,
-              title: 'Dark Mode',
+              title: l10n.translate('dark_mode'),
               subtitle: 'Use dark theme',
               value: settings.isDarkMode,
               onChanged: (value) => settingsNotifier.setDarkMode(value),
+            ),
+            const SizedBox(height: 12),
+            _buildLanguageSelector(
+              context: context,
+              currentLanguage: settings.language,
+              onChanged: (value) => settingsNotifier.setLanguage(value),
             ),
 
             const SizedBox(height: 24),
 
             // Display Section
-            const Text(
+            Text(
               'Display',
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: Colors.grey,
@@ -89,7 +97,7 @@ class SettingsScreen extends ConsumerWidget {
             _buildSwitchTile(
               context: context,
               icon: Icons.image,
-              title: 'Show Product Images',
+              title: l10n.translate('show_product_images'),
               subtitle: 'Display product images in the grid',
               value: settings.showProductImages,
               onChanged: (value) => settingsNotifier.setShowProductImages(value),
@@ -104,9 +112,9 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: 24),
 
             // Order Defaults Section
-            const Text(
+            Text(
               'Order Defaults',
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: Colors.grey,
@@ -123,6 +131,90 @@ class SettingsScreen extends ConsumerWidget {
               context: context,
               currentStatus: settings.defaultOrderStatus,
               onChanged: (value) => settingsNotifier.setDefaultOrderStatus(value),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Currency Section
+            const Text(
+              'Currency',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildCurrencySelector(
+              context: context,
+              currentCurrency: settings.currency,
+              onChanged: (value) => settingsNotifier.setCurrency(value),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Action Buttons Section
+            const Text(
+              'Action Buttons Visibility',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.table_bar,
+              title: 'Table Button',
+              subtitle: 'Show table selection button',
+              value: settings.showTableButton,
+              onChanged: (value) => settingsNotifier.setShowTableButton(value),
+            ),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.person,
+              title: 'Customer Button',
+              subtitle: 'Show customer selection button',
+              value: settings.showCustomerButton,
+              onChanged: (value) => settingsNotifier.setShowCustomerButton(value),
+            ),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.badge,
+              title: 'Commercial Button',
+              subtitle: 'Show commercial selection button',
+              value: settings.showCommercialButton,
+              onChanged: (value) => settingsNotifier.setShowCommercialButton(value),
+            ),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.discount,
+              title: 'Coupon Button',
+              subtitle: 'Show coupon button',
+              value: settings.showCouponButton,
+              onChanged: (value) => settingsNotifier.setShowCouponButton(value),
+            ),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.percent,
+              title: 'Discount Button',
+              subtitle: 'Show manual discount button',
+              value: settings.showDiscountButton,
+              onChanged: (value) => settingsNotifier.setShowDiscountButton(value),
+            ),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.print,
+              title: 'Print Button',
+              subtitle: 'Show print button',
+              value: settings.showPrintButton,
+              onChanged: (value) => settingsNotifier.setShowPrintButton(value),
             ),
 
             const SizedBox(height: 32),
@@ -573,6 +665,207 @@ class SettingsScreen extends ConsumerWidget {
                 color: isSelected ? color.withValues(alpha: 0.8) : Colors.grey,
               ),
               textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCurrencySelector({
+    required BuildContext context,
+    required String currentCurrency,
+    required ValueChanged<String> onChanged,
+  }) {
+    final currencies = [
+      {'symbol': '\$', 'name': 'US Dollar'},
+      {'symbol': '€', 'name': 'Euro'},
+      {'symbol': '£', 'name': 'British Pound'},
+      {'symbol': 'DH', 'name': 'Moroccan Dirham'},
+      {'symbol': '₹', 'name': 'Indian Rupee'},
+      {'symbol': '¥', 'name': 'Japanese Yen'},
+      {'symbol': 'CHF', 'name': 'Swiss Franc'},
+      {'symbol': 'R', 'name': 'South African Rand'},
+    ];
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.attach_money),
+                const SizedBox(width: 12),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Currency Symbol',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      'Select currency to display in the app',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: currencies.map((currency) {
+                final isSelected = currency['symbol'] == currentCurrency;
+                return InkWell(
+                  onTap: () => onChanged(currency['symbol']!),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Theme.of(context).primaryColor.withValues(alpha: 0.2)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isSelected
+                            ? Theme.of(context).primaryColor
+                            : Colors.grey.withValues(alpha: 0.3),
+                        width: isSelected ? 2 : 1,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          currency['symbol']!,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            color: isSelected ? Theme.of(context).primaryColor : null,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          currency['name']!,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isSelected
+                                ? Theme.of(context).primaryColor.withValues(alpha: 0.8)
+                                : Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLanguageSelector({
+    required BuildContext context,
+    required String currentLanguage,
+    required ValueChanged<String> onChanged,
+  }) {
+    final languages = [
+      {'code': 'en', 'name': 'English', 'flag': '🇬🇧'},
+      {'code': 'ar', 'name': 'العربية', 'flag': '🇸🇦'},
+      {'code': 'fr', 'name': 'Français', 'flag': '🇫🇷'},
+    ];
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.language),
+                const SizedBox(width: 12),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Language',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      'Select app language',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: languages.map((language) {
+                final isSelected = language['code'] == currentLanguage;
+                return InkWell(
+                  onTap: () => onChanged(language['code']!),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: 140,
+                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Theme.of(context).primaryColor.withValues(alpha: 0.2)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected
+                            ? Theme.of(context).primaryColor
+                            : Colors.grey.withValues(alpha: 0.3),
+                        width: isSelected ? 2 : 1,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          language['flag']!,
+                          style: const TextStyle(fontSize: 32),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          language['name']!,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            color: isSelected ? Theme.of(context).primaryColor : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
           ],
         ),

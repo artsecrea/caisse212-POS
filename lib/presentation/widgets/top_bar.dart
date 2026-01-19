@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:bcrypt/bcrypt.dart';
 import 'package:posecrea/providers/stat_provider.dart';
 import 'package:posecrea/providers/order_provider.dart';
 import 'package:posecrea/services/api_service.dart';
 import 'package:posecrea/services/data_sync_service.dart';
 import 'package:posecrea/services/permission_service.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/settings_provider.dart';
 import '../../services/session_service.dart';
 import '../settings/settings_screen.dart';
 
@@ -340,6 +342,91 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   /// Full logout - clears tenant data and goes back to server login
   Future<void> _handleFullLogout() async {
+    // First verify tenant password
+    final prefs = ref.read(sharedPreferencesProvider);
+    final tenantPasswordHash = prefs.getString('tenant_password_hash');
+
+    if (tenantPasswordHash != null) {
+      // Show password dialog
+      final passwordController = TextEditingController();
+      final verified = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          bool obscurePassword = true;
+          return StatefulBuilder(
+            builder: (context, setState) {
+              return AlertDialog(
+                title: const Text('Verify Tenant Password'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('This will clear ALL data and disconnect from the server.'),
+                    const SizedBox(height: 8),
+                    const Text('Enter tenant password to continue:'),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: obscurePassword,
+                      decoration: InputDecoration(
+                        labelText: 'Tenant Password',
+                        prefixIcon: const Icon(Icons.lock),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            obscurePassword ? Icons.visibility : Icons.visibility_off,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              obscurePassword = !obscurePassword;
+                            });
+                          },
+                        ),
+                        border: const OutlineInputBorder(),
+                      ),
+                      autofocus: true,
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      final password = passwordController.text.trim();
+                      final isVerified = BCrypt.checkpw(password, tenantPasswordHash);
+                      Navigator.of(context).pop(isVerified);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Verify & Logout'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      passwordController.dispose();
+
+      if (verified != true) {
+        if (mounted && verified == false) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Invalid tenant password'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    // After password verification (or if no password set), show confirmation dialog
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -373,7 +460,6 @@ class _TopBarState extends ConsumerState<TopBar> {
       ref.read(orderProvider.notifier).clearOrder();
 
       // Clear API service data
-      final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
       await apiService.clearAuthData();
 
@@ -408,6 +494,7 @@ class _TopBarState extends ConsumerState<TopBar> {
   Future<void> _handleSync() async {
     final prefs = ref.read(sharedPreferencesProvider);
     final apiService = ApiService(prefs);
+    final settings = ref.read(settingsProvider);
 
     // Check if in demo mode
     if (apiService.isDemoMode()) {
@@ -442,8 +529,8 @@ class _TopBarState extends ConsumerState<TopBar> {
       // First upload local data
       await syncService.uploadLocalData();
 
-      // Then download fresh data
-      await syncService.syncAllData();
+      // Then download fresh data with data retention
+      await syncService.syncAllData(dataRetentionDays: settings.dataRetentionDays);
 
       if (mounted) {
         Navigator.of(context).pop(); // Close dialog

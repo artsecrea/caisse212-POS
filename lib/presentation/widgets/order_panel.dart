@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/order_provider.dart';
 import '../../domain/models/order_models.dart';
+import '../../utils/currency_formatter.dart';
+import '../../utils/app_localizations.dart';
 import 'product_modification_dialog.dart';
 
 
@@ -34,7 +36,8 @@ class OrderPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentOrder = ref.watch(orderProvider);
-
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     return Container(
       decoration: BoxDecoration(
@@ -64,7 +67,7 @@ class OrderPanel extends ConsumerWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  currentOrder.orderId?.toString() ?? 'Current Order*',
+                  currentOrder.orderId?.toString() ?? l10n.translate('current_order'),
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
@@ -74,7 +77,7 @@ class OrderPanel extends ConsumerWidget {
                       ref.read(orderProvider.notifier).clearOrder();
                     },
                     icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    tooltip: 'Clear Order',
+                    tooltip: l10n.translate('clear'),
                   ),
               ],
             ),
@@ -94,7 +97,7 @@ class OrderPanel extends ConsumerWidget {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'click a product to start new order',
+                          l10n.translate('no_items'),
                           style: TextStyle(
                             fontSize: 16,
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -327,7 +330,7 @@ class OrderPanel extends ConsumerWidget {
                                           crossAxisAlignment: CrossAxisAlignment.end,
                                           children: [
                                             Text(
-                                              '\$${item.totalPrice.toStringAsFixed(2)}',
+                                              currencyFormatter.format(item.totalPrice),
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
                                                 color: Theme.of(context).primaryColor,
@@ -337,7 +340,7 @@ class OrderPanel extends ConsumerWidget {
                                             if (item.totalDiscount > 0) ...[
                                               const SizedBox(height: 2),
                                               Text(
-                                                'Discount: -\$${item.totalDiscount.toStringAsFixed(2)}',
+                                                'Discount: -${currencyFormatter.format(item.totalDiscount)}',
                                                 style: TextStyle(
                                                   fontSize: 11,
                                                   color: Colors.orange[700],
@@ -380,9 +383,9 @@ class OrderPanel extends ConsumerWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Subtotal:'),
+                      Text(l10n.translate('subtotal')),
                       Text(
-                        '\$${currentOrder.subtotal.toStringAsFixed(2)}',
+                        currencyFormatter.format(currentOrder.subtotal),
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ],
@@ -396,13 +399,13 @@ class OrderPanel extends ConsumerWidget {
                           Icon(Icons.percent, size: 14, color: Colors.orange[700]),
                           const SizedBox(width: 4),
                           Text(
-                            'Discount (${currentOrder.discountPercentage.toStringAsFixed(0)}%):',
+                            '${l10n.translate('discount')} (${currentOrder.discountPercentage.toStringAsFixed(0)}%):',
                             style: TextStyle(color: Colors.orange[700]),
                           ),
                         ],
                       ),
                       Text(
-                        '-\$${currentOrder.discountAmount.toStringAsFixed(2)}',
+                        '-${currencyFormatter.format(currentOrder.discountAmount)}',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.orange[700],
@@ -415,9 +418,9 @@ class OrderPanel extends ConsumerWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Subtotal:'),
+                      Text('${l10n.translate('subtotal')}:'),
                       Text(
-                        '\$${currentOrder.subtotal.toStringAsFixed(2)}',
+                        currencyFormatter.format(currentOrder.subtotal),
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ],
@@ -427,9 +430,9 @@ class OrderPanel extends ConsumerWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Tax:'),
+                    Text('${l10n.translate('tax')}:'),
                     Text(
-                      '\$${currentOrder.tax.toStringAsFixed(2)}',
+                      currencyFormatter.format(currentOrder.tax),
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -438,15 +441,15 @@ class OrderPanel extends ConsumerWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Total:',
-                      style: TextStyle(
+                    Text(
+                      '${l10n.translate('total')}:',
+                      style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     Text(
-                      '\$${currentOrder.total.toStringAsFixed(2)}',
+                      currencyFormatter.format(currentOrder.total),
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,

@@ -7,42 +7,101 @@ enum CategoryDisplayMode {
 // App Settings Model
 class AppSettings {
   final bool isDarkMode;
+  final String language; // 'en', 'ar', 'fr'
   final String defaultOrderType; // 'DINE_IN' or 'TAKE_AWAY'
   final bool showProductImages;
   final String defaultOrderStatus; // 'PENDING', 'ONHOLD', etc.
   final CategoryDisplayMode categoryDisplayMode; // How to display categories
+  final String currency; // Currency symbol (e.g., '$', '€', '£', 'DH')
+
+  // Action button visibility
+  final bool showTableButton;
+  final bool showCustomerButton;
+  final bool showCommercialButton;
+  final bool showCouponButton;
+  final bool showDiscountButton;
+  final bool showPrintButton;
+
+  // Sync settings
+  final bool autoSyncOnline; // Auto-sync orders when online
+  final int bulkSyncSize; // Number of orders to sync at once when offline
+  final int dataRetentionDays; // Days to keep synced data before deletion
 
   const AppSettings({
     this.isDarkMode = false,
+    this.language = 'en',
     this.defaultOrderType = 'DINE_IN',
     this.showProductImages = true,
     this.defaultOrderStatus = 'PENDING',
     this.categoryDisplayMode = CategoryDisplayMode.topBar,
+    this.currency = '\$',
+    this.showTableButton = true,
+    this.showCustomerButton = true,
+    this.showCommercialButton = true,
+    this.showCouponButton = true,
+    this.showDiscountButton = true,
+    this.showPrintButton = true,
+    this.autoSyncOnline = true,
+    this.bulkSyncSize = 50,
+    this.dataRetentionDays = 7,
   });
 
   AppSettings copyWith({
     bool? isDarkMode,
+    String? language,
     String? defaultOrderType,
     bool? showProductImages,
     String? defaultOrderStatus,
     CategoryDisplayMode? categoryDisplayMode,
+    String? currency,
+    bool? showTableButton,
+    bool? showCustomerButton,
+    bool? showCommercialButton,
+    bool? showCouponButton,
+    bool? showDiscountButton,
+    bool? showPrintButton,
+    bool? autoSyncOnline,
+    int? bulkSyncSize,
+    int? dataRetentionDays,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
+      language: language ?? this.language,
       defaultOrderType: defaultOrderType ?? this.defaultOrderType,
       showProductImages: showProductImages ?? this.showProductImages,
       defaultOrderStatus: defaultOrderStatus ?? this.defaultOrderStatus,
       categoryDisplayMode: categoryDisplayMode ?? this.categoryDisplayMode,
+      currency: currency ?? this.currency,
+      showTableButton: showTableButton ?? this.showTableButton,
+      showCustomerButton: showCustomerButton ?? this.showCustomerButton,
+      showCommercialButton: showCommercialButton ?? this.showCommercialButton,
+      showCouponButton: showCouponButton ?? this.showCouponButton,
+      showDiscountButton: showDiscountButton ?? this.showDiscountButton,
+      showPrintButton: showPrintButton ?? this.showPrintButton,
+      autoSyncOnline: autoSyncOnline ?? this.autoSyncOnline,
+      bulkSyncSize: bulkSyncSize ?? this.bulkSyncSize,
+      dataRetentionDays: dataRetentionDays ?? this.dataRetentionDays,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'isDarkMode': isDarkMode,
+      'language': language,
       'defaultOrderType': defaultOrderType,
       'showProductImages': showProductImages,
       'defaultOrderStatus': defaultOrderStatus,
       'categoryDisplayMode': categoryDisplayMode.name,
+      'currency': currency,
+      'showTableButton': showTableButton,
+      'showCustomerButton': showCustomerButton,
+      'showCommercialButton': showCommercialButton,
+      'showCouponButton': showCouponButton,
+      'showDiscountButton': showDiscountButton,
+      'showPrintButton': showPrintButton,
+      'autoSyncOnline': autoSyncOnline,
+      'bulkSyncSize': bulkSyncSize,
+      'dataRetentionDays': dataRetentionDays,
     };
   }
 
@@ -56,12 +115,22 @@ class AppSettings {
         (e) => e.name == json['categoryDisplayMode'],
         orElse: () => CategoryDisplayMode.topBar,
       ),
+      currency: json['currency'] as String? ?? '\$',
+      showTableButton: json['showTableButton'] as bool? ?? true,
+      showCustomerButton: json['showCustomerButton'] as bool? ?? true,
+      showCommercialButton: json['showCommercialButton'] as bool? ?? true,
+      showCouponButton: json['showCouponButton'] as bool? ?? true,
+      showDiscountButton: json['showDiscountButton'] as bool? ?? true,
+      showPrintButton: json['showPrintButton'] as bool? ?? true,
+      autoSyncOnline: json['autoSyncOnline'] as bool? ?? true,
+      bulkSyncSize: json['bulkSyncSize'] as int? ?? 50,
+      dataRetentionDays: json['dataRetentionDays'] as int? ?? 7,
     );
   }
 
   @override
   String toString() {
-    return 'AppSettings(isDarkMode: $isDarkMode, defaultOrderType: $defaultOrderType, showProductImages: $showProductImages, defaultOrderStatus: $defaultOrderStatus, categoryDisplayMode: $categoryDisplayMode)';
+    return 'AppSettings(isDarkMode: $isDarkMode, defaultOrderType: $defaultOrderType, showProductImages: $showProductImages, defaultOrderStatus: $defaultOrderStatus, categoryDisplayMode: $categoryDisplayMode, currency: $currency)';
   }
 }
 

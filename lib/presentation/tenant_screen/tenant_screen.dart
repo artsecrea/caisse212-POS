@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bcrypt/bcrypt.dart';
+import '../../utils/app_localizations.dart';
 import '../login_screen/login_screen.dart';
 
 class TenantScreen extends ConsumerStatefulWidget {
@@ -14,12 +16,15 @@ class TenantScreen extends ConsumerStatefulWidget {
 class _TenantScreenState extends ConsumerState<TenantScreen> {
   final _formKey = GlobalKey<FormState>();
   final _tenantIdController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _isLoading = false;
   String? _errorMessage;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
     _tenantIdController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
@@ -28,10 +33,17 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
       return;
     }
 
-    // Additional validation for tenant ID
+    // Additional validation for tenant ID and password
     if (_tenantIdController.text.trim().isEmpty) {
       setState(() {
         _errorMessage = 'Please enter tenant ID';
+      });
+      return;
+    }
+
+    if (_passwordController.text.trim().isEmpty) {
+      setState(() {
+        _errorMessage = 'Please enter a password';
       });
       return;
     }
@@ -43,7 +55,13 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
 
     try {
       final prefs = await SharedPreferences.getInstance();
+
+      // Hash the tenant password
+      final passwordHash = BCrypt.hashpw(_passwordController.text.trim(), BCrypt.gensalt());
+
+      // Save tenant ID and password hash
       await prefs.setString('tenant_id', _tenantIdController.text.trim());
+      await prefs.setString('tenant_password_hash', passwordHash);
 
       if (mounted) {
         Navigator.of(context).pushReplacement(
@@ -52,7 +70,7 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Failed to save tenant ID: ${e.toString()}';
+        _errorMessage = 'Failed to save tenant data: ${e.toString()}';
         _isLoading = false;
       });
     }
@@ -60,6 +78,8 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -96,17 +116,17 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
                           color: Theme.of(context).primaryColor,
                         ),
                         const SizedBox(height: 16),
-                        const Text(
-                          'POS System',
+                        Text(
+                          l10n.translate('app_title'),
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Enter your tenant ID',
+                          l10n.translate('enter_tenant_id'),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 16,
@@ -116,12 +136,42 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
                         const SizedBox(height: 32),
                         OnscreenKeyboardTextField(
                           controller: _tenantIdController,
-                          decoration: const InputDecoration(
-                            labelText: 'Tenant ID',
-                            prefixIcon: Icon(Icons.apartment),
-                            border: OutlineInputBorder(),
+                          decoration: InputDecoration(
+                            labelText: l10n.translate('tenant_id'),
+                            prefixIcon: const Icon(Icons.apartment),
+                            border: const OutlineInputBorder(),
                           ),
-                          onSubmitted: (_) => _handleSubmit(),
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _passwordController,
+                          obscureText: _obscurePassword,
+                          decoration: InputDecoration(
+                            labelText: l10n.translate('password'),
+                            prefixIcon: const Icon(Icons.lock),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscurePassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _obscurePassword = !_obscurePassword;
+                                });
+                              },
+                            ),
+                            border: const OutlineInputBorder(),
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return l10n.translate('enter_password');
+                            }
+                            if (value.length < 4) {
+                              return l10n.translate('password_min_length');
+                            }
+                            return null;
+                          },
                         ),
                         const SizedBox(height: 24),
                         if (_errorMessage != null) ...[
@@ -163,9 +213,9 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
                                     valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                                   ),
                                 )
-                              : const Text(
-                                  'Continue',
-                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                              : Text(
+                                  l10n.translate('continue'),
+                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                                 ),
                         ),
                         const SizedBox(height: 16),

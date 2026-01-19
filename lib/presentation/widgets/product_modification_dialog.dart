@@ -4,6 +4,7 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show O
 import '../../providers/database_providers.dart';
 import '../../domain/models/order_models.dart';
 import '../../services/permission_service.dart';
+import '../../utils/currency_formatter.dart';
 import 'permission_guard.dart';
 
 class ProductModificationDialog extends ConsumerStatefulWidget {

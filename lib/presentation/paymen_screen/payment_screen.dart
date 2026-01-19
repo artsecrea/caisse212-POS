@@ -8,6 +8,7 @@ import 'package:loggecrea/loggecrea.dart';
 import 'package:posecrea/providers/database_providers.dart';
 import 'package:posecrea/data/database/app_database.dart';
 import 'package:posecrea/providers/settings_provider.dart';
+import 'package:posecrea/providers/sync_manager_provider.dart';
 import 'package:posecrea/services/printing_service.dart';
 import '../../domain/models/order_models.dart';
 import '../../core/enums.dart';
@@ -1193,6 +1194,36 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         _logger.error('Failed to print ticket: $printError');
         // Don't fail the payment if printing fails
       }
+
+      // Check if all items in the order are now paid
+      final allOrderProducts = await (database.select(database.orderProducts)
+        ..where((op) => op.orderId.equals(currentOrder.orderId ?? 0)))
+        .get();
+
+      final allPaid = allOrderProducts.every((op) => op.state == 'PAID');
+
+      if (allPaid) {
+        // Update order status to COMPLETED
+        await (database.update(database.orders)
+          ..where((o) => o.id.equals(currentOrder.orderId ?? 0)))
+          .write(OrdersCompanion(
+            status: const Value('COMPLETED'),
+            updatedAt: Value(DateTime.now()),
+          ));
+
+        _logger.info('Order ${currentOrder.orderId} marked as COMPLETED');
+
+        // Trigger auto-sync if enabled and online
+        final syncManager = ref.read(syncManagerProvider.notifier);
+        final synced = await syncManager.autoSyncOrder(currentOrder.orderId ?? 0);
+
+        if (synced) {
+          _logger.info('Order ${currentOrder.orderId} auto-synced successfully');
+        } else {
+          _logger.info('Order ${currentOrder.orderId} queued for bulk sync');
+        }
+      }
+
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

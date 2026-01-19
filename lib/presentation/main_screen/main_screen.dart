@@ -6,6 +6,7 @@ import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../services/permission_service.dart';
+import '../../utils/app_localizations.dart';
 import '../paymen_screen/payment_screen.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/category_grid.dart';
@@ -31,8 +32,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final currentOrder = ref.watch(orderProvider);
+    final settings = ref.watch(settingsProvider);
     final displayMode = ref.watch(categoryDisplayModeProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     // In fullPage mode, show CategoryGrid when no category selected, otherwise ProductGrid
     final showCategoryGrid = displayMode == CategoryDisplayMode.fullPage &&
@@ -73,42 +76,47 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           Container(
             height: 150,
             padding: const EdgeInsets.all(8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              spacing: 8,
-              children: [
-                // Number of persons button
-                _buildActionButton(
-                  icon: Icons.people,
-                  label: "${currentOrder.numberOfPersons} ${currentOrder.numberOfPersons == 1 ? 'Person' : 'Persons'}",
-                  color: currentOrder.numberOfPersons > 1 ? Colors.blue : null,
-                  onPressed: () async {
-                    final result = await showDialog<int>(
-                      context: context,
-                      builder: (context) => _NumberOfPersonsDialog(
-                        currentNumber: currentOrder.numberOfPersons,
-                      ),
-                    );
-                    if (result != null) {
-                      ref.read(orderProvider.notifier).setNumberOfPersons(result);
-                    }
-                  },
-                ),
-                // Order type toggle button
-                _buildActionButton(
-                  icon: currentOrder.type == 'DINE_IN' ? Icons.restaurant : Icons.takeout_dining,
-                  label: currentOrder.type == 'DINE_IN' ? 'Dine In' : 'Take Away',
-                  color: currentOrder.type == 'TAKE_AWAY' ? Colors.orange : Colors.green,
-                  onPressed: () {
-                    final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
-                    ref.read(orderProvider.notifier).setOrderType(newType);
-                  },
-                ),
-                _buildActionButton(
-                  icon: Icons.table_bar_sharp,
-                  label: currentOrder.tableName ?? "Table",
-                  color: currentOrder.tableId != null ? Colors.blue : null,
-                  onPressed: () async {
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  // Number of persons button
+                  _buildActionButton(
+                    icon: Icons.people,
+                    label: "${currentOrder.numberOfPersons} ${currentOrder.numberOfPersons == 1 ? l10n.translate('person') : l10n.translate('persons')}",
+                    color: currentOrder.numberOfPersons > 1 ? Colors.blue : null,
+                    onPressed: () async {
+                      final result = await showDialog<int>(
+                        context: context,
+                        builder: (context) => _NumberOfPersonsDialog(
+                          currentNumber: currentOrder.numberOfPersons,
+                        ),
+                      );
+                      if (result != null) {
+                        ref.read(orderProvider.notifier).setNumberOfPersons(result);
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  // Order type toggle button
+                  _buildActionButton(
+                    icon: currentOrder.type == 'DINE_IN' ? Icons.restaurant : Icons.takeout_dining,
+                    label: currentOrder.type == 'DINE_IN' ? l10n.translate('dine_in') : l10n.translate('take_away'),
+                    color: currentOrder.type == 'TAKE_AWAY' ? Colors.orange : Colors.green,
+                    onPressed: () {
+                      final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
+                      ref.read(orderProvider.notifier).setOrderType(newType);
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  // Table button - conditionally shown
+                  if (settings.showTableButton)
+                    _buildActionButton(
+                      icon: Icons.table_bar_sharp,
+                      label: currentOrder.tableName ?? l10n.translate('table'),
+                      color: currentOrder.tableId != null ? Colors.blue : null,
+                      onPressed: () async {
 
                   final result = await showDialog<Map<String, dynamic>>(
                     context: context,
@@ -132,8 +140,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                       if (paymentResult == true && context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Payment completed successfully'),
+                          SnackBar(
+                            content: Text(l10n.translate('payment_successful')),
                             backgroundColor: Colors.green,
                           ),
                         );
@@ -146,7 +154,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       final clearedTableName = result['tableName'];
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('$clearedTableName has been cleared'),
+                          content: Text('$clearedTableName ${l10n.translate('table_cleared')}'),
                           backgroundColor: Colors.green,
                         ),
                       );
@@ -175,7 +183,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Loaded order for $tableName'),
+                            content: Text('${l10n.translate('order')} ${l10n.translate('for')} $tableName'),
                             backgroundColor: Colors.blue,
                           ),
                         );
@@ -186,85 +194,96 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     }
                   }
                 },),
-                // Customer - Protected by permission
-                if (ref.read(permissionServiceProvider).hasPermission(Permissions.customerSet))
-                  _buildActionButton(
-                    icon: Icons.person,
-                    label: currentOrder.customerName ?? "Customer",
-                    color: currentOrder.customerId != null ? Colors.green : null,
-                    onPressed: () async {
-                    final result =
-                    await showDialog<Map<String, dynamic>>(
-                      context: context,
-                      builder: (context) =>
-                      const CustomerSelectionDialog(),
+                  const SizedBox(width: 8),
+                  // Customer - Protected by permission and settings
+                  if (settings.showCustomerButton && ref.read(permissionServiceProvider).hasPermission(Permissions.customerSet))
+                    _buildActionButton(
+                      icon: Icons.person,
+                      label: currentOrder.customerName ?? "Customer",
+                      color: currentOrder.customerId != null ? Colors.green : null,
+                      onPressed: () async {
+                      final result =
+                      await showDialog<Map<String, dynamic>>(
+                        context: context,
+                        builder: (context) =>
+                        const CustomerSelectionDialog(),
+                      );
+                      if (result != null) {
+                        if (result['id'] == null) {
+                          // Unselect customer
+                          ref.read(orderProvider.notifier).clearCustomer();
+                        } else {
+                          ref
+                              .read(orderProvider.notifier)
+                              .setCustomer(result['id'], result['name']);
+                        }
+                      }
+                    },),
+                  if (settings.showCustomerButton && ref.read(permissionServiceProvider).hasPermission(Permissions.customerSet))
+                    const SizedBox(width: 8),
+                  // Commercial - Protected by permission and settings
+                  if (settings.showCommercialButton && ref.read(permissionServiceProvider).hasPermission(Permissions.commercialSet))
+                    _buildActionButton(
+                      icon: Icons.badge,
+                      label: currentOrder.commercialName ?? "Commercial",
+                      color: currentOrder.commercialId != null ? Colors.purple : null,
+                      onPressed:() async {
+                      final result =
+                      await showDialog<Map<String, dynamic>>(
+                        context: context,
+                        builder: (context) =>
+                        const CommercialSelectionDialog(),
                     );
                     if (result != null) {
                       if (result['id'] == null) {
-                        // Unselect customer
-                        ref.read(orderProvider.notifier).clearCustomer();
+                        // Unselect commercial
+                        ref.read(orderProvider.notifier).clearCommercial();
                       } else {
                         ref
                             .read(orderProvider.notifier)
-                            .setCustomer(result['id'], result['name']);
+                            .setCommercial(result['id'], result['name']);
                       }
                     }
                   },),
-                // Commercial - Protected by permission
-                if (ref.read(permissionServiceProvider).hasPermission(Permissions.commercialSet))
-                  _buildActionButton(
-                    icon: Icons.badge,
-                    label: currentOrder.commercialName ?? "Commercial",
-                    color: currentOrder.commercialId != null ? Colors.purple : null,
-                    onPressed:() async {
-                    final result =
-                    await showDialog<Map<String, dynamic>>(
-                      context: context,
-                      builder: (context) =>
-                      const CommercialSelectionDialog(),
-                  );
-                  if (result != null) {
-                    if (result['id'] == null) {
-                      // Unselect commercial
-                      ref.read(orderProvider.notifier).clearCommercial();
-                    } else {
-                      ref
-                          .read(orderProvider.notifier)
-                          .setCommercial(result['id'], result['name']);
-                    }
-                  }
-                },),
-                _buildActionButton(icon: Icons.discount, label: "Coupon", onPressed: (){}),
-                // Manual Discount - Protected by permission
-                if (ref.read(permissionServiceProvider).hasPermission(Permissions.manualDiscount))
-                  _buildActionButton(
-                    icon: Icons.percent,
-                    label: currentOrder.discountPercentage > 0
-                      ? "Discount ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
-                      : "Manual Discount",
-                    color: currentOrder.discountPercentage > 0 ? Colors.orange : null,
-                    onPressed: currentOrder.hasPaidItems
-                      ? null  // Disable if any item is paid
-                      : () async {
-                      final result = await showDialog<double>(
-                        context: context,
-                        builder: (context) => ManualDiscountDialog(
-                          currentPercentage: currentOrder.discountPercentage,
-                        ),
-                      );
-                      if (result != null) {
-                        ref.read(orderProvider.notifier).setDiscountPercentage(result);
-                      }
-                    },
-                  ),
-                // Print - Protected by permission
-                if (ref.read(permissionServiceProvider).hasPermission(Permissions.printing))
-                  _buildActionButton(
-                    icon: Icons.print,
-                    label: 'Print',
-                    onPressed: currentOrder.items.isEmpty
-                        ? null
+                  if (settings.showCommercialButton && ref.read(permissionServiceProvider).hasPermission(Permissions.commercialSet))
+                    const SizedBox(width: 8),
+                  // Coupon button - conditionally shown
+                  if (settings.showCouponButton)
+                    _buildActionButton(icon: Icons.discount, label: "Coupon", onPressed: (){}),
+                  if (settings.showCouponButton)
+                    const SizedBox(width: 8),
+                  // Manual Discount - Protected by permission and settings
+                  if (settings.showDiscountButton && ref.read(permissionServiceProvider).hasPermission(Permissions.manualDiscount))
+                    _buildActionButton(
+                      icon: Icons.percent,
+                      label: currentOrder.discountPercentage > 0
+                        ? "Discount ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
+                        : "Manual Discount",
+                      color: currentOrder.discountPercentage > 0 ? Colors.orange : null,
+                      onPressed: currentOrder.hasPaidItems
+                        ? null  // Disable if any item is paid
                         : () async {
+                        final result = await showDialog<double>(
+                          context: context,
+                          builder: (context) => ManualDiscountDialog(
+                            currentPercentage: currentOrder.discountPercentage,
+                          ),
+                        );
+                        if (result != null) {
+                          ref.read(orderProvider.notifier).setDiscountPercentage(result);
+                        }
+                      },
+                    ),
+                  if (settings.showDiscountButton && ref.read(permissionServiceProvider).hasPermission(Permissions.manualDiscount))
+                    const SizedBox(width: 8),
+                  // Print - Protected by permission and settings
+                  if (settings.showPrintButton && ref.read(permissionServiceProvider).hasPermission(Permissions.printing))
+                    _buildActionButton(
+                      icon: Icons.print,
+                      label: l10n.translate('print'),
+                      onPressed: currentOrder.items.isEmpty
+                          ? null
+                          : () async {
                       final currentUser = ref.read(currentUserProvider);
                     final orderRepo = ref.read(orderRepositoryProvider);
                     final settings = ref.read(settingsProvider);
@@ -355,7 +374,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 // ),
                 _buildActionButton(
                   icon: Icons.payment,
-                  label: 'Pay',
+                  label: l10n.translate('pay'),
                   color: Colors.green[700],
                   onPressed: currentOrder.items.isEmpty
                       ? null
@@ -430,7 +449,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 ),
                 _buildActionButton(
                   icon: Icons.check_circle,
-                  label: 'Proceed',
+                  label: l10n.translate('proceed'),
                   isPrimary: true,
                   onPressed: currentOrder.items.isEmpty
                       ? null
@@ -509,10 +528,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     }
                   },
                 ),
-
               ],
             ),
-          )
+            ),
+          ),
 
         ],
       ),
