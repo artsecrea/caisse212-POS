@@ -195,38 +195,39 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             minWidth: 1200,
             sortColumnIndex: _sortColumnIndex,
             sortAscending: _sortAscending,
-            headingRowColor: MaterialStateProperty
-                .all(Colors.grey[200]),
+            headingRowColor: WidgetStateProperty.all(
+              Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            headingTextStyle: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
             columns: [
-              DataColumn2(label: const Text('ID', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.S, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Code', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Username', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Products', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Discount', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('TVA',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              DataColumn2(label: const Text('ID'), size: ColumnSize.S, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('Code'), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('Username'), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('Products'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('Discount'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('TVA'),
                   size: ColumnSize.S,
                   numeric: true,
                   onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
 
-              DataColumn2(label: const Text('Subtotal',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              DataColumn2(label: const Text('Subtotal'),
                   size: ColumnSize.S,
                   numeric: true,
                   onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)
               ),
-              DataColumn2(label: const Text('Total', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('Total'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
 
-              DataColumn2(label: const Text('Paid', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('Paid'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
 
-              DataColumn2(label: const Text('Status', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('Status'), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
 
-              DataColumn2(label: const Text('Date',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              DataColumn2(label: const Text('Date'),
                   size: ColumnSize.M,
                   onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Actions',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              DataColumn2(label: const Text('Actions'),
                   size: ColumnSize.L,
                   fixedWidth: 150
               ),

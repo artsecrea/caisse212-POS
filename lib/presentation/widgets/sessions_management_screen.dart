@@ -482,7 +482,13 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
             minWidth: 1000,
             sortColumnIndex: _sortColumnIndex,
             sortAscending: _sortAscending,
-            headingRowColor: WidgetStateProperty.all(Colors.grey[100]),
+            headingRowColor: WidgetStateProperty.all(
+              Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            headingTextStyle: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
             columns: [
               DataColumn2(
                 label: const Text('ID', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -567,7 +573,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: _getStatusColor(session.status).withOpacity(0.2),
+                        color: _getStatusColor(session.status).withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text(

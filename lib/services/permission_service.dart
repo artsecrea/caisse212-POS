@@ -13,7 +13,7 @@ class PermissionService {
 
     // Admin users have all permissions
     if (currentUser!.type.toLowerCase() == 'admin') return true;
-    return true;
+    // return true;
 
     // Parse user permissions (stored as comma-separated string)
     final userPermissions = currentUser!.permissions.split(',').map((p) => p.trim()).toList();

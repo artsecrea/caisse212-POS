@@ -4,7 +4,6 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show O
 import '../../providers/database_providers.dart';
 import '../../domain/models/order_models.dart';
 import '../../services/permission_service.dart';
-import '../../utils/currency_formatter.dart';
 import 'permission_guard.dart';
 
 class ProductModificationDialog extends ConsumerStatefulWidget {
@@ -67,7 +66,40 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     } else {
       // New product - get discount from product table
       _productDiscount = widget.product.discountAmount ?? 0.0;
+
+      // Initialize required components with their minimum quantities
+      // This will be done after the widget builds when we have access to the component data
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _initializeRequiredComponents();
+      });
     }
+  }
+
+  void _initializeRequiredComponents() {
+    final productId = widget.product is OrderItem
+        ? (widget.product as OrderItem).productId
+        : widget.product.id;
+
+    final componentsAsync = ref.read(productComponentsProvider(productId));
+
+    componentsAsync.whenData((componentsData) {
+      bool hasChanges = false;
+      for (var componentData in componentsData) {
+        final component = componentData['component'];
+        final isRequired = componentData['isRequired'] as bool;
+        final minQuantity = componentData['minQuantity'] as int;
+
+        // Auto-add required components with minimum quantity if not already added
+        if (isRequired && !_componentQuantities.containsKey(component.id)) {
+          _componentQuantities[component.id] = minQuantity;
+          hasChanges = true;
+        }
+      }
+
+      if (hasChanges && mounted) {
+        setState(() {});
+      }
+    });
   }
 
   @override
@@ -111,7 +143,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
+                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
@@ -133,7 +165,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                               return Container(
                                 width: 60,
                                 height: 60,
-                                color: Colors.grey[200],
+                                color: Theme.of(context).colorScheme.surfaceContainerHighest,
                                 child: const Icon(Icons.fastfood),
                               );
                             },
@@ -259,7 +291,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             TabBar(
               controller: _tabController,
               labelColor: Theme.of(context).primaryColor,
-              unselectedLabelColor: Colors.grey[600],
+              unselectedLabelColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
               indicatorColor: Theme.of(context).primaryColor,
               tabs: const [
                 Tab(
@@ -344,12 +376,16 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 itemBuilder: (context, groupIndex) {
                   final groupId = groupedComponents.keys.elementAt(groupIndex);
                   final groupComponents = groupedComponents[groupId]!;
-                  final group = groupId != null
-                      ? (groups as List).firstWhere(
-                        (g) => g.id == groupId,
-                    orElse: () => null,
-                  )
-                      : null;
+
+                  // Find the group - handle case where it might not exist
+                  dynamic group;
+                  if (groupId != null) {
+                    try {
+                      group = groups.firstWhere((g) => g.id == groupId);
+                    } catch (e) {
+                      group = null;
+                    }
+                  }
 
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -374,12 +410,16 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                         final maxQuantity = componentData['maxQuantity'] as int;
 
                         // Get current quantity for this component
-                        final quantity = _componentQuantities[component.id] ?? minQuantity;
+                        // If not in map and is required, initialize it with minQuantity
+                        if (isRequired && !_componentQuantities.containsKey(component.id)) {
+                          _componentQuantities[component.id] = minQuantity;
+                        }
+                        final quantity = _componentQuantities[component.id] ?? 0;
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 8),
                           elevation: isRequired ? 3 : 1,
-                          color: isRequired ? Colors.orange.withOpacity(0.05) : null,
+                          color: isRequired ? Colors.orange.withValues(alpha: 0.05) : null,
                           child: Padding(
                             padding: const EdgeInsets.all(12),
                             child: Row(
@@ -423,7 +463,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                             Text(
                                               '+\$${component.price.toStringAsFixed(2)}',
                                               style: TextStyle(
-                                                color: Colors.grey[600],
+                                                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                                               ),
                                             ),
                                           const SizedBox(width: 8),
@@ -431,7 +471,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                             'Min: $minQuantity, Max: $maxQuantity',
                                             style: TextStyle(
                                               fontSize: 11,
-                                              color: Colors.grey[600],
+                                              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                                               fontStyle: FontStyle.italic,
                                             ),
                                           ),
@@ -446,11 +486,20 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                       onPressed: quantity > minQuantity
                                           ? () {
                                         setState(() {
-                                          _componentQuantities[component.id] = quantity - 1;
-                                          // Don't remove if required and at minimum
-                                          if (!isRequired && _componentQuantities[component.id]! < minQuantity) {
-                                            _componentQuantities.remove(component.id);
-                                            _componentSpecial.remove(component.id);
+                                          final newQuantity = quantity - 1;
+
+                                          // For required components, keep at minimum
+                                          // For optional components, can go to 0 (which removes them)
+                                          if (isRequired) {
+                                            _componentQuantities[component.id] = newQuantity;
+                                          } else {
+                                            if (newQuantity > 0) {
+                                              _componentQuantities[component.id] = newQuantity;
+                                            } else {
+                                              // Remove optional component if quantity reaches 0
+                                              _componentQuantities.remove(component.id);
+                                              _componentSpecial.remove(component.id);
+                                            }
                                           }
                                         });
                                       }
@@ -613,7 +662,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 const SizedBox(height: 8),
                 Text(
                   'Apply an extra discount to this item',
-                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
                 ),
                 const SizedBox(height: 2),
 
@@ -755,9 +807,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   }
 
   void _handleSave(BuildContext context) {
+    print('DEBUG: _handleSave called');
+
     // Validate quantity
     final quantity = int.tryParse(_quantityController.text) ?? 1;
     if (quantity < 1) {
+      print('DEBUG: Quantity validation failed: $quantity');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Quantity must be at least 1'),
@@ -772,89 +827,137 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         ? (widget.product as OrderItem).productId
         : widget.product.id;
 
+    print('DEBUG: Product ID: $productId');
+
     // Get components async data
     final componentsAsync = ref.read(productComponentsProvider(productId));
 
-    componentsAsync.when(
-      data: (componentsData) {
-        // Validate required components
-        for (var componentData in componentsData) {
-          final component = componentData['component'];
-          final isRequired = componentData['isRequired'] as bool;
-          final minQuantity = componentData['minQuantity'] as int;
+    // Check if data is available
+    if (!componentsAsync.hasValue) {
+      print('DEBUG: Components not loaded yet');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Components not loaded yet, please try again'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
-          if (isRequired) {
-            final currentQuantity = _componentQuantities[component.id] ?? 0;
-            if (currentQuantity < minQuantity) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('${component.name ?? 'Component'} is required (minimum: $minQuantity)'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-              return;
-            }
-          }
+    final componentsData = componentsAsync.value!;
+    print('DEBUG: Components loaded: ${componentsData.length} components');
+
+    // Validate required components
+    bool hasValidationError = false;
+    for (var componentData in componentsData) {
+      final component = componentData['component'];
+      final isRequired = componentData['isRequired'] as bool;
+      final minQuantity = componentData['minQuantity'] as int;
+
+      if (isRequired) {
+        final currentQuantity = _componentQuantities[component.id] ?? 0;
+        print('DEBUG: Required component ${component.name}: current=$currentQuantity, min=$minQuantity');
+        if (currentQuantity < minQuantity) {
+          print('DEBUG: Required component validation failed: ${component.name}');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${component.name ?? 'Component'} is required (minimum: $minQuantity)'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          hasValidationError = true;
+          break;
         }
+      }
+    }
 
-        // Build selected components list
-        final selectedComponents = <OrderItemComponent>[];
-        for (final entry in _componentQuantities.entries) {
-          final componentData = componentsData.firstWhere(
-                (cd) {
+    if (hasValidationError) return;
+
+    print('DEBUG: Building selected components from ${_componentQuantities.length} entries');
+
+    // Build selected components list
+    final selectedComponents = <OrderItemComponent>[];
+    try {
+      for (final entry in _componentQuantities.entries) {
+        print('DEBUG: Processing component ID ${entry.key} with quantity ${entry.value}');
+
+        Map<String, dynamic>? componentData;
+        try {
+          componentData = componentsData.firstWhere(
+            (cd) {
               final comp = cd['component'];
               return comp != null && comp.id == entry.key;
             },
-            orElse: () => <String, dynamic>{},
           );
-
-          if (componentData.isEmpty) continue;
-
-          final component = componentData['component'];
-          if (component == null) continue;
-
-          final minQuantity = (componentData['minQuantity'] as int?) ?? 0;
-          final componentQuantity = entry.value;
-
-          // Only add if quantity is different from minimum (default)
-          if (componentQuantity > minQuantity || (componentQuantity > 0 && minQuantity == 0)) {
-            selectedComponents.add(OrderItemComponent(
-              componentId: component.id,
-              name: component.name ?? 'Unknown',
-              quantity: componentQuantity,
-              price: component.price ?? 0.0,
-              isSpecial: _componentSpecial[component.id] ?? false,
-            ));
-          }
+        } catch (e) {
+          print('DEBUG: Component not found for ID ${entry.key}');
+          componentData = null;
         }
 
-        // Calculate manual discount
-        final productPrice = widget.product is OrderItem
-            ? (widget.product as OrderItem).finalPrice
-            : widget.product.price;
-        final manualDiscount = _calculateManualDiscount(productPrice);
+        if (componentData == null || componentData.isEmpty) {
+          print('DEBUG: Component data is empty for ID ${entry.key}, skipping');
+          continue;
+        }
 
-        Navigator.of(context).pop({
-          'components': selectedComponents,
-          'discount': _productDiscount, // Product's built-in discount
-          'manualDiscount': manualDiscount, // Manual additional discount
-          'note': _noteController.text.isEmpty ? null : _noteController.text,
-          'quantity': quantity, // Added quantity
-        });
-      },
-      loading: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Loading components...')),
-        );
-      },
-      error: (error, _) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $error'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      },
-    );
+        final component = componentData['component'];
+        if (component == null) {
+          print('DEBUG: Component is null for ID ${entry.key}, skipping');
+          continue;
+        }
+
+        final isRequired = componentData['isRequired'] as bool;
+        final minQuantity = (componentData['minQuantity'] as int?) ?? 0;
+        final componentQuantity = entry.value;
+
+        print('DEBUG: Component ${component.name}: qty=$componentQuantity, min=$minQuantity, required=$isRequired');
+
+        // Add component if:
+        // 1. It's required (always include required components)
+        // 2. Quantity is greater than 0 (user explicitly selected it)
+        // 3. Quantity is greater than minimum (user increased it)
+        if (componentQuantity > 0 && (isRequired || componentQuantity != minQuantity)) {
+          print('DEBUG: Adding component: ${component.name} x$componentQuantity (required: $isRequired)');
+          selectedComponents.add(OrderItemComponent(
+            componentId: component.id,
+            name: component.name ?? 'Unknown',
+            quantity: componentQuantity,
+            price: component.price ?? 0.0,
+            isSpecial: _componentSpecial[component.id] ?? false,
+          ));
+        } else {
+          print('DEBUG: Skipping component ${component.name}: condition not met (qty>0: ${componentQuantity > 0}, required: $isRequired, qty!=min: ${componentQuantity != minQuantity})');
+        }
+      }
+    } catch (e, stackTrace) {
+      print('DEBUG: ERROR in component building: $e');
+      print('DEBUG: Stack trace: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error building components: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    print('DEBUG: Total selected components: ${selectedComponents.length}');
+
+    // Calculate manual discount
+    final productPrice = widget.product is OrderItem
+        ? (widget.product as OrderItem).finalPrice
+        : widget.product.price;
+    final manualDiscount = _calculateManualDiscount(productPrice);
+
+    print('DEBUG: Manual discount: $manualDiscount');
+    print('DEBUG: Returning result and closing dialog');
+
+    // Successfully validated, return the result
+    Navigator.of(context).pop({
+      'components': selectedComponents,
+      'discount': _productDiscount, // Product's built-in discount
+      'manualDiscount': manualDiscount, // Manual additional discount
+      'note': _noteController.text.isEmpty ? null : _noteController.text,
+      'quantity': quantity, // Added quantity
+    });
   }
 }

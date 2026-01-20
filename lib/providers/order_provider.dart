@@ -457,7 +457,9 @@ class OrderRepository {
 
     return CurrentOrder(
       orderId: order.id,
+      orderCode: order.code,
       items: items,
+
       tableId: order.tableId,
       tableName: tableName,
       customerId: order.clientId,

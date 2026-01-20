@@ -7,6 +7,9 @@ import 'database_providers.dart' show sharedPreferencesProvider;
 class SettingsKeys {
   static const String isDarkMode = 'is_dark_mode';
   static const String language = 'language';
+  static const String autoSyncOnline = 'auto_sync_online';
+  static const String bulkSyncSize = 'bulk_sync_size';
+  static const String dataRetentionDays = 'data_retention_days';
   static const String defaultOrderType = 'default_order_type';
   static const String showProductImages = 'show_product_images';
   static const String defaultOrderStatus = 'default_order_status';
@@ -18,9 +21,6 @@ class SettingsKeys {
   static const String showCouponButton = 'show_coupon_button';
   static const String showDiscountButton = 'show_discount_button';
   static const String showPrintButton = 'show_print_button';
-  static const String autoSyncOnline = 'auto_sync_online';
-  static const String bulkSyncSize = 'bulk_sync_size';
-  static const String dataRetentionDays = 'data_retention_days';
 }
 
 // Settings Notifier
@@ -41,6 +41,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = AppSettings(
       isDarkMode: _prefs.getBool(SettingsKeys.isDarkMode) ?? false,
       language: _prefs.getString(SettingsKeys.language) ?? 'en',
+      autoSyncOnline: _prefs.getBool(SettingsKeys.autoSyncOnline) ?? true,
+      bulkSyncSize: _prefs.getInt(SettingsKeys.bulkSyncSize) ?? 50,
+      dataRetentionDays: _prefs.getInt(SettingsKeys.dataRetentionDays) ?? 7,
       defaultOrderType: _prefs.getString(SettingsKeys.defaultOrderType) ?? 'DINE_IN',
       showProductImages: _prefs.getBool(SettingsKeys.showProductImages) ?? true,
       defaultOrderStatus: _prefs.getString(SettingsKeys.defaultOrderStatus) ?? 'PENDING',
@@ -52,9 +55,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showCouponButton: _prefs.getBool(SettingsKeys.showCouponButton) ?? true,
       showDiscountButton: _prefs.getBool(SettingsKeys.showDiscountButton) ?? true,
       showPrintButton: _prefs.getBool(SettingsKeys.showPrintButton) ?? true,
-      autoSyncOnline: _prefs.getBool(SettingsKeys.autoSyncOnline) ?? true,
-      bulkSyncSize: _prefs.getInt(SettingsKeys.bulkSyncSize) ?? 50,
-      dataRetentionDays: _prefs.getInt(SettingsKeys.dataRetentionDays) ?? 7,
     );
   }
 
@@ -70,6 +70,21 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setLanguage(String languageCode) async {
     await _prefs.setString(SettingsKeys.language, languageCode);
     state = state.copyWith(language: languageCode);
+  }
+
+  Future<void> setAutoSyncOnline(bool value) async {
+    await _prefs.setBool(SettingsKeys.autoSyncOnline, value);
+    state = state.copyWith(autoSyncOnline: value);
+  }
+
+  Future<void> setBulkSyncSize(int value) async {
+    await _prefs.setInt(SettingsKeys.bulkSyncSize, value);
+    state = state.copyWith(bulkSyncSize: value);
+  }
+
+  Future<void> setDataRetentionDays(int value) async {
+    await _prefs.setInt(SettingsKeys.dataRetentionDays, value);
+    state = state.copyWith(dataRetentionDays: value);
   }
 
   Future<void> setDefaultOrderType(String type) async {
@@ -131,24 +146,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(showPrintButton: value);
   }
 
-  Future<void> setAutoSyncOnline(bool value) async {
-    await _prefs.setBool(SettingsKeys.autoSyncOnline, value);
-    state = state.copyWith(autoSyncOnline: value);
-  }
-
-  Future<void> setBulkSyncSize(int value) async {
-    await _prefs.setInt(SettingsKeys.bulkSyncSize, value);
-    state = state.copyWith(bulkSyncSize: value);
-  }
-
-  Future<void> setDataRetentionDays(int value) async {
-    await _prefs.setInt(SettingsKeys.dataRetentionDays, value);
-    state = state.copyWith(dataRetentionDays: value);
-  }
-
   Future<void> resetToDefaults() async {
     await _prefs.remove(SettingsKeys.isDarkMode);
     await _prefs.remove(SettingsKeys.language);
+    await _prefs.remove(SettingsKeys.autoSyncOnline);
+    await _prefs.remove(SettingsKeys.bulkSyncSize);
+    await _prefs.remove(SettingsKeys.dataRetentionDays);
     await _prefs.remove(SettingsKeys.defaultOrderType);
     await _prefs.remove(SettingsKeys.showProductImages);
     await _prefs.remove(SettingsKeys.defaultOrderStatus);
@@ -160,9 +163,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _prefs.remove(SettingsKeys.showCouponButton);
     await _prefs.remove(SettingsKeys.showDiscountButton);
     await _prefs.remove(SettingsKeys.showPrintButton);
-    await _prefs.remove(SettingsKeys.autoSyncOnline);
-    await _prefs.remove(SettingsKeys.bulkSyncSize);
-    await _prefs.remove(SettingsKeys.dataRetentionDays);
     state = const AppSettings();
   }
 }
@@ -176,6 +176,10 @@ final settingsProvider = StateNotifierProvider<SettingsNotifier, AppSettings>((r
 // Convenience providers for specific settings
 final isDarkModeProvider = Provider<bool>((ref) {
   return ref.watch(settingsProvider).isDarkMode;
+});
+
+final languageProvider = Provider<String>((ref) {
+  return ref.watch(settingsProvider).language;
 });
 
 final defaultOrderTypeProvider = Provider<String>((ref) {
@@ -192,5 +196,9 @@ final defaultOrderStatusProvider = Provider<String>((ref) {
 
 final categoryDisplayModeProvider = Provider<CategoryDisplayMode>((ref) {
   return ref.watch(settingsProvider).categoryDisplayMode;
+});
+
+final currencyProvider = Provider<String>((ref) {
+  return ref.watch(settingsProvider).currency;
 });
 

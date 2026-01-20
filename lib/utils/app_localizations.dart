@@ -366,6 +366,15 @@ class AppLocalizations {
       'pay_first': 'Pay First',
       'just_clear': 'Just Clear',
       'table_has_items': 'This table has unpaid items. What would you like to do?',
+
+      // Calculator & Payment
+      'loaded': 'Loaded',
+      'to': 'to',
+      'calculator': 'Calculator',
+      'new_ticket': 'New Ticket',
+      'item_discount': 'Item Discount',
+      'reprint': 'Reprint',
+      'quick_amounts': 'Quick Amounts',
     },
     'ar': {
       // Common - Arabic
@@ -721,6 +730,15 @@ class AppLocalizations {
       'pay_first': 'ادفع أولاً',
       'just_clear': 'امسح فقط',
       'table_has_items': 'هذه الطاولة بها عناصر غير مدفوعة. ماذا تريد أن تفعل؟',
+
+      // Calculator & Payment
+      'loaded': 'تم التحميل',
+      'to': 'إلى',
+      'calculator': 'الحاسبة',
+      'new_ticket': 'تذكرة جديدة',
+      'item_discount': 'خصم العناصر',
+      'reprint': 'إعادة الطباعة',
+      'quick_amounts': 'مبالغ سريعة',
     },
     'fr': {
       // Common - French
@@ -1076,6 +1094,15 @@ class AppLocalizations {
       'pay_first': 'Payer d\'abord',
       'just_clear': 'Juste vider',
       'table_has_items': 'Cette table a des éléments non payés. Que voulez-vous faire?',
+
+      // Calculator & Payment
+      'loaded': 'Chargé',
+      'to': 'à',
+      'calculator': 'Calculatrice',
+      'new_ticket': 'Nouveau Ticket',
+      'item_discount': 'Remise sur articles',
+      'reprint': 'Réimprimer',
+      'quick_amounts': 'Montants rapides',
     },
   };
 

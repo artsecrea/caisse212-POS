@@ -7,6 +7,7 @@ import '../services/session_service.dart';
 import '../services/api_service.dart';
 import '../services/data_sync_service.dart';
 import '../services/printing_service.dart';
+import '../services/pending_operations_service.dart';
 
 // Database Provider
 final databaseProvider = Provider<AppDatabase>((ref) {
@@ -24,6 +25,12 @@ final dataSyncServiceProvider = Provider<DataSyncService>((ref) {
   final database = ref.watch(databaseProvider);
   final apiService = ref.watch(apiServiceProvider);
   return DataSyncService(database, apiService);
+});
+
+// Pending Operations Service Provider
+final pendingOperationsServiceProvider = Provider<PendingOperationsService>((ref) {
+  final database = ref.watch(databaseProvider);
+  return PendingOperationsService(database);
 });
 
 // Printing Service Provider

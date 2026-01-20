@@ -1,15 +1,14 @@
-import 'package:bcrypt/bcrypt.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
-import '../../providers/stat_provider.dart';
-import '../../services/session_service.dart';
+import 'package:bcrypt/bcrypt.dart';
+import '../../providers/database_providers.dart';
 import '../../services/api_service.dart';
 import '../../services/data_sync_service.dart';
-import '../../providers/database_providers.dart';
+import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
 import '../main_screen/main_screen.dart';
+
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -21,7 +20,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _startingBalanceController = TextEditingController();
+  final _startingBalanceController = TextEditingController(text: '0.0');
+
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
@@ -30,7 +30,103 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
+    _startingBalanceController.dispose();
     super.dispose();
+  }
+
+  /// Handle exit to tenant screen - requires tenant password verification
+  Future<void> _handleExitToTenant() async {
+    final prefs = ref.read(sharedPreferencesProvider);
+    final tenantPasswordHash = prefs.getString('tenant_password_hash');
+
+    if (tenantPasswordHash == null) {
+      // No tenant password set, just go back
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/tenant');
+      }
+      return;
+    }
+
+    // Show password dialog
+    final passwordController = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        bool obscurePassword = true;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Exit to Tenant Login'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Enter tenant password to continue:'),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    decoration: InputDecoration(
+                      labelText: 'Tenant Password',
+                      prefixIcon: const Icon(Icons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            obscurePassword = !obscurePassword;
+                          });
+                        },
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                    autofocus: true,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final password = passwordController.text.trim();
+                    final verified = BCrypt.checkpw(password, tenantPasswordHash);
+                    Navigator.of(context).pop(verified);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Verify'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+
+    if (result == true) {
+      // Password verified, navigate to tenant screen
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/tenant');
+      }
+    } else if (result == false) {
+      // Password verification failed
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid tenant password'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _handleLogin() async {
@@ -44,20 +140,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      // Check internet connectivity
-      final connectivityResult = await Connectivity().checkConnectivity();
-      final hasInternet = connectivityResult != ConnectivityResult.none;
-
-
-      // Check if database is empty (first time login)
       final database = ref.read(databaseProvider);
+      final hasInternet = true; // TODO: Check internet connection
+
+      // Check if users exist
       final users = await database.select(database.users).get();
       final isFirstTime = users.isEmpty;
-
-      users.forEach((u){
-        print(u.username);
-        print(u.password);
-      });
 
       // If no users exist, this means the database is corrupted or cleared
       // Logout entirely and go back to tenant login
@@ -69,24 +157,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         }
         return;
       }
+
       final username = _usernameController.text;
       final password = _passwordController.text;
 
-
-
       // Try local authentication first
       final user = await (database.select(database.users)
-            ..where((tbl) =>
-                tbl.username.equals(username)))
+            ..where((tbl) => tbl.username.equals(username)))
           .getSingleOrNull();
       final hash = user?.password ?? '';
 
-      final verified  = BCrypt.checkpw(password,hash);
+      final verified = BCrypt.checkpw(password, hash);
 
       if (user != null && verified) {
         // Local authentication successful
         ref.read(currentUserProvider.notifier).state = CurrentUser.fromUser(user);
-        
+
         // Handle cash session - resume paused or create new
         try {
           final sessionService = SessionService(database);
@@ -221,109 +307,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('can\'t logout: please check you username and password'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  String _formatTime(DateTime dt) {
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    final s = dt.second.toString().padLeft(2, '0');
-    return '$h:$m:$s';
-  }
-
-  /// Handle exit to tenant screen - requires tenant password verification
-  Future<void> _handleExitToTenant() async {
-    final prefs = ref.read(sharedPreferencesProvider);
-    final tenantPasswordHash = prefs.getString('tenant_password_hash');
-
-    if (tenantPasswordHash == null) {
-      // No tenant password set, just go back
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/tenant');
-      }
-      return;
-    }
-
-    // Show password dialog
-    final passwordController = TextEditingController();
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        bool obscurePassword = true;
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text('Exit to Tenant Login'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Enter tenant password to continue:'),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: obscurePassword,
-                    decoration: InputDecoration(
-                      labelText: 'Tenant Password',
-                      prefixIcon: const Icon(Icons.lock),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          obscurePassword ? Icons.visibility : Icons.visibility_off,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            obscurePassword = !obscurePassword;
-                          });
-                        },
-                      ),
-                      border: const OutlineInputBorder(),
-                    ),
-                    autofocus: true,
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    final password = passwordController.text.trim();
-                    final verified = BCrypt.checkpw(password, tenantPasswordHash);
-                    Navigator.of(context).pop(verified);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('Verify'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    passwordController.dispose();
-
-    if (result == true) {
-      // Password verified, navigate to tenant screen
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/tenant');
-      }
-    } else if (result == false) {
-      // Password verification failed
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invalid tenant password'),
+            content: Text('Can\'t logout: please check your username and password'),
             backgroundColor: Colors.red,
           ),
         );
@@ -333,7 +317,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final time = ref.watch(timeProvider).value ?? DateTime.now();
     final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
@@ -346,7 +329,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 end: Alignment.bottomRight,
                 colors: [
                   Theme.of(context).primaryColor,
-                  Theme.of(context).primaryColor.withOpacity(0.7),
+                  Theme.of(context).primaryColor.withValues(alpha: 0.7),
                 ],
               ),
             ),
@@ -368,124 +351,120 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                        Icon(
-                          Icons.point_of_sale,
-                          size: 80,
-                          color: Theme.of(context).primaryColor,
-                        ),
-                      Text(
-                        _formatTime(time),
-                        style: const TextStyle(fontSize: 24),
-                      ),
-                        const SizedBox(height: 16),
-                        Text(
-                          l10n.translate('app_title'),
-                          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: Theme.of(context).primaryColor,
-                              ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          l10n.translate('sign_in'),
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Colors.grey[600],
-                              ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 32),
-                        OnscreenKeyboardTextField(
-                          controller: _usernameController,
-                          decoration: InputDecoration(
-                            labelText: l10n.translate('username'),
-                            prefixIcon: const Icon(Icons.person),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
+                            Icon(
+                              Icons.point_of_sale,
+                              size: 80,
+                              color: Theme.of(context).primaryColor,
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        OnscreenKeyboardTextField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          decoration: InputDecoration(
-                            labelText: l10n.translate('password'),
-                            prefixIcon: const Icon(Icons.lock),
-                            suffixIcon: IconButton(
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility
-                                    : Icons.visibility_off,
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword = !_obscurePassword;
-                                });
-                              },
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        OnscreenKeyboardTextField(
-                          controller: _startingBalanceController,
-                          keyboardType: TextInputType.number,
-                          decoration: InputDecoration(
-                            labelText: l10n.translate('starting_balance'),
-                            prefixIcon: const Icon(Icons.account_balance_wallet),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          )
-                        ),
-                        if (_errorMessage != null) ...[
-                          const SizedBox(height: 16),
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.red[50],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.red[300]!),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.error_outline, color: Colors.red[700]),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _errorMessage!,
-                                    style: TextStyle(color: Colors.red[700]),
+                            const SizedBox(height: 16),
+                            Text(
+                              l10n.translate('app_title'),
+                              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: Theme.of(context).primaryColor,
                                   ),
-                                ),
-                              ],
+                              textAlign: TextAlign.center,
                             ),
-                          ),
-                        ],
-                        const SizedBox(height: 24),
-                        ElevatedButton(
-                          onPressed: _isLoading ? null : _handleLogin,
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+                            const SizedBox(height: 8),
+                            Text(
+                              l10n.translate('sign_in'),
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Colors.grey[600],
                                   ),
-                                )
-                              : Text(
-                                  l10n.translate('sign_in'),
-                                  style: const TextStyle(fontSize: 16),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 32),
+                            OnscreenKeyboardTextField(
+                              controller: _usernameController,
+                              decoration: InputDecoration(
+                                labelText: l10n.translate('username'),
+                                prefixIcon: const Icon(Icons.person),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                        ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            OnscreenKeyboardTextField(
+                              controller: _passwordController,
+                              obscureText: _obscurePassword,
+                              decoration: InputDecoration(
+                                labelText: l10n.translate('password'),
+                                prefixIcon: const Icon(Icons.lock),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _obscurePassword = !_obscurePassword;
+                                    });
+                                  },
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            OnscreenKeyboardTextField(
+                              controller: _startingBalanceController,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                labelText: l10n.translate('starting_balance'),
+                                prefixIcon: const Icon(Icons.account_balance_wallet),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                            if (_errorMessage != null) ...[
+                              const SizedBox(height: 16),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.red[50],
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.red[300]!),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.error_outline, color: Colors.red[700]),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _errorMessage!,
+                                        style: TextStyle(color: Colors.red[700]),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 24),
+                            ElevatedButton(
+                              onPressed: _isLoading ? null : _handleLogin,
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: _isLoading
+                                  ? const SizedBox(
+                                      height: 20,
+                                      width: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Text(
+                                      l10n.translate('sign_in'),
+                                      style: const TextStyle(fontSize: 16),
+                                    ),
+                            ),
                           ],
                         ),
                       ),
@@ -495,30 +474,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
           ),
-        // Exit button positioned at top-left
-        Positioned(
-          top: 16,
-          left: 16,
-          child: Material(
-            color: Colors.black26,
-            borderRadius: BorderRadius.circular(12),
-            child: InkWell(
-              onTap: _handleExitToTenant,
+          // Exit button positioned at top-left
+          Positioned(
+            top: 16,
+            left: 16,
+            child: Material(
+              color: Colors.black26,
               borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                child: const Icon(
-                  Icons.exit_to_app,
-                  size: 32,
-                  color: Colors.white,
+              child: InkWell(
+                onTap: _handleExitToTenant,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  child: const Icon(
+                    Icons.exit_to_app,
+                    size: 32,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+        ],
+      ),
+    );
+  }
 }
 

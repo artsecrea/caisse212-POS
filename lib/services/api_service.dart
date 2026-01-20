@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -317,6 +318,67 @@ class ApiService {
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    }
+  }
+
+  // ========== DELETE OPERATIONS ==========
+
+  /// Delete an order from server
+  Future<void> deleteOrder(int serverId) async {
+    try {
+      await _dio.delete('/pos/orders/$serverId');
+    } on DioException catch (e) {
+      throw Exception('Failed to delete order: ${e.message}');
+    }
+  }
+
+  /// Delete a ticket from server
+  Future<void> deleteTicket(int serverId) async {
+    try {
+      await _dio.delete('/pos/tickets/$serverId');
+    } on DioException catch (e) {
+      throw Exception('Failed to delete ticket: ${e.message}');
+    }
+  }
+
+  /// Delete an order product from server
+  Future<void> deleteOrderProduct(int serverId) async {
+    try {
+      await _dio.delete('/pos/order-products/$serverId');
+    } on DioException catch (e) {
+      throw Exception('Failed to delete order product: ${e.message}');
+    }
+  }
+
+  // ========== UPDATE OPERATIONS ==========
+
+  /// Update an order on server
+  Future<void> updateOrder(int serverId, String updateDataJson) async {
+    try {
+      final Map<String, dynamic> updateData = jsonDecode(updateDataJson);
+      await _dio.put('/pos/orders/$serverId', data: updateData);
+    } on DioException catch (e) {
+      throw Exception('Failed to update order: ${e.message}');
+    }
+  }
+
+  /// Update a ticket on server
+  Future<void> updateTicket(int serverId, String updateDataJson) async {
+    try {
+      final Map<String, dynamic> updateData = jsonDecode(updateDataJson);
+      await _dio.put('/pos/tickets/$serverId', data: updateData);
+    } on DioException catch (e) {
+      throw Exception('Failed to update ticket: ${e.message}');
+    }
+  }
+
+  /// Update an order product on server
+  Future<void> updateOrderProduct(int serverId, String updateDataJson) async {
+    try {
+      final Map<String, dynamic> updateData = jsonDecode(updateDataJson);
+      await _dio.put('/pos/order-products/$serverId', data: updateData);
+    } on DioException catch (e) {
+      throw Exception('Failed to update order product: ${e.message}');
     }
   }
 }

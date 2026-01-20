@@ -200,20 +200,20 @@ class _ProductCard extends ConsumerWidget {
     final currencyFormatter = ref.watch(currencyFormatterProvider);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Expanded(
-            child: Text(
-              product.name,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+          Text(
+            product.name,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
             ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(height: 4),
           Text(
             currencyFormatter.format(product.finalPrice),
             style: TextStyle(

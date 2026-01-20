@@ -47,11 +47,11 @@ class SampleDataGenerator {
       UsersCompanion.insert(
         id: const Value(2),
         username: 'cashier',
-        password: 'cashier123',
+        password: BCrypt.hashpw("cashier123",BCrypt.gensalt()),
         firstName: 'John',
         lastName: 'Doe',
         type: 'cashier',
-        permissions: const Value('pos:products:view,pos:orders:view,pos:orders:create,pos:tickets:create,pos:tickets:view,pos:customer:set,pos:commercial:set,pos:tables:set,pos:printing'),
+        permissions: const Value('pos:products:view,pos:orders:view,pos:tickets:create,pos:tickets:view,pos:commercial:set,pos:tables:set,pos:printing'),
       ),
     );
 

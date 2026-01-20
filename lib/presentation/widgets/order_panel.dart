@@ -1,10 +1,15 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:drift/drift.dart' as drift;
 import '../../providers/order_provider.dart';
 import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/app_localizations.dart';
+import '../../services/permission_service.dart';
+import '../../providers/database_providers.dart';
+import '../../providers/network_provider.dart';
+import '../../data/database/app_database.dart';
 import 'product_modification_dialog.dart';
 
 
@@ -30,6 +35,247 @@ class OrderPanel extends ConsumerWidget {
         note: result['note'] as String?,
       );
       ref.read(orderProvider.notifier).updateItem(index, updatedItem);
+    }
+  }
+
+  void _showDeletePaidItemDialog(BuildContext context, WidgetRef ref, OrderItem item) async {
+    final l10n = AppLocalizations.of(context)!;
+    final currentUser = ref.read(currentUserProvider);
+    final permissionService = PermissionService(currentUser);
+
+    // Check permission
+    final hasPermission = permissionService.hasPermission('pos:tickets:delete');
+
+    if (!hasPermission) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.translate('no_permission')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show confirmation dialog
+    if (context.mounted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.orange[700]),
+              const SizedBox(width: 8),
+              const Text('Delete Paid Item?'),
+            ],
+          ),
+          content: Text(
+            'Are you sure you want to delete this paid item?\n\n'
+            '${item.productName}\n'
+            'Ticket #${item.ticketId}\n\n'
+            'This action will update the ticket total.',
+            style: const TextStyle(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(l10n.translate('cancel')),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed == true && context.mounted) {
+        try {
+          final database = ref.read(databaseProvider);
+          final syncService = ref.read(dataSyncServiceProvider);
+          final isOnline = ref.read(lastKnownOnlineStatusProvider);
+
+          if (item.id != null && item.ticketId != null) {
+            // First, check how many items are in this ticket
+            final ticketProducts = await (database.select(database.orderProducts)
+              ..where((tbl) => tbl.ticketId.equals(item.ticketId!)))
+                .get();
+
+            // Get the order product to check if it has a server ID
+            final orderProduct = await (database.select(database.orderProducts)
+              ..where((tbl) => tbl.id.equals(item.id!)))
+                .getSingleOrNull();
+
+            // Delete the order product from database
+            await (database.delete(database.orderProducts)
+              ..where((tbl) => tbl.id.equals(item.id!)))
+                .go();
+
+            // Queue or execute delete operation for order product
+            if (orderProduct != null) {
+              await syncService.deleteEntity(
+                entityType: 'ORDER_PRODUCT',
+                entityId: item.id!,
+                serverId: null, // TODO: Add serverId field to OrderProducts table
+                isOnline: isOnline,
+              );
+            }
+
+            // If this was the only item in the ticket, delete the ticket
+            if (ticketProducts.length == 1) {
+              // Get ticket to check for server ID
+              final ticket = await (database.select(database.tickets)
+                ..where((tbl) => tbl.id.equals(item.ticketId!)))
+                  .getSingleOrNull();
+
+              await (database.delete(database.tickets)
+                ..where((tbl) => tbl.id.equals(item.ticketId!)))
+                  .go();
+
+              // Queue or execute delete operation for ticket
+              if (ticket != null) {
+                await syncService.deleteEntity(
+                  entityType: 'TICKET',
+                  entityId: item.ticketId!,
+                  serverId: null, // TODO: Add serverId field to Tickets table
+                  isOnline: isOnline,
+                );
+              }
+            } else {
+              // Otherwise, update the ticket amount
+              final remainingProducts = await (database.select(database.orderProducts)
+                ..where((tbl) => tbl.ticketId.equals(item.ticketId!)))
+                  .get();
+
+              final newTicketAmount = remainingProducts.fold<double>(
+                0.0,
+                (sum, product) => sum + (product.unitaryPrice * product.quantity),
+              );
+
+              await (database.update(database.tickets)
+                ..where((tbl) => tbl.id.equals(item.ticketId!)))
+                  .write(TicketsCompanion(
+                amount: drift.Value(newTicketAmount),
+              ));
+
+              // Queue or execute update operation for ticket
+              final ticket = await (database.select(database.tickets)
+                ..where((tbl) => tbl.id.equals(item.ticketId!)))
+                  .getSingleOrNull();
+
+              if (ticket != null) {
+                await syncService.updateEntity(
+                  entityType: 'TICKET',
+                  entityId: item.ticketId!,
+                  serverId: null, // TODO: Add serverId field to Tickets table
+                  updateData: {'amount': newTicketAmount},
+                  isOnline: isOnline,
+                );
+              }
+            }
+
+            // Reload the current order from database to get updated state
+            final currentOrder = ref.read(orderProvider);
+            if (currentOrder.orderId != null) {
+              // Fetch the updated order from database
+              final orderRow = await (database.select(database.orders)
+                ..where((tbl) => tbl.id.equals(currentOrder.orderId!)))
+                  .getSingleOrNull();
+
+              if (orderRow != null) {
+                // Reload all order items with updated ticket IDs
+                final orderProducts = await (database.select(database.orderProducts)
+                  ..where((tbl) => tbl.orderId.equals(currentOrder.orderId!)))
+                    .get();
+
+                // Build updated items list
+                final updatedItems = <OrderItem>[];
+                for (final orderProduct in orderProducts) {
+                  final product = await (database.select(database.products)
+                    ..where((tbl) => tbl.id.equals(orderProduct.productId)))
+                      .getSingleOrNull();
+
+                  if (product != null) {
+                    // Get components for this order product
+                    final components = await (database.select(database.orderProductComponents)
+                      ..where((tbl) => tbl.orderProductId.equals(orderProduct.id)))
+                        .get();
+
+                    final orderItemComponents = <OrderItemComponent>[];
+                    for (final comp in components) {
+                      final component = await (database.select(database.components)
+                        ..where((tbl) => tbl.id.equals(comp.componentId)))
+                          .getSingleOrNull();
+
+                      if (component != null) {
+                        orderItemComponents.add(OrderItemComponent(
+                          componentId: component.id,
+                          name: component.name,
+                          price: component.price,
+                          quantity: comp.quantity,
+                          isSpecial: comp.isSpecial,
+                        ));
+                      }
+                    }
+
+                    updatedItems.add(OrderItem(
+                      id: orderProduct.id,
+                      productId: orderProduct.productId,
+                      productName: product.name,
+                      finalPrice: orderProduct.unitaryPrice,
+                      quantity: orderProduct.quantity,
+                      discount: orderProduct.unitaryDiscount,
+                      manualDiscount: orderProduct.manualDiscount,
+                      tva: orderProduct.unitaryTva,
+                      components: orderItemComponents,
+                      ticketId: orderProduct.ticketId,
+                      state: orderProduct.state,
+                      imageUrl: product.imageUrl,
+                    ));
+                  }
+                }
+
+                // Update the order with refreshed items
+                ref.read(orderProvider.notifier).loadOrder(
+                  currentOrder.copyWith(items: updatedItems),
+                );
+              }
+            } else {
+              // If no order ID, just remove from local state
+              final itemIndex = currentOrder.items.indexWhere((i) => i.id == item.id);
+              if (itemIndex != -1) {
+                ref.read(orderProvider.notifier).removeItem(itemIndex);
+              }
+            }
+
+            if (context.mounted) {
+              final message = ticketProducts.length == 1
+                  ? 'Paid item and ticket deleted successfully'
+                  : 'Paid item deleted successfully';
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(message),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          }
+        } catch (e) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error deleting item: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      }
     }
   }
 
@@ -67,7 +313,7 @@ class OrderPanel extends ConsumerWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  currentOrder.orderId?.toString() ?? l10n.translate('current_order'),
+                  currentOrder.orderCode?.toString() ?? l10n.translate('current_order'),
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
@@ -131,52 +377,67 @@ class OrderPanel extends ConsumerWidget {
                           color: Colors.red,
                           child: const Icon(Icons.delete, color: Colors.white),
                         ),
-                        child: Opacity(
-                          opacity: isPaid ? 0.5 : 1.0,
-                          child: Card(
-                            elevation: 2,
-                            color: isPaid
-                                ? Theme.of(context).colorScheme.surfaceContainerHighest
-                                : isHeld
-                                    ? Colors.orange[50]
-                                    : Theme.of(context).cardColor,
-                            margin: const EdgeInsets.only(bottom: 8, left: 4, right: 4),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              side: BorderSide(
-                                color: isPaid
-                                    ? Theme.of(context).colorScheme.outline
-                                    : isHeld
-                                        ? Colors.orange[300]!
-                                        : Theme.of(context).dividerColor,
-                                width: isHeld ? 2 : 1,
+                        onDismissed: (direction) {
+                          ref.read(orderProvider.notifier).removeItem(index);
+                        },
+                        child: GestureDetector(
+                          onLongPress: isPaid
+                              ? () => _showDeletePaidItemDialog(context, ref, item)
+                              : null,
+                          child: Opacity(
+                            opacity: isPaid ? 0.6 : 1.0,
+                            child: Card(
+                              elevation: isPaid ? 1 : 2,
+                              color: isPaid
+                                  ? Theme.of(context).colorScheme.surfaceContainerHighest
+                                  : isHeld
+                                      ? Colors.orange[50]
+                                      : Theme.of(context).cardColor,
+                              margin: EdgeInsets.only(
+                                bottom: isPaid ? 4 : 8,
+                                left: 4,
+                                right: 4,
                               ),
-                            ),
-                            child: InkWell(
-                              onTap: isPaid ? null : () => _showItemOptions(context, ref, index, item),
-                              borderRadius: BorderRadius.circular(8),
-                              child: Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(isPaid ? 6 : 8),
+                                side: BorderSide(
+                                  color: isPaid
+                                      ? Theme.of(context).colorScheme.outline.withValues(alpha: 0.3)
+                                      : isHeld
+                                          ? Colors.orange[300]!
+                                          : Theme.of(context).dividerColor,
+                                  width: isPaid ? 0.5 : (isHeld ? 2 : 1),
+                                ),
+                              ),
+                              child: InkWell(
+                                onTap: isPaid ? null : () => _showItemOptions(context, ref, index, item),
+                                borderRadius: BorderRadius.circular(isPaid ? 6 : 8),
+                                child: Padding(
+                                  padding: EdgeInsets.all(isPaid ? 8 : 12),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
                                     // Header: Name and Delete button
                                     Row(
                                       children: [
                                         if (isPaid) ...[
-                                          Icon(Icons.lock, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                                          const SizedBox(width: 6),
+                                          Icon(
+                                            Icons.lock,
+                                            size: isPaid ? 12 : 14,
+                                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                          ),
+                                          const SizedBox(width: 4),
                                         ],
                                         Expanded(
                                           child: Text(
                                             item.productName,
                                             style: TextStyle(
                                               fontWeight: FontWeight.w600,
-                                              fontSize: 15,
+                                              fontSize: isPaid ? 13 : 15,
                                               decoration: isPaid ? TextDecoration.lineThrough : null,
                                               decorationColor: Theme.of(context).colorScheme.onSurfaceVariant,
                                             ),
-                                            maxLines: 2,
+                                            maxLines: isPaid ? 1 : 2,
                                             overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
@@ -195,18 +456,18 @@ class OrderPanel extends ConsumerWidget {
 
                                     // Paid status badge
                                     if (isPaid) ...[
-                                      const SizedBox(height: 4),
+                                      const SizedBox(height: 3),
                                       Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                                         decoration: BoxDecoration(
                                           color: Colors.green[50],
-                                          borderRadius: BorderRadius.circular(4),
+                                          borderRadius: BorderRadius.circular(3),
                                           border: Border.all(color: Colors.green[200]!),
                                         ),
                                         child: Text(
                                           'Paid - Ticket #${item.ticketId}',
                                           style: TextStyle(
-                                            fontSize: 10,
+                                            fontSize: 9,
                                             color: Colors.green[700],
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -244,18 +505,22 @@ class OrderPanel extends ConsumerWidget {
 
                                     // Components
                                     if (item.components.isNotEmpty) ...[
-                                      const SizedBox(height: 6),
+                                      SizedBox(height: isPaid ? 4 : 6),
                                       ...item.components.map((comp) => Padding(
                                         padding: const EdgeInsets.only(left: 4, top: 2),
                                         child: Row(
                                           children: [
-                                            Icon(Icons.add, size: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                            Icon(
+                                              Icons.add,
+                                              size: isPaid ? 8 : 10,
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                            ),
                                             const SizedBox(width: 4),
                                             Expanded(
                                               child: Text(
                                                 '${comp.name} x${comp.quantity}',
                                                 style: TextStyle(
-                                                  fontSize: 11,
+                                                  fontSize: isPaid ? 9 : 11,
                                                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                                                 ),
                                               ),
@@ -265,9 +530,9 @@ class OrderPanel extends ConsumerWidget {
                                       )),
                                     ],
 
-                                    const SizedBox(height: 10),
+                                    SizedBox(height: isPaid ? 6 : 10),
                                     const Divider(height: 1),
-                                    const SizedBox(height: 10),
+                                    SizedBox(height: isPaid ? 6 : 10),
 
                                     // Bottom: Quantity controls and Price
                                     Row(
@@ -278,47 +543,50 @@ class OrderPanel extends ConsumerWidget {
                                             color: isPaid
                                                 ? Theme.of(context).colorScheme.surfaceContainerHighest
                                                 : Theme.of(context).colorScheme.surfaceContainerLow,
-                                            borderRadius: BorderRadius.circular(6),
+                                            borderRadius: BorderRadius.circular(isPaid ? 4 : 6),
                                             border: Border.all(color: Theme.of(context).dividerColor),
                                           ),
                                           child: Row(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              IconButton(
-                                                onPressed: isPaid ? null : () {
-                                                  ref.read(orderProvider.notifier).updateItemQuantity(
-                                                    index,
-                                                    item.quantity - 1,
-                                                  );
-                                                },
-                                                icon: const Icon(Icons.remove, size: 16),
-                                                padding: const EdgeInsets.all(4),
-                                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                                visualDensity: VisualDensity.compact,
-                                              ),
+                                              if (!isPaid)
+                                                IconButton(
+                                                  onPressed: () {
+                                                    ref.read(orderProvider.notifier).updateItemQuantity(
+                                                      index,
+                                                      item.quantity - 1,
+                                                    );
+                                                  },
+                                                  icon: const Icon(Icons.remove, size: 16),
+                                                  padding: const EdgeInsets.all(4),
+                                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                                  visualDensity: VisualDensity.compact,
+                                                ),
                                               Container(
-                                                constraints: const BoxConstraints(minWidth: 24),
+                                                constraints: BoxConstraints(minWidth: isPaid ? 16 : 24),
+                                                padding: EdgeInsets.symmetric(horizontal: isPaid ? 6 : 0),
                                                 child: Text(
-                                                  item.quantity.toString(),
+                                                  'x${item.quantity}',
                                                   textAlign: TextAlign.center,
-                                                  style: const TextStyle(
+                                                  style: TextStyle(
                                                     fontWeight: FontWeight.bold,
-                                                    fontSize: 14,
+                                                    fontSize: isPaid ? 11 : 14,
                                                   ),
                                                 ),
                                               ),
-                                              IconButton(
-                                                onPressed: isPaid ? null : () {
-                                                  ref.read(orderProvider.notifier).updateItemQuantity(
-                                                    index,
-                                                    item.quantity + 1,
-                                                  );
-                                                },
-                                                icon: const Icon(Icons.add, size: 16),
-                                                padding: const EdgeInsets.all(4),
-                                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                                visualDensity: VisualDensity.compact,
-                                              ),
+                                              if (!isPaid)
+                                                IconButton(
+                                                  onPressed: () {
+                                                    ref.read(orderProvider.notifier).updateItemQuantity(
+                                                      index,
+                                                      item.quantity + 1,
+                                                    );
+                                                  },
+                                                  icon: const Icon(Icons.add, size: 16),
+                                                  padding: const EdgeInsets.all(4),
+                                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                                  visualDensity: VisualDensity.compact,
+                                                ),
                                             ],
                                           ),
                                         ),
@@ -334,15 +602,15 @@ class OrderPanel extends ConsumerWidget {
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
                                                 color: Theme.of(context).primaryColor,
-                                                fontSize: 16,
+                                                fontSize: isPaid ? 13 : 16,
                                               ),
                                             ),
                                             if (item.totalDiscount > 0) ...[
-                                              const SizedBox(height: 2),
+                                              SizedBox(height: isPaid ? 1 : 2),
                                               Text(
                                                 'Discount: -${currencyFormatter.format(item.totalDiscount)}',
                                                 style: TextStyle(
-                                                  fontSize: 11,
+                                                  fontSize: isPaid ? 9 : 11,
                                                   color: Colors.orange[700],
                                                   fontWeight: FontWeight.w500,
                                                 ),
@@ -352,20 +620,14 @@ class OrderPanel extends ConsumerWidget {
                                         ),
                                       ],
                                     ),
-                                  ],
+                                  ],)
+
                                 ),
                               ),
                             ),
                           ),
                         ),
-                        onDismissed: (it) {
-
-
-                          ref.read(orderProvider.notifier)
-                              .removeItem(index);
-
-                        },
-                      );
+                    );
                     },
                   ),
           ),

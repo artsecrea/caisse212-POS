@@ -149,7 +149,7 @@ class SessionService {
   Future<List<Ticket>> getSessionTickets(int sessionId) async {
     return await (_database.select(_database.tickets)
       ..where((tbl) => tbl.sessionId.equals(sessionId))
-      ..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)]))
+      ..orderBy([(tbl) => OrderingTerm.desc(tbl.date)]))
       .get();
   }
 

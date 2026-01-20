@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:io';
 import 'package:drift/drift.dart' hide Column;
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
@@ -24,6 +25,7 @@ import 'tables/payment_table.dart';
 import 'tables/transaction_table.dart';
 import 'tables/cash_session_table.dart';
 import 'tables/ticket_table.dart';
+import 'tables/pending_sync_operation_table.dart';
 
 part 'app_database.g.dart';
 
@@ -48,6 +50,7 @@ part 'app_database.g.dart';
   Transactions,
   CashSessions,
   Tickets,
+  PendingSyncOperations,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());

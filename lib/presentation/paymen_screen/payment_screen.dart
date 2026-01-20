@@ -10,6 +10,8 @@ import 'package:posecrea/data/database/app_database.dart';
 import 'package:posecrea/providers/settings_provider.dart';
 import 'package:posecrea/providers/sync_manager_provider.dart';
 import 'package:posecrea/services/printing_service.dart';
+import 'package:posecrea/utils/app_localizations.dart';
+import 'package:posecrea/utils/currency_formatter.dart';
 import '../../domain/models/order_models.dart';
 import '../../core/enums.dart';
 
@@ -103,6 +105,12 @@ class CalculatorState {
 
 final calculatorProvider = StateProvider<CalculatorState>((ref) => CalculatorState(display: '0.00'));
 
+// Provider for calculator visibility
+final calculatorVisibleProvider = StateProvider<bool>((ref) => false);
+
+// Provider for selected ticket index for calculator
+final selectedTicketForCalcProvider = StateProvider<int?>((ref) => null);
+
 class PaymentScreen extends ConsumerStatefulWidget {
   final CurrentOrder order;
 
@@ -178,6 +186,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   @override
   Widget build(BuildContext context) {
     final tickets = ref.watch(ticketsProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final calcVisible = ref.watch(calculatorVisibleProvider);
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -186,12 +196,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         width: MediaQuery.of(context).size.width * 0.95,
         height: MediaQuery.of(context).size.height * 0.95,
         decoration: BoxDecoration(
-          color: Theme.of(context).dialogBackgroundColor,
-          borderRadius: BorderRadius.circular(4),
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Theme.of(context).shadowColor.withValues(alpha: 0.2),
-              blurRadius: 10,
+              color: Colors.black.withValues(alpha: isDark ? 0.5 : 0.2),
+              blurRadius: 20,
               offset: const Offset(0, 4),
             ),
           ],
@@ -203,14 +213,19 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               child: Row(
                 children: [
                   Expanded(
-                    flex: 3,
+                    flex: calcVisible ? 3 : 1,
                     child: _buildTicketsArea(tickets),
                   ),
-                  Container(width: 1, color: Colors.grey[300]),
-                  Expanded(
-                    flex: 2,
-                    child: _buildCalculatorArea(context),
-                  ),
+                  if (calcVisible)
+                    Container(
+                      width: 1,
+                      color: Theme.of(context).dividerColor,
+                    ),
+                  if (calcVisible)
+                    Expanded(
+                      flex: 2,
+                      child: _buildCalculatorArea(context),
+                    ),
                 ],
               ),
             ),
@@ -221,34 +236,54 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   Widget _buildHeader(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final calcVisible = ref.watch(calculatorVisibleProvider);
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey[900],
+        color: Theme.of(context).colorScheme.primaryContainer,
         borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(4),
-          topRight: Radius.circular(4),
+          topLeft: Radius.circular(12),
+          topRight: Radius.circular(12),
         ),
       ),
       child: Row(
         children: [
-          const Icon(Icons.payment, color: Colors.white, size: 24),
+          Icon(
+            Icons.payment,
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+            size: 28,
+          ),
           const SizedBox(width: 12),
-          const Text(
-            'Payment',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
+          Expanded(
+            child: Text(
+              l10n.translate('split_payment'),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
-          const Spacer(),
+          // Calculator toggle button
+          IconButton(
+            onPressed: () {
+              ref.read(calculatorVisibleProvider.notifier).state = !calcVisible;
+            },
+            icon: Icon(
+              calcVisible ? Icons.calculate : Icons.calculate_outlined,
+              color: Theme.of(context).colorScheme.onPrimaryContainer,
+            ),
+            tooltip: calcVisible ? 'Hide Calculator' : 'Show Calculator',
+          ),
           IconButton(
             onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.close, color: Colors.white, size: 20),
-            tooltip: 'Close',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
+            icon: Icon(
+              Icons.close,
+              color: Theme.of(context).colorScheme.onPrimaryContainer,
+            ),
+            tooltip: l10n.translate('close'),
           ),
         ],
       ),
@@ -256,47 +291,89 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   Widget _buildTicketsArea(List<TicketData> tickets) {
+    final l10n = AppLocalizations.of(context)!;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
-      color: Colors.grey[50],
-      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+      ),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Text(
-                'Tickets (${tickets.length})',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.receipt_long,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${l10n.translate('tickets')} (${tickets.length})',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const Spacer(),
               ElevatedButton.icon(
                 onPressed: _addNewTicket,
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('New Ticket', style: TextStyle(fontSize: 13)),
+                icon: const Icon(Icons.add, size: 20),
+                label: Text(l10n.translate('new_ticket'), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  backgroundColor: Colors.grey[900],
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  backgroundColor: Colors.green[600],
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(2)),
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           Expanded(
             child: tickets.isEmpty
                 ? Center(
-                    child: Text('No items', style: TextStyle(color: Colors.grey[600])),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.receipt_long_outlined,
+                          size: 64,
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          l10n.translate('no_items'),
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
                   )
                 : ListView.builder(
                     scrollDirection: Axis.horizontal,
                     itemCount: tickets.length,
                     itemBuilder: (context, index) {
                       return Padding(
-                        padding: const EdgeInsets.only(right: 12),
+                        padding: const EdgeInsets.only(right: 16),
                         child: _buildTicket(index, tickets[index]),
                       );
                     },
@@ -320,18 +397,28 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       },
       builder: (context, candidateData, rejectedData) {
         final isDraggingOver = candidateData.isNotEmpty && !ticket.isPaid;
+        final isDark = Theme.of(context).brightness == Brightness.dark;
 
         return Container(
-          width: 280,
+          width: 320,
           decoration: BoxDecoration(
             color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(2),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isDraggingOver
-                  ? Theme.of(context).colorScheme.onSurface
-                  : Theme.of(context).dividerColor,
-              width: isDraggingOver ? 2 : 1,
+                  ? Theme.of(context).colorScheme.primary
+                  : ticket.isPaid
+                      ? (isDark ? Colors.green[700]! : Colors.green[400]!)
+                      : Theme.of(context).dividerColor,
+              width: isDraggingOver ? 3 : 2,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.1),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Column(
             children: [
@@ -346,16 +433,30 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   Widget _buildTicketHeader(int ticketIndex, TicketData ticket) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: ticket.isPaid ? Colors.green[50] : Colors.grey[100],
-        border: Border(bottom: BorderSide(color: ticket.isPaid ? Colors.green[300]! : Colors.grey[300]!)),
+        color: ticket.isPaid
+            ? (isDark ? Colors.green[900]!.withValues(alpha: 0.3) : Colors.green[50])
+            : Theme.of(context).colorScheme.surfaceContainerLow,
+        border: Border(
+          bottom: BorderSide(
+            color: ticket.isPaid
+                ? (isDark ? Colors.green[700]! : Colors.green[300]!)
+                : Theme.of(context).dividerColor,
+          ),
+        ),
       ),
       child: Row(
         children: [
           if (ticket.isPaid) ...[
-            Icon(Icons.lock, size: 16, color: Colors.green[700]),
+            Icon(
+              Icons.lock,
+              size: 16,
+              color: isDark ? Colors.green[400] : Colors.green[700],
+            ),
             const SizedBox(width: 6),
           ],
           Text(
@@ -363,19 +464,28 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             style: TextStyle(
               fontWeight: FontWeight.w600,
               fontSize: 14,
-              color: ticket.isPaid ? Colors.green[900] : Colors.black87,
+              color: ticket.isPaid
+                  ? (isDark ? Colors.green[300] : Colors.green[900])
+                  : Theme.of(context).colorScheme.onSurface,
             ),
           ),
           const Spacer(),
           Text(
             '${ticket.items.length} items',
-            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+              fontSize: 12,
+            ),
           ),
           if (ref.watch(ticketsProvider).length > 1 && !ticket.isPaid) ...[
             const SizedBox(width: 8),
             InkWell(
               onTap: () => _removeTicket(ticketIndex),
-              child: Icon(Icons.close, size: 16, color: Colors.grey[700]),
+              child: Icon(
+                Icons.close,
+                size: 16,
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+              ),
             ),
           ],
         ],
@@ -386,7 +496,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   Widget _buildTicketBody(int ticketIndex, TicketData ticket) {
     if (ticket.items.isEmpty) {
       return Center(
-        child: Text('Drag items here', style: TextStyle(color: Colors.grey[400], fontSize: 13)),
+        child: Text(
+          'Drag items here',
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
+            fontSize: 13,
+          ),
+        ),
       );
     }
 
@@ -595,71 +711,190 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   Widget _buildTicketFooter(int ticketIndex, TicketData ticket) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: ticket.isPaid ? Colors.green[50] : Colors.grey[50],
-        border: Border(top: BorderSide(color: ticket.isPaid ? Colors.green[300]! : Colors.grey[300]!)),
-      ),
-      child: Column(
-        children: [
-          // Totals breakdown
-          _buildTotalRow('Subtotal:', ticket.subtotal, false),
-          if (ticket.itemDiscount > 0) _buildTotalRow('Item Discount:', -ticket.itemDiscount, false, color: Colors.orange[700]),
-          if (ticket.discountPercentage > 0) _buildTotalRow('Manual (${ticket.discountPercentage.toStringAsFixed(0)}%):', -ticket.manualDiscountAmount, false, color: Colors.deepOrange[700]),
-          if (ticket.totalTva > 0) _buildTotalRow('TVA:', ticket.totalTva, false, color: Colors.blue[700]),
-          const Divider(height: 12, thickness: 1),
-          _buildTotalRow('Total:', ticket.total, true),
-          const SizedBox(height: 10),
-          // Payment Method Dropdown
-          _buildPaymentMethodDropdown(ticketIndex, ticket),
-          const SizedBox(height: 8),
-          // Action Buttons
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: ticket.items.isEmpty ? null : () => _printTicket(ticketIndex),
-                  icon: const Icon(Icons.print, size: 14),
-                  label: Text(
-                    ticket.isPaid ? 'Reprint' : 'Print',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(2)),
-                    side: BorderSide(color: Colors.grey[400]!),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: (ticket.items.isEmpty || ticket.isPaid) ? null : () => _payTicket(ticketIndex),
-                  icon: Icon(
-                    ticket.isPaid ? Icons.check_circle : Icons.payment,
-                    size: 14,
-                  ),
-                  label: Text(
-                    ticket.isPaid ? 'Paid' : 'Pay',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    backgroundColor: ticket.isPaid ? Colors.green[700] : Colors.grey[900],
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(2)),
-                  ),
-                ),
-              ),
-            ],
+    final l10n = AppLocalizations.of(context)!;
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return InkWell(
+      onTap: () {
+        if (!ticket.isPaid) {
+          // Show calculator and load ticket total
+          ref.read(calculatorVisibleProvider.notifier).state = true;
+          ref.read(selectedTicketForCalcProvider.notifier).state = ticketIndex;
+          ref.read(calculatorProvider.notifier).state = CalculatorState(
+            display: ticket.total.toStringAsFixed(2),
+            enteredAmount: ticket.total,
+            isEnteringAmount: true,
+          );
+
+          // Show feedback
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Calculator ready for Ticket #${ticketIndex + 1}'),
+              duration: const Duration(seconds: 1),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+            ),
+          );
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: ticket.isPaid
+              ? (isDark ? Colors.green[900] : Colors.green[50])
+              : (isDark ? Theme.of(context).colorScheme.surfaceContainerHighest : Theme.of(context).colorScheme.surfaceContainerHigh),
+          border: Border(
+            top: BorderSide(
+              color: ticket.isPaid
+                  ? (isDark ? Colors.green[700]! : Colors.green[400]!)
+                  : Theme.of(context).dividerColor,
+              width: 2,
+            ),
           ),
-        ],
+          borderRadius: const BorderRadius.only(
+            bottomLeft: Radius.circular(12),
+            bottomRight: Radius.circular(12),
+          ),
+        ),
+        child: Column(
+          children: [
+            // Totals breakdown
+            _buildTotalRow(
+              '${l10n.translate('subtotal')}:',
+              ticket.subtotal,
+              false,
+              currencyFormatter,
+            ),
+            if (ticket.itemDiscount > 0)
+              _buildTotalRow(
+                '${l10n.translate('item_discount')}:',
+                -ticket.itemDiscount,
+                false,
+                currencyFormatter,
+                color: Colors.orange[700],
+              ),
+            if (ticket.discountPercentage > 0)
+              _buildTotalRow(
+                'Manual (${ticket.discountPercentage.toStringAsFixed(0)}%):',
+                -ticket.manualDiscountAmount,
+                false,
+                currencyFormatter,
+                color: Colors.deepOrange[700],
+              ),
+            if (ticket.totalTva > 0)
+              _buildTotalRow(
+                '${l10n.translate('tax')}:',
+                ticket.totalTva,
+                false,
+                currencyFormatter,
+                color: Colors.blue[700],
+              ),
+            const Divider(height: 16, thickness: 2),
+            // Clickable total - highlighted to indicate it's clickable
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: ticket.isPaid ? Colors.green[600]! : Colors.blue[600]!,
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (ticket.isPaid ? Colors.green : Colors.blue).withValues(alpha: 0.2),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.touch_app,
+                        size: 20,
+                        color: ticket.isPaid ? Colors.green[700] : Colors.blue[700],
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${l10n.translate('total')}:',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: ticket.isPaid ? Colors.green[700] : Colors.blue[700],
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    currencyFormatter.format(ticket.total),
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: ticket.isPaid ? Colors.green[700] : Colors.blue[700],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Payment Method Dropdown
+            _buildPaymentMethodDropdown(ticketIndex, ticket),
+            const SizedBox(height: 10),
+            // Action Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: ticket.items.isEmpty ? null : () => _printTicket(ticketIndex),
+                    icon: const Icon(Icons.print, size: 16),
+                    label: Text(
+                      ticket.isPaid ? l10n.translate('reprint') : l10n.translate('print'),
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                      side: BorderSide(color: Colors.grey[400]!),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: (ticket.items.isEmpty || ticket.isPaid) ? null : () => _payTicket(ticketIndex),
+                    icon: Icon(
+                      ticket.isPaid ? Icons.check_circle : Icons.payment,
+                      size: 14,
+                    ),
+                    label: Text(
+                      ticket.isPaid ? 'Paid' : 'Pay',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      backgroundColor: ticket.isPaid ? Colors.green[700] : Colors.grey[900],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildTotalRow(String label, double amount, bool isBold, {Color? color}) {
+  Widget _buildTotalRow(String label, double amount, bool isBold, CurrencyFormatter currencyFormatter, {Color? color}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -674,7 +909,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             ),
           ),
           Text(
-            '\$${amount.toStringAsFixed(2)}',
+            currencyFormatter.format(amount),
             style: TextStyle(
               fontSize: isBold ? 14 : 12,
               fontWeight: isBold ? FontWeight.w600 : FontWeight.normal,
@@ -736,161 +971,213 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   Widget _buildCalculatorArea(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final calcState = ref.watch(calculatorProvider);
+    final selectedTicketIndex = ref.watch(selectedTicketForCalcProvider);
     final tickets = ref.watch(ticketsProvider);
-    final totalAmount = tickets.fold<double>(0.0, (sum, ticket) => sum + ticket.total);
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Container(
-      color: Theme.of(context).cardColor,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          // Display
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(2),
-              border: Border.all(color: Theme.of(context).dividerColor),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  'Total: \$${totalAmount.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    color: Colors.grey[400],
-                    fontSize: 14,
-                    fontFamily: 'monospace',
-                  ),
+    if (selectedTicketIndex == null || selectedTicketIndex >= tickets.length) {
+      // Empty state
+      return Container(
+        padding: const EdgeInsets.all(32),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.touch_app,
+                size: 64,
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Click a ticket\nto calculate',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                  fontSize: 16,
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '\$${calcState.display}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 32,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-                if (calcState.enteredAmount != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Change: \$${(calcState.enteredAmount! - totalAmount).toStringAsFixed(2)}',
-                    style: TextStyle(
-                      color: calcState.enteredAmount! >= totalAmount ? Colors.green[400] : Colors.red[400],
-                      fontSize: 16,
-                      fontFamily: 'monospace',
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final ticket = tickets[selectedTicketIndex];
+    final totalAmount = ticket.total;
+    final enteredAmount = calcState.enteredAmount ?? 0.0;
+    final change = enteredAmount - totalAmount;
+
+    return Column(
+      children: [
+        // Ticket info header
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            border: Border(
+              bottom: BorderSide(color: Theme.of(context).dividerColor),
             ),
           ),
-          const SizedBox(height: 16),
-          // Calculator Buttons
-          Expanded(child: _buildCalculatorButtons()),
-          const SizedBox(height: 16),
-          // Action Buttons
-          Column(
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _resetCalculator,
-                      icon: const Icon(Icons.refresh, size: 16),
-                      label: const Text('Reset', style: TextStyle(fontSize: 13)),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: BorderSide(color: Colors.grey[600]!),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(2)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _clearCalculator,
-                      icon: const Icon(Icons.backspace, size: 16),
-                      label: const Text('Clear', style: TextStyle(fontSize: 13)),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        backgroundColor: Colors.orange[700],
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(2)),
-                      ),
-                    ),
-                  ),
-                ],
+              Icon(
+                Icons.receipt,
+                color: Theme.of(context).colorScheme.onSecondaryContainer,
+                size: 20,
               ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed: () => _confirmPayment(context),
-                  icon: const Icon(Icons.check_circle, size: 20),
-                  label: const Text(
-                    'Confirm Payment',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[700],
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(2)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Ticket #${selectedTicketIndex + 1}',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSecondaryContainer,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
             ],
           ),
-        ],
-      ),
+        ),
+
+        // Display area
+        Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isDark ? Colors.grey[850] : Colors.grey[200],
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Total:', style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
+                  Text(
+                    currencyFormatter.format(totalAmount),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Cash:', style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
+                  Text(
+                    currencyFormatter.format(enteredAmount),
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: enteredAmount >= totalAmount ? Colors.green : Colors.red,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ),
+              if (change > 0) ...[
+                const Divider(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Change:', style: TextStyle(color: Theme.of(context).colorScheme.onSurface)),
+                    Text(
+                      currencyFormatter.format(change),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+
+        // Number pad
+        Expanded(child: _buildCalculatorButtons()),
+
+        // Pay button
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: enteredAmount >= totalAmount ? () => _payTicket(selectedTicketIndex) : null,
+              icon: const Icon(Icons.payment),
+              label: Text(l10n.translate('pay_ticket'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green[600],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildCalculatorButtons() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final buttons = [
       ['7', '8', '9'],
       ['4', '5', '6'],
       ['1', '2', '3'],
-      ['.', '0', '00'],
+      ['.', '0', 'C'],
     ];
 
-    return GridView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 1.8,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: 12,
-      itemBuilder: (context, index) {
-        final row = index ~/ 3;
-        final col = index % 3;
-        final button = buttons[row][col];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GridView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          childAspectRatio: 1.5,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+        ),
+        itemCount: 12,
+        itemBuilder: (context, index) {
+          final row = index ~/ 3;
+          final col = index % 3;
+          final button = buttons[row][col];
 
-        return ElevatedButton(
-          onPressed: () => _onCalculatorButtonPressed(button),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black87,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(2),
-              side: BorderSide(color: Colors.grey[300]!),
+          return ElevatedButton(
+            onPressed: () => _onCalculatorButtonPressed(button),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: button == 'C'
+                  ? Colors.red[isDark ? 700 : 600]
+                  : (isDark ? Colors.grey[800] : Colors.grey[300]),
+              foregroundColor: button == 'C'
+                  ? Colors.white
+                  : (isDark ? Colors.white : Colors.black87),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              elevation: 2,
             ),
-            elevation: 0,
-          ),
-          child: Text(
-            button,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
-          ),
-        );
-      },
+            child: Text(
+              button,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -898,7 +1185,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final currentState = ref.read(calculatorProvider);
     String newDisplay = currentState.display;
 
-    if (button == '.') {
+    if (button == 'C') {
+      // Clear button
+      newDisplay = '0.00';
+    } else if (button == '.') {
       if (!newDisplay.contains('.')) {
         newDisplay = newDisplay + button;
       }

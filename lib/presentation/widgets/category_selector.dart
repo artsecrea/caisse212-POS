@@ -94,7 +94,7 @@ class CategorySelector extends ConsumerWidget {
             if (index == 0) {
               // "All" category
               return _CategoryChip(
-                name: 'All',
+                name: '*',
                 imageUrl: null,
                 isSelected: selectedCategory == null,
                 onTap: () {
@@ -269,11 +269,11 @@ class _CategoryChip extends StatelessWidget {
           decoration: BoxDecoration(
             color: isSelected
                 ? Theme.of(context).primaryColor
-                : Colors.grey[100],
+                : Theme.of(context).colorScheme.surfaceContainerHighest,
             border: Border.all(
               color: isSelected
                   ? Theme.of(context).primaryColor
-                  : Colors.grey[300]!,
+                  : Theme.of(context).dividerColor,
               width: 2,
             ),
           ),
@@ -424,8 +424,10 @@ class _CalculatorDialogState extends State<_CalculatorDialog> {
         child: ElevatedButton(
           onPressed: onPressed,
           style: ElevatedButton.styleFrom(
-            backgroundColor: color ?? Colors.grey[200],
-            foregroundColor: color != null ? Colors.white : Colors.black87,
+            backgroundColor: color ?? Theme.of(context).colorScheme.surfaceContainerHigh,
+            foregroundColor: color != null
+                ? Colors.white
+                : Theme.of(context).colorScheme.onSurface,
             padding: const EdgeInsets.all(20),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
