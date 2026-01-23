@@ -1,6 +1,5 @@
 import 'package:drift/drift.dart';
 import 'package:posecrea/data/database/app_database.dart';
-import 'package:posecrea/data/database/tables/pending_sync_operation_table.dart';
 import 'package:posecrea/services/api_service.dart';
 import 'package:posecrea/services/pending_operations_service.dart';
 import 'package:loggecrea/loggecrea.dart';
@@ -383,32 +382,38 @@ class DataSyncService {
 
   /// Get all tickets for completed, synced orders that haven't been synced yet
   Future<List<Map<String, dynamic>>> getTicketsForSync() async {
-    // Get synced order IDs
+    // Get synced order IDs and codes
     final syncedOrders = await (_database.select(_database.orders)
       ..where((o) => o.isSynced.equals(true)))
       .get();
-    final syncedOrderIds = syncedOrders.map((o) => o.id).toSet();
+    final syncedOrderMap = {for (var o in syncedOrders) o.id: o.code};
 
     // Get tickets that belong to synced orders but aren't synced yet
     final tickets = await (_database.select(_database.tickets)
       ..where((t) => t.isSynced.equals(false)))
       .get();
 
-    // Filter tickets for synced orders only
-    final ticketsToSync = tickets.where((t) => syncedOrderIds.contains(t.orderId)).toList();
+    // Filter tickets for synced orders only and build ticket list
+    final ticketsList = <Map<String, dynamic>>[];
+    for (final t in tickets) {
+      if (!syncedOrderMap.containsKey(t.orderId)) continue;
 
-    return ticketsToSync.map((t) => {
-      'id': t.id,
-      'num': t.num,
-      'orderId': t.orderId,
-      'sessionId': t.sessionId,
-      'paymentMethod': t.paymentMethod,
-      'amount': t.amount,
-      'isPaid': t.isPaid,
-      'printCount': t.printCount,
-      'date': t.date.toIso8601String(),
-      'createdAt': t.date.toIso8601String(),
-    }).toList();
+      ticketsList.add({
+        'id': t.id,
+        'num': t.num,
+        'orderCode': syncedOrderMap[t.orderId], // Use order code for backend
+        'orderId': t.orderId, // Keep for local tracking
+        'sessionId': t.sessionId,
+        'paymentMethod': t.paymentMethod,
+        'amount': t.amount,
+        'isPaid': t.isPaid,
+        'printCount': t.printCount,
+        'date': t.date.toIso8601String(),
+        'createdAt': t.date.toIso8601String(),
+      });
+    }
+
+    return ticketsList;
   }
 
   /// Get all ended sessions that need to be synced
@@ -518,8 +523,14 @@ class DataSyncService {
         ..where((o) => o.id.equals(orderId)))
         .getSingleOrNull();
 
-      if (order == null || order.isSynced) {
-        return false; // Order doesn't exist or already synced
+      if (order == null) {
+        _logger.warning('Order #$orderId not found for sync');
+        return false;
+      }
+
+      if (order.isSynced) {
+        _logger.info('Order #$orderId already synced');
+        return true;
       }
 
       // Get all products for this order
@@ -554,9 +565,8 @@ class DataSyncService {
         });
       }
 
-      // Build order map
+      // Build order map - use code as identifier for backend
       final orderData = {
-        'id': order.id,
         'code': order.code,
         'status': order.status,
         'type': order.type,
@@ -573,20 +583,22 @@ class DataSyncService {
         'updatedAt': order.updatedAt.toIso8601String(),
       };
 
-      // Sync to server
-      await _apiService.syncOrders([orderData]);
+      // Sync to server using single order endpoint (PUT to create/update)
+      await _apiService.syncSingleOrder(order.code, orderData);
 
       // Mark as synced
       await markOrdersAsSynced([orderId]);
 
+      _logger.info('Successfully synced order code=${order.code}');
       return true;
     } catch (e) {
-      print('Error syncing single order: $e');
+      _logger.error('Error syncing single order: $e');
       return false;
     }
   }
 
   /// Sync orders in bulk with limited batch size
+  /// Only sends bulk request if more than one order, otherwise uses single sync
   Future<int> syncOrdersBulk({int batchSize = 50}) async {
     try {
       // Get unsynced orders
@@ -599,7 +611,14 @@ class DataSyncService {
       // Take only the specified batch size
       final batch = orders.take(batchSize).toList();
 
-      // Sync the batch
+      // If only one order, use single sync instead of bulk
+      if (batch.length == 1) {
+        final orderId = batch.first['id'] as int;
+        final success = await syncSingleOrder(orderId);
+        return success ? 1 : 0;
+      }
+
+      // Sync the batch using bulk endpoint
       await _apiService.syncOrders(batch);
 
       // Mark as synced
@@ -608,7 +627,88 @@ class DataSyncService {
 
       return batch.length;
     } catch (e) {
-      print('Error syncing orders bulk: $e');
+      _logger.error('Error syncing orders bulk: $e');
+      return 0;
+    }
+  }
+
+  /// Sync tickets in bulk for synced orders
+  Future<int> syncTicketsBulk({int batchSize = 100}) async {
+    try {
+      // Get tickets for sync (only for synced orders)
+      final tickets = await getTicketsForSync();
+
+      if (tickets.isEmpty) {
+        return 0;
+      }
+
+      // Take only the specified batch size
+      final batch = tickets.take(batchSize).toList();
+
+      // Sync the batch
+      await _apiService.syncTickets(batch);
+
+      // Mark as synced
+      final syncedIds = batch.map((t) => t['id'] as int).toList();
+      await markTicketsAsSynced(syncedIds);
+
+      return batch.length;
+    } catch (e) {
+      print('Error syncing tickets bulk: $e');
+      return 0;
+    }
+  }
+
+  /// Sync customers in bulk
+  Future<int> syncCustomersBulk({int batchSize = 100}) async {
+    try {
+      // Get customers for sync
+      final customers = await getCustomersForSync();
+
+      if (customers.isEmpty) {
+        return 0;
+      }
+
+      // Take only the specified batch size
+      final batch = customers.take(batchSize).toList();
+
+      // Sync the batch
+      await _apiService.syncCustomers(batch);
+
+      // Mark as synced
+      final syncedIds = batch.map((c) => c['id'] as int).toList();
+      await markCustomersAsSynced(syncedIds);
+
+      return batch.length;
+    } catch (e) {
+      print('Error syncing customers bulk: $e');
+      return 0;
+    }
+  }
+
+  /// Sync ended sessions in bulk
+  Future<int> syncSessionsBulk({int batchSize = 50}) async {
+    try {
+      // Get sessions for sync
+      final sessions = await getSessionsForSync();
+
+      if (sessions.isEmpty) {
+        return 0;
+      }
+
+      // Take only the specified batch size
+      final batch = sessions.take(batchSize).toList();
+
+      // Sync the batch
+      await _apiService.syncSessions(batch);
+
+      // Mark as synced
+      final syncedIds = batch.map((s) => s['id'] as int).toList();
+      await markSessionsAsSynced(syncedIds);
+
+      return batch.length;
+    } catch (e) {
+      print('Error syncing sessions bulk: $e');
       return 0;
     }
   }
@@ -682,24 +782,54 @@ class DataSyncService {
   Future<void> _processPendingDelete(PendingSyncOperation operation) async {
     _logger.info('Processing DELETE for ${operation.entityType} #${operation.entityId}');
 
-    // Only process if we have a server ID (can't delete if not synced to server)
-    if (operation.serverId == null) {
-      _logger.warning('Skipping DELETE - no server ID for ${operation.entityType} #${operation.entityId}');
-      return;
-    }
-
     switch (operation.entityType) {
       case 'ORDER':
-        await _apiService.deleteOrder(operation.serverId!);
-        _logger.info('Deleted order #${operation.serverId} from server');
+        // Temporarily get orderCode from updateData JSON until database is regenerated
+        String? orderCode;
+        if (operation.updateData != null) {
+          try {
+            final data = jsonDecode(operation.updateData!) as Map<String, dynamic>;
+            orderCode = data['_orderCode'] as String?;
+          } catch (e) {
+            _logger.error('Failed to parse orderCode from updateData: $e');
+          }
+        }
+
+        if (orderCode == null) {
+          _logger.warning('Skipping DELETE - no order code for ORDER #${operation.entityId}');
+          return;
+        }
+        await _apiService.deleteOrder(orderCode);
+        _logger.info('Deleted order code=$orderCode from server');
         break;
 
       case 'TICKET':
-        await _apiService.deleteTicket(operation.serverId!);
-        _logger.info('Deleted ticket #${operation.serverId} from server');
+        // Temporarily get orderCode and ticketNum from updateData JSON
+        String? orderCode;
+        String? ticketNum;
+        if (operation.updateData != null) {
+          try {
+            final data = jsonDecode(operation.updateData!) as Map<String, dynamic>;
+            orderCode = data['_orderCode'] as String?;
+            ticketNum = data['_ticketNum'] as String?;
+          } catch (e) {
+            _logger.error('Failed to parse ticket data from updateData: $e');
+          }
+        }
+
+        if (orderCode == null || ticketNum == null) {
+          _logger.warning('Skipping DELETE - missing orderCode or ticketNum for TICKET #${operation.entityId}');
+          return;
+        }
+        await _apiService.deleteTicket(orderCode, ticketNum);
+        _logger.info('Deleted ticket orderCode=$orderCode, ticketNum=$ticketNum from server');
         break;
 
       case 'ORDER_PRODUCT':
+        if (operation.serverId == null) {
+          _logger.warning('Skipping DELETE - no server ID for ORDER_PRODUCT #${operation.entityId}');
+          return;
+        }
         await _apiService.deleteOrderProduct(operation.serverId!);
         _logger.info('Deleted order product #${operation.serverId} from server');
         break;
@@ -713,30 +843,60 @@ class DataSyncService {
   Future<void> _processPendingUpdate(PendingSyncOperation operation) async {
     _logger.info('Processing UPDATE for ${operation.entityType} #${operation.entityId}');
 
-    if (operation.serverId == null) {
-      _logger.warning('Skipping UPDATE - no server ID for ${operation.entityType} #${operation.entityId}');
-      return;
-    }
-
     if (operation.updateData == null) {
       _logger.warning('Skipping UPDATE - no update data for ${operation.entityType} #${operation.entityId}');
       return;
     }
 
-    final updateData = operation.updateData!;
+    final rawData = jsonDecode(operation.updateData!) as Map<String, dynamic>;
 
     switch (operation.entityType) {
       case 'ORDER':
-        await _apiService.updateOrder(operation.serverId!, updateData);
-        _logger.info('Updated order #${operation.serverId} on server');
+        // Extract orderCode and actual update data
+        final orderCode = rawData['_orderCode'] as String?;
+        if (orderCode == null) {
+          _logger.warning('Skipping UPDATE - no order code for ORDER #${operation.entityId}');
+          return;
+        }
+
+        // Remove metadata fields
+        final updateData = Map<String, dynamic>.from(rawData);
+        updateData.remove('_orderCode');
+        updateData.remove('_ticketNum');
+
+        await _apiService.updateOrder(orderCode, updateData);
+        _logger.info('Updated order code=$orderCode on server');
         break;
 
       case 'TICKET':
-        await _apiService.updateTicket(operation.serverId!, updateData);
-        _logger.info('Updated ticket #${operation.serverId} on server');
+        // Extract orderCode, ticketNum and actual update data
+        final orderCode = rawData['_orderCode'] as String?;
+        final ticketNum = rawData['_ticketNum'] as String?;
+        if (orderCode == null || ticketNum == null) {
+          _logger.warning('Skipping UPDATE - missing orderCode or ticketNum for TICKET #${operation.entityId}');
+          return;
+        }
+
+        // Remove metadata fields
+        final updateData = Map<String, dynamic>.from(rawData);
+        updateData.remove('_orderCode');
+        updateData.remove('_ticketNum');
+
+        await _apiService.updateTicket(orderCode, ticketNum, updateData);
+        _logger.info('Updated ticket orderCode=$orderCode, ticketNum=$ticketNum on server');
         break;
 
       case 'ORDER_PRODUCT':
+        if (operation.serverId == null) {
+          _logger.warning('Skipping UPDATE - no server ID for ORDER_PRODUCT #${operation.entityId}');
+          return;
+        }
+
+        // Remove metadata fields
+        final updateData = Map<String, dynamic>.from(rawData);
+        updateData.remove('_orderCode');
+        updateData.remove('_ticketNum');
+
         await _apiService.updateOrderProduct(operation.serverId!, updateData);
         _logger.info('Updated order product #${operation.serverId} on server');
         break;
@@ -747,87 +907,105 @@ class DataSyncService {
   }
 
   /// Queue a delete operation (for offline support)
-  Future<void> queueDelete(String entityType, int entityId, {int? serverId}) async {
+  Future<void> queueDelete(String entityType, int entityId, {int? serverId, String? orderCode, String? ticketNum}) async {
     await _pendingOpsService.queueDelete(
       entityType: entityType,
       entityId: entityId,
       serverId: serverId,
+      orderCode: orderCode,
+      ticketNum: ticketNum,
     );
   }
 
   /// Queue an update operation (for offline support)
-  Future<void> queueUpdate(String entityType, int entityId, Map<String, dynamic> updateData, {int? serverId}) async {
+  Future<void> queueUpdate(String entityType, int entityId, Map<String, dynamic> updateData, {int? serverId, String? orderCode, String? ticketNum}) async {
     await _pendingOpsService.queueUpdate(
       entityType: entityType,
       entityId: entityId,
       serverId: serverId,
+      orderCode: orderCode,
+      ticketNum: ticketNum,
       updateData: updateData,
     );
   }
 
   /// Execute delete immediately if online, queue if offline
-  Future<void> deleteEntity({
-    required String entityType,
+  Future<void> deleteOrderEntity({
     required int entityId,
-    int? serverId,
+    required String orderCode,
     required bool isOnline,
   }) async {
-    if (isOnline && serverId != null) {
-      // Execute immediately
+    if (isOnline) {
       try {
-        switch (entityType) {
-          case 'ORDER':
-            await _apiService.deleteOrder(serverId);
-            break;
-          case 'TICKET':
-            await _apiService.deleteTicket(serverId);
-            break;
-          case 'ORDER_PRODUCT':
-            await _apiService.deleteOrderProduct(serverId);
-            break;
-        }
-        _logger.info('Deleted $entityType #$serverId from server immediately');
+        await _apiService.deleteOrder(orderCode);
+        _logger.info('Deleted order code=$orderCode from server immediately');
       } catch (e) {
-        _logger.error('Failed to delete $entityType immediately, queuing: $e');
-        await queueDelete(entityType, entityId, serverId: serverId);
+        _logger.error('Failed to delete order immediately, queuing: $e');
+        await _pendingOpsService.queueOrderDelete(entityId: entityId, orderCode: orderCode);
       }
     } else {
-      // Queue for later
-      await queueDelete(entityType, entityId, serverId: serverId);
+      await _pendingOpsService.queueOrderDelete(entityId: entityId, orderCode: orderCode);
     }
   }
 
-  /// Execute update immediately if online, queue if offline
-  Future<void> updateEntity({
-    required String entityType,
+  /// Execute ticket delete immediately if online, queue if offline
+  Future<void> deleteTicketEntity({
     required int entityId,
-    required Map<String, dynamic> updateData,
-    int? serverId,
+    required String orderCode,
+    required String ticketNum,
     required bool isOnline,
   }) async {
-    if (isOnline && serverId != null) {
-      // Execute immediately
+    if (isOnline) {
       try {
-        final updateDataJson = jsonEncode(updateData);
-        switch (entityType) {
-          case 'ORDER':
-            await _apiService.updateOrder(serverId, updateDataJson);
-            break;
-          case 'TICKET':
-            await _apiService.updateTicket(serverId, updateDataJson);
-            break;
-          case 'ORDER_PRODUCT':
-            await _apiService.updateOrderProduct(serverId, updateDataJson);
-            break;
-        }
-        _logger.info('Updated $entityType #$serverId on server immediately');
+        await _apiService.deleteTicket(orderCode, ticketNum);
+        _logger.info('Deleted ticket orderCode=$orderCode, ticketNum=$ticketNum from server immediately');
       } catch (e) {
-        _logger.error('Failed to update $entityType immediately, queuing: $e');
-        await queueUpdate(entityType, entityId, updateData, serverId: serverId);
+        _logger.error('Failed to delete ticket immediately, queuing: $e');
+        await _pendingOpsService.queueTicketDelete(entityId: entityId, orderCode: orderCode, ticketNum: ticketNum);
       }
     } else {
-      // Queue for later
-      await queueUpdate(entityType, entityId, updateData, serverId: serverId);
+      await _pendingOpsService.queueTicketDelete(entityId: entityId, orderCode: orderCode, ticketNum: ticketNum);
+    }
+  }
+
+  /// Execute order update immediately if online, queue if offline
+  Future<void> updateOrderEntity({
+    required int entityId,
+    required String orderCode,
+    required Map<String, dynamic> updateData,
+    required bool isOnline,
+  }) async {
+    if (isOnline) {
+      try {
+        await _apiService.updateOrder(orderCode, updateData);
+        _logger.info('Updated order code=$orderCode on server immediately');
+      } catch (e) {
+        _logger.error('Failed to update order immediately, queuing: $e');
+        await _pendingOpsService.queueOrderUpdate(entityId: entityId, orderCode: orderCode, updateData: updateData);
+      }
+    } else {
+      await _pendingOpsService.queueOrderUpdate(entityId: entityId, orderCode: orderCode, updateData: updateData);
+    }
+  }
+
+  /// Execute ticket update immediately if online, queue if offline
+  Future<void> updateTicketEntity({
+    required int entityId,
+    required String orderCode,
+    required String ticketNum,
+    required Map<String, dynamic> updateData,
+    required bool isOnline,
+  }) async {
+    if (isOnline) {
+      try {
+        await _apiService.updateTicket(orderCode, ticketNum, updateData);
+        _logger.info('Updated ticket orderCode=$orderCode, ticketNum=$ticketNum on server immediately');
+      } catch (e) {
+        _logger.error('Failed to update ticket immediately, queuing: $e');
+        await _pendingOpsService.queueTicketUpdate(entityId: entityId, orderCode: orderCode, ticketNum: ticketNum, updateData: updateData);
+      }
+    } else {
+      await _pendingOpsService.queueTicketUpdate(entityId: entityId, orderCode: orderCode, ticketNum: ticketNum, updateData: updateData);
     }
   }
 }

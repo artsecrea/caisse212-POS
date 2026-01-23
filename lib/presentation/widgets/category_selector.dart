@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
@@ -260,6 +259,7 @@ class _CategoryChip extends StatelessWidget {
       padding: const EdgeInsets.only(right: 12),
       child: InkWell(
         onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
         child: Container(
           width: 120,
           constraints: const BoxConstraints(
@@ -270,6 +270,7 @@ class _CategoryChip extends StatelessWidget {
             color: isSelected
                 ? Theme.of(context).primaryColor
                 : Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isSelected
                   ? Theme.of(context).primaryColor

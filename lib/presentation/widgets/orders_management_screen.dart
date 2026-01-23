@@ -1,10 +1,14 @@
 // filepath: /home/arecrea/prj/posecrea/lib/presentation/widgets/orders_management_screen.dart
 
+import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/network_provider.dart';
+import '../../providers/sync_manager_provider.dart';
+import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
 import 'permission_guard.dart';
@@ -31,6 +35,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   int? _sortColumnIndex;
   bool _sortAscending = true;
 
+  // Sync state
+  bool _isSyncing = false;
+
   final TextEditingController _searchController = TextEditingController();
 
   @override
@@ -42,7 +49,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   @override
   Widget build(BuildContext context) {
     final orderRepo = ref.watch(orderRepositoryProvider);
-    final currentOrderAsync = ref.watch(orderProvider);
 
     return Scaffold(
       appBar: _buildAppBar(),
@@ -79,9 +85,50 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   PreferredSizeWidget _buildAppBar() {
+    // Use the same network state provider as top_bar for accurate detection
+    final isOnline = ref.watch(networkStateProvider);
+    final syncState = ref.watch(syncManagerProvider);
+
     return AppBar(
       title: const Text('Orders Management'),
       actions: [
+        // Sync indicator
+        if (_isSyncing || syncState.isSyncing)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+            ),
+          ),
+        // Online/Offline indicator
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Tooltip(
+            message: isOnline ? 'Online' : 'Offline',
+            child: Icon(
+              isOnline ? Icons.wifi : Icons.wifi_off,
+              color: isOnline ? Colors.green : Colors.red,
+              size: 20,
+            ),
+          ),
+        ),
+        // View pending operations queue
+        IconButton(
+          icon: const Icon(Icons.pending_actions),
+          onPressed: _showPendingOperationsDialog,
+          tooltip: 'View Pending Operations',
+        ),
+        // Sync all button
+        IconButton(
+          icon: const Icon(Icons.cloud_sync),
+          onPressed: (_isSyncing || syncState.isSyncing) ? null : _syncAll,
+          tooltip: 'Sync All (Orders, Tickets, Customers)',
+        ),
+        // Refresh
         IconButton(
           icon: const Icon(Icons.refresh),
           onPressed: () => setState(() {}),
@@ -171,6 +218,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         DropdownMenuItem(value: 'PREPARING', child: Text('Preparing')),
         DropdownMenuItem(value: 'READY', child: Text('Ready')),
         DropdownMenuItem(value: 'DELIVERED', child: Text('Delivered')),
+        DropdownMenuItem(value: 'COMPLETED', child: Text('Completed')),
         DropdownMenuItem(value: 'CANCELED', child: Text('Canceled')),
       ],
       onChanged: (value) {
@@ -192,7 +240,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           child: DataTable2(
             columnSpacing: 12,
             horizontalMargin: 12,
-            minWidth: 1200,
+            minWidth: 1000,
             sortColumnIndex: _sortColumnIndex,
             sortAscending: _sortAscending,
             headingRowColor: WidgetStateProperty.all(
@@ -205,7 +253,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             columns: [
               DataColumn2(label: const Text('ID'), size: ColumnSize.S, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
               DataColumn2(label: const Text('Code'), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Username'), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
+              DataColumn2(label: const Text('Username'), size: ColumnSize.S, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
               DataColumn2(label: const Text('Products'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
               DataColumn2(label: const Text('Discount'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
               DataColumn2(label: const Text('TVA'),
@@ -229,7 +277,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                   onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
               DataColumn2(label: const Text('Actions'),
                   size: ColumnSize.L,
-                  fixedWidth: 150
               ),
             ],
             rows: paginatedOrders.map((orderDetails) => _buildDataRow(orderDetails)).toList(),
@@ -242,24 +289,48 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   DataRow _buildDataRow(OrderFullDetails orderDetails) {
     final order = orderDetails.order;
+    final isCompleted = order.status == 'COMPLETED';
+    final isSynced = order.isSynced;
+
+    // Order needs sync if it's completed but not synced
+    final needsSync = isCompleted && !isSynced;
+
     return DataRow(
       cells: [
         DataCell(Text(order.id.toString())),
-        DataCell(Text(order.code)),
-        DataCell(Text(orderDetails.userName ?? 'N/A')),
+        DataCell(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(order.code, style: const TextStyle(fontSize: 12)),
+              const SizedBox(width: 4),
+              // Sync status indicator - show for completed orders
+              if (isCompleted)
+                Tooltip(
+                  message: needsSync ? 'Not synced to server' : 'Synced to server',
+                  child: Icon(
+                    needsSync ? Icons.cloud_off : Icons.cloud_done,
+                    size: 14,
+                    color: needsSync ? Colors.orange : Colors.green,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        DataCell(Text(orderDetails.userName ?? 'N/A', style: const TextStyle(fontSize: 12))),
         DataCell(Text(orderDetails.productCount.toString())),
-        DataCell(Text('\$${orderDetails.totalDiscount.toStringAsFixed(2)}')),
-        DataCell(Text('\$${orderDetails.totalTva.toStringAsFixed(2)}')),
-        DataCell(Text('\$${orderDetails.subtotal.toStringAsFixed(2)}')),
+        DataCell(Text('\$${orderDetails.totalDiscount.toStringAsFixed(0)}')),
+        DataCell(Text('\$${orderDetails.totalTva.toStringAsFixed(0)}')),
+        DataCell(Text('\$${orderDetails.subtotal.toStringAsFixed(0)}')),
         DataCell(
           Text(
-            '\$${orderDetails.total.toStringAsFixed(2)}',
+            '\$${orderDetails.total.toStringAsFixed(0)}',
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
         ),
         DataCell(
           Text(
-            '\$${orderDetails.totalPaid.toStringAsFixed(2)}',
+            '\$${orderDetails.totalPaid.toStringAsFixed(0)}',
             style: TextStyle(
               color: orderDetails.totalPaid >= orderDetails.total ? Colors.green : Colors.orange,
               fontWeight: FontWeight.w600,
@@ -267,29 +338,39 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           ),
         ),
         DataCell(_buildStatusChip(order.status)),
-        DataCell(Text(_formatDate(order.date))),
+        DataCell(Text(_formatDate(order.date), style: const TextStyle(fontSize: 11))),
         DataCell(
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // View details
               IconButton(
-                icon: const Icon(Icons.visibility, size: 20),
+                icon: const Icon(Icons.visibility, size: 18),
                 onPressed: () => _showOrderDetails(order),
-                tooltip: 'View Details',
+                tooltip: 'View',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               ),
-              // Edit - Protected by permission
+              // Edit order - Protected by permission
               PermissionIconButton(
                 permission: Permissions.ordersUpdate,
-                icon: const Icon(Icons.edit, size: 20),
+                icon: const Icon(Icons.edit, size: 18, color: Colors.green),
                 onPressed: () => _editOrder(order),
-                tooltip: 'Edit Order',
+                tooltip: 'Edit',
+              ),
+              // Change status - Protected by permission
+              PermissionIconButton(
+                permission: Permissions.ordersUpdate,
+                icon: const Icon(Icons.swap_horiz, size: 18, color: Colors.blue),
+                onPressed: () => _showChangeStatusDialog(order),
+                tooltip: 'Status',
               ),
               // Delete - Protected by permission
               PermissionIconButton(
                 permission: Permissions.ordersDelete,
-                icon: const Icon(Icons.delete, size: 20, color: Colors.red),
+                icon: const Icon(Icons.delete, size: 18, color: Colors.red),
                 onPressed: () => _deleteOrder(order),
-                tooltip: 'Delete Order',
+                tooltip: 'Delete',
               ),
             ],
           ),
@@ -314,7 +395,10 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         color = Colors.green;
         break;
       case 'DELIVERED':
-        color = Colors.grey;
+        color = Colors.teal;
+        break;
+      case 'COMPLETED':
+        color = Colors.green.shade800;
         break;
       case 'CANCELED':
         color = Colors.red;
@@ -326,7 +410,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: color),
       ),
@@ -604,6 +688,267 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             SnackBar(content: Text('Error deleting order: $e')),
           );
         }
+      }
+    }
+  }
+
+  // Show dialog to change order status
+  void _showChangeStatusDialog(Order order) async {
+    final statuses = ['ONHOLD', 'PENDING', 'PREPARING', 'READY', 'DELIVERED', 'COMPLETED', 'CANCELED'];
+    String? selectedStatus = order.status;
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text('Change Status - ${order.code}'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text('Current: ', style: TextStyle(fontWeight: FontWeight.w500)),
+                    _buildStatusChip(order.status),
+                    const SizedBox(width: 8),
+                    if (order.isSynced)
+                      const Icon(Icons.cloud_done, size: 16, color: Colors.green)
+                    else if (order.status == 'COMPLETED')
+                      const Icon(Icons.cloud_off, size: 16, color: Colors.orange),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const Text('New status:', style: TextStyle(fontWeight: FontWeight.w500)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: statuses.map((status) => ChoiceChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(status, style: const TextStyle(fontSize: 11)),
+                        if (status == 'COMPLETED') ...[
+                          const SizedBox(width: 4),
+                          const Icon(Icons.cloud_upload, size: 12),
+                        ],
+                      ],
+                    ),
+                    selected: selectedStatus == status,
+                    onSelected: (selected) {
+                      setDialogState(() {
+                        selectedStatus = selected ? status : null;
+                      });
+                    },
+                  )).toList(),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: selectedStatus != null && selectedStatus != order.status
+                    ? () => Navigator.pop(context, selectedStatus)
+                    : null,
+                child: const Text('Change'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (result != null && result != order.status) {
+      await _changeOrderStatus(order, result);
+    }
+  }
+
+  // Change order status and optionally sync
+  Future<void> _changeOrderStatus(Order order, String newStatus) async {
+    try {
+      final orderRepo = ref.read(orderRepositoryProvider);
+      final isOnline = ref.read(networkStateProvider);
+
+      // Update status
+      await orderRepo.updateOrderStatus(order.id, newStatus);
+
+      // If changed to COMPLETED and online, try to sync
+      bool synced = false;
+      if (newStatus == 'COMPLETED' && isOnline) {
+        try {
+          final syncManager = ref.read(syncManagerProvider.notifier);
+          synced = await syncManager.autoSyncOrder(order.id);
+        } catch (e) {
+          print('Auto-sync after status change failed: $e');
+        }
+      }
+
+      setState(() {}); // Refresh
+
+      if (mounted) {
+        String message = 'Status changed to $newStatus';
+        if (newStatus == 'COMPLETED') {
+          message += synced ? ' and synced' : (isOnline ? ' (sync pending)' : ' (will sync when online)');
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: synced || newStatus != 'COMPLETED' ? Colors.green : Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error changing status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // Sync all unsynced data (orders, tickets, customers, sessions)
+  Future<void> _syncAll() async {
+    final isOnline = ref.read(networkStateProvider);
+
+    if (!isOnline) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No network connection'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isSyncing = true);
+
+    try {
+      final syncManager = ref.read(syncManagerProvider.notifier);
+      final result = await syncManager.performFullSync();
+
+      if (mounted) {
+        setState(() => _isSyncing = false);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.message),
+            backgroundColor: result.success && result.totalSynced > 0
+                ? Colors.green
+                : (result.success ? Colors.orange : Colors.red),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+
+        if (result.totalSynced > 0) {
+          setState(() {}); // Refresh the list
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // Show pending operations (deletes/updates) dialog
+  Future<void> _showPendingOperationsDialog() async {
+    try {
+      final database = ref.read(databaseProvider);
+      final operations = await (database.select(database.pendingSyncOperations)..orderBy([(t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.desc)])).get();
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.pending_actions),
+              const SizedBox(width: 12),
+              Text('Pending Operations (${operations.length})'),
+            ],
+          ),
+          content: SizedBox(
+            width: 600,
+            height: 400,
+            child: operations.isEmpty
+                ? const Center(child: Text('No pending operations'))
+                : ListView.builder(
+                    itemCount: operations.length,
+                    itemBuilder: (context, index) {
+                      final op = operations[index];
+                      final isDelete = op.operationType == 'DELETE';
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          leading: Icon(
+                            isDelete ? Icons.delete : Icons.edit,
+                            color: isDelete ? Colors.red : Colors.blue,
+                          ),
+                          title: Text('${op.operationType} ${op.entityType} #${op.entityId}'),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Server ID: ${op.serverId ?? "Not synced yet"}'),
+                              Text('Created: ${_formatDate(op.createdAt)}'),
+                              if (op.retryCount > 0)
+                                Text('Retries: ${op.retryCount}', style: const TextStyle(color: Colors.orange)),
+                              if (op.lastError != null)
+                                Text('Error: ${op.lastError}', style: const TextStyle(color: Colors.red, fontSize: 11)),
+                            ],
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_forever, color: Colors.red),
+                            onPressed: () async {
+                              await (database.delete(database.pendingSyncOperations)..where((t) => t.id.equals(op.id))).go();
+                              Navigator.pop(context);
+                              _showPendingOperationsDialog();
+                            },
+                            tooltip: 'Remove from queue',
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+            if (operations.isNotEmpty)
+              ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await _syncAll(); // Trigger sync to process pending operations
+                },
+                icon: const Icon(Icons.sync),
+                label: const Text('Sync Now'),
+              ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading operations: $e'), backgroundColor: Colors.red),
+        );
       }
     }
   }

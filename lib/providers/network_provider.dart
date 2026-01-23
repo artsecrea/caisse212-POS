@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'database_providers.dart';
+import '../services/sync_job_service.dart';
 
 /// Provider for network connectivity status
 final connectivityProvider = StreamProvider<ConnectivityResult>((ref) async* {
@@ -59,3 +60,10 @@ final lastKnownOnlineStatusProvider = StateNotifierProvider<OnlineStatusNotifier
   return OnlineStatusNotifier(ref);
 });
 
+/// Sync Job Service Provider with proper network status access
+final syncJobServiceWithNetworkProvider = Provider<SyncJobService>((ref) {
+  final syncService = ref.watch(dataSyncServiceProvider);
+  final prefs = ref.watch(sharedPreferencesProvider);
+  final isOnline = ref.watch(lastKnownOnlineStatusProvider);
+  return SyncJobService(syncService, prefs, () => isOnline);
+});

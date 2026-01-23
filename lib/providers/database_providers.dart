@@ -8,6 +8,7 @@ import '../services/api_service.dart';
 import '../services/data_sync_service.dart';
 import '../services/printing_service.dart';
 import '../services/pending_operations_service.dart';
+import '../services/sync_job_service.dart';
 
 // Database Provider
 final databaseProvider = Provider<AppDatabase>((ref) {
@@ -31,6 +32,15 @@ final dataSyncServiceProvider = Provider<DataSyncService>((ref) {
 final pendingOperationsServiceProvider = Provider<PendingOperationsService>((ref) {
   final database = ref.watch(databaseProvider);
   return PendingOperationsService(database);
+});
+
+// Sync Job Service Provider - initialized lazily to avoid circular dependency
+// Use syncJobServiceWithNetworkProvider from network_provider.dart instead
+final syncJobServiceProvider = Provider<SyncJobService>((ref) {
+  final syncService = ref.watch(dataSyncServiceProvider);
+  final prefs = ref.watch(sharedPreferencesProvider);
+  // Default offline callback - will be updated by network_provider
+  return SyncJobService(syncService, prefs, () => false);
 });
 
 // Printing Service Provider

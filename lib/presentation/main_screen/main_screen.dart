@@ -490,7 +490,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           await printingService.printOrderReceipt(
                             order: reloadedOrder,
                             cashierName: currentUser.firstName,
-                            storeName: 'POS Store',
+                            storeName: '#',
                           );
 
                           // Print KDS ticket if enabled

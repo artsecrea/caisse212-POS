@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
+import '../services/pending_operations_service.dart';
 import 'database_providers.dart';
 
 class TicketRepository {
@@ -35,13 +36,74 @@ class TicketRepository {
 
   // Update a ticket
   Future<void> updateTicket(int ticketId, TicketsCompanion ticket) async {
+    // Check if ticket was synced and get order code
+    final existingTicket = await getTicketById(ticketId);
+    final wasSynced = existingTicket?.isSynced ?? false;
+    final ticketNum = existingTicket?.num ?? '';
+
+    // Get the order code
+    String? orderCode;
+    if (existingTicket != null) {
+      final order = await (_database.select(_database.orders)
+        ..where((tbl) => tbl.id.equals(existingTicket.orderId)))
+        .getSingleOrNull();
+      orderCode = order?.code;
+    }
+
+    // Mark as not synced if changes were made
+    final updatedTicket = ticket.copyWith(isSynced: const Value(false));
+
     await (_database.update(_database.tickets)
           ..where((tbl) => tbl.id.equals(ticketId)))
-        .write(ticket);
+        .write(updatedTicket);
+
+    // Queue update operation if ticket was previously synced
+    if (wasSynced && orderCode != null && ticketNum.isNotEmpty) {
+      try {
+        final pendingOpsService = PendingOperationsService(_database);
+        await pendingOpsService.queueTicketUpdate(
+          entityId: ticketId,
+          orderCode: orderCode,
+          ticketNum: ticketNum,
+          updateData: ticket.toColumns(false).map((k, v) => MapEntry(k, v.toString())),
+        );
+      } catch (e) {
+        print('Failed to queue ticket update operation: $e');
+      }
+    }
   }
 
   // Delete a ticket
-  Future<void> deleteTicket(int ticketId) async {
+  Future<void> deleteTicket(int ticketId, {bool queueSyncOperation = true}) async {
+    // Check if ticket was synced
+    final ticket = await getTicketById(ticketId);
+    final wasSynced = ticket?.isSynced ?? false;
+    final ticketNum = ticket?.num ?? '';
+
+    // Get the order code
+    String? orderCode;
+    if (ticket != null) {
+      final order = await (_database.select(_database.orders)
+        ..where((tbl) => tbl.id.equals(ticket.orderId)))
+        .getSingleOrNull();
+      orderCode = order?.code;
+    }
+
+    // Queue delete operation if ticket was synced
+    if (wasSynced && queueSyncOperation && orderCode != null && ticketNum.isNotEmpty) {
+      try {
+        final pendingOpsService = PendingOperationsService(_database);
+        await pendingOpsService.queueTicketDelete(
+          entityId: ticketId,
+          orderCode: orderCode,
+          ticketNum: ticketNum,
+        );
+        print('Queued delete operation for synced ticket orderCode=$orderCode, ticketNum=$ticketNum');
+      } catch (e) {
+        print('Failed to queue ticket delete operation: $e');
+      }
+    }
+
     // First, set all order products with this ticketId to null
     await (_database.update(_database.orderProducts)
           ..where((tbl) => tbl.ticketId.equals(ticketId)))

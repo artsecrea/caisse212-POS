@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
+import 'pending_operations_service.dart';
 
 /// Session summary with calculated totals
 class SessionSummary {
@@ -139,7 +140,26 @@ class SessionService {
   }
 
   /// Delete a session
-  Future<void> deleteSession(int sessionId) async {
+  Future<void> deleteSession(int sessionId, {bool queueSyncOperation = true}) async {
+    // Check if session was synced
+    final session = await getSessionById(sessionId);
+    final wasSynced = session?.isSynced ?? false;
+
+    // Queue delete operation if session was synced
+    if (wasSynced && queueSyncOperation) {
+      try {
+        final pendingOpsService = PendingOperationsService(_database);
+        await pendingOpsService.queueDelete(
+          entityType: 'SESSION',
+          entityId: sessionId,
+          serverId: sessionId,
+        );
+        print('Queued delete operation for synced session #$sessionId');
+      } catch (e) {
+        print('Failed to queue session delete operation: $e');
+      }
+    }
+
     await (_database.delete(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(sessionId)))
       .go();

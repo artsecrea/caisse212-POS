@@ -217,6 +217,69 @@ class SettingsScreen extends ConsumerWidget {
               onChanged: (value) => settingsNotifier.setShowPrintButton(value),
             ),
 
+            const SizedBox(height: 24),
+
+            // Sync Settings Section
+            const Text(
+              'Sync Settings',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.sync,
+              title: 'Auto Sync Online',
+              subtitle: 'Automatically sync orders when online',
+              value: settings.autoSyncOnline,
+              onChanged: (value) => settingsNotifier.setAutoSyncOnline(value),
+            ),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.auto_delete,
+              title: 'Auto Clear Synced Data',
+              subtitle: 'Clear old synced data daily',
+              value: settings.autoClearSyncedData,
+              onChanged: (value) => settingsNotifier.setAutoClearSyncedData(value),
+            ),
+            const SizedBox(height: 12),
+            _buildNumberSelector(
+              context: context,
+              icon: Icons.timer,
+              title: 'Sync Interval (minutes)',
+              subtitle: 'How often to sync data',
+              value: settings.autoSyncDurationMinutes,
+              min: 1,
+              max: 60,
+              onChanged: (value) => settingsNotifier.setAutoSyncDuration(value),
+            ),
+            const SizedBox(height: 12),
+            _buildNumberSelector(
+              context: context,
+              icon: Icons.backup,
+              title: 'Bulk Sync Size',
+              subtitle: 'Number of records to sync at once',
+              value: settings.bulkSyncSize,
+              min: 10,
+              max: 200,
+              onChanged: (value) => settingsNotifier.setBulkSyncSize(value),
+            ),
+            const SizedBox(height: 12),
+            _buildNumberSelector(
+              context: context,
+              icon: Icons.calendar_today,
+              title: 'Data Retention (days)',
+              subtitle: 'Days to keep synced data before deletion',
+              value: settings.dataRetentionDays,
+              min: 1,
+              max: 30,
+              onChanged: (value) => settingsNotifier.setDataRetentionDays(value),
+            ),
+
             const SizedBox(height: 32),
 
             // Reset Button
@@ -866,6 +929,82 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                 );
               }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNumberSelector({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required int value,
+    required int min,
+    required int max,
+    required ValueChanged<int> onChanged,
+  }) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  onPressed: value > min
+                      ? () => onChanged(value - 1)
+                      : null,
+                  icon: const Icon(Icons.remove_circle_outline),
+                  iconSize: 28,
+                ),
+                Container(
+                  constraints: const BoxConstraints(minWidth: 48),
+                  alignment: Alignment.center,
+                  child: Text(
+                    value.toString(),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: value < max
+                      ? () => onChanged(value + 1)
+                      : null,
+                  icon: const Icon(Icons.add_circle_outline),
+                  iconSize: 28,
+                ),
+              ],
             ),
           ],
         ),

@@ -186,7 +186,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
 
     final tenantId = apiService.getTenantId();
     if (tenantId != null) {
-      headers['X-Tenant-ID'] = tenantId;
+      // headers['X-Tenant-ID'] = tenantId;
     }
 
     if (_selectedEndpoint?.method == 'POST') {
@@ -294,7 +294,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                     children: [
                       _buildInfoRow('Base URL', baseUrl),
                       _buildInfoRow('POS Name', apiService.getPosName() ?? 'Not set'),
-                      _buildInfoRow('Tenant ID', apiService.getTenantId() ?? 'Not set'),
+                      // _buildInfoRow('Tenant ID', apiService.getTenantId() ?? 'Not set'),
                       _buildInfoRow('Demo Mode', isDemoMode ? 'Yes' : 'No'),
                       _buildInfoRow('Auth Token', apiService.getAccessToken() != null ? 'Set' : 'Not set'),
                     ],

@@ -112,9 +112,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     passwordController.dispose();
 
     if (result == true) {
-      // Password verified, navigate to tenant screen
+      // Password verified, clear auth data and navigate to tenant screen
+      final apiService = ApiService(prefs);
+      await apiService.clearAuthData();
+
       if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/tenant');
+        Navigator.of(context).pushReplacementNamed('/tenant_login');
       }
     } else if (result == false) {
       // Password verification failed

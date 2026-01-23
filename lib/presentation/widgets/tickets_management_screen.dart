@@ -93,10 +93,10 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).cardColor,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Theme.of(context).shadowColor.withValues(alpha: 0.05),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -231,9 +231,28 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
   DataRow _buildDataRow(TicketWithDetails ticketDetails) {
     final ticket = ticketDetails.ticket;
+    final needsSync = ticket.isPaid && !ticket.isSynced;
+
     return DataRow(
       cells: [
-        DataCell(Text(ticket.id.toString())),
+        DataCell(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(ticket.id.toString()),
+              const SizedBox(width: 4),
+              if (ticket.isPaid)
+                Tooltip(
+                  message: needsSync ? 'Not synced to server' : 'Synced to server',
+                  child: Icon(
+                    needsSync ? Icons.cloud_off : Icons.cloud_done,
+                    size: 14,
+                    color: needsSync ? Colors.orange : Colors.green,
+                  ),
+                ),
+            ],
+          ),
+        ),
         DataCell(Text(ticket.num)),
         DataCell(Text(ticket.orderId.toString())),
         DataCell(Text(ticketDetails.itemCount.toString())),

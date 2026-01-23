@@ -10,6 +10,7 @@ class SettingsKeys {
   static const String autoSyncOnline = 'auto_sync_online';
   static const String bulkSyncSize = 'bulk_sync_size';
   static const String dataRetentionDays = 'data_retention_days';
+  static const String autoSyncDurationMinutes = 'auto_sync_duration_minutes';
   static const String defaultOrderType = 'default_order_type';
   static const String showProductImages = 'show_product_images';
   static const String defaultOrderStatus = 'default_order_status';
@@ -21,6 +22,8 @@ class SettingsKeys {
   static const String showCouponButton = 'show_coupon_button';
   static const String showDiscountButton = 'show_discount_button';
   static const String showPrintButton = 'show_print_button';
+  static const String autoClearSyncedData = 'auto_clear_synced_data';
+  static const String lastDataClearDate = 'last_data_clear_date';
 }
 
 // Settings Notifier
@@ -44,6 +47,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       autoSyncOnline: _prefs.getBool(SettingsKeys.autoSyncOnline) ?? true,
       bulkSyncSize: _prefs.getInt(SettingsKeys.bulkSyncSize) ?? 50,
       dataRetentionDays: _prefs.getInt(SettingsKeys.dataRetentionDays) ?? 7,
+      autoSyncDurationMinutes: _prefs.getInt(SettingsKeys.autoSyncDurationMinutes) ?? 5,
       defaultOrderType: _prefs.getString(SettingsKeys.defaultOrderType) ?? 'DINE_IN',
       showProductImages: _prefs.getBool(SettingsKeys.showProductImages) ?? true,
       defaultOrderStatus: _prefs.getString(SettingsKeys.defaultOrderStatus) ?? 'PENDING',
@@ -55,6 +59,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showCouponButton: _prefs.getBool(SettingsKeys.showCouponButton) ?? true,
       showDiscountButton: _prefs.getBool(SettingsKeys.showDiscountButton) ?? true,
       showPrintButton: _prefs.getBool(SettingsKeys.showPrintButton) ?? true,
+      autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
     );
   }
 
@@ -85,6 +90,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setDataRetentionDays(int value) async {
     await _prefs.setInt(SettingsKeys.dataRetentionDays, value);
     state = state.copyWith(dataRetentionDays: value);
+  }
+
+  Future<void> setAutoSyncDuration(int minutes) async {
+    await _prefs.setInt(SettingsKeys.autoSyncDurationMinutes, minutes);
+    state = state.copyWith(autoSyncDurationMinutes: minutes);
   }
 
   Future<void> setDefaultOrderType(String type) async {
@@ -146,6 +156,37 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(showPrintButton: value);
   }
 
+  Future<void> setAutoClearSyncedData(bool value) async {
+    await _prefs.setBool(SettingsKeys.autoClearSyncedData, value);
+    state = state.copyWith(autoClearSyncedData: value);
+  }
+
+  /// Get the last data clear date
+  DateTime? getLastDataClearDate() {
+    final dateStr = _prefs.getString(SettingsKeys.lastDataClearDate);
+    if (dateStr == null) return null;
+    return DateTime.tryParse(dateStr);
+  }
+
+  /// Set the last data clear date to now
+  Future<void> setLastDataClearDate() async {
+    await _prefs.setString(SettingsKeys.lastDataClearDate, DateTime.now().toIso8601String());
+  }
+
+  /// Check if data should be cleared today
+  bool shouldClearDataToday() {
+    if (!state.autoClearSyncedData) return false;
+
+    final lastClearDate = getLastDataClearDate();
+    if (lastClearDate == null) return true;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final lastClearDay = DateTime(lastClearDate.year, lastClearDate.month, lastClearDate.day);
+
+    return today.isAfter(lastClearDay);
+  }
+
   Future<void> resetToDefaults() async {
     await _prefs.remove(SettingsKeys.isDarkMode);
     await _prefs.remove(SettingsKeys.language);
@@ -163,6 +204,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _prefs.remove(SettingsKeys.showCouponButton);
     await _prefs.remove(SettingsKeys.showDiscountButton);
     await _prefs.remove(SettingsKeys.showPrintButton);
+    await _prefs.remove(SettingsKeys.autoClearSyncedData);
     state = const AppSettings();
   }
 }

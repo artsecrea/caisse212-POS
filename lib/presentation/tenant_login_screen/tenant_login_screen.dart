@@ -64,11 +64,16 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       await apiService.setDemoMode(false);
 
       // Attempt login
-      await apiService.login(
+      var data = await apiService.login(
         username: _usernameController.text.trim(),
         password: _passwordController.text.trim(),
         posName: _posNameController.text.trim(),
       );
+
+      // Save tenant password hash before clearing
+      final tenantPasswordHash = prefs.getString('tenant_password_hash');
+
+      print(data);
 
       // Login successful, now sync data
       setState(() {
@@ -92,11 +97,17 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
 
       await syncService.syncAllData();
 
+      // Restore tenant password hash if it was saved
+      if (tenantPasswordHash != null) {
+        await prefs.setString('tenant_password_hash', tenantPasswordHash);
+      }
+
       // Navigate to login screen
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/login');
       }
     } catch (e) {
+      print(e);
       setState(() {
         _errorMessage = e.toString().replaceFirst('Exception: ', '');
         _isLoading = false;
@@ -118,7 +129,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
 
       // Set demo mode
       await apiService.setDemoMode(true);
-      await apiService.setTenantId('DEMO');
+      await apiService.setTenantId(0); // Demo tenant ID is 0
       await apiService.setPosName('DEMO-POS');
 
       final database = ref.read(databaseProvider);
@@ -163,17 +174,17 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     // Show loading screen during data sync
     if (_isLoadingData) {
       return Scaffold(
-        body: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Theme.of(context).primaryColor,
-                Theme.of(context).primaryColor.withOpacity(0.7),
-              ],
-            ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Theme.of(context).primaryColor,
+              Theme.of(context).primaryColor.withValues(alpha: 0.7),
+            ],
           ),
+        ),
           child: Center(
             child: Card(
               elevation: 8,
@@ -220,7 +231,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
             end: Alignment.bottomRight,
             colors: [
               Theme.of(context).primaryColor,
-              Theme.of(context).primaryColor.withOpacity(0.7),
+              Theme.of(context).primaryColor.withValues(alpha: 0.7),
             ],
           ),
         ),

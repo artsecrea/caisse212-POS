@@ -476,7 +476,7 @@ class _TopBarState extends ConsumerState<TopBar> {
           ),
         );
         // Navigate to tenant login screen
-        Navigator.of(context).pushNamedAndRemoveUntil('/tenant', (route) => false);
+        Navigator.of(context).pushNamedAndRemoveUntil('/tenant_login', (route) => false);
       }
     } catch (e) {
       if (mounted) {

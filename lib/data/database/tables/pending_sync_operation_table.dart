@@ -13,8 +13,14 @@ class PendingSyncOperations extends Table {
   /// ID of the entity to delete/update (local database ID)
   IntColumn get entityId => integer()();
 
-  /// Server ID if available (for entities already synced)
+  /// Server ID if available (for entities already synced) - DEPRECATED, use orderCode/ticketNum
   IntColumn get serverId => integer().nullable()();
+
+  /// Order code for identifying orders on server (unique identifier)
+  TextColumn get orderCode => text().nullable()();
+
+  /// Ticket num for identifying tickets on server (used with orderCode)
+  TextColumn get ticketNum => text().nullable()();
 
   /// JSON data for UPDATE operations (contains the fields to update)
   TextColumn get updateData => text().nullable()();

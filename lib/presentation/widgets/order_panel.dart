@@ -106,43 +106,42 @@ class OrderPanel extends ConsumerWidget {
               ..where((tbl) => tbl.ticketId.equals(item.ticketId!)))
                 .get();
 
-            // Get the order product to check if it has a server ID
-            final orderProduct = await (database.select(database.orderProducts)
-              ..where((tbl) => tbl.id.equals(item.id!)))
-                .getSingleOrNull();
-
             // Delete the order product from database
             await (database.delete(database.orderProducts)
               ..where((tbl) => tbl.id.equals(item.id!)))
                 .go();
 
-            // Queue or execute delete operation for order product
-            if (orderProduct != null) {
-              await syncService.deleteEntity(
-                entityType: 'ORDER_PRODUCT',
-                entityId: item.id!,
-                serverId: null, // TODO: Add serverId field to OrderProducts table
-                isOnline: isOnline,
-              );
-            }
+            // Note: Order products are synced as part of the order, not individually
 
             // If this was the only item in the ticket, delete the ticket
             if (ticketProducts.length == 1) {
-              // Get ticket to check for server ID
+              // Get ticket and order info for sync
               final ticket = await (database.select(database.tickets)
                 ..where((tbl) => tbl.id.equals(item.ticketId!)))
                   .getSingleOrNull();
+
+              String? orderCode;
+              String? ticketNum;
+
+              if (ticket != null) {
+                ticketNum = ticket.num;
+                // Get order code
+                final order = await (database.select(database.orders)
+                  ..where((tbl) => tbl.id.equals(ticket.orderId)))
+                    .getSingleOrNull();
+                orderCode = order?.code;
+              }
 
               await (database.delete(database.tickets)
                 ..where((tbl) => tbl.id.equals(item.ticketId!)))
                   .go();
 
               // Queue or execute delete operation for ticket
-              if (ticket != null) {
-                await syncService.deleteEntity(
-                  entityType: 'TICKET',
+              if (ticket != null && ticket.isSynced && orderCode != null && ticketNum != null) {
+                await syncService.deleteTicketEntity(
                   entityId: item.ticketId!,
-                  serverId: null, // TODO: Add serverId field to Tickets table
+                  orderCode: orderCode,
+                  ticketNum: ticketNum,
                   isOnline: isOnline,
                 );
               }
@@ -168,14 +167,21 @@ class OrderPanel extends ConsumerWidget {
                 ..where((tbl) => tbl.id.equals(item.ticketId!)))
                   .getSingleOrNull();
 
-              if (ticket != null) {
-                await syncService.updateEntity(
-                  entityType: 'TICKET',
-                  entityId: item.ticketId!,
-                  serverId: null, // TODO: Add serverId field to Tickets table
-                  updateData: {'amount': newTicketAmount},
-                  isOnline: isOnline,
-                );
+              if (ticket != null && ticket.isSynced) {
+                // Get order code
+                final order = await (database.select(database.orders)
+                  ..where((tbl) => tbl.id.equals(ticket.orderId)))
+                    .getSingleOrNull();
+
+                if (order != null) {
+                  await syncService.updateTicketEntity(
+                    entityId: item.ticketId!,
+                    orderCode: order.code,
+                    ticketNum: ticket.num,
+                    updateData: {'amount': newTicketAmount},
+                    isOnline: isOnline,
+                  );
+                }
               }
             }
 

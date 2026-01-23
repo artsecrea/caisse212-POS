@@ -5,8 +5,11 @@ import 'package:loggecrea/loggecrea.dart';
 import '../domain/models/order_models.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/order_events.dart';
+import '../services/pending_operations_service.dart';
+import '../services/data_sync_service.dart';
 import 'package:uuid/uuid.dart';
 import 'database_providers.dart';
+import 'network_provider.dart';
 
 // Current Order State Provider
 class OrderNotifier extends StateNotifier<CurrentOrder> {
@@ -154,7 +157,17 @@ class OrderRepository {
   final AppDatabase _database;
   final _logger = Logger.instance;
 
+  // Optional sync service and network status callback for auto-sync
+  DataSyncService? _syncService;
+  bool Function()? _isOnlineCallback;
+
   OrderRepository(this._database);
+
+  /// Set sync service for auto-syncing completed orders
+  void setSyncService(DataSyncService syncService, bool Function() isOnlineCallback) {
+    _syncService = syncService;
+    _isOnlineCallback = isOnlineCallback;
+  }
 
   // Event stream for socket service integration
   final StreamController<OrderEvent> _eventController = StreamController<OrderEvent>.broadcast();
@@ -243,6 +256,20 @@ class OrderRepository {
       status: status,
     ));
 
+    // Auto-sync if order is COMPLETED and network is available
+    if (status == 'COMPLETED' && _syncService != null && _isOnlineCallback != null) {
+      final isOnline = _isOnlineCallback!();
+      if (isOnline) {
+        try {
+          await _syncService!.syncSingleOrder(orderId);
+          _logger.info('Auto-synced new COMPLETED order code=$orderCode');
+        } catch (e) {
+          _logger.error('Failed to auto-sync new order: $e');
+          // Order is saved locally, will be synced later
+        }
+      }
+    }
+
     return orderId;
   }
 
@@ -301,9 +328,17 @@ class OrderRepository {
     return orderId;
   }
 
-  Future<void> updateOrder( CurrentOrder order) async {
-
+  Future<void> updateOrder(CurrentOrder order, {bool queueSyncOperation = true}) async {
     int orderId = order.orderId!;
+
+    // Check if order was synced and queue update operation
+    final existingOrder = await (_database.select(_database.orders)
+      ..where((tbl) => tbl.id.equals(orderId)))
+      .getSingleOrNull();
+
+    final wasAlreadySynced = existingOrder?.isSynced ?? false;
+    final orderCode = existingOrder?.code ?? order.orderCode ?? '';
+
     // Update order details
     await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(OrdersCompanion(
       tableId: Value(order.tableId),
@@ -312,16 +347,18 @@ class OrderRepository {
       discountPercentage: Value(order.discountPercentage),
       note: Value(order.note),
       updatedAt: Value(DateTime.now()),
+      // Mark as not synced if changes were made to a previously synced order
+      isSynced: Value(wasAlreadySynced ? false : existingOrder?.isSynced ?? false),
     ));
 
-    // Delete existing order products
+    // Delete existing unpaid order products (keep paid ones)
     await (_database.delete(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))..where((tbl) => tbl.ticketId.isNull())).go();
 
     // Insert new order products
     for (final item in order.items) {
       if (item.ticketId != null) {
         // Skip items that are already ticketed
-        _logger.debug("continue");
+        _logger.debug("Skipping ticketed item");
         continue;
       }
       final orderProductId = await _database.into(_database.orderProducts).insert(
@@ -350,12 +387,58 @@ class OrderRepository {
       }
     }
 
+    // If order was previously synced, we need to sync the update
+    if (wasAlreadySynced && queueSyncOperation && orderCode.isNotEmpty) {
+      // Try to sync immediately if online, otherwise queue
+      if (_syncService != null && _isOnlineCallback != null) {
+        final isOnline = _isOnlineCallback!();
+        if (isOnline) {
+          try {
+            // Re-sync the entire order with updated products
+            await _syncService!.syncSingleOrder(orderId);
+            _logger.info('Re-synced updated order code=$orderCode');
+          } catch (e) {
+            _logger.error('Failed to re-sync updated order, queuing update: $e');
+            // Queue update operation as fallback
+            await _queueOrderUpdate(orderId, orderCode, order);
+          }
+        } else {
+          // Offline - queue the update
+          await _queueOrderUpdate(orderId, orderCode, order);
+        }
+      } else {
+        // No sync service - queue the update
+        await _queueOrderUpdate(orderId, orderCode, order);
+      }
+    }
+
     // Emit event
     _emitEvent(OrderUpdatedEvent(orderId: orderId));
     _emitEvent(OrderItemsChangedEvent(
       orderId: orderId,
       itemCount: order.items.length,
     ));
+  }
+
+  /// Helper to queue order update operation
+  Future<void> _queueOrderUpdate(int orderId, String orderCode, CurrentOrder order) async {
+    try {
+      final pendingOpsService = PendingOperationsService(_database);
+      await pendingOpsService.queueOrderUpdate(
+        entityId: orderId,
+        orderCode: orderCode,
+        updateData: {
+          'tableId': order.tableId,
+          'clientId': order.customerId,
+          'commercialId': order.commercialId,
+          'discountPercentage': order.discountPercentage,
+          'note': order.note,
+        },
+      );
+      _logger.info('Queued update operation for order code=$orderCode');
+    } catch (e) {
+      _logger.error('Failed to queue update operation: $e');
+    }
   }
 
   Future<CurrentOrder?> getOrderByTable(int tableId) async {
@@ -558,15 +641,49 @@ class OrderRepository {
     return result;
   }
 
-  Future<void> updateOrderStatus(int orderId, String status) async {
+  Future<void> updateOrderStatus(int orderId, String status, {bool queueSyncOperation = true}) async {
     // Get current status before updating
     final currentOrder = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
     final oldStatus = currentOrder?.status ?? '';
+    final wasAlreadySynced = currentOrder?.isSynced ?? false;
+    final orderCode = currentOrder?.code ?? '';
 
     await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(OrdersCompanion(
       status: Value(status),
       updatedAt: Value(DateTime.now()),
+      // Mark as not synced when status changes
+      isSynced: const Value(false),
     ));
+
+    // Handle sync based on status change
+    if (queueSyncOperation && orderCode.isNotEmpty) {
+      // If order becomes COMPLETED, try to sync it
+      if (status == 'COMPLETED' && _syncService != null && _isOnlineCallback != null) {
+        final isOnline = _isOnlineCallback!();
+        if (isOnline) {
+          try {
+            await _syncService!.syncSingleOrder(orderId);
+            _logger.info('Synced COMPLETED order code=$orderCode');
+          } catch (e) {
+            _logger.error('Failed to sync COMPLETED order: $e');
+            // Will be synced later by periodic sync
+          }
+        }
+      } else if (wasAlreadySynced) {
+        // Order was synced before, queue status update
+        try {
+          final pendingOpsService = PendingOperationsService(_database);
+          await pendingOpsService.queueOrderUpdate(
+            entityId: orderId,
+            orderCode: orderCode,
+            updateData: {'status': status},
+          );
+          _logger.info('Queued status update operation for order code=$orderCode');
+        } catch (e) {
+          _logger.error('Failed to queue status update operation: $e');
+        }
+      }
+    }
 
     // Emit event
     _emitEvent(OrderStatusChangedEvent(
@@ -802,7 +919,39 @@ class OrderRepository {
   }
 
   // Delete an order
-  Future<void> deleteOrder(int orderId) async {
+  Future<void> deleteOrder(int orderId, {bool queueSyncOperation = true}) async {
+    // Check if order was synced to server
+    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
+
+    if (order != null && order.isSynced && queueSyncOperation) {
+      // Try to delete from server if online, otherwise queue
+      if (_syncService != null && _isOnlineCallback != null) {
+        final isOnline = _isOnlineCallback!();
+        if (isOnline) {
+          try {
+            await _syncService!.deleteOrderEntity(
+              entityId: orderId,
+              orderCode: order.code,
+              isOnline: true,
+            );
+            _logger.info('Deleted order code=${order.code} from server');
+          } catch (e) {
+            _logger.error('Failed to delete order from server: $e');
+            // Queue for later if immediate delete failed
+            await _queueOrderDelete(orderId, order.code);
+          }
+        } else {
+          // Offline - queue the delete
+          await _queueOrderDelete(orderId, order.code);
+        }
+      } else {
+        // No sync service available - just queue
+        await _queueOrderDelete(orderId, order.code);
+      }
+    } else if (order != null && !order.isSynced) {
+      _logger.info('Deleting local-only order #$orderId (not synced, no queue needed)');
+    }
+
     // Delete order product components first
     final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))).get();
     for (final product in orderProducts) {
@@ -818,10 +967,31 @@ class OrderRepository {
     // Emit event
     _emitEvent(OrderDeletedEvent(orderId: orderId));
   }
+
+  /// Helper to queue order delete operation
+  Future<void> _queueOrderDelete(int orderId, String orderCode) async {
+    try {
+      final pendingOpsService = PendingOperationsService(_database);
+      await pendingOpsService.queueOrderDelete(
+        entityId: orderId,
+        orderCode: orderCode,
+      );
+      _logger.info('Queued delete operation for synced order code=$orderCode');
+    } catch (e) {
+      _logger.error('Failed to queue delete operation: $e');
+    }
+  }
 }
 
 final orderRepositoryProvider = Provider<OrderRepository>((ref) {
   final database = ref.watch(databaseProvider);
-  return OrderRepository(database);
+  final repository = OrderRepository(database);
+
+  // Set up sync service and network status callback
+  final syncService = ref.watch(dataSyncServiceProvider);
+  final isOnline = ref.watch(lastKnownOnlineStatusProvider);
+  repository.setSyncService(syncService, () => isOnline);
+
+  return repository;
 });
 

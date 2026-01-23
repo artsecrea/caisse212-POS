@@ -10,19 +10,75 @@ class PendingOperationsService {
 
   PendingOperationsService(this._database);
 
-  /// Queue a delete operation
+  /// Queue a delete operation for an order
+  Future<void> queueOrderDelete({
+    required int entityId,
+    required String orderCode,
+  }) async {
+    try {
+      // Temporarily store orderCode in updateData until database is regenerated
+      await _database.into(_database.pendingSyncOperations).insert(
+        PendingSyncOperationsCompanion.insert(
+          operationType: 'DELETE',
+          entityType: 'ORDER',
+          entityId: entityId,
+          updateData: Value(jsonEncode({'_orderCode': orderCode})),
+        ),
+      );
+      _logger.info('Queued DELETE operation for ORDER code=$orderCode');
+    } catch (e) {
+      _logger.error('Failed to queue order delete operation: $e');
+      rethrow;
+    }
+  }
+
+  /// Queue a delete operation for a ticket
+  Future<void> queueTicketDelete({
+    required int entityId,
+    required String orderCode,
+    required String ticketNum,
+  }) async {
+    try {
+      // Temporarily store orderCode and ticketNum in updateData until database is regenerated
+      await _database.into(_database.pendingSyncOperations).insert(
+        PendingSyncOperationsCompanion.insert(
+          operationType: 'DELETE',
+          entityType: 'TICKET',
+          entityId: entityId,
+          updateData: Value(jsonEncode({'_orderCode': orderCode, '_ticketNum': ticketNum})),
+        ),
+      );
+      _logger.info('Queued DELETE operation for TICKET orderCode=$orderCode, ticketNum=$ticketNum');
+    } catch (e) {
+      _logger.error('Failed to queue ticket delete operation: $e');
+      rethrow;
+    }
+  }
+
+  /// Queue a generic delete operation (legacy support)
   Future<void> queueDelete({
     required String entityType,
     required int entityId,
     int? serverId,
+    String? orderCode,
+    String? ticketNum,
   }) async {
     try {
+      // Store orderCode/ticketNum in updateData JSON temporarily
+      Map<String, dynamic>? metaData;
+      if (orderCode != null || ticketNum != null) {
+        metaData = {};
+        if (orderCode != null) metaData['_orderCode'] = orderCode;
+        if (ticketNum != null) metaData['_ticketNum'] = ticketNum;
+      }
+
       await _database.into(_database.pendingSyncOperations).insert(
         PendingSyncOperationsCompanion.insert(
           operationType: 'DELETE',
           entityType: entityType,
           entityId: entityId,
           serverId: Value(serverId),
+          updateData: metaData != null ? Value(jsonEncode(metaData)) : const Value.absent(),
         ),
       );
       _logger.info('Queued DELETE operation for $entityType #$entityId');
@@ -32,21 +88,82 @@ class PendingOperationsService {
     }
   }
 
-  /// Queue an update operation
+  /// Queue an update operation for an order
+  Future<void> queueOrderUpdate({
+    required int entityId,
+    required String orderCode,
+    required Map<String, dynamic> updateData,
+  }) async {
+    try {
+      // Include orderCode in updateData (temporarily until database is regenerated)
+      final dataWithMeta = Map<String, dynamic>.from(updateData);
+      dataWithMeta['_orderCode'] = orderCode;
+
+      await _database.into(_database.pendingSyncOperations).insert(
+        PendingSyncOperationsCompanion.insert(
+          operationType: 'UPDATE',
+          entityType: 'ORDER',
+          entityId: entityId,
+          updateData: Value(jsonEncode(dataWithMeta)),
+        ),
+      );
+      _logger.info('Queued UPDATE operation for ORDER code=$orderCode');
+    } catch (e) {
+      _logger.error('Failed to queue order update operation: $e');
+      rethrow;
+    }
+  }
+
+  /// Queue an update operation for a ticket
+  Future<void> queueTicketUpdate({
+    required int entityId,
+    required String orderCode,
+    required String ticketNum,
+    required Map<String, dynamic> updateData,
+  }) async {
+    try {
+      // Include orderCode and ticketNum in updateData (temporarily until database is regenerated)
+      final dataWithMeta = Map<String, dynamic>.from(updateData);
+      dataWithMeta['_orderCode'] = orderCode;
+      dataWithMeta['_ticketNum'] = ticketNum;
+
+      await _database.into(_database.pendingSyncOperations).insert(
+        PendingSyncOperationsCompanion.insert(
+          operationType: 'UPDATE',
+          entityType: 'TICKET',
+          entityId: entityId,
+          updateData: Value(jsonEncode(dataWithMeta)),
+        ),
+      );
+      _logger.info('Queued UPDATE operation for TICKET orderCode=$orderCode, ticketNum=$ticketNum');
+    } catch (e) {
+      _logger.error('Failed to queue ticket update operation: $e');
+      rethrow;
+    }
+  }
+
+  /// Queue a generic update operation (legacy support)
   Future<void> queueUpdate({
     required String entityType,
     required int entityId,
     int? serverId,
+    String? orderCode,
+    String? ticketNum,
     required Map<String, dynamic> updateData,
   }) async {
     try {
+      // Include orderCode/ticketNum in updateData JSON temporarily
+      final dataWithMeta = Map<String, dynamic>.from(updateData);
+      if (orderCode != null) dataWithMeta['_orderCode'] = orderCode;
+      if (ticketNum != null) dataWithMeta['_ticketNum'] = ticketNum;
+
       await _database.into(_database.pendingSyncOperations).insert(
         PendingSyncOperationsCompanion.insert(
           operationType: 'UPDATE',
           entityType: entityType,
           entityId: entityId,
           serverId: Value(serverId),
-          updateData: Value(jsonEncode(updateData)),
+          updateData: Value(jsonEncode(dataWithMeta)),
         ),
       );
       _logger.info('Queued UPDATE operation for $entityType #$entityId');

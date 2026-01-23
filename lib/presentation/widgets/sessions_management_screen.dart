@@ -563,10 +563,30 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
             ],
             rows: paginatedSessions.map((session) {
               final summary = _summaries[session.id];
+              final isEnded = session.status == 'ended';
+              final needsSync = isEnded && !session.isSynced;
+
               return DataRow2(
                 key: ValueKey('row_${session.id}'),
                 cells: [
-                  DataCell(Text('#${session.id}')),
+                  DataCell(
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('#${session.id}'),
+                        const SizedBox(width: 4),
+                        if (isEnded)
+                          Tooltip(
+                            message: needsSync ? 'Not synced to server' : 'Synced to server',
+                            child: Icon(
+                              needsSync ? Icons.cloud_off : Icons.cloud_done,
+                              size: 14,
+                              color: needsSync ? Colors.orange : Colors.green,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                   DataCell(Text('#${session.cashierId}')),
                   DataCell(Text(_formatDateTime(session.startedAt))),
                   DataCell(

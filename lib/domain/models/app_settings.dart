@@ -26,6 +26,8 @@ class AppSettings {
   final bool autoSyncOnline; // Auto-sync orders when online
   final int bulkSyncSize; // Number of orders to sync at once when offline
   final int dataRetentionDays; // Days to keep synced data before deletion
+  final int autoSyncDurationMinutes; // Auto-sync interval in minutes (default: 5)
+  final bool autoClearSyncedData; // Clear synced data at start of each day
 
   const AppSettings({
     this.isDarkMode = false,
@@ -44,6 +46,8 @@ class AppSettings {
     this.autoSyncOnline = true,
     this.bulkSyncSize = 50,
     this.dataRetentionDays = 7,
+    this.autoSyncDurationMinutes = 5,
+    this.autoClearSyncedData = true,
   });
 
   AppSettings copyWith({
@@ -63,6 +67,8 @@ class AppSettings {
     bool? autoSyncOnline,
     int? bulkSyncSize,
     int? dataRetentionDays,
+    int? autoSyncDurationMinutes,
+    bool? autoClearSyncedData,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -81,6 +87,8 @@ class AppSettings {
       autoSyncOnline: autoSyncOnline ?? this.autoSyncOnline,
       bulkSyncSize: bulkSyncSize ?? this.bulkSyncSize,
       dataRetentionDays: dataRetentionDays ?? this.dataRetentionDays,
+      autoSyncDurationMinutes: autoSyncDurationMinutes ?? this.autoSyncDurationMinutes,
+      autoClearSyncedData: autoClearSyncedData ?? this.autoClearSyncedData,
     );
   }
 
