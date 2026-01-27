@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 
 class CashSessions extends Table {
   IntColumn get id => integer()();
+  TextColumn get code => text().unique()(); // Unique code for backend identification
   IntColumn get cashierId => integer()();
 
   @override

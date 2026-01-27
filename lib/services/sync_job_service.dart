@@ -77,24 +77,26 @@ class SyncJobService {
       // 2. Sync pending operations (deletes, updates)
       await _syncService.syncPendingOperations();
 
-      // 3. Sync unsynced orders
       final bulkSize = _prefs.getInt(_bulkSyncSizeKey) ?? 50;
+
+      // 3. Sync ended sessions FIRST (tickets may reference sessions)
+      final sessionsSynced = await _syncService.syncSessionsBulk(batchSize: bulkSize);
+      if (sessionsSynced > 0) {
+        _logger.info('Synced $sessionsSynced sessions');
+      }
+
+      // 4. Sync unsynced orders
       final ordersSynced = await _syncService.syncOrdersBulk(batchSize: bulkSize);
       if (ordersSynced > 0) {
         _logger.info('Synced $ordersSynced orders');
       }
 
-      // 4. Sync tickets for synced orders
+      // 5. Sync tickets for synced orders (after both sessions and orders are synced)
       final ticketsSynced = await _syncService.syncTicketsBulk(batchSize: bulkSize);
       if (ticketsSynced > 0) {
         _logger.info('Synced $ticketsSynced tickets');
       }
 
-      // 5. Sync ended sessions
-      final sessionsSynced = await _syncService.syncSessionsBulk(batchSize: bulkSize);
-      if (sessionsSynced > 0) {
-        _logger.info('Synced $sessionsSynced sessions');
-      }
 
       // 6. Sync new customers
       final customersSynced = await _syncService.syncCustomersBulk(batchSize: bulkSize);

@@ -388,6 +388,12 @@ class DataSyncService {
       .get();
     final syncedOrderMap = {for (var o in syncedOrders) o.id: o.code};
 
+    // Get synced sessions IDs and codes
+    final syncedSessions = await (_database.select(_database.cashSessions)
+      ..where((s) => s.isSynced.equals(true)))
+      .get();
+    final syncedSessionMap = {for (var s in syncedSessions) s.id: s.code};
+
     // Get tickets that belong to synced orders but aren't synced yet
     final tickets = await (_database.select(_database.tickets)
       ..where((t) => t.isSynced.equals(false)))
@@ -398,12 +404,19 @@ class DataSyncService {
     for (final t in tickets) {
       if (!syncedOrderMap.containsKey(t.orderId)) continue;
 
+      // Get session code if ticket has a session
+      String? sessionCode;
+      if (t.sessionId != null && syncedSessionMap.containsKey(t.sessionId)) {
+        sessionCode = syncedSessionMap[t.sessionId];
+      }
+
       ticketsList.add({
         'id': t.id,
         'num': t.num,
         'orderCode': syncedOrderMap[t.orderId], // Use order code for backend
         'orderId': t.orderId, // Keep for local tracking
         'sessionId': t.sessionId,
+        'sessionCode': sessionCode, // Use session code for backend
         'paymentMethod': t.paymentMethod,
         'amount': t.amount,
         'isPaid': t.isPaid,
@@ -423,6 +436,7 @@ class DataSyncService {
       .get();
     return sessions.map((s) => {
       'id': s.id,
+      'code': s.code,
       'cashierId': s.cashierId,
       'moneyAtStart': s.moneyAtStart,
       'moneyAtEnd': s.moneyAtEnd,
@@ -503,15 +517,52 @@ class DataSyncService {
     // Sync tickets for synced orders
     final tickets = await getTicketsForSync();
     if (tickets.isNotEmpty) {
+      _logger.debug("Syncing ${tickets.length} tickets");
       await _apiService.syncTickets(tickets);
       await markTicketsAsSynced(tickets.map((t) => t['id'] as int).toList());
     }
+  }
 
-    // Sync ended sessions
-    final sessions = await getSessionsForSync();
-    if (sessions.isNotEmpty) {
-      await _apiService.syncSessions(sessions);
-      await markSessionsAsSynced(sessions.map((s) => s['id'] as int).toList());
+  /// Sync a single session immediately (for online auto-sync)
+  Future<bool> syncSingleSession(int sessionId) async {
+    try {
+      final session = await (_database.select(_database.cashSessions)
+        ..where((s) => s.id.equals(sessionId)))
+        .getSingleOrNull();
+
+      if (session == null) {
+        _logger.warning('Session #$sessionId not found for sync');
+        return false;
+      }
+
+      if (session.isSynced) {
+        _logger.info('Session #$sessionId already synced');
+        return true;
+      }
+
+      // Build session data
+      final sessionData = {
+        'code': session.code,
+        'cashierId': session.cashierId,
+        'moneyAtStart': session.moneyAtStart,
+        'moneyAtEnd': session.moneyAtEnd,
+        'status': session.status,
+        'startedAt': session.startedAt.toIso8601String(),
+        'endedAt': session.endedAt?.toIso8601String(),
+        'pausedAt': session.pausedAt?.toIso8601String(),
+      };
+
+      // Sync to server using single session endpoint (PUT to create/update)
+      await _apiService.syncSingleSession(session.code, sessionData);
+
+      // Mark as synced
+      await markSessionsAsSynced([sessionId]);
+
+      _logger.info('Successfully synced session code=${session.code}');
+      return true;
+    } catch (e) {
+      _logger.error('Error syncing single session: $e');
+      return false;
     }
   }
 
@@ -834,6 +885,26 @@ class DataSyncService {
         _logger.info('Deleted order product #${operation.serverId} from server');
         break;
 
+      case 'SESSION':
+        // Get sessionCode from updateData
+        String? sessionCode;
+        if (operation.updateData != null) {
+          try {
+            final data = jsonDecode(operation.updateData!) as Map<String, dynamic>;
+            sessionCode = data['_sessionCode'] as String?;
+          } catch (e) {
+            _logger.error('Failed to parse sessionCode from updateData: $e');
+          }
+        }
+
+        if (sessionCode == null) {
+          _logger.warning('Skipping DELETE - no session code for SESSION #${operation.entityId}');
+          return;
+        }
+        await _apiService.deleteSession(sessionCode);
+        _logger.info('Deleted session code=$sessionCode from server');
+        break;
+
       default:
         _logger.warning('Unknown entity type for delete: ${operation.entityType}');
     }
@@ -853,6 +924,7 @@ class DataSyncService {
     switch (operation.entityType) {
       case 'ORDER':
         // Extract orderCode and actual update data
+      _logger.debug("Raw data for update: $rawData");
         final orderCode = rawData['_orderCode'] as String?;
         if (orderCode == null) {
           _logger.warning('Skipping UPDATE - no order code for ORDER #${operation.entityId}');
@@ -886,19 +958,26 @@ class DataSyncService {
         _logger.info('Updated ticket orderCode=$orderCode, ticketNum=$ticketNum on server');
         break;
 
-      case 'ORDER_PRODUCT':
-        if (operation.serverId == null) {
-          _logger.warning('Skipping UPDATE - no server ID for ORDER_PRODUCT #${operation.entityId}');
+      case 'SESSION':
+        // Extract sessionCode and actual update data
+        final sessionCode = rawData['_sessionCode'] as String?;
+        if (sessionCode == null) {
+          _logger.warning('Skipping UPDATE - no session code for SESSION #${operation.entityId}');
           return;
         }
 
         // Remove metadata fields
         final updateData = Map<String, dynamic>.from(rawData);
-        updateData.remove('_orderCode');
-        updateData.remove('_ticketNum');
+        updateData.remove('_sessionCode');
 
-        await _apiService.updateOrderProduct(operation.serverId!, updateData);
-        _logger.info('Updated order product #${operation.serverId} on server');
+        await _apiService.updateSession(sessionCode, updateData);
+        _logger.info('Updated session code=$sessionCode on server');
+        break;
+
+      case 'ORDER_PRODUCT':
+        // Order product updates are handled by resending the full order
+        // Backend deletes all products and recreates them with same order code
+        _logger.info('ORDER_PRODUCT update skipped - handled via order sync');
         break;
 
       default:
@@ -1006,6 +1085,45 @@ class DataSyncService {
       }
     } else {
       await _pendingOpsService.queueTicketUpdate(entityId: entityId, orderCode: orderCode, ticketNum: ticketNum, updateData: updateData);
+    }
+  }
+
+  /// Execute session delete immediately if online, queue if offline
+  Future<void> deleteSessionEntity({
+    required int entityId,
+    required String sessionCode,
+    required bool isOnline,
+  }) async {
+    if (isOnline) {
+      try {
+        await _apiService.deleteSession(sessionCode);
+        _logger.info('Deleted session code=$sessionCode from server immediately');
+      } catch (e) {
+        _logger.error('Failed to delete session immediately, queuing: $e');
+        await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionCode: sessionCode);
+      }
+    } else {
+      await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionCode: sessionCode);
+    }
+  }
+
+  /// Execute session update immediately if online, queue if offline
+  Future<void> updateSessionEntity({
+    required int entityId,
+    required String sessionCode,
+    required Map<String, dynamic> updateData,
+    required bool isOnline,
+  }) async {
+    if (isOnline) {
+      try {
+        await _apiService.updateSession(sessionCode, updateData);
+        _logger.info('Updated session code=$sessionCode on server immediately');
+      } catch (e) {
+        _logger.error('Failed to update session immediately, queuing: $e');
+        await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionCode: sessionCode, updateData: updateData);
+      }
+    } else {
+      await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionCode: sessionCode, updateData: updateData);
     }
   }
 }

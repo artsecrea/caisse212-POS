@@ -458,7 +458,7 @@ class ApiService {
   /// Sync customers to server (new customers created locally)
   Future<void> syncCustomers(List<Map<String, dynamic>> customers) async {
     try {
-      await _dio.post('/pos/customers/bulk', data: customers);
+      await _dio.post('/pos/customers/bulk', data: {"customers" : customers});
     } on DioException catch (e) {
       throw Exception('Failed to sync customers: ${e.message ?? 'Check connection.'}');
     } catch (e) {
@@ -543,6 +543,41 @@ class ApiService {
       throw Exception('Failed to update order product: ${e.message ?? 'Check connection.'}');
     } catch (e) {
       throw Exception('Error updating order product: ${e.toString()}');
+    }
+  }
+
+  // ========== SESSION OPERATIONS ==========
+
+  /// Sync a single session to server using PUT (creates or updates)
+  Future<void> syncSingleSession(String sessionCode, Map<String, dynamic> sessionData) async {
+    try {
+      await _dio.put('/pos/cash-sessions/$sessionCode', data: sessionData);
+    } on DioException catch (e) {
+      throw Exception('Failed to sync session: ${e.message ?? 'Check connection.'}');
+    } catch (e) {
+      throw Exception('Error syncing session: ${e.toString()}');
+    }
+  }
+
+  /// Delete a session from server by session code
+  Future<void> deleteSession(String sessionCode) async {
+    try {
+      await _dio.delete('/pos/cash-sessions/$sessionCode');
+    } on DioException catch (e) {
+      throw Exception('Failed to delete session: ${e.message ?? 'Check connection.'}');
+    } catch (e) {
+      throw Exception('Error deleting session: ${e.toString()}');
+    }
+  }
+
+  /// Update a session on server by session code
+  Future<void> updateSession(String sessionCode, Map<String, dynamic> updateData) async {
+    try {
+      await _dio.put('/pos/cash-sessions/$sessionCode', data: updateData);
+    } on DioException catch (e) {
+      throw Exception('Failed to update session: ${e.message ?? 'Check connection.'}');
+    } catch (e) {
+      throw Exception('Error updating session: ${e.toString()}');
     }
   }
 }

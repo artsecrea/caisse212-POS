@@ -5,9 +5,10 @@ import 'package:data_table_2/data_table_2.dart';
 import 'package:drift/drift.dart' hide Column;
 import '../../data/database/app_database.dart';
 import '../../providers/ticket_provider.dart';
-import '../../providers/order_provider.dart';
 import '../../providers/database_providers.dart';
-import '../../services/printing_service.dart';
+import '../../providers/network_provider.dart';
+import '../../services/data_sync_service.dart';
+import '../../services/pending_operations_service.dart';
 
 class TicketsManagementScreen extends ConsumerStatefulWidget {
   const TicketsManagementScreen({super.key});
@@ -29,12 +30,37 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   int? _sortColumnIndex;
   bool _sortAscending = true;
 
+  // Sync state
+  bool _isSyncing = false;
+  int _pendingOperationsCount = 0;
+
   final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPendingOperationsCount();
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPendingOperationsCount() async {
+    try {
+      final database = ref.read(databaseProvider);
+      final pendingOpsService = PendingOperationsService(database);
+      final operations = await pendingOpsService.getPendingOperationsByType('TICKET');
+      if (mounted) {
+        setState(() {
+          _pendingOperationsCount = operations.length;
+        });
+      }
+    } catch (e) {
+      // Ignore errors
+    }
   }
 
   @override
@@ -76,17 +102,153 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   }
 
   PreferredSizeWidget _buildAppBar() {
+    final isOnline = ref.watch(lastKnownOnlineStatusProvider);
+
     return AppBar(
       title: const Text('Tickets Management'),
       actions: [
+        // Pending operations indicator
+        if (_pendingOperationsCount > 0)
+          IconButton(
+            icon: Badge(
+              label: Text('$_pendingOperationsCount'),
+              child: const Icon(Icons.pending_actions),
+            ),
+            onPressed: _showPendingOperationsDialog,
+            tooltip: 'Pending Operations',
+          ),
+        // Sync all button
+        IconButton(
+          icon: _isSyncing
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  isOnline ? Icons.cloud_sync : Icons.cloud_off,
+                  color: isOnline ? null : Colors.grey,
+                ),
+          onPressed: isOnline && !_isSyncing ? _syncAllTickets : null,
+          tooltip: isOnline ? 'Sync All Tickets' : 'Offline',
+        ),
         IconButton(
           icon: const Icon(Icons.refresh),
-          onPressed: () => setState(() {}),
+          onPressed: () {
+            setState(() {});
+            _loadPendingOperationsCount();
+          },
           tooltip: 'Refresh',
         ),
         const SizedBox(width: 8),
       ],
     );
+  }
+
+  Future<void> _syncAllTickets() async {
+    setState(() => _isSyncing = true);
+
+    try {
+      final database = ref.read(databaseProvider);
+      final apiService = ref.read(apiServiceProvider);
+      final syncService = DataSyncService(database, apiService);
+
+      // Sync pending operations first
+      await syncService.syncPendingOperations();
+
+      // Sync unsynced tickets
+      final syncedCount = await syncService.syncTicketsBulk();
+
+      await _loadPendingOperationsCount();
+
+      if (mounted) {
+        setState(() {}); // Refresh the list
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Synced $syncedCount tickets'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+    }
+  }
+
+  Future<void> _showPendingOperationsDialog() async {
+    final database = ref.read(databaseProvider);
+    final pendingOpsService = PendingOperationsService(database);
+    final operations = await pendingOpsService.getPendingOperationsByType('TICKET');
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Pending Ticket Operations'),
+        content: SizedBox(
+          width: 400,
+          height: 300,
+          child: operations.isEmpty
+              ? const Center(child: Text('No pending operations'))
+              : ListView.builder(
+                  itemCount: operations.length,
+                  itemBuilder: (context, index) {
+                    final op = operations[index];
+                    return ListTile(
+                      leading: Icon(
+                        op.operationType == 'DELETE' ? Icons.delete : Icons.edit,
+                        color: op.operationType == 'DELETE' ? Colors.red : Colors.blue,
+                      ),
+                      title: Text('${op.operationType} Ticket #${op.entityId}'),
+                      subtitle: Text(
+                        'Created: ${_formatDateTime(op.createdAt)}\n'
+                        'Retries: ${op.retryCount}${op.lastError != null ? '\nError: ${op.lastError}' : ''}',
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_forever, color: Colors.grey),
+                        onPressed: () async {
+                          await pendingOpsService.markCompleted(op.id);
+                          Navigator.of(context).pop();
+                          _loadPendingOperationsCount();
+                        },
+                        tooltip: 'Remove from queue',
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          if (operations.isNotEmpty)
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _syncAllTickets();
+              },
+              child: const Text('Sync Now'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
   Widget _buildFiltersBar() {

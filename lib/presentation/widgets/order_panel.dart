@@ -447,16 +447,6 @@ class OrderPanel extends ConsumerWidget {
                                             overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
-                                        if (!isPaid)
-                                          IconButton(
-                                            onPressed: () {
-                                              ref.read(orderProvider.notifier).removeItem(index);
-                                            },
-                                            icon: Icon(Icons.close, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                            visualDensity: VisualDensity.compact,
-                                          ),
                                       ],
                                     ),
 
@@ -607,7 +597,6 @@ class OrderPanel extends ConsumerWidget {
                                               currencyFormatter.format(item.totalPrice),
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
-                                                color: Theme.of(context).primaryColor,
                                                 fontSize: isPaid ? 13 : 16,
                                               ),
                                             ),
@@ -721,7 +710,6 @@ class OrderPanel extends ConsumerWidget {
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
-                        color: Theme.of(context).primaryColor,
                       ),
                     ),
                   ],

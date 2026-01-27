@@ -41,9 +41,17 @@ class SessionService {
       throw Exception('User already has an active session');
     }
 
+    // Generate unique session code (format: CS-YYYYMMDD-HHMMSS-XXX)
+    final now = DateTime.now();
+    final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+    final randomSuffix = now.microsecond.toString().padLeft(3, '0').substring(0, 3);
+    final sessionCode = 'CS-$dateStr-$timeStr-$randomSuffix';
+
     final id = await _database.into(_database.cashSessions).insert(
       CashSessionsCompanion.insert(
         id: const Value.absent(),
+        code: sessionCode,
         cashierId: cashierId,
         moneyAtStart: moneyAtStart,
         status: const Value('active'),
@@ -58,21 +66,49 @@ class SessionService {
   /// End a cash session - calculates money at end from tickets
   Future<void> endSession({
     required int sessionId,
+    bool queueSyncOperation = true,
   }) async {
+    // Check if session was synced before ending
+    final session = await getSessionById(sessionId);
+    if (session == null) {
+      throw Exception('Session not found');
+    }
+    final wasSynced = session.isSynced;
+
     // Calculate total cash from session tickets
     final summary = await getSessionSummary(sessionId);
     final moneyAtEnd = summary.expectedCashAtEnd;
+    final endedAt = DateTime.now();
 
     await (_database.update(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(sessionId)))
       .write(
         CashSessionsCompanion(
-          endedAt: Value(DateTime.now()),
+          endedAt: Value(endedAt),
           moneyAtEnd: Value(moneyAtEnd),
           status: const Value('ended'),
           updatedAt: Value(DateTime.now()),
         ),
       );
+
+    // Queue update operation if session was synced
+    if (wasSynced && queueSyncOperation) {
+      try {
+        final pendingOpsService = PendingOperationsService(_database);
+        await pendingOpsService.queueSessionUpdate(
+          entityId: sessionId,
+          sessionCode: session.code,
+          updateData: {
+            'status': 'ended',
+            'moneyAtEnd': moneyAtEnd,
+            'endedAt': endedAt.toIso8601String(),
+          },
+        );
+        print('Queued update operation for ended session code=${session.code}');
+      } catch (e) {
+        print('Failed to queue session update operation: $e');
+      }
+    }
   }
 
   /// Pause a session
@@ -143,18 +179,20 @@ class SessionService {
   Future<void> deleteSession(int sessionId, {bool queueSyncOperation = true}) async {
     // Check if session was synced
     final session = await getSessionById(sessionId);
-    final wasSynced = session?.isSynced ?? false;
+    if (session == null) {
+      throw Exception('Session not found');
+    }
+    final wasSynced = session.isSynced;
 
     // Queue delete operation if session was synced
     if (wasSynced && queueSyncOperation) {
       try {
         final pendingOpsService = PendingOperationsService(_database);
-        await pendingOpsService.queueDelete(
-          entityType: 'SESSION',
+        await pendingOpsService.queueSessionDelete(
           entityId: sessionId,
-          serverId: sessionId,
+          sessionCode: session.code,
         );
-        print('Queued delete operation for synced session #$sessionId');
+        print('Queued delete operation for synced session code=${session.code}');
       } catch (e) {
         print('Failed to queue session delete operation: $e');
       }

@@ -257,11 +257,15 @@ class OrderRepository {
     ));
 
     // Auto-sync if order is COMPLETED and network is available
+    print("-----------------------------------------------");
     if (status == 'COMPLETED' && _syncService != null && _isOnlineCallback != null) {
+      print("-----------------------------------------------2");
       final isOnline = _isOnlineCallback!();
       if (isOnline) {
         try {
           await _syncService!.syncSingleOrder(orderId);
+          print("-----------------------------------------------3");
+
           _logger.info('Auto-synced new COMPLETED order code=$orderCode');
         } catch (e) {
           _logger.error('Failed to auto-sync new order: $e');
@@ -967,7 +971,7 @@ class OrderRepository {
     // Emit event
     _emitEvent(OrderDeletedEvent(orderId: orderId));
   }
-
+  
   /// Helper to queue order delete operation
   Future<void> _queueOrderDelete(int orderId, String orderCode) async {
     try {

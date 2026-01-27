@@ -3,8 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/network_provider.dart';
 import '../../services/session_service.dart';
 import '../../services/permission_service.dart';
+import '../../services/data_sync_service.dart';
+import '../../services/api_service.dart';
+import '../../services/pending_operations_service.dart';
 import '../../utils/app_localizations.dart';
 import 'permission_guard.dart';
 
@@ -19,6 +23,8 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   List<CashSession> _sessions = [];
   Map<int, SessionSummary> _summaries = {};
   bool _isLoading = true;
+  bool _isSyncing = false;
+  int _pendingOperationsCount = 0;
   String _statusFilter = 'ALL';
   String _searchQuery = '';
   int _sortColumnIndex = 0;
@@ -30,6 +36,20 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   void initState() {
     super.initState();
     _loadSessions();
+    _loadPendingOperationsCount();
+  }
+
+  Future<void> _loadPendingOperationsCount() async {
+    try {
+      final database = ref.read(databaseProvider);
+      final pendingOpsService = PendingOperationsService(database);
+      final operations = await pendingOpsService.getPendingOperationsByType('SESSION');
+      setState(() {
+        _pendingOperationsCount = operations.length;
+      });
+    } catch (e) {
+      // Ignore errors
+    }
   }
 
   Future<void> _loadSessions() async {
@@ -372,12 +392,40 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
   @override
   Widget build(BuildContext context) {
+    final isOnline = ref.watch(lastKnownOnlineStatusProvider);
+    final l10n = AppLocalizations.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sessions Management'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
         actions: [
+          // Pending operations indicator
+          if (_pendingOperationsCount > 0)
+            IconButton(
+              icon: Badge(
+                label: Text('$_pendingOperationsCount'),
+                child: const Icon(Icons.pending_actions),
+              ),
+              onPressed: _showPendingOperationsDialog,
+              tooltip: 'Pending Operations',
+            ),
+          // Sync all button
+          IconButton(
+            icon: _isSyncing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : Icon(
+                    isOnline ? Icons.cloud_sync : Icons.cloud_off,
+                    color: isOnline ? Colors.white : Colors.grey,
+                  ),
+            onPressed: isOnline && !_isSyncing ? _syncAllSessions : null,
+            tooltip: isOnline ? 'Sync All Sessions' : 'Offline',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadSessions,
@@ -397,6 +445,108 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 ],
               ),
             ),
+    );
+  }
+
+  Future<void> _syncAllSessions() async {
+    setState(() => _isSyncing = true);
+
+    try {
+      final database = ref.read(databaseProvider);
+      final apiService = ref.read(apiServiceProvider);
+      final syncService = DataSyncService(database, apiService);
+
+      // Sync pending operations first
+      await syncService.syncPendingOperations();
+
+      // Sync unsynced sessions
+      final syncedCount = await syncService.syncSessionsBulk();
+
+      await _loadSessions();
+      await _loadPendingOperationsCount();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Synced $syncedCount sessions'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+    }
+  }
+
+  Future<void> _showPendingOperationsDialog() async {
+    final database = ref.read(databaseProvider);
+    final pendingOpsService = PendingOperationsService(database);
+    final operations = await pendingOpsService.getPendingOperationsByType('SESSION');
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Pending Session Operations'),
+        content: SizedBox(
+          width: 400,
+          height: 300,
+          child: operations.isEmpty
+              ? const Center(child: Text('No pending operations'))
+              : ListView.builder(
+                  itemCount: operations.length,
+                  itemBuilder: (context, index) {
+                    final op = operations[index];
+                    return ListTile(
+                      leading: Icon(
+                        op.operationType == 'DELETE' ? Icons.delete : Icons.edit,
+                        color: op.operationType == 'DELETE' ? Colors.red : Colors.blue,
+                      ),
+                      title: Text('${op.operationType} Session #${op.entityId}'),
+                      subtitle: Text(
+                        'Created: ${_formatDateTime(op.createdAt)}\n'
+                        'Retries: ${op.retryCount}${op.lastError != null ? '\nError: ${op.lastError}' : ''}',
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_forever, color: Colors.grey),
+                        onPressed: () async {
+                          await pendingOpsService.markCompleted(op.id);
+                          Navigator.of(context).pop();
+                          _loadPendingOperationsCount();
+                        },
+                        tooltip: 'Remove from queue',
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          if (operations.isNotEmpty)
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _syncAllSessions();
+              },
+              child: const Text('Sync Now'),
+            ),
+        ],
+      ),
     );
   }
 
@@ -428,7 +578,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
           flex: 1,
           child: DropdownButtonFormField<String>(
             key: const ValueKey('sessions_filter_status'),
-            value: _statusFilter,
+            initialValue: _statusFilter,
             decoration: InputDecoration(
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
