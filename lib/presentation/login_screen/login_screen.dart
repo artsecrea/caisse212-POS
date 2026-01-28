@@ -8,6 +8,7 @@ import '../../services/data_sync_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
 import '../main_screen/main_screen.dart';
+import '../widgets/report_issue_dialog.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -38,6 +39,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _handleExitToTenant() async {
     final prefs = ref.read(sharedPreferencesProvider);
     final tenantPasswordHash = prefs.getString('tenant_password_hash');
+    final l10n = AppLocalizations.of(context)!;
 
     if (tenantPasswordHash == null) {
       // No tenant password set, just go back
@@ -57,17 +59,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: const Text('Exit to Tenant Login'),
+              title: Text(l10n.translate('exit_to_tenant')),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Enter tenant password to continue:'),
+                  Text(l10n.translate('enter_password')),
                   const SizedBox(height: 16),
                   TextField(
                     controller: passwordController,
                     obscureText: obscurePassword,
                     decoration: InputDecoration(
-                      labelText: 'Tenant Password',
+                      labelText: l10n.translate('tenant_password'),
                       prefixIcon: const Icon(Icons.lock),
                       suffixIcon: IconButton(
                         icon: Icon(
@@ -88,7 +90,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancel'),
+                  child: Text(l10n.translate('cancel')),
                 ),
                 ElevatedButton(
                   onPressed: () {
@@ -100,7 +102,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     backgroundColor: Colors.orange,
                     foregroundColor: Colors.white,
                   ),
-                  child: const Text('Verify'),
+                  child: Text(l10n.translate('verify')),
                 ),
               ],
             );
@@ -123,8 +125,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // Password verification failed
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invalid tenant password'),
+          SnackBar(
+            content: Text(l10n.translate('invalid_tenant_password')),
             backgroundColor: Colors.red,
           ),
         );
@@ -292,10 +294,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ref.read(currentUserProvider.notifier).state = null;
       ref.read(currentSessionProvider.notifier).state = null;
 
-      // Clear API service data
+      // Clear API service data INCLUDING tenant password hash
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
-      await apiService.clearAuthData();
+      await apiService.clearAllAuthData(); // Use clearAllAuthData for full logout
 
       // Clear the database
       final database = ref.read(databaseProvider);
@@ -491,6 +493,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   padding: const EdgeInsets.all(12),
                   child: const Icon(
                     Icons.exit_to_app,
+                    size: 32,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Report Issue button positioned at top-right
+          Positioned(
+            top: 16,
+            right: 16,
+            child: Material(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                onTap: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => const ReportIssueDialog(),
+                  );
+                },
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  child: const Icon(
+                    Icons.bug_report,
                     size: 32,
                     color: Colors.white,
                   ),

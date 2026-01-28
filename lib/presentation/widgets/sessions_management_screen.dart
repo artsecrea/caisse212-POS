@@ -641,7 +641,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
             ),
             columns: [
               DataColumn2(
-                label: const Text('ID', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: const Text('Code', style: TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
                 onSort: (columnIndex, ascending) {
                   setState(() {
@@ -723,7 +723,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('#${session.id}'),
+                        Text('#${session.code}'),
                         const SizedBox(width: 4),
                         if (isEnded)
                           Tooltip(

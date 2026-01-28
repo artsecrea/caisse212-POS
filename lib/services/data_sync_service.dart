@@ -389,10 +389,8 @@ class DataSyncService {
     final syncedOrderMap = {for (var o in syncedOrders) o.id: o.code};
 
     // Get synced sessions IDs and codes
-    final syncedSessions = await (_database.select(_database.cashSessions)
-      ..where((s) => s.isSynced.equals(true)))
-      .get();
-    final syncedSessionMap = {for (var s in syncedSessions) s.id: s.code};
+    final sessions = await (_database.select(_database.cashSessions)
+      .get());
 
     // Get tickets that belong to synced orders but aren't synced yet
     final tickets = await (_database.select(_database.tickets)
@@ -405,10 +403,10 @@ class DataSyncService {
       if (!syncedOrderMap.containsKey(t.orderId)) continue;
 
       // Get session code if ticket has a session
-      String? sessionCode;
-      if (t.sessionId != null && syncedSessionMap.containsKey(t.sessionId)) {
-        sessionCode = syncedSessionMap[t.sessionId];
-      }
+      String? sessionCode = sessions.firstWhere((s) => s.id == t.sessionId).code;
+
+
+      print(">>>>>>>>>>>>>>>>>>> $sessionCode");
 
       ticketsList.add({
         'id': t.id,

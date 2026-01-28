@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bcrypt/bcrypt.dart';
 import '../../utils/app_localizations.dart';
 import '../login_screen/login_screen.dart';
+import '../widgets/report_issue_dialog.dart';
 
 class TenantScreen extends ConsumerStatefulWidget {
   const TenantScreen({super.key});
@@ -81,160 +82,190 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
     final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Theme.of(context).primaryColor,
-              Theme.of(context).primaryColor.withValues(alpha: 0.7),
-            ],
-          ),
-        ),
-        child: Center(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(32.0),
-              child: Card(
-                elevation: 8,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 450),
-                  padding: const EdgeInsets.all(40.0),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Icon(
-                          Icons.business,
-                          size: 80,
-                          color: Theme.of(context).primaryColor,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          l10n.translate('app_title'),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          l10n.translate('enter_tenant_id'),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                        const SizedBox(height: 32),
-                        OnscreenKeyboardTextField(
-                          controller: _tenantIdController,
-                          decoration: InputDecoration(
-                            labelText: l10n.translate('tenant_id'),
-                            prefixIcon: const Icon(Icons.apartment),
-                            border: const OutlineInputBorder(),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          decoration: InputDecoration(
-                            labelText: l10n.translate('password'),
-                            prefixIcon: const Icon(Icons.lock),
-                            suffixIcon: IconButton(
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility
-                                    : Icons.visibility_off,
+      body: Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Theme.of(context).primaryColor,
+                  Theme.of(context).primaryColor.withValues(alpha: 0.7),
+                ],
+              ),
+            ),
+            child: Center(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(32.0),
+                  child: Card(
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 450),
+                      padding: const EdgeInsets.all(40.0),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Icon(
+                              Icons.business,
+                              size: 80,
+                              color: Theme.of(context).primaryColor,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              l10n.translate('app_title'),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
                               ),
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword = !_obscurePassword;
-                                });
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              l10n.translate('enter_tenant_id'),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            const SizedBox(height: 32),
+                            OnscreenKeyboardTextField(
+                              controller: _tenantIdController,
+                              decoration: InputDecoration(
+                                labelText: l10n.translate('tenant_id'),
+                                prefixIcon: const Icon(Icons.apartment),
+                                border: const OutlineInputBorder(),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _passwordController,
+                              obscureText: _obscurePassword,
+                              decoration: InputDecoration(
+                                labelText: l10n.translate('password'),
+                                prefixIcon: const Icon(Icons.lock),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _obscurePassword = !_obscurePassword;
+                                    });
+                                  },
+                                ),
+                                border: const OutlineInputBorder(),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return l10n.translate('enter_password');
+                                }
+                                if (value.length < 4) {
+                                  return l10n.translate('password_min_length');
+                                }
+                                return null;
                               },
                             ),
-                            border: const OutlineInputBorder(),
-                          ),
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return l10n.translate('enter_password');
-                            }
-                            if (value.length < 4) {
-                              return l10n.translate('password_min_length');
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 24),
-                        if (_errorMessage != null) ...[
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.red[50],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.red[300]!),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.error_outline, color: Colors.red[700]),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _errorMessage!,
-                                    style: TextStyle(color: Colors.red[700]),
-                                  ),
+                            const SizedBox(height: 24),
+                            if (_errorMessage != null) ...[
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.red[50],
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.red[300]!),
                                 ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                        ],
-                        ElevatedButton(
-                          onPressed: _isLoading ? null : _handleSubmit,
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            backgroundColor: Theme.of(context).primaryColor,
-                            foregroundColor: Colors.white,
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                  ),
-                                )
-                              : Text(
-                                  l10n.translate('continue'),
-                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.error_outline, color: Colors.red[700]),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _errorMessage!,
+                                        style: TextStyle(color: Colors.red[700]),
+                                      ),
+                                    ),
+                                  ],
                                 ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+                            ElevatedButton(
+                              onPressed: _isLoading ? null : _handleSubmit,
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                backgroundColor: Theme.of(context).primaryColor,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: _isLoading
+                                  ? const SizedBox(
+                                      height: 20,
+                                      width: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                      ),
+                                    )
+                                  : Text(
+                                      l10n.translate('continue'),
+                                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                    ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'This device will be associated with the entered tenant ID',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'This device will be associated with the entered tenant ID',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
+          // Report Issue button positioned at top-right
+          Positioned(
+            top: 16,
+            right: 16,
+            child: Material(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                onTap: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => const ReportIssueDialog(),
+                  );
+                },
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  child: const Icon(
+                    Icons.bug_report,
+                    size: 32,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

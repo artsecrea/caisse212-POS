@@ -118,6 +118,12 @@ class ApiService {
     await _prefs.remove(_tenantIdKey);
     await _prefs.remove(_baseUrlKey);
     await _prefs.remove(_isDemoModeKey);
+    // NOTE: We do NOT remove 'tenant_password_hash' here - it should only be cleared on full logout
+  }
+
+  /// Clear ALL data including tenant password hash (for full logout)
+  Future<void> clearAllAuthData() async {
+    await clearAuthData();
     await _prefs.remove('tenant_password_hash');
   }
 
@@ -549,6 +555,38 @@ class ApiService {
   // ========== SESSION OPERATIONS ==========
 
   /// Sync a single session to server using PUT (creates or updates)
+
+  // ========== ISSUE REPORTING ==========
+
+  /// Submit an issue report to the server
+  Future<void> submitIssue({
+    required String title,
+    required String type,
+    String? description,
+    String? ipAddress,
+    int? userId,
+  }) async {
+    try {
+      final posName = getPosName();
+      final data = {
+        'ipAddress': ipAddress,
+        'userId': userId,
+        'source': posName ?? 'Unknown POS',
+        'type': type,
+        'title': title,
+        'description': description,
+        'status': 'OPEN',
+      };
+
+      await _dio.post('/pos/issues', data: data);
+    } on DioException catch (e) {
+      throw Exception('Failed to submit issue: ${e.message ?? 'Check connection.'}');
+    } catch (e) {
+      throw Exception('Error submitting issue: ${e.toString()}');
+    }
+  }
+
+  // ========== SESSION OPERATIONS (continued) ==========
   Future<void> syncSingleSession(String sessionCode, Map<String, dynamic> sessionData) async {
     try {
       await _dio.put('/pos/cash-sessions/$sessionCode', data: sessionData);

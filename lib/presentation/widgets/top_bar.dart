@@ -11,7 +11,9 @@ import 'package:posecrea/services/permission_service.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/session_service.dart';
+import '../../utils/app_localizations.dart';
 import '../settings/settings_screen.dart';
+import 'report_issue_dialog.dart';
 
 class TopBar extends ConsumerStatefulWidget {
   const TopBar({Key? key}) : super(key: key);
@@ -342,12 +344,14 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   /// Full logout - clears tenant data and goes back to server login
   Future<void> _handleFullLogout() async {
+    final localizations = AppLocalizations.of(context);
+
     // First verify tenant password
     final prefs = ref.read(sharedPreferencesProvider);
     final tenantPasswordHash = prefs.getString('tenant_password_hash');
 
     if (tenantPasswordHash != null) {
-      // Show password dialog
+      // Show password dialog FIRST before any confirmation
       final passwordController = TextEditingController();
       final verified = await showDialog<bool>(
         context: context,
@@ -357,19 +361,19 @@ class _TopBarState extends ConsumerState<TopBar> {
           return StatefulBuilder(
             builder: (context, setState) {
               return AlertDialog(
-                title: const Text('Verify Tenant Password'),
+                title: Text(localizations?.translate('verify_tenant_password') ?? 'Verify Tenant Password'),
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('This will clear ALL data and disconnect from the server.'),
+                    Text(localizations?.translate('full_logout_warning') ?? 'This will clear ALL data and disconnect from the server.'),
                     const SizedBox(height: 8),
-                    const Text('Enter tenant password to continue:'),
+                    Text(localizations?.translate('enter_password') ?? 'Enter tenant password to continue:'),
                     const SizedBox(height: 16),
                     TextField(
                       controller: passwordController,
                       obscureText: obscurePassword,
                       decoration: InputDecoration(
-                        labelText: 'Tenant Password',
+                        labelText: localizations?.translate('tenant_password') ?? 'Tenant Password',
                         prefixIcon: const Icon(Icons.lock),
                         suffixIcon: IconButton(
                           icon: Icon(
@@ -390,7 +394,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
+                    child: Text(localizations?.translate('cancel') ?? 'Cancel'),
                   ),
                   ElevatedButton(
                     onPressed: () {
@@ -402,7 +406,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
                     ),
-                    child: const Text('Verify & Logout'),
+                    child: Text(localizations?.translate('verify_logout') ?? 'Verify & Logout'),
                   ),
                 ],
               );
@@ -416,13 +420,13 @@ class _TopBarState extends ConsumerState<TopBar> {
       if (verified != true) {
         if (mounted && verified == false) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Invalid tenant password'),
+            SnackBar(
+              content: Text(localizations?.translate('invalid_tenant_password') ?? 'Invalid tenant password'),
               backgroundColor: Colors.red,
             ),
           );
         }
-        return;
+        return; // Exit if password verification failed
       }
     }
 
@@ -430,8 +434,9 @@ class _TopBarState extends ConsumerState<TopBar> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Full Logout'),
-        content: const Text(
+        title: Text(localizations?.translate('full_logout') ?? 'Full Logout'),
+        content: Text(
+          localizations?.translate('full_logout_confirm') ??
           'This will clear all server authentication data and local database.\n\n'
           'You will need to reconnect to the server or use demo mode again.\n\n'
           'Are you sure?',
@@ -439,12 +444,12 @@ class _TopBarState extends ConsumerState<TopBar> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(localizations?.translate('cancel') ?? 'Cancel'),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Full Logout'),
+            child: Text(localizations?.translate('full_logout') ?? 'Full Logout'),
           ),
         ],
       ),
@@ -459,9 +464,9 @@ class _TopBarState extends ConsumerState<TopBar> {
       // Clear current order state
       ref.read(orderProvider.notifier).clearOrder();
 
-      // Clear API service data
+      // Clear API service data INCLUDING tenant password hash
       final apiService = ApiService(prefs);
-      await apiService.clearAuthData();
+      await apiService.clearAllAuthData(); // Use clearAllAuthData for full logout
 
       // Clear the database
       final database = ref.read(databaseProvider);
@@ -822,6 +827,11 @@ class _TopBarState extends ConsumerState<TopBar> {
                 // Navigate to profile
               } else if (value == 'settings') {
                 // Navigate to settings
+              } else if (value == 'report_issue') {
+                showDialog(
+                  context: context,
+                  builder: (context) => const ReportIssueDialog(),
+                );
               } else if (value == 'logout') {
                 await _handleLogout();
               } else if (value == 'full_logout') {
@@ -967,6 +977,21 @@ class _TopBarState extends ConsumerState<TopBar> {
                   },
                 ));
               }
+
+              // Report Issue - always visible
+              items.add(PopupMenuItem(
+                value: 'report_issue',
+                child: Row(
+                  children: [
+                    Icon(Icons.bug_report, color: Colors.blue[700]),
+                    const SizedBox(width: 8),
+                    Text(
+                      AppLocalizations.of(context)?.translate('report_issue') ?? 'Report Issue',
+                      style: TextStyle(color: Colors.blue[700]),
+                    ),
+                  ],
+                ),
+              ));
 
               // Divider before logout
               items.add(const PopupMenuDivider());

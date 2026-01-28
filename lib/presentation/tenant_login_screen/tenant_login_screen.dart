@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:bcrypt/bcrypt.dart';
 import 'package:posecrea/services/api_service.dart';
 import 'package:posecrea/services/data_sync_service.dart';
 import 'package:posecrea/utils/sample_data_generator.dart';
@@ -32,8 +33,8 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
   void initState() {
     super.initState();
     // Set default server URL - can be changed
-    _serverUrlController.text = 'https://api.yourserver.com';
-    _posNameController.text = 'POS-1';
+    _serverUrlController.text = 'http://localhost:8080';
+    _posNameController.text = 'test';
   }
 
   @override
@@ -70,10 +71,28 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         posName: _posNameController.text.trim(),
       );
 
-      // Save tenant password hash before clearing
-      final tenantPasswordHash = prefs.getString('tenant_password_hash');
-
       print(data);
+
+      // Login successful - ALWAYS prompt user to set a NEW tenant password
+      // This ensures fresh security on each server connection
+      setState(() => _isLoading = false);
+
+      if (!mounted) return;
+
+      final tenantPassword = await _showSetTenantPasswordDialog();
+
+      if (tenantPassword == null || tenantPassword.isEmpty) {
+        // User cancelled or didn't set password
+        setState(() {
+          _errorMessage = 'Tenant password is required to continue';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Hash and save the NEW tenant password (overwrites any old one)
+      final passwordHash = BCrypt.hashpw(tenantPassword, BCrypt.gensalt());
+      await prefs.setString('tenant_password_hash', passwordHash);
 
       // Login successful, now sync data
       setState(() {
@@ -97,10 +116,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
 
       await syncService.syncAllData();
 
-      // Restore tenant password hash if it was saved
-      if (tenantPasswordHash != null) {
-        await prefs.setString('tenant_password_hash', tenantPasswordHash);
-      }
 
       // Navigate to login screen
       if (mounted) {
@@ -167,6 +182,143 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         _isLoadingData = false;
       });
     }
+  }
+
+  /// Show dialog to set tenant password after successful server login
+  Future<String?> _showSetTenantPasswordDialog() async {
+    final passwordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    bool obscurePassword = true;
+    bool obscureConfirmPassword = true;
+    String? errorMessage;
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Set Tenant Password'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Set a password to protect full logout and tenant access.\n\n'
+                    'This password will be required to clear all data or change tenant settings.',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 24),
+                  OnscreenKeyboardTextField(
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    decoration: InputDecoration(
+                      labelText: 'Tenant Password',
+                      prefixIcon: const Icon(Icons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            obscurePassword = !obscurePassword;
+                          });
+                        },
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                    autofocus: true,
+                  ),
+                  const SizedBox(height: 16),
+                  OnscreenKeyboardTextField(
+                    controller: confirmPasswordController,
+                    obscureText: obscureConfirmPassword,
+                    decoration: InputDecoration(
+                      labelText: 'Confirm Password',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscureConfirmPassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            obscureConfirmPassword = !obscureConfirmPassword;
+                          });
+                        },
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.red[300]!),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.error_outline, color: Colors.red[700], size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              errorMessage!,
+                              style: TextStyle(color: Colors.red[700], fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () {
+                    final password = passwordController.text.trim();
+                    final confirmPassword = confirmPasswordController.text.trim();
+
+                    if (password.isEmpty) {
+                      setState(() {
+                        errorMessage = 'Password is required';
+                      });
+                      return;
+                    }
+
+                    if (password.length < 4) {
+                      setState(() {
+                        errorMessage = 'Password must be at least 4 characters';
+                      });
+                      return;
+                    }
+
+                    if (password != confirmPassword) {
+                      setState(() {
+                        errorMessage = 'Passwords do not match';
+                      });
+                      return;
+                    }
+
+                    Navigator.of(context).pop(password);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Set Password'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).then((value) {
+      passwordController.dispose();
+      confirmPasswordController.dispose();
+      return value;
+    });
   }
 
   @override
@@ -464,3 +616,5 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     );
   }
 }
+
+

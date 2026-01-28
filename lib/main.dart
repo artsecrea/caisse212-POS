@@ -138,6 +138,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       initialRoute: initialRoute,
       routes:{
         '/tenant': (context) => const TenantLoginScreen(),
+        '/tenant_login': (context) => const TenantLoginScreen(),
         '/login': (context) => const LoginScreen(),
         '/main': (context) => const MainScreen(),
         '/orders': (context) => const OrdersManagementScreen(),

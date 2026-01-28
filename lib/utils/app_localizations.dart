@@ -375,6 +375,25 @@ class AppLocalizations {
       'item_discount': 'Item Discount',
       'reprint': 'Reprint',
       'quick_amounts': 'Quick Amounts',
+
+      // Issue Reporting
+      'report_issue': 'Report Issue',
+      'issue_type': 'Issue Type',
+      'issue_title': 'Issue Title',
+      'issue_description': 'Issue Description',
+      'submit_issue': 'Submit Issue',
+      'issue_submitted': 'Issue submitted successfully',
+      'issue_submit_failed': 'Failed to submit issue',
+      'issue_type_general': 'General',
+      'issue_type_bug': 'Bug',
+      'issue_type_feature': 'Feature Request',
+      'issue_type_hardware': 'Hardware',
+      'issue_type_network': 'Network',
+      'issue_type_printer': 'Printer',
+      'issue_type_other': 'Other',
+      'enter_issue_title': 'Enter issue title',
+      'enter_issue_description': 'Describe the issue (optional)',
+      'title_required': 'Title is required',
     },
     'ar': {
       // Common - Arabic
@@ -739,6 +758,25 @@ class AppLocalizations {
       'item_discount': 'خصم العناصر',
       'reprint': 'إعادة الطباعة',
       'quick_amounts': 'مبالغ سريعة',
+
+      // Issue Reporting
+      'report_issue': 'الإبلاغ عن مشكلة',
+      'issue_type': 'نوع المشكلة',
+      'issue_title': 'عنوان المشكلة',
+      'issue_description': 'وصف المشكلة',
+      'submit_issue': 'إرسال المشكلة',
+      'issue_submitted': 'تم إرسال المشكلة بنجاح',
+      'issue_submit_failed': 'فشل إرسال المشكلة',
+      'issue_type_general': 'عام',
+      'issue_type_bug': 'خطأ برمجي',
+      'issue_type_feature': 'طلب ميزة',
+      'issue_type_hardware': 'عتاد',
+      'issue_type_network': 'شبكة',
+      'issue_type_printer': 'طابعة',
+      'issue_type_other': 'أخرى',
+      'enter_issue_title': 'أدخل عنوان المشكلة',
+      'enter_issue_description': 'صف المشكلة (اختياري)',
+      'title_required': 'العنوان مطلوب',
     },
     'fr': {
       // Common - French
@@ -1103,6 +1141,25 @@ class AppLocalizations {
       'item_discount': 'Remise sur articles',
       'reprint': 'Réimprimer',
       'quick_amounts': 'Montants rapides',
+
+      // Issue Reporting
+      'report_issue': 'Signaler un problème',
+      'issue_type': 'Type de problème',
+      'issue_title': 'Titre du problème',
+      'issue_description': 'Description du problème',
+      'submit_issue': 'Soumettre le problème',
+      'issue_submitted': 'Problème soumis avec succès',
+      'issue_submit_failed': 'Échec de la soumission du problème',
+      'issue_type_general': 'Général',
+      'issue_type_bug': 'Bug',
+      'issue_type_feature': 'Demande de fonctionnalité',
+      'issue_type_hardware': 'Matériel',
+      'issue_type_network': 'Réseau',
+      'issue_type_printer': 'Imprimante',
+      'issue_type_other': 'Autre',
+      'enter_issue_title': 'Entrez le titre du problème',
+      'enter_issue_description': 'Décrivez le problème (optionnel)',
+      'title_required': 'Le titre est requis',
     },
   };
 
