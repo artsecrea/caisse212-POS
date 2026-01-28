@@ -959,20 +959,6 @@ class OrderRepository {
     // CASCADE DELETE: Delete all tickets associated with this order
     final tickets = await (_database.select(_database.tickets)..where((tbl) => tbl.orderId.equals(orderId))).get();
     for (final ticket in tickets) {
-      // Queue delete operation for synced tickets
-      if (ticket.isSynced && queueSyncOperation && order != null) {
-        try {
-          final pendingOpsService = PendingOperationsService(_database);
-          await pendingOpsService.queueTicketDelete(
-            entityId: ticket.id,
-            orderCode: order.code,
-            ticketNum: ticket.num,
-          );
-          _logger.info('Queued delete operation for ticket orderCode=${order.code}, ticketNum=${ticket.num}');
-        } catch (e) {
-          _logger.error('Failed to queue ticket delete operation: $e');
-        }
-      }
 
       // Delete the ticket
       await (_database.delete(_database.tickets)..where((tbl) => tbl.id.equals(ticket.id))).go();

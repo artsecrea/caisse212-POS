@@ -9,6 +9,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/pending_operations_service.dart';
+import '../../services/permission_service.dart';
 
 class TicketsManagementScreen extends ConsumerStatefulWidget {
   const TicketsManagementScreen({super.key});
@@ -109,28 +110,44 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       actions: [
         // Pending operations indicator
         if (_pendingOperationsCount > 0)
-          IconButton(
-            icon: Badge(
-              label: Text('$_pendingOperationsCount'),
-              child: const Icon(Icons.pending_actions),
-            ),
-            onPressed: _showPendingOperationsDialog,
-            tooltip: 'Pending Operations',
+          Builder(
+            builder: (context) {
+              final permissionService = ref.watch(permissionServiceProvider);
+              final hasPermission = permissionService.hasPermission(Permissions.viewPendingOperations);
+              return IconButton(
+                icon: Badge(
+                  label: Text('$_pendingOperationsCount'),
+                  child: const Icon(Icons.pending_actions),
+                ),
+                onPressed: hasPermission ? _showPendingOperationsDialog : null,
+                tooltip: hasPermission ? 'Pending Operations' : 'Insufficient permissions',
+              );
+            },
           ),
         // Sync all button
-        IconButton(
-          icon: _isSyncing
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Icon(
-                  isOnline ? Icons.cloud_sync : Icons.cloud_off,
-                  color: isOnline ? null : Colors.grey,
-                ),
-          onPressed: isOnline && !_isSyncing ? _syncAllTickets : null,
-          tooltip: isOnline ? 'Sync All Tickets' : 'Offline',
+        Builder(
+          builder: (context) {
+            final permissionService = ref.watch(permissionServiceProvider);
+            final hasPermission = permissionService.hasPermission(Permissions.syncTickets);
+            return IconButton(
+              icon: _isSyncing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      isOnline ? Icons.cloud_sync : Icons.cloud_off,
+                      color: isOnline ? null : Colors.grey,
+                    ),
+              onPressed: hasPermission && isOnline && !_isSyncing ? _syncAllTickets : null,
+              tooltip: !hasPermission
+                  ? 'Insufficient permissions'
+                  : isOnline
+                      ? 'Sync All Tickets'
+                      : 'Offline',
+            );
+          },
         ),
         IconButton(
           icon: const Icon(Icons.refresh),

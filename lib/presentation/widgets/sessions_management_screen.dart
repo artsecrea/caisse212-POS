@@ -403,28 +403,45 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         actions: [
           // Pending operations indicator
           if (_pendingOperationsCount > 0)
-            IconButton(
-              icon: Badge(
-                label: Text('$_pendingOperationsCount'),
-                child: const Icon(Icons.pending_actions),
-              ),
-              onPressed: _showPendingOperationsDialog,
-              tooltip: 'Pending Operations',
+            Builder(
+              builder: (context) {
+                final permissionService = ref.watch(permissionServiceProvider);
+                final hasPermission = permissionService.hasPermission(Permissions.viewPendingOperations);
+                return IconButton(
+                  icon: Badge(
+                    label: Text('$_pendingOperationsCount'),
+                    child: const Icon(Icons.pending_actions),
+                  ),
+                  onPressed: hasPermission ? _showPendingOperationsDialog : null,
+                  tooltip: hasPermission ? 'Pending Operations' : 'Insufficient permissions',
+                  color: Colors.white,
+                );
+              },
             ),
           // Sync all button
-          IconButton(
-            icon: _isSyncing
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : Icon(
-                    isOnline ? Icons.cloud_sync : Icons.cloud_off,
-                    color: isOnline ? Colors.white : Colors.grey,
-                  ),
-            onPressed: isOnline && !_isSyncing ? _syncAllSessions : null,
-            tooltip: isOnline ? 'Sync All Sessions' : 'Offline',
+          Builder(
+            builder: (context) {
+              final permissionService = ref.watch(permissionServiceProvider);
+              final hasPermission = permissionService.hasPermission(Permissions.syncSessions);
+              return IconButton(
+                icon: _isSyncing
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : Icon(
+                        isOnline ? Icons.cloud_sync : Icons.cloud_off,
+                        color: isOnline ? Colors.white : Colors.grey,
+                      ),
+                onPressed: hasPermission && isOnline && !_isSyncing ? _syncAllSessions : null,
+                tooltip: !hasPermission
+                    ? 'Insufficient permissions'
+                    : isOnline
+                        ? 'Sync All Sessions'
+                        : 'Offline',
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.refresh),

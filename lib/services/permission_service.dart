@@ -102,6 +102,15 @@ class Permissions {
   // Reports
   static const String reportsView = 'pos:reports:view';
 
+  // Sync Operations
+  static const String syncOrders = 'pos:sync:orders';
+  static const String syncTickets = 'pos:sync:tickets';
+  static const String syncSessions = 'pos:sync:sessions';
+  static const String syncCustomers = 'pos:sync:customers';
+  static const String syncAll = 'pos:sync:all';
+  static const String viewPendingOperations = 'pos:sync:viewPending';
+  static const String managePendingOperations = 'pos:sync:managePending';
+
   // Wildcard - all permissions
   static const String all = 'pos:*';
 }

@@ -117,15 +117,17 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           ),
         ),
         // View pending operations queue
-        IconButton(
-          icon: const Icon(Icons.pending_actions),
+        PermissionIconButton(
+          permission: Permissions.viewPendingOperations,
           onPressed: _showPendingOperationsDialog,
+          icon: const Icon(Icons.pending_actions),
           tooltip: 'View Pending Operations',
         ),
         // Sync all button
-        IconButton(
+        PermissionIconButton(
+          permission: Permissions.syncAll,
+          onPressed: (_isSyncing || syncState.isSyncing) ? () {} : _syncAll,
           icon: const Icon(Icons.cloud_sync),
-          onPressed: (_isSyncing || syncState.isSyncing) ? null : _syncAll,
           tooltip: 'Sync All (Orders, Tickets, Customers)',
         ),
         // Refresh
