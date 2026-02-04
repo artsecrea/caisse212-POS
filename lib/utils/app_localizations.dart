@@ -129,6 +129,16 @@ class AppLocalizations {
       'take_away': 'Take Away',
       'no_orders_found': 'No orders found',
 
+      // Order Confirmation
+      'confirm_order': 'Confirm Order',
+      'confirm_and_pay': 'Confirm & Pay',
+      'order_on_hold': 'Order On Hold',
+      'no_onhold_orders': 'No orders on hold',
+      'select_order_to_confirm': 'Select an order to confirm',
+      'search_by_code': 'Search by code...',
+      'items': 'Items',
+      'type': 'Type',
+
       // Customers
       'customer': 'Customer',
       'customers': 'Customers',
@@ -508,6 +518,16 @@ class AppLocalizations {
       'pending': 'قيد الانتظار',
       'completed': 'مكتمل',
       'cancelled': 'ملغى',
+
+      // Order Confirmation
+      'confirm_order': 'تأكيد الطلب',
+      'confirm_and_pay': 'تأكيد والدفع',
+      'order_on_hold': 'طلب معلق',
+      'no_onhold_orders': 'لا توجد طلبات معلقة',
+      'select_order_to_confirm': 'اختر طلبًا لتأكيده',
+      'search_by_code': 'البحث بالرمز...',
+      'items': 'العناصر',
+      'type': 'النوع',
       'dine_in': 'تناول الطعام في المكان',
       'take_away': 'وجبات جاهزة',
       'no_orders_found': 'لم يتم العثور على طلبات',
@@ -894,6 +914,16 @@ class AppLocalizations {
       'dine_in': 'Sur place',
       'take_away': 'À emporter',
       'no_orders_found': 'Aucune commande trouvée',
+
+      // Order Confirmation
+      'confirm_order': 'Confirmer la commande',
+      'confirm_and_pay': 'Confirmer et payer',
+      'order_on_hold': 'Commande en attente',
+      'no_onhold_orders': 'Aucune commande en attente',
+      'select_order_to_confirm': 'Sélectionner une commande à confirmer',
+      'search_by_code': 'Rechercher par code...',
+      'items': 'Articles',
+      'type': 'Type',
 
       // Customers
       'customer': 'Client',

@@ -195,8 +195,13 @@ class OrderRepository {
     print(order.items.first.toJson());
     // Generate order code
     final uuid = const Uuid();
-    final orderCode = uuid.v4().substring(0, 8).toUpperCase();
+    final orderCode = order.orderCode != null ? order.orderCode! : uuid.v4().substring(0, 8).toUpperCase();
 
+    // check if the order with that code exists
+    final existingOrder = await (_database.select(_database.orders)..where((tbl) => tbl.code.equals(orderCode))).getSingleOrNull();
+      if (existingOrder != null) {
+        throw Exception("Order with code $orderCode already exists.");
+      }
     // Insert order
     final orderId = await _database.into(_database.orders).insert(
       OrdersCompanion.insert(

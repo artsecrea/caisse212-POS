@@ -10,6 +10,7 @@ import '../providers/database_providers.dart';
 import '../providers/socket_order_providers.dart';
 import '../providers/device_providers.dart';
 import '../providers/order_provider.dart';
+import '../providers/ticket_provider.dart';
 
 final cmdecreaClientProvider = Provider<CmdecreaClient>((ref) {
   final client = CmdecreaClient();
@@ -155,17 +156,17 @@ class SocketService {
 
 
     if (event.status == 'PENDING') {
+      // Separate products by station
       final stationIds = socketOrder.products
           .where((p) => p.stationId != null)
           .map((p) => p.stationId!)
           .toSet();
 
-      if (stationIds.isEmpty) {
-        print('⚠️ Order ${event.orderCode} has no products assigned to stations');
-        return;
-      }
+      final productsWithoutStation = socketOrder.products
+          .where((p) => p.stationId == null)
+          .toList();
 
-
+      // Send products to their assigned stations
       for (final stationId in stationIds) {
         try {
           await sendOrderToStation(socketOrder, stationId);
@@ -173,6 +174,21 @@ class SocketService {
         } catch (e) {
           print('❌ Failed to send to station $stationId: $e');
         }
+      }
+
+      // Handle products with no station - send to KDS named "all"
+      if (productsWithoutStation.isNotEmpty) {
+        try {
+          await sendOrderWithoutStationToAllKDS(socketOrder, productsWithoutStation);
+          print('✅ Sent ${productsWithoutStation.length} products without station to "all" KDS');
+        } catch (e) {
+          print('❌ Failed to send products without station to "all" KDS: $e');
+        }
+      }
+
+      // If no products at all (neither with station nor without)
+      if (stationIds.isEmpty && productsWithoutStation.isEmpty) {
+        print('⚠️ Order ${event.orderCode} has no products');
       }
     }
 
@@ -293,21 +309,30 @@ class SocketService {
       print('Order state changed: ${command.payload}');
     });
 
-    _client.listenForCommand('new_order', (command) async {
+    _client.listenForCommand('ORDER_CREATE', (command) async {
       // Handle order state changes from KDS
+      // first get the tickets repo and if the command is paid  create it ticket
+
+
+      print(command.payload);
+      var isPaid = command.getPayloadValueOrDefault("paid", false);
+      final stat = !isPaid ? "ONHOLD" : "PENDING";
 
 
       repository.saveOrder(
           SocketOrderModel.fromJson(command.payload).toCurrentOrder(),
-          currentUser!.id);
-      print("aha");
-    });
+          0,
+          status: stat
+      );
+      // todo impliment if is paid
 
+
+    });
 
     _client.listenForAllCommands((cmd){
-        print(cmd.type);
-
+      print("received command: ${cmd.type} from ${cmd.senderId}");
     });
+
   }
 
 
@@ -447,6 +472,50 @@ class SocketService {
     for (final kds in kdsList) {
       if (kds.isActive) {
         await sendOrderToKDS(filteredOrder, kds.id);
+      }
+    }
+  }
+
+  /// Send products without station to KDS named "all"
+  Future<void> sendOrderWithoutStationToAllKDS(
+    SocketOrderModel order,
+    List<SocketOrderProductModel> productsWithoutStation,
+  ) async {
+    // Find KDS with name "all" (case-insensitive)
+    final database = _ref.read(databaseProvider);
+    final allKdsList = await database.select(database.kDSs).get();
+
+    // Filter for name "all" case-insensitive
+    final filteredKdsList = allKdsList
+        .where((kds) => kds.name.toLowerCase() == 'all')
+        .toList();
+
+    if (filteredKdsList.isEmpty) {
+      print('⚠️ No KDS named "all" found for products without station');
+      return;
+    }
+
+    // Create order with only products that have no station
+    final filteredOrder = SocketOrderModel(
+      id: order.id,
+      code: order.code,
+      status: order.status,
+      type: order.type,
+      priority: order.priority,
+      date: order.date,
+      tableId: order.tableId,
+      tableName: order.tableName,
+      clientId: order.clientId,
+      clientName: order.clientName,
+      products: productsWithoutStation,
+      note: order.note,
+    );
+
+    // Send to all active KDS devices named "all"
+    for (final kds in filteredKdsList) {
+      if (kds.isActive) {
+        await sendOrderToKDS(filteredOrder, kds.id);
+        print('📦 Sent order to KDS "${kds.name}" (ID: ${kds.id}) with ${productsWithoutStation.length} products');
       }
     }
   }

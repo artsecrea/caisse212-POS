@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart' as widgets;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import 'package:loggecrea/loggecrea.dart';
+import 'package:drift/drift.dart' as drift;
 import '../../providers/device_providers.dart';
 import '../../providers/socket_order_providers.dart';
 import '../../data/database/app_database.dart';
@@ -615,24 +616,43 @@ class _DeviceFormDialogState extends ConsumerState<_DeviceFormDialog> {
 
     return stationsAsync.when(
       data: (stations) {
-        return DropdownButtonFormField<int?>(
-          value: _selectedStationId,
-          decoration: const InputDecoration(
-            labelText: 'Station',
-            border: OutlineInputBorder(),
-            helperText: 'Optional - Assign this KDS to a station',
-          ),
-          items: [
-            const DropdownMenuItem<int?>(
-              value: null,
-              child: Text('Not assigned'),
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<int?>(
+                value: _selectedStationId,
+                decoration: const InputDecoration(
+                  labelText: 'Station',
+                  border: OutlineInputBorder(),
+                  helperText: 'Optional - Assign this KDS to a station',
+                ),
+                items: [
+                  const DropdownMenuItem<int?>(
+                    value: null,
+                    child: Text('Not assigned'),
+                  ),
+                  ...stations.map((station) => DropdownMenuItem<int?>(
+                    value: station.id,
+                    child: Text(station.name),
+                  )),
+                ],
+                onChanged: (value) => setState(() => _selectedStationId = value),
+              ),
             ),
-            ...stations.map((station) => DropdownMenuItem<int?>(
-              value: station.id,
-              child: Text(station.name),
-            )),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 0),
+              child: ElevatedButton.icon(
+                onPressed: () => _showAddStationDialog(stations),
+                icon: const Icon(Icons.add, size: 20),
+                label: const Text('Add Station'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+                ),
+              ),
+            ),
           ],
-          onChanged: (value) => setState(() => _selectedStationId = value),
         );
       },
       loading: () => const LinearProgressIndicator(),
@@ -685,6 +705,150 @@ class _DeviceFormDialogState extends ConsumerState<_DeviceFormDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error saving device: $e')),
+        );
+      }
+    }
+  }
+
+  void _showAddStationDialog(List<Station> existingStations) {
+    showDialog(
+      context: context,
+      builder: (context) => _AddStationDialog(
+        onStationAdded: (stationId) {
+          setState(() => _selectedStationId = stationId);
+        },
+        existingStations: existingStations,
+      ),
+    );
+  }
+}
+
+// Add Station Dialog
+class _AddStationDialog extends ConsumerStatefulWidget {
+  final Function(int) onStationAdded;
+  final List<Station> existingStations;
+
+  const _AddStationDialog({
+    required this.onStationAdded,
+    required this.existingStations,
+  });
+
+  @override
+  ConsumerState<_AddStationDialog> createState() => _AddStationDialogState();
+}
+
+class _AddStationDialogState extends ConsumerState<_AddStationDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _descriptionController = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: Container(
+        width: 400,
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Add New Station',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 24),
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Station Name',
+                  border: OutlineInputBorder(),
+                  hintText: 'e.g., Kitchen, Bar, Grill',
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Station name is required';
+                  }
+                  if (widget.existingStations.any((s) => s.name.toLowerCase() == value.toLowerCase())) {
+                    return 'A station with this name already exists';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _descriptionController,
+                decoration: const InputDecoration(
+                  labelText: 'Description (Optional)',
+                  border: OutlineInputBorder(),
+                  hintText: 'Brief description of the station',
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _saveStation,
+                    child: const Text('Add'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _saveStation() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    try {
+      final database = ref.read(databaseProvider);
+
+      // Get the maximum ID and increment it
+      final maxId = await (database.selectOnly(database.stations)
+        ..addColumns([database.stations.id.max()]))
+        .map((row) => row.read(database.stations.id.max()))
+        .getSingleOrNull();
+
+      final newId = (maxId ?? 0) + 1;
+
+      // Insert the new station
+      await database.into(database.stations).insert(
+        StationsCompanion.insert(
+          id: drift.Value(newId),
+          name: _nameController.text,
+          description: drift.Value(_descriptionController.text.isEmpty ? null : _descriptionController.text),
+        ),
+      );
+
+      if (mounted) {
+        widget.onStationAdded(newId);
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Station added successfully')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error adding station: $e')),
         );
       }
     }

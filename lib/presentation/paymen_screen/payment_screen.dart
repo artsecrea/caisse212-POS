@@ -1394,10 +1394,20 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     try {
       // Get the next ticket number
-      final existingTickets = await database.select(database.tickets).get();
+// Dart
+      final orderId = currentOrder.orderId;
+      final existingTickets = orderId != null
+          ? await (database.select(database.tickets)
+        ..where((t) => t.orderId.equals(orderId)))
+          .get()
+          : <Ticket>[];
+
       final maxTicketNum = existingTickets.isEmpty
           ? 0
-          : existingTickets.map((t) => int.tryParse(t.num) ?? 0).reduce((a, b) => a > b ? a : b);
+          : existingTickets
+          .map((t) => int.tryParse(t.num) ?? 0)
+          .reduce((a, b) => a > b ? a : b);
+
       final newTicketNum = maxTicketNum + 1;
       final ticketNumStr = newTicketNum.toString().padLeft(4, '0');
 
@@ -1485,34 +1495,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         // Don't fail the payment if printing fails
       }
 
-      // Check if all items in the order are now paid
-      final allOrderProducts = await (database.select(database.orderProducts)
-        ..where((op) => op.orderId.equals(currentOrder.orderId ?? 0)))
-        .get();
-
-      final allPaid = allOrderProducts.every((op) => op.state == 'PAID');
-
-      if (allPaid) {
-        // Update order status to COMPLETED
-        await (database.update(database.orders)
-          ..where((o) => o.id.equals(currentOrder.orderId ?? 0)))
-          .write(OrdersCompanion(
-            status: const Value('COMPLETED'),
-            updatedAt: Value(DateTime.now()),
-          ));
-
-        _logger.info('Order ${currentOrder.orderId} marked as COMPLETED');
-
-        // Trigger auto-sync if enabled and online
-        final syncManager = ref.read(syncManagerProvider.notifier);
-        final synced = await syncManager.autoSyncOrder(currentOrder.orderId ?? 0);
-
-        if (synced) {
-          _logger.info('Order ${currentOrder.orderId} auto-synced successfully');
-        } else {
-          _logger.info('Order ${currentOrder.orderId} queued for bulk sync');
-        }
-      }
+      // Note: We do NOT automatically change order status to COMPLETED after payment
+      // The order status should be managed separately through order management screen
 
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(

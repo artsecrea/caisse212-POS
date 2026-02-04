@@ -949,9 +949,7 @@ class DataSyncService {
 
         // Remove metadata fields
         final updateData = Map<String, dynamic>.from(rawData);
-        updateData.remove('_orderCode');
-        updateData.remove('_ticketNum');
-
+        _logger.debug(updateData.toString());
         await _apiService.updateTicket(orderCode, ticketNum, updateData);
         _logger.info('Updated ticket orderCode=$orderCode, ticketNum=$ticketNum on server');
         break;

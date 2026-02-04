@@ -660,14 +660,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  'Apply an extra discount to this item',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
-                ),
-                const SizedBox(height: 2),
 
                 Row(
                   children: [
@@ -676,7 +668,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                       child: TextField(
                         controller: _manualDiscountController,
                         decoration: InputDecoration(
-                          labelText: _isPercentageDiscount ? 'Manual Discount (%)' : 'Manual Discount (\$)',
                           border: const OutlineInputBorder(),
                           prefixIcon: Icon(_isPercentageDiscount ? Icons.percent : Icons.attach_money),
                           hintText: '0.00',

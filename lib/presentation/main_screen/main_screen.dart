@@ -7,6 +7,7 @@ import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
+import '../order_confirmation/order_confirmation_screen.dart';
 import '../paymen_screen/payment_screen.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/category_grid.dart';
@@ -107,6 +108,20 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     onPressed: () {
                       final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
                       ref.read(orderProvider.notifier).setOrderType(newType);
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  // Confirm Order button
+                  _buildActionButton(
+                    icon: Icons.task_alt,
+                    label: l10n.translate('confirm_order'),
+                    color: Colors.purple,
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const OrderConfirmationScreen(),
+                        ),
+                      );
                     },
                   ),
                   const SizedBox(width: 8),
