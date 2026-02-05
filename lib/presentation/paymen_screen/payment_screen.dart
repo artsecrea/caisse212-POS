@@ -1306,11 +1306,22 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       return;
     }
 
-    // Build items list for printing
-    final itemsForPrint = ticket.items.map((item) => {
-      'name': item.productName,
-      'quantity': item.quantity,
-      'price': item.totalPrice,
+    // Build items list for printing with components
+    final itemsForPrint = ticket.items.map((item) {
+      // Build components list
+      final componentsForPrint = item.components.map((comp) => {
+        'name': comp.name,
+        'quantity': comp.quantity,
+        'price': comp.price,
+        'isSpecial': comp.isSpecial,
+      }).toList();
+
+      return {
+        'name': item.productName,
+        'quantity': item.quantity,
+        'price': item.totalPrice,
+        'components': componentsForPrint,
+      };
     }).toList();
 
     final ticketNum = ticket.ticketNum ?? '${ticketIndex + 1}'.padLeft(4, '0');
@@ -1323,6 +1334,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         paymentMethod: ticket.paymentMethod.value,
         createdAt: DateTime.now(),
         items: itemsForPrint,
+        orderCode: widget.order.orderCode,
         cashierName: currentUser?.firstName,
         storeName: 'POS Store',
       );
@@ -1468,10 +1480,21 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
       // Print the ticket after successful payment
       try {
-        final itemsForPrint = ticket.items.map((item) => {
-          'name': item.productName,
-          'quantity': item.quantity,
-          'price': item.totalPrice,
+        final itemsForPrint = ticket.items.map((item) {
+          // Build components list
+          final componentsForPrint = item.components.map((comp) => {
+            'name': comp.name,
+            'quantity': comp.quantity,
+            'price': comp.price,
+            'isSpecial': comp.isSpecial,
+          }).toList();
+
+          return {
+            'name': item.productName,
+            'quantity': item.quantity,
+            'price': item.totalPrice,
+            'components': componentsForPrint,
+          };
         }).toList();
 
         await printingService.printTicketReceipt(
@@ -1481,6 +1504,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           paymentMethod: ticket.paymentMethod.value,
           createdAt: DateTime.now(),
           items: itemsForPrint,
+          orderCode: widget.order.orderCode,
           cashierName: currentUser?.firstName,
           storeName: 'POS Store',
         );

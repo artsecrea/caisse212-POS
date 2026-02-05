@@ -941,16 +941,46 @@ class _TicketDetailsDialog extends ConsumerWidget {
     final currentUser = ref.read(currentUserProvider);
     final database = ref.read(databaseProvider);
 
-    // Build items list for printing
-    final itemsForPrint = items.map((itemData) {
+    // Get order code
+    final orderData = await (database.select(database.orders)
+          ..where((tbl) => tbl.id.equals(ticket.orderId)))
+        .getSingleOrNull();
+
+    // Build items list for printing with components
+    final itemsForPrint = <Map<String, dynamic>>[];
+    for (final itemData in items) {
       final item = itemData['product'] as OrderProduct;
       final productName = itemData['productName'] as String;
-      return {
+
+      // Get components for this order product
+      final orderComponents = await (database.select(database.orderProductComponents)
+            ..where((tbl) => tbl.orderProductId.equals(item.id)))
+          .get();
+
+      // Build components list
+      final componentsForPrint = <Map<String, dynamic>>[];
+      for (final orderComp in orderComponents) {
+        final component = await (database.select(database.components)
+              ..where((tbl) => tbl.id.equals(orderComp.componentId)))
+            .getSingleOrNull();
+
+        if (component != null) {
+          componentsForPrint.add({
+            'name': component.name,
+            'quantity': orderComp.quantity,
+            'price': orderComp.price,
+            'isSpecial': orderComp.isSpecial,
+          });
+        }
+      }
+
+      itemsForPrint.add({
         'name': productName,
         'quantity': item.quantity,
         'price': item.unitaryPrice * item.quantity,
-      };
-    }).toList();
+        'components': componentsForPrint,
+      });
+    }
 
     try {
       final success = await printingService.printTicketReceipt(
@@ -960,6 +990,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
         paymentMethod: ticket.paymentMethod,
         createdAt: ticket.date,
         items: itemsForPrint,
+        orderCode: orderData?.code,
         cashierName: currentUser?.firstName,
         storeName: 'POS Store',
       );

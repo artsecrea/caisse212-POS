@@ -482,6 +482,21 @@ class PrintingService {
       bytes += generator.emptyLines(1);
       bytes += generator.text('Thank you for your purchase!',
           styles: const PosStyles(align: PosAlign.center));
+
+      // Add barcode if order code exists
+      if (order.orderCode != null && order.orderCode!.isNotEmpty) {
+        bytes += generator.emptyLines(1);
+        bytes += generator.barcode(
+          Barcode.code128(order.orderCode!.codeUnits),
+          height: 80,
+          align: PosAlign.center,
+        );
+        bytes += generator.text(
+          order.orderCode!,
+          styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB),
+        );
+      }
+
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
@@ -591,6 +606,21 @@ class PrintingService {
       }
 
       bytes += generator.hr(ch: '=');
+
+      // Add barcode if order code exists
+      if (order.orderCode != null && order.orderCode!.isNotEmpty) {
+        bytes += generator.emptyLines(1);
+        bytes += generator.barcode(
+          Barcode.code128(order.orderCode!.codeUnits),
+          height: 80,
+          align: PosAlign.center,
+        );
+        bytes += generator.text(
+          order.orderCode!,
+          styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB),
+        );
+      }
+
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
@@ -615,6 +645,7 @@ class PrintingService {
     required String paymentMethod,
     required DateTime createdAt,
     required List<Map<String, dynamic>> items,
+    String? orderCode,
     String? cashierName,
     String? storeName,
   }) async {
@@ -651,6 +682,13 @@ class PrintingService {
       // Ticket info
       bytes += generator.text('Ticket #$ticketNumber',
           styles: const PosStyles(align: PosAlign.center, bold: true));
+
+      // Add order code if available
+      if (orderCode != null && orderCode.isNotEmpty) {
+        bytes += generator.text('Order: $orderCode',
+            styles: const PosStyles(align: PosAlign.center, bold: true));
+      }
+
       bytes += generator.text('Date: ${_formatDateTime(createdAt)}',
           styles: const PosStyles(align: PosAlign.left));
       if (cashierName != null) {
@@ -676,6 +714,28 @@ class PrintingService {
             styles: const PosStyles(align: PosAlign.right),
           ),
         ]);
+
+        // Add components if available
+        final components = item['components'] as List<dynamic>?;
+        if (components != null && components.isNotEmpty) {
+          for (final comp in components) {
+            final compName = comp['name'] ?? '';
+            final compQty = comp['quantity'] ?? 1;
+            final compPrice = comp['price'] ?? 0.0;
+
+            if (compPrice > 0) {
+              bytes += generator.text(
+                '  + ${compQty}x $compName (+\$${(compPrice * compQty).toStringAsFixed(2)})',
+                styles: const PosStyles(align: PosAlign.left, fontType: PosFontType.fontB),
+              );
+            } else {
+              bytes += generator.text(
+                '  + ${compQty}x $compName',
+                styles: const PosStyles(align: PosAlign.left, fontType: PosFontType.fontB),
+              );
+            }
+          }
+        }
       }
 
       bytes += generator.hr();
@@ -701,6 +761,21 @@ class PrintingService {
       bytes += generator.emptyLines(1);
       bytes += generator.text('Thank you!',
           styles: const PosStyles(align: PosAlign.center));
+
+      // Add barcode if order code exists
+      if (orderCode != null && orderCode.isNotEmpty) {
+        bytes += generator.emptyLines(1);
+        bytes += generator.barcode(
+          Barcode.code128(orderCode.codeUnits),
+          height: 80,
+          align: PosAlign.center,
+        );
+        bytes += generator.text(
+          orderCode,
+          styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB),
+        );
+      }
+
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
