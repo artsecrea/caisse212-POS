@@ -5,6 +5,7 @@ class OrderProductComponents extends Table {
   IntColumn get componentId => integer()();
   IntColumn get orderProductId => integer()();
   IntColumn get quantity => integer().withDefault(const Constant(1))();
+  RealColumn get price => real().withDefault(const Constant(0.0))(); // Price at order time
   BoolColumn get isSpecial => boolean().withDefault(const Constant(false))();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();

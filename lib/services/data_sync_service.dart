@@ -340,6 +340,7 @@ class DataSyncService {
         final componentsList = productComponents.map((comp) => {
           'componentId': comp.componentId,
           'quantity': comp.quantity,
+          'price': comp.price,  // Include price from order time
           'isSpecial': comp.isSpecial,
         }).toList();
 
@@ -598,6 +599,7 @@ class DataSyncService {
         final componentsList = productComponents.map((comp) => {
           'componentId': comp.componentId,
           'quantity': comp.quantity,
+          'price': comp.price,  // Include price from order time
           'isSpecial': comp.isSpecial,
         }).toList();
 

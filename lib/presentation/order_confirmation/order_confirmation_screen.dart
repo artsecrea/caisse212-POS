@@ -1,9 +1,7 @@
-import 'package:drift/drift.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:posecrea/data/database/app_database.dart';
-import 'package:posecrea/domain/models/order_models.dart';
 import 'package:posecrea/providers/database_providers.dart';
 import 'package:posecrea/providers/order_provider.dart';
 import 'package:posecrea/presentation/paymen_screen/payment_screen.dart';
@@ -122,12 +120,23 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
 
     double total = 0.0;
     for (final item in items) {
+      // Get components for this order product
+      final orderComponents = await (database.select(database.orderProductComponents)
+            ..where((tbl) => tbl.orderProductId.equals(item.id)))
+          .get();
+
+      double componentTotal = 0.0;
+      for (final orderComp in orderComponents) {
+        // Use stored price instead of looking up component
+        componentTotal += orderComp.price * orderComp.quantity;
+      }
+
       // Calculate based on pricing rules
       final subtotal = item.unitaryPrice * item.quantity;
       final discountAmount = (item.unitaryDiscount + item.manualDiscount) * item.quantity;
       final taxableAmount = subtotal - discountAmount;
       final taxAmount = item.unitaryTva * item.quantity;
-      total += taxableAmount + taxAmount;
+      total += (taxableAmount + taxAmount + componentTotal);
     }
 
     return total;
@@ -145,9 +154,32 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
             ..where((tbl) => tbl.id.equals(orderProduct.productId)))
           .getSingleOrNull();
 
+      // Get components for this order product
+      final orderComponents = await (database.select(database.orderProductComponents)
+            ..where((tbl) => tbl.orderProductId.equals(orderProduct.id)))
+          .get();
+
+      final components = <Map<String, dynamic>>[];
+      for (final orderComp in orderComponents) {
+        // Still need component name for display, but use stored price
+        final component = await (database.select(database.components)
+              ..where((tbl) => tbl.id.equals(orderComp.componentId)))
+            .getSingleOrNull();
+
+        if (component != null) {
+          components.add({
+            'name': component.name,
+            'quantity': orderComp.quantity,
+            'price': orderComp.price, // Use stored price from order time
+            'isSpecial': orderComp.isSpecial,
+          });
+        }
+      }
+
       items.add({
         'orderProduct': orderProduct,
         'productName': product?.name ?? 'Unknown Product',
+        'components': components,
       });
     }
 
@@ -414,41 +446,105 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
                     final item = items[index];
                     final orderProduct = item['orderProduct'] as OrderProduct;
                     final productName = item['productName'] as String;
+                    final components = item['components'] as List<Map<String, dynamic>>;
 
                     return Card(
                       margin: const EdgeInsets.only(bottom: 8),
                       child: Padding(
                         padding: const EdgeInsets.all(12),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primaryContainer,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  '${orderProduct.quantity}x',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                            Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.primaryContainer,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '${orderProduct.quantity}x',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                      ),
+                                    ),
                                   ),
                                 ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    productName,
+                                    style: const TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                Text(
+                                  currencyFormatter.format(orderProduct.unitaryPrice * orderProduct.quantity),
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                            if (components.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Padding(
+                                padding: const EdgeInsets.only(left: 52),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      l10n.translate('components'),
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    ...components.map((comp) {
+                                      final quantity = comp['quantity'] as int;
+                                      final name = comp['name'] as String;
+                                      final price = comp['price'] as double;
+                                      final isSpecial = comp['isSpecial'] as bool;
+
+                                      return Padding(
+                                        padding: const EdgeInsets.only(bottom: 2),
+                                        child: Row(
+                                          children: [
+                                            if (isSpecial)
+                                              Icon(
+                                                Icons.star,
+                                                size: 12,
+                                                color: Colors.orange[700],
+                                              ),
+                                            if (isSpecial) const SizedBox(width: 4),
+                                            Text(
+                                              '${quantity}x $name',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                                              ),
+                                            ),
+                                            if (price > 0) ...[
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                '(+${currencyFormatter.format(price * quantity)})',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                productName,
-                                style: const TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            Text(
-                              currencyFormatter.format(orderProduct.unitaryPrice * orderProduct.quantity),
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                            ),
+                            ],
                           ],
                         ),
                       ),

@@ -248,6 +248,7 @@ class OrderRepository {
             componentId: component.componentId,
             orderProductId: orderProductId,
             quantity: Value(component.quantity),
+            price: Value(component.price),
             isSpecial: Value(component.isSpecial),
           ),
         );
@@ -390,6 +391,7 @@ class OrderRepository {
             componentId: component.componentId,
             orderProductId: orderProductId,
             quantity: Value(component.quantity),
+            price: Value(component.price),
             isSpecial: Value(component.isSpecial),
           ),
         );
@@ -504,7 +506,7 @@ class OrderRepository {
             componentId: component.id,
             name: component.name,
             quantity: orderComp.quantity,
-            price: component.price,
+            price: orderComp.price, // Use stored price from order time
             isSpecial: orderComp.isSpecial,
           ));
         }
@@ -752,8 +754,26 @@ class OrderRepository {
           ..where((tbl) => tbl.id.equals(product.productId)))
             .getSingleOrNull();
 
+        // Get components
+        final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
+
+        // Calculate component total using stored prices
+        double componentTotal = 0.0;
+        final components = <ComponentDetails>[];
+        for (final orderComp in orderComponents) {
+          componentTotal += orderComp.price * orderComp.quantity;
+
+          final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
+          if (component != null) {
+            components.add(ComponentDetails(
+              name: component.name,
+              quantity: orderComp.quantity,
+            ));
+          }
+        }
+
         final productDiscount = ((product.manualDiscount + product.unitaryDiscount ) * product.quantity) ;
-        final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) * product.quantity) ;
+        final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) * product.quantity) + componentTotal;
         final itemTva = product.unitaryTva * product.quantity;
 
         subtotal += itemSubtotal;
@@ -774,18 +794,6 @@ class OrderRepository {
 
         }
 
-        // Get components
-        final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
-        final components = <ComponentDetails>[];
-        for (final orderComp in orderComponents) {
-          final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
-          if (component != null) {
-            components.add(ComponentDetails(
-              name: component.name,
-              quantity: orderComp.quantity,
-            ));
-          }
-        }
 
         itemDetails.add(OrderItemDetails(
           productName: productDetail?.name ?? 'Unknown Product',
@@ -859,8 +867,25 @@ class OrderRepository {
     for (final product in orderProducts) {
       final productDetail = await (_database.select(_database.products)..where((tbl) => tbl.id.equals(product.productId))).getSingleOrNull();
 
+      // Get components and calculate total using stored prices
+      final productComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
+
+      double componentTotal = 0.0;
+      final components = <ComponentDetails>[];
+      for (final orderComp in productComponents) {
+        componentTotal += orderComp.price * orderComp.quantity;
+
+        final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
+        if (component != null) {
+          components.add(ComponentDetails(
+            name: component.name,
+            quantity: orderComp.quantity,
+          ));
+        }
+      }
+
       final productDiscount = ((product.manualDiscount + product.unitaryDiscount) * product.quantity);
-      final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) * product.quantity);
+      final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) * product.quantity) + componentTotal;
       final itemTva = product.unitaryTva * product.quantity;
 
       subtotal += itemSubtotal;
@@ -879,18 +904,6 @@ class OrderRepository {
         }
       }
 
-      // Get components
-      final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
-      final components = <ComponentDetails>[];
-      for (final orderComp in orderComponents) {
-        final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
-        if (component != null) {
-          components.add(ComponentDetails(
-            name: component.name,
-            quantity: orderComp.quantity,
-          ));
-        }
-      }
 
       itemDetails.add(OrderItemDetails(
         productName: productDetail?.name ?? 'Unknown Product',
