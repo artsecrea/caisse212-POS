@@ -101,10 +101,10 @@ class _TopBarState extends ConsumerState<TopBar> {
               child: OnscreenKeyboardTextField(
                 controller: _searchController,
                 focusNode: _searchFocusNode,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
+                style: const TextStyle( fontSize: 14),
                 decoration: const InputDecoration(
                   hintText: 'Search products...',
-                  hintStyle: TextStyle(color: Colors.white70, fontSize: 14),
+                  hintStyle: TextStyle(fontSize: 14),
                   border: InputBorder.none,
                   contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                   isDense: true,

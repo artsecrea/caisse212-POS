@@ -21,9 +21,95 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       throw Exception('Cannot add items from paid tickets');
     }
 
-    state = state.copyWith(
-      items: [...state.items, item],
-    );
+    // Check for duplicate items (same product, note, and components)
+    final existingItemIndex = _findDuplicateItemIndex(item);
+
+    if (existingItemIndex != -1) {
+      // Merge with existing item by adding quantities
+      final items = List<OrderItem>.from(state.items);
+      final existingItem = items[existingItemIndex];
+      items[existingItemIndex] = existingItem.copyWith(
+        quantity: existingItem.quantity + item.quantity,
+      );
+      state = state.copyWith(items: items);
+    } else {
+      // Add as new item
+      state = state.copyWith(
+        items: [...state.items, item],
+      );
+    }
+  }
+
+  /// Find the index of a duplicate item in the current order
+  /// Returns -1 if no duplicate is found
+  /// Items are duplicates if they have:
+  /// - Same productId
+  /// - Same note (null or matching string)
+  /// - Same components (same componentId and quantity for each)
+  /// - Not already paid (ticketId is null)
+  int _findDuplicateItemIndex(OrderItem newItem) {
+    for (int i = 0; i < state.items.length; i++) {
+      final existingItem = state.items[i];
+
+      // Skip items that are already paid
+      if (existingItem.ticketId != null) {
+        continue;
+      }
+
+      // Check if product IDs match
+      if (existingItem.productId != newItem.productId) {
+        continue;
+      }
+
+      // Check if notes match (both null or same string)
+      final notesMatch = (existingItem.note == null && newItem.note == null) ||
+                         (existingItem.note != null && newItem.note != null &&
+                          existingItem.note == newItem.note);
+
+      if (!notesMatch) {
+        continue;
+      }
+
+      // Check if components match
+      if (!_componentsMatch(existingItem.components, newItem.components)) {
+        continue;
+      }
+
+      // Found a duplicate
+      return i;
+    }
+
+    return -1;
+  }
+
+  /// Check if two component lists are identical
+  /// They match if they have the same components with the same quantities
+  bool _componentsMatch(List<OrderItemComponent> list1, List<OrderItemComponent> list2) {
+    // Different number of components
+    if (list1.length != list2.length) {
+      return false;
+    }
+
+    // Both empty
+    if (list1.isEmpty) {
+      return true;
+    }
+
+    // Sort both lists by componentId for comparison
+    final sorted1 = List<OrderItemComponent>.from(list1)
+      ..sort((a, b) => a.componentId.compareTo(b.componentId));
+    final sorted2 = List<OrderItemComponent>.from(list2)
+      ..sort((a, b) => a.componentId.compareTo(b.componentId));
+
+    // Compare each component
+    for (int i = 0; i < sorted1.length; i++) {
+      if (sorted1[i].componentId != sorted2[i].componentId ||
+          sorted1[i].quantity != sorted2[i].quantity) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   void removeItem(int index) {

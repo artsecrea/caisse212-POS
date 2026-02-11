@@ -362,9 +362,9 @@ class OrderPanel extends ConsumerWidget {
                 : ListView.builder(
                     padding: const EdgeInsets.all(2),
                     itemCount: currentOrder.items.length,
-                    reverse: true,
                     itemBuilder: (context, index) {
-                      final item = currentOrder.items[index];
+                      final invertedIndex = currentOrder.items.length - 1 - index;
+                      final item = currentOrder.items[invertedIndex];
                       final isPaid = item.ticketId != null;
                       final isHeld = item.state == 'ONHOLD';
 
@@ -385,7 +385,7 @@ class OrderPanel extends ConsumerWidget {
                           child: const Icon(Icons.delete, color: Colors.white),
                         ),
                         onDismissed: (direction) {
-                          ref.read(orderProvider.notifier).removeItem(index);
+                          ref.read(orderProvider.notifier).removeItem(invertedIndex);
                         },
                         child: GestureDetector(
                           onLongPress: isPaid
@@ -394,263 +394,264 @@ class OrderPanel extends ConsumerWidget {
                           child: Opacity(
                             opacity: isPaid ? 0.6 : 1.0,
                             child: Card(
-                              elevation: isPaid ? 1 : 2,
+                              elevation: isPaid ? 0.5 : 1,
                               color: isPaid
-                                  ? Theme.of(context).colorScheme.surfaceContainerHighest
+                                  ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
                                   : isHeld
                                       ? Colors.orange[50]
                                       : Theme.of(context).cardColor,
-                              margin: EdgeInsets.only(
-                                bottom: isPaid ? 4 : 8,
-                                left: 4,
-                                right: 4,
-                              ),
+                              margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(isPaid ? 6 : 8),
+                                borderRadius: BorderRadius.circular(8),
                                 side: BorderSide(
                                   color: isPaid
-                                      ? Theme.of(context).colorScheme.outline.withValues(alpha: 0.3)
+                                      ? Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)
                                       : isHeld
-                                          ? Colors.orange[300]!
-                                          : Theme.of(context).dividerColor,
-                                  width: isPaid ? 0.5 : (isHeld ? 2 : 1),
+                                          ? Colors.orange[200]!
+                                          : Theme.of(context).dividerColor.withValues(alpha: 0.5),
+                                  width: isPaid ? 0.5 : (isHeld ? 1.5 : 0.5),
                                 ),
                               ),
                               child: InkWell(
-                                onTap: isPaid ? null : () => _showItemOptions(context, ref, index, item),
-                                borderRadius: BorderRadius.circular(isPaid ? 6 : 8),
+                                onTap: isPaid ? null : () => _showItemOptions(context, ref, invertedIndex, item),
+                                borderRadius: BorderRadius.circular(8),
                                 child: Padding(
-                                  padding: EdgeInsets.all(isPaid ? 8 : 12),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                    // Header: Name and Note button
-                                    Row(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                  child: IntrinsicHeight(
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        if (isPaid) ...[
-                                          Icon(
-                                            Icons.lock,
-                                            size: isPaid ? 12 : 14,
-                                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                          ),
-                                          const SizedBox(width: 4),
-                                        ],
+                                        // 1. Quantity Section (Left)
+                                        Center(
+                                          child: isPaid
+                                              ? Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                                    borderRadius: BorderRadius.circular(4),
+                                                    border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.5)),
+                                                  ),
+                                                  child: Text(
+                                                    '${item.quantity}',
+                                                    style: TextStyle(
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 14,
+                                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                                    ),
+                                                  ),
+                                                )
+                                              : InkWell(
+                                                  onTap: () => _showQuantityDialog(context, ref, invertedIndex, item),
+                                                  borderRadius: BorderRadius.circular(8),
+                                                  child: Container(
+                                                    width: 48,
+                                                    height: 48,
+                                                    alignment: Alignment.center,
+                                                    decoration: BoxDecoration(
+                                                      color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.7),
+                                                      borderRadius: BorderRadius.circular(8),
+                                                      border: Border.all(
+                                                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                                                      ),
+                                                    ),
+                                                    child: Text(
+                                                      '${item.quantity}',
+                                                      style: TextStyle(
+                                                        fontWeight: FontWeight.bold,
+                                                        fontSize: 20,
+                                                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                        ),
+
+                                        const SizedBox(width: 12),
+
+                                        // 2. Product Details (Middle)
                                         Expanded(
-                                          child: Text(
-                                            item.productName,
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: isPaid ? 13 : 15,
-                                              decoration: isPaid ? TextDecoration.lineThrough : null,
-                                              decorationColor: Theme.of(context).colorScheme.onSurfaceVariant,
-                                            ),
-                                            maxLines: isPaid ? 1 : 2,
-                                            overflow: TextOverflow.ellipsis,
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              // Product Name and Lock Icon
+                                              Row(
+                                                children: [
+                                                  if (isPaid) ...[
+                                                    Icon(
+                                                      Icons.lock_outline,
+                                                      size: 14,
+                                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                                    ),
+                                                    const SizedBox(width: 4),
+                                                  ],
+                                                  Expanded(
+                                                    child: Text(
+                                                      item.productName,
+                                                      style: TextStyle(
+                                                        fontWeight: FontWeight.w600,
+                                                        fontSize: 15,
+                                                        decoration: isPaid ? TextDecoration.lineThrough : null,
+                                                        decorationColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                                                        color: isPaid ? Theme.of(context).colorScheme.onSurfaceVariant : null,
+                                                        height: 1.1,
+                                                      ),
+                                                      maxLines: 2,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+
+                                              // Components (Compact)
+                                              if (item.components.isNotEmpty) ...[
+                                                const SizedBox(height: 2),
+                                                Wrap(
+                                                  spacing: 6,
+                                                  runSpacing: 2,
+                                                  children: item.components.map((comp) => Text(
+                                                    '+ ${comp.name} (${comp.quantity})',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                                      height: 1.1,
+                                                    ),
+                                                  )).toList(),
+                                                ),
+                                              ],
+
+                                              // Note (Compact)
+                                              if (item.note != null && item.note!.isNotEmpty) ...[
+                                                const SizedBox(height: 4),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    borderRadius: BorderRadius.circular(4),
+                                                    border: Border.all(),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      Icon(Icons.sticky_note_2, size: 10, color: Colors.amber[800]),
+                                                      const SizedBox(width: 4),
+                                                      Flexible(
+                                                        child: Text(
+                                                          item.note!,
+                                                          style: TextStyle(
+                                                            fontSize: 11,
+                                                            fontStyle: FontStyle.italic,
+                                                            height: 1.1,
+                                                          ),
+                                                          maxLines: 5,
+                                                          overflow: TextOverflow.visible,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+
+                                              // Badges Row
+                                              if (isPaid || (isHeld && !isPaid)) ...[
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  children: [
+                                                    if (isPaid)
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                        margin: const EdgeInsets.only(right: 4),
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.green[50],
+                                                          borderRadius: BorderRadius.circular(4),
+                                                          border: Border.all(color: Colors.green[200]!),
+                                                        ),
+                                                        child: Text(
+                                                          'Ticket #${item.ticketId}',
+                                                          style: TextStyle(
+                                                            fontSize: 10,
+                                                            color: Colors.green[800],
+                                                            fontWeight: FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    if (isHeld && !isPaid)
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.orange[50],
+                                                          borderRadius: BorderRadius.circular(4),
+                                                          border: Border.all(color: Colors.orange[200]!),
+                                                        ),
+                                                        child: Row(
+                                                          mainAxisSize: MainAxisSize.min,
+                                                          children: [
+                                                            Icon(Icons.pause_circle_outline, size: 10, color: Colors.orange[800]),
+                                                            const SizedBox(width: 4),
+                                                            Text(
+                                                              'Held',
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                                color: Colors.orange[800],
+                                                                fontWeight: FontWeight.w600,
+                                                              ),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ],
                                           ),
                                         ),
-                                        // Note icon button
-                                        if (!isPaid) ...[
-                                          IconButton(
-                                            onPressed: () => _showNoteDialog(context, ref, index, item),
-                                            icon: Icon(
-                                              item.note != null && item.note!.isNotEmpty
-                                                  ? Icons.sticky_note_2
-                                                  : Icons.sticky_note_2_outlined,
-                                              size: 30,
-                                              color: item.note != null && item.note!.isNotEmpty
-                                                  ? Colors.amber[700]
-                                                  : Theme.of(context).colorScheme.onSurfaceVariant,
-                                            ),
-                                            tooltip: 'Add note',
-                                            padding: const EdgeInsets.all(4),
-                                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
 
-                                    // Show note if exists
-                                    if (item.note != null && item.note!.isNotEmpty) ...[
-                                      const SizedBox(height: 6),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          color: Colors.amber[50],
-                                          borderRadius: BorderRadius.circular(4),
-                                          border: Border.all(color: Colors.amber[200]!),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.note, size: 12, color: Colors.amber[900]),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                item.note!,
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: Colors.amber[900],
-                                                  fontStyle: FontStyle.italic,
-                                                ),
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
+                                        const SizedBox(width: 8),
 
-                                    // Paid status badge
-                                    if (isPaid) ...[
-                                      const SizedBox(height: 3),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                        decoration: BoxDecoration(
-                                          color: Colors.green[50],
-                                          borderRadius: BorderRadius.circular(3),
-                                          border: Border.all(color: Colors.green[200]!),
-                                        ),
-                                        child: Text(
-                                          'Paid - Ticket #${item.ticketId}',
-                                          style: TextStyle(
-                                            fontSize: 9,
-                                            color: Colors.green[700],
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-
-                                    // Held status badge
-                                    if (isHeld && !isPaid) ...[
-                                      const SizedBox(height: 4),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: Colors.orange[50],
-                                          borderRadius: BorderRadius.circular(4),
-                                          border: Border.all(color: Colors.orange[300]!),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(Icons.pause_circle, size: 12, color: Colors.orange[700]),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              'On Hold',
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                color: Colors.orange[700],
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-
-                                    // Components
-                                    if (item.components.isNotEmpty) ...[
-                                      SizedBox(height: 4),
-                                      ...item.components.map((comp) => Padding(
-                                        padding: const EdgeInsets.only(left: 4, top: 2),
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.add,
-                                              size: isPaid ? 8 : 10,
-                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                '${comp.name} x${comp.quantity}',
-                                                style: TextStyle(
-                                                  fontSize: isPaid ? 9 : 11,
-                                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      )),
-                                    ],
-
-                                    SizedBox(height: 4),
-                                    const Divider(height: 1),
-                                    SizedBox(height: 4),
-
-                                    // Bottom: Quantity and Price
-                                    Row(
-                                      children: [
-                                        // Quantity - tappable button that opens dialog with on-screen keyboard
-                                        if (!isPaid)
-                                          InkWell(
-                                            onTap: () => _showQuantityDialog(context, ref, index, item),
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                                              constraints: const BoxConstraints(minWidth: 40),
-                                              decoration: BoxDecoration(
-                                                color: Theme.of(context).colorScheme.onInverseSurface,
-                                                borderRadius: BorderRadius.circular(10),
-
-
-                                                border: Border.all(
-                                                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-                                                  width: 1,
-                                                ),
-                                              ),
-                                              child: Text(
-                                                '${item.quantity}',
-
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 24,
-
-                                                  color: Theme.of(context).colorScheme.onPrimaryContainer,
-                                                ),
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          // Paid item - show quantity in smaller format
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                              borderRadius: BorderRadius.circular(4),
-                                              border: Border.all(color: Theme.of(context).dividerColor),
-                                            ),
-                                            child: Text(
-                                              'x${item.quantity}',
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 11,
-                                              ),
-                                            ),
-                                          ),
-
-                                        const Spacer(),
-
-                                        // Price and discount
+                                        // 3. Price & Actions (Right)
                                         Column(
                                           crossAxisAlignment: CrossAxisAlignment.end,
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                           children: [
+                                            // Price
                                             Text(
                                               currencyFormatter.format(item.totalPrice),
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
-                                                fontSize: isPaid ? 13 : 16,
+                                                fontSize: 15,
+                                                color: isPaid ? Theme.of(context).colorScheme.onSurfaceVariant : null,
                                               ),
                                             ),
-                                            if (item.totalDiscount > 0) ...[
-                                              SizedBox(height: isPaid ? 1 : 2),
+                                            // Discount
+                                            if (item.totalDiscount > 0)
                                               Text(
-                                                'Discount: -${currencyFormatter.format(item.totalDiscount)}',
+                                                '-${currencyFormatter.format(item.totalDiscount)}',
                                                 style: TextStyle(
-                                                  fontSize: isPaid ? 9 : 11,
-                                                  color: Colors.orange[700],
+                                                  fontSize: 10,
+                                                  color: Colors.orange[800],
                                                   fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+
+                                            // Action Button (Note)
+                                            if (!isPaid) ...[
+                                               const SizedBox(height: 8),
+                                              SizedBox(
+                                                width: 32,
+                                                height: 32,
+                                                child: IconButton(
+                                                  onPressed: () => _showNoteDialog(context, ref, invertedIndex, item),
+                                                  icon: Icon(
+                                                    item.note != null && item.note!.isNotEmpty
+                                                        ? Icons.sticky_note_2
+                                                        : Icons.sticky_note_2_outlined,
+                                                    size: 30,
+                                                    color: item.note != null && item.note!.isNotEmpty
+                                                        ? Colors.amber[700]
+                                                        : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                                                  ),
+                                                  tooltip: 'Note',
+                                                  padding: EdgeInsets.zero,
+                                                  visualDensity: VisualDensity.compact,
                                                 ),
                                               ),
                                             ],
@@ -658,8 +659,7 @@ class OrderPanel extends ConsumerWidget {
                                         ),
                                       ],
                                     ),
-                                  ],)
-
+                                  ),
                                 ),
                               ),
                             ),
