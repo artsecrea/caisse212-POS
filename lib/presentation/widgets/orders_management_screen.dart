@@ -1,4 +1,4 @@
-// filepath: /home/arecrea/prj/posecrea/lib/presentation/widgets/orders_management_screen.dart
+// filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/orders_management_screen.dart
 
 import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import 'package:flutter/material.dart';
@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/order_provider.dart';
-import '../../providers/network_provider.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
@@ -26,19 +25,38 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   String _searchQuery = '';
   DateTime? _startDate;
   DateTime? _endDate;
+  int? _selectedCustomerId;
 
   // Pagination
   int _currentPage = 0;
-  final int _rowsPerPage = 10;
+  int _rowsPerPage = 10;
+
+  // Paginated data
+  PaginatedOrders? _paginatedOrders;
+  bool _isLoading = true;
+  String? _errorMessage;
 
   // Sorting
-  int? _sortColumnIndex;
-  bool _sortAscending = true;
+  String _sortColumn = 'createdAt';
+  bool _sortAscending = false;
+
+  // Grouping
+  String _groupBy = 'none'; // none, status, date
 
   // Sync state
   bool _isSyncing = false;
 
   final TextEditingController _searchController = TextEditingController();
+
+  // Customers list for filter
+  List<Customer> _customers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCustomers();
+    _loadOrders();
+  }
 
   @override
   void dispose() {
@@ -46,38 +64,92 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     super.dispose();
   }
 
+  Future<void> _loadCustomers() async {
+    try {
+      final database = ref.read(databaseProvider);
+      _customers = await database.select(database.customers).get();
+      if (mounted) setState(() {});
+    } catch (e) {
+      // Ignore errors loading customers
+    }
+  }
+
+  Future<void> _loadOrders() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final orderRepo = ref.read(orderRepositoryProvider);
+      final result = await orderRepo.getPaginatedOrdersWithFullDetails(
+        page: _currentPage,
+        pageSize: _rowsPerPage,
+        statusFilter: _statusFilter,
+        searchQuery: _searchQuery.isNotEmpty ? _searchQuery : null,
+        customerId: _selectedCustomerId,
+        startDate: _startDate,
+        endDate: _endDate,
+        sortColumn: _sortColumn,
+        sortAscending: _sortAscending,
+      );
+
+      if (mounted) {
+        setState(() {
+          _paginatedOrders = result;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _onFilterChanged() {
+    _currentPage = 0;
+    _loadOrders();
+  }
+
+  void _onPageChanged(int newPage) {
+    _currentPage = newPage;
+    _loadOrders();
+  }
+
+  void _onSort(String column) {
+    setState(() {
+      if (_sortColumn == column) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortColumn = column;
+        _sortAscending = true;
+      }
+    });
+    _loadOrders();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final orderRepo = ref.watch(orderRepositoryProvider);
-
     return Scaffold(
       appBar: _buildAppBar(),
       body: Column(
         children: [
           _buildFiltersBar(),
+          _buildSecondaryFiltersBar(),
           Expanded(
-            child: FutureBuilder(
-              future: orderRepo.getAllOrdersWithFullDetails(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                if (snapshot.hasError) {
-                  return _buildErrorView(snapshot.error.toString());
-                }
-
-                List<OrderFullDetails> orders = snapshot.data ?? [];
-                orders = _applyFilters(orders);
-                orders = _applySorting(orders);
-
-                if (orders.isEmpty) {
-                  return _buildEmptyView();
-                }
-
-                return _buildOrdersTable(orders);
-              },
-            ),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _errorMessage != null
+                    ? _buildErrorView(_errorMessage!)
+                    : _paginatedOrders == null || _paginatedOrders!.orders.isEmpty
+                        ? _buildEmptyView()
+                        : _groupBy == 'none'
+                            ? _buildOrdersTable()
+                            : _buildGroupedView(),
           ),
         ],
       ),
@@ -85,12 +157,32 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   PreferredSizeWidget _buildAppBar() {
-    // Use the same network state provider as top_bar for accurate detection
     final isOnline = ref.watch(networkStateProvider);
     final syncState = ref.watch(syncManagerProvider);
 
     return AppBar(
-      title: const Text('Orders Management'),
+      title: Row(
+        children: [
+          const Text('Orders Management'),
+          if (_paginatedOrders != null) ...[
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${_paginatedOrders!.totalCount} orders',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
       actions: [
         // Sync indicator
         if (_isSyncing || syncState.isSyncing)
@@ -128,12 +220,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           permission: Permissions.syncAll,
           onPressed: (_isSyncing || syncState.isSyncing) ? () {} : _syncAll,
           icon: const Icon(Icons.cloud_sync),
-          tooltip: 'Sync All (Orders, Tickets, Customers)',
+          tooltip: 'Sync All',
         ),
         // Refresh
         IconButton(
           icon: const Icon(Icons.refresh),
-          onPressed: () => setState(() {}),
+          onPressed: _loadOrders,
           tooltip: 'Refresh',
         ),
         const SizedBox(width: 8),
@@ -156,45 +248,57 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       ),
       child: Row(
         children: [
+          // Search field
           Expanded(
             flex: 2,
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search by code, username...',
+                hintText: 'Search by code, username, customer...',
                 prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                          _searchQuery = '';
+                          _onFilterChanged();
+                        },
+                      )
+                    : null,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                  _currentPage = 0;
-                });
+              onSubmitted: (value) {
+                _searchQuery = value;
+                _onFilterChanged();
               },
             ),
           ),
           const SizedBox(width: 16),
+          // Status filter
           Expanded(
             child: _buildStatusDropdown(),
           ),
           const SizedBox(width: 16),
+          // Customer filter
+          Expanded(
+            child: _buildCustomerDropdown(),
+          ),
+          const SizedBox(width: 16),
+          // Date range picker
           OutlinedButton.icon(
             onPressed: _showDateRangePicker,
-            icon: const Icon(Icons.date_range),
-            label: Text(_getDateRangeText()),
+            icon: const Icon(Icons.date_range, size: 18),
+            label: Text(_getDateRangeText(), style: const TextStyle(fontSize: 12)),
           ),
-          const SizedBox(width: 8),
           if (_startDate != null || _endDate != null)
             IconButton(
-              icon: const Icon(Icons.clear),
+              icon: const Icon(Icons.clear, size: 18),
               onPressed: () {
-                setState(() {
-                  _startDate = null;
-                  _endDate = null;
-                });
+                _startDate = null;
+                _endDate = null;
+                _onFilterChanged();
               },
               tooltip: 'Clear date filter',
             ),
@@ -203,16 +307,106 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
+  Widget _buildSecondaryFiltersBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+      ),
+      child: Row(
+        children: [
+          // Group by
+          const Text('Group by: ', style: TextStyle(fontWeight: FontWeight.w500)),
+          const SizedBox(width: 8),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'none', label: Text('None', style: TextStyle(fontSize: 12))),
+              ButtonSegment(value: 'status', label: Text('Status', style: TextStyle(fontSize: 12))),
+              ButtonSegment(value: 'date', label: Text('Date', style: TextStyle(fontSize: 12))),
+            ],
+            selected: {_groupBy},
+            onSelectionChanged: (selected) {
+              setState(() {
+                _groupBy = selected.first;
+              });
+            },
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          const Spacer(),
+          // Rows per page
+          const Text('Rows per page: ', style: TextStyle(fontSize: 12)),
+          DropdownButton<int>(
+            value: _rowsPerPage,
+            underline: const SizedBox(),
+            items: const [
+              DropdownMenuItem(value: 10, child: Text('10')),
+              DropdownMenuItem(value: 25, child: Text('25')),
+              DropdownMenuItem(value: 50, child: Text('50')),
+              DropdownMenuItem(value: 100, child: Text('100')),
+            ],
+            onChanged: (value) {
+              if (value != null) {
+                _rowsPerPage = value;
+                _currentPage = 0;
+                _loadOrders();
+              }
+            },
+          ),
+          const SizedBox(width: 16),
+          // Quick filters
+          Wrap(
+            spacing: 8,
+            children: [
+              FilterChip(
+                label: const Text('Today', style: TextStyle(fontSize: 11)),
+                selected: _isToday(),
+                onSelected: (selected) {
+                  if (selected) {
+                    final now = DateTime.now();
+                    _startDate = DateTime(now.year, now.month, now.day);
+                    _endDate = now;
+                  } else {
+                    _startDate = null;
+                    _endDate = null;
+                  }
+                  _onFilterChanged();
+                },
+              ),
+              FilterChip(
+                label: const Text('Unsynced', style: TextStyle(fontSize: 11)),
+                selected: _statusFilter == 'COMPLETED',
+                onSelected: (selected) {
+                  _statusFilter = selected ? 'COMPLETED' : 'ALL';
+                  _onFilterChanged();
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isToday() {
+    if (_startDate == null) return false;
+    final now = DateTime.now();
+    return _startDate!.year == now.year &&
+           _startDate!.month == now.month &&
+           _startDate!.day == now.day;
+  }
+
   Widget _buildStatusDropdown() {
     return DropdownButtonFormField<String>(
-      value: _statusFilter,
       decoration: InputDecoration(
         labelText: 'Status',
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
+      isExpanded: true,
       items: const [
         DropdownMenuItem(value: 'ALL', child: Text('All Statuses')),
         DropdownMenuItem(value: 'ONHOLD', child: Text('On Hold')),
@@ -224,17 +418,165 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         DropdownMenuItem(value: 'CANCELED', child: Text('Canceled')),
       ],
       onChanged: (value) {
-        setState(() {
-          _statusFilter = value!;
-          _currentPage = 0;
-        });
+        if (value != null) {
+          _statusFilter = value;
+          _onFilterChanged();
+        }
       },
     );
   }
 
-  Widget _buildOrdersTable(List orders) {
-    final paginatedOrders = _paginateOrders(orders);
-    final totalPages = (orders.length / _rowsPerPage).ceil();
+  Widget _buildCustomerDropdown() {
+    return DropdownButtonFormField<int?>(
+      decoration: InputDecoration(
+        labelText: 'Customer',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        suffixIcon: _selectedCustomerId != null
+            ? IconButton(
+                icon: const Icon(Icons.clear, size: 18),
+                onPressed: () {
+                  _selectedCustomerId = null;
+                  _onFilterChanged();
+                },
+              )
+            : null,
+      ),
+      isExpanded: true,
+      items: [
+        const DropdownMenuItem(value: null, child: Text('All Customers')),
+        ..._customers.map((c) => DropdownMenuItem(
+              value: c.id,
+              child: Text('${c.firstName} ${c.lastName}', overflow: TextOverflow.ellipsis),
+            )),
+      ],
+      onChanged: (value) {
+        _selectedCustomerId = value;
+        _onFilterChanged();
+      },
+    );
+  }
+
+  Widget _buildGroupedView() {
+    final orders = _paginatedOrders!.orders;
+
+    Map<String, List<OrderFullDetails>> grouped = {};
+
+    if (_groupBy == 'status') {
+      for (final order in orders) {
+        final key = order.order.status;
+        grouped.putIfAbsent(key, () => []).add(order);
+      }
+    } else if (_groupBy == 'date') {
+      for (final order in orders) {
+        final date = order.order.date;
+        final key = '${date.day}/${date.month}/${date.year}';
+        grouped.putIfAbsent(key, () => []).add(order);
+      }
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            itemCount: grouped.length,
+            itemBuilder: (context, index) {
+              final key = grouped.keys.elementAt(index);
+              final groupOrders = grouped[key]!;
+
+              return ExpansionTile(
+                initiallyExpanded: true,
+                title: Row(
+                  children: [
+                    if (_groupBy == 'status') _buildStatusChip(key),
+                    if (_groupBy == 'date') Text(key, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${groupOrders.length}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                children: groupOrders.map((order) => _buildOrderListTile(order)).toList(),
+              );
+            },
+          ),
+        ),
+        _buildPaginationControls(),
+      ],
+    );
+  }
+
+  Widget _buildOrderListTile(OrderFullDetails orderDetails) {
+    final order = orderDetails.order;
+    final needsSync = order.status == 'COMPLETED' && !order.isSynced;
+
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: _getStatusColor(order.status).withValues(alpha: 0.2),
+        child: Text(
+          order.code.substring(0, 2).toUpperCase(),
+          style: TextStyle(color: _getStatusColor(order.status)),
+        ),
+      ),
+      title: Row(
+        children: [
+          Text(order.code, style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          if (needsSync)
+            const Icon(Icons.cloud_off, size: 14, color: Colors.orange),
+          if (order.isSynced && order.status == 'COMPLETED')
+            const Icon(Icons.cloud_done, size: 14, color: Colors.green),
+        ],
+      ),
+      subtitle: Row(
+        children: [
+          if (orderDetails.customerName != null) ...[
+            Icon(Icons.person, size: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            const SizedBox(width: 4),
+            Text(orderDetails.customerName!, style: const TextStyle(fontSize: 11)),
+            const SizedBox(width: 12),
+          ],
+          Text(
+            '\$${orderDetails.total.toStringAsFixed(2)}',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(width: 8),
+          Text(_formatDate(order.date), style: const TextStyle(fontSize: 11)),
+        ],
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildStatusChip(order.status),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) => _handleOrderAction(value, order, orderDetails),
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'view', child: Row(children: [Icon(Icons.visibility, size: 18), SizedBox(width: 8), Text('View')])),
+              const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('Edit')])),
+              const PopupMenuItem(value: 'status', child: Row(children: [Icon(Icons.swap_horiz, size: 18), SizedBox(width: 8), Text('Change Status')])),
+              const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 18, color: Colors.red), SizedBox(width: 8), Text('Delete', style: TextStyle(color: Colors.red))])),
+            ],
+          ),
+        ],
+      ),
+      onTap: () => _editOrder(order),
+    );
+  }
+
+  Widget _buildOrdersTable() {
+    final orders = _paginatedOrders!.orders;
 
     return Column(
       children: [
@@ -242,9 +584,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           child: DataTable2(
             columnSpacing: 12,
             horizontalMargin: 12,
-            minWidth: 1000,
-            sortColumnIndex: _sortColumnIndex,
-            sortAscending: _sortAscending,
+            minWidth: 1200,
+            scrollController: ScrollController(),
+            showCheckboxColumn: false,
             headingRowColor: WidgetStateProperty.all(
               Theme.of(context).colorScheme.surfaceContainerHighest,
             ),
@@ -252,39 +594,38 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               fontWeight: FontWeight.bold,
               color: Theme.of(context).colorScheme.onSurface,
             ),
+            dataRowHeight: 56,
             columns: [
-              DataColumn2(label: const Text('ID'), size: ColumnSize.S, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Code'), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Username'), size: ColumnSize.S, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Products'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Discount'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('TVA'),
-                  size: ColumnSize.S,
-                  numeric: true,
-                  onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-
-              DataColumn2(label: const Text('Subtotal'),
-                  size: ColumnSize.S,
-                  numeric: true,
-                  onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)
+              DataColumn2(
+                label: const Text('Code'),
+                size: ColumnSize.M,
+                onSort: (_, __) => _onSort('code'),
               ),
-              DataColumn2(label: const Text('Total'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-
-              DataColumn2(label: const Text('Paid'), size: ColumnSize.S, numeric: true, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-
-              DataColumn2(label: const Text('Status'), size: ColumnSize.M, onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-
-              DataColumn2(label: const Text('Date'),
-                  size: ColumnSize.M,
-                  onSort: (columnIndex, ascending) => _onSort(columnIndex, ascending)),
-              DataColumn2(label: const Text('Actions'),
-                  size: ColumnSize.L,
+              const DataColumn2(label: Text('Customer'), size: ColumnSize.M),
+              DataColumn2(
+                label: const Text('User'),
+                size: ColumnSize.S,
+                onSort: (_, __) => _onSort('takenBy'),
               ),
+              const DataColumn2(label: Text('Products'), size: ColumnSize.S, numeric: true),
+              const DataColumn2(label: Text('Total'), size: ColumnSize.S, numeric: true),
+              const DataColumn2(label: Text('Paid'), size: ColumnSize.S, numeric: true),
+              DataColumn2(
+                label: const Text('Status'),
+                size: ColumnSize.M,
+                onSort: (_, __) => _onSort('status'),
+              ),
+              DataColumn2(
+                label: const Text('Date'),
+                size: ColumnSize.M,
+                onSort: (_, __) => _onSort('createdAt'),
+              ),
+              const DataColumn2(label: Text('Actions'), size: ColumnSize.L),
             ],
-            rows: paginatedOrders.map((orderDetails) => _buildDataRow(orderDetails)).toList(),
+            rows: orders.map((orderDetails) => _buildDataRow(orderDetails)).toList(),
           ),
         ),
-        _buildPaginationControls(orders.length, totalPages),
+        _buildPaginationControls(),
       ],
     );
   }
@@ -293,23 +634,20 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     final order = orderDetails.order;
     final isCompleted = order.status == 'COMPLETED';
     final isSynced = order.isSynced;
-
-    // Order needs sync if it's completed but not synced
     final needsSync = isCompleted && !isSynced;
 
     return DataRow(
+      onSelectChanged: (_) => _editOrder(order),
       cells: [
-        DataCell(Text(order.id.toString())),
         DataCell(
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(order.code, style: const TextStyle(fontSize: 12)),
+              Text(order.code, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
               const SizedBox(width: 4),
-              // Sync status indicator - show for completed orders
               if (isCompleted)
                 Tooltip(
-                  message: needsSync ? 'Not synced to server' : 'Synced to server',
+                  message: needsSync ? 'Not synced' : 'Synced',
                   child: Icon(
                     needsSync ? Icons.cloud_off : Icons.cloud_done,
                     size: 14,
@@ -319,11 +657,26 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             ],
           ),
         ),
-        DataCell(Text(orderDetails.userName ?? 'N/A', style: const TextStyle(fontSize: 12))),
+        DataCell(
+          orderDetails.customerName != null
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.person, size: 14),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        orderDetails.customerName!,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                )
+              : Text('—', style: TextStyle(color: Theme.of(context).hintColor)),
+        ),
+        DataCell(Text(orderDetails.userName ?? '—', style: const TextStyle(fontSize: 12))),
         DataCell(Text(orderDetails.productCount.toString())),
-        DataCell(Text('\$${orderDetails.totalDiscount.toStringAsFixed(0)}')),
-        DataCell(Text('\$${orderDetails.totalTva.toStringAsFixed(0)}')),
-        DataCell(Text('\$${orderDetails.subtotal.toStringAsFixed(0)}')),
         DataCell(
           Text(
             '\$${orderDetails.total.toStringAsFixed(0)}',
@@ -345,29 +698,25 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // View details
               IconButton(
                 icon: const Icon(Icons.visibility, size: 18),
                 onPressed: () => _showOrderDetails(order),
                 tooltip: 'View',
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
-              // Edit order - Protected by permission
               PermissionIconButton(
                 permission: Permissions.ordersUpdate,
                 icon: const Icon(Icons.edit, size: 18, color: Colors.green),
                 onPressed: () => _editOrder(order),
                 tooltip: 'Edit',
               ),
-              // Change status - Protected by permission
               PermissionIconButton(
                 permission: Permissions.ordersUpdate,
                 icon: const Icon(Icons.swap_horiz, size: 18, color: Colors.blue),
                 onPressed: () => _showChangeStatusDialog(order),
                 tooltip: 'Status',
               ),
-              // Delete - Protected by permission
               PermissionIconButton(
                 permission: Permissions.ordersDelete,
                 icon: const Icon(Icons.delete, size: 18, color: Colors.red),
@@ -382,35 +731,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   Widget _buildStatusChip(String status) {
-    Color color;
-    switch (status) {
-      case 'ONHOLD':
-        color = Colors.orange;
-        break;
-      case 'PENDING':
-        color = Colors.blue;
-        break;
-      case 'PREPARING':
-        color = Colors.purple;
-        break;
-      case 'READY':
-        color = Colors.green;
-        break;
-      case 'DELIVERED':
-        color = Colors.teal;
-        break;
-      case 'COMPLETED':
-        color = Colors.green.shade800;
-        break;
-      case 'CANCELED':
-        color = Colors.red;
-        break;
-      default:
-        color = Colors.grey;
-    }
-
+    final color = _getStatusColor(status);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
@@ -421,13 +744,39 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         style: TextStyle(
           color: color,
           fontWeight: FontWeight.w600,
-          fontSize: 12,
+          fontSize: 11,
         ),
       ),
     );
   }
 
-  Widget _buildPaginationControls(int totalItems, int totalPages) {
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'ONHOLD':
+        return Colors.orange;
+      case 'PENDING':
+        return Colors.blue;
+      case 'PREPARING':
+        return Colors.purple;
+      case 'READY':
+        return Colors.green;
+      case 'DELIVERED':
+        return Colors.teal;
+      case 'COMPLETED':
+        return Colors.green.shade800;
+      case 'CANCELED':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Widget _buildPaginationControls() {
+    final totalItems = _paginatedOrders?.totalCount ?? 0;
+    final totalPages = _paginatedOrders?.totalPages ?? 0;
+    final startItem = totalItems > 0 ? _currentPage * _rowsPerPage + 1 : 0;
+    final endItem = ((_currentPage + 1) * _rowsPerPage).clamp(0, totalItems);
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -438,30 +787,42 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            'Showing ${_currentPage * _rowsPerPage + 1}-${((_currentPage + 1) * _rowsPerPage).clamp(0, totalItems)} of $totalItems orders',
+            totalItems > 0
+                ? 'Showing $startItem-$endItem of $totalItems orders'
+                : 'No orders',
             style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           Row(
             children: [
               IconButton(
                 icon: const Icon(Icons.first_page),
-                onPressed: _currentPage > 0 ? () => setState(() => _currentPage = 0) : null,
+                onPressed: _currentPage > 0 ? () => _onPageChanged(0) : null,
               ),
               IconButton(
                 icon: const Icon(Icons.chevron_left),
-                onPressed: _currentPage > 0 ? () => setState(() => _currentPage--) : null,
+                onPressed: _currentPage > 0 ? () => _onPageChanged(_currentPage - 1) : null,
               ),
-              Text(
-                'Page ${_currentPage + 1} of $totalPages',
-                style: const TextStyle(fontWeight: FontWeight.w600),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'Page ${_currentPage + 1} of ${totalPages > 0 ? totalPages : 1}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
               ),
               IconButton(
                 icon: const Icon(Icons.chevron_right),
-                onPressed: _currentPage < totalPages - 1 ? () => setState(() => _currentPage++) : null,
+                onPressed: _currentPage < totalPages - 1 ? () => _onPageChanged(_currentPage + 1) : null,
               ),
               IconButton(
                 icon: const Icon(Icons.last_page),
-                onPressed: _currentPage < totalPages - 1 ? () => setState(() => _currentPage = totalPages - 1) : null,
+                onPressed: _currentPage < totalPages - 1 ? () => _onPageChanged(totalPages - 1) : null,
               ),
             ],
           ),
@@ -486,6 +847,20 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             'Try adjusting your filters',
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: () {
+              _statusFilter = 'ALL';
+              _searchQuery = '';
+              _searchController.clear();
+              _selectedCustomerId = null;
+              _startDate = null;
+              _endDate = null;
+              _onFilterChanged();
+            },
+            icon: const Icon(Icons.clear_all),
+            label: const Text('Clear Filters'),
+          ),
         ],
       ),
     );
@@ -508,96 +883,18 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
             textAlign: TextAlign.center,
           ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _loadOrders,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+          ),
         ],
       ),
     );
   }
 
   // Helper Functions
-
-  List<OrderFullDetails> _applyFilters(List<OrderFullDetails> orders) {
-    var filtered = orders;
-
-    if (_statusFilter != 'ALL') {
-      filtered = filtered.where((o) => o.order.status == _statusFilter).toList();
-    }
-
-    if (_searchQuery.isNotEmpty) {
-      final query = _searchQuery.toLowerCase();
-      filtered = filtered.where((o) {
-        return o.order.code.toLowerCase().contains(query) ||
-            (o.userName?.toLowerCase().contains(query) ?? false);
-      }).toList();
-    }
-
-    if (_startDate != null) {
-      filtered = filtered.where((o) => o.order.date.isAfter(_startDate!)).toList();
-    }
-    if (_endDate != null) {
-      filtered = filtered.where((o) => o.order.date.isBefore(_endDate!.add(const Duration(days: 1)))).toList();
-    }
-
-    return filtered;
-  }
-
-  List<OrderFullDetails> _applySorting(List<OrderFullDetails> orders) {
-    if (_sortColumnIndex == null) return orders;
-
-    orders.sort((a, b) {
-      int comparison = 0;
-      switch (_sortColumnIndex) {
-        case 0: // ID
-          comparison = a.order.id.compareTo(b.order.id);
-          break;
-        case 1: // Code
-          comparison = a.order.code.compareTo(b.order.code);
-          break;
-        case 2: // Username
-          comparison = (a.userName ?? '').compareTo(b.userName ?? '');
-          break;
-        case 3: // Products
-          comparison = a.productCount.compareTo(b.productCount);
-          break;
-        case 4: // Discount
-          comparison = a.totalDiscount.compareTo(b.totalDiscount);
-          break;
-        case 5: // TVA
-          comparison = a.totalTva.compareTo(b.totalTva);
-          break;
-        case 6: // Subtotal
-          comparison = a.subtotal.compareTo(b.subtotal);
-          break;
-        case 7: // Total
-          comparison = a.total.compareTo(b.total);
-          break;
-        case 8: // Paid
-          comparison = a.totalPaid.compareTo(b.totalPaid);
-          break;
-        case 9: // Status
-          comparison = a.order.status.compareTo(b.order.status);
-          break;
-        case 10: // Date
-          comparison = a.order.date.compareTo(b.order.date);
-          break;
-      }
-      return _sortAscending ? comparison : -comparison;
-    });
-    return orders;
-  }
-
-  List _paginateOrders(List orders) {
-    final start = _currentPage * _rowsPerPage;
-    final end = (start + _rowsPerPage).clamp(0, orders.length);
-    return orders.sublist(start, end);
-  }
-
-  void _onSort(int columnIndex, bool ascending) {
-    setState(() {
-      _sortColumnIndex = columnIndex;
-      _sortAscending = ascending;
-    });
-  }
-
   String _formatDate(DateTime date) {
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
   }
@@ -606,8 +903,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     if (_startDate == null && _endDate == null) {
       return 'Date Range';
     }
-    final start = _startDate != null ? '${_startDate!.day}/${_startDate!.month}/${_startDate!.year}' : '...';
-    final end = _endDate != null ? '${_endDate!.day}/${_endDate!.month}/${_endDate!.year}' : '...';
+    final start = _startDate != null ? '${_startDate!.day}/${_startDate!.month}' : '...';
+    final end = _endDate != null ? '${_endDate!.day}/${_endDate!.month}' : '...';
     return '$start - $end';
   }
 
@@ -622,11 +919,26 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
 
     if (result != null) {
-      setState(() {
-        _startDate = result.start;
-        _endDate = result.end;
-        _currentPage = 0;
-      });
+      _startDate = result.start;
+      _endDate = result.end;
+      _onFilterChanged();
+    }
+  }
+
+  void _handleOrderAction(String action, Order order, OrderFullDetails details) {
+    switch (action) {
+      case 'view':
+        _showOrderDetails(order);
+        break;
+      case 'edit':
+        _editOrder(order);
+        break;
+      case 'status':
+        _showChangeStatusDialog(order);
+        break;
+      case 'delete':
+        _deleteOrder(order);
+        break;
     }
   }
 
@@ -644,7 +956,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   void _editOrder(Order order) async {
-    // sets the current order to the selected order
     final currentOrderNotifier = ref.read(orderProvider.notifier);
     final orderRepo = ref.read(orderRepositoryProvider);
     final currentOrder = await orderRepo.getOrderById(order.id);
@@ -678,7 +989,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       try {
         final orderRepo = ref.read(orderRepositoryProvider);
         await orderRepo.deleteOrder(order.id);
-        setState(() {});
+        _loadOrders();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Order deleted successfully')),
@@ -694,7 +1005,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     }
   }
 
-  // Show dialog to change order status
   void _showChangeStatusDialog(Order order) async {
     final statuses = ['ONHOLD', 'PENDING', 'PREPARING', 'READY', 'DELIVERED', 'COMPLETED', 'CANCELED'];
     String? selectedStatus = order.status;
@@ -769,27 +1079,24 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     }
   }
 
-  // Change order status and optionally sync
   Future<void> _changeOrderStatus(Order order, String newStatus) async {
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
       final isOnline = ref.read(networkStateProvider);
 
-      // Update status
       await orderRepo.updateOrderStatus(order.id, newStatus);
 
-      // If changed to COMPLETED and online, try to sync
       bool synced = false;
       if (newStatus == 'COMPLETED' && isOnline) {
         try {
           final syncManager = ref.read(syncManagerProvider.notifier);
           synced = await syncManager.autoSyncOrder(order.id);
         } catch (e) {
-          print('Auto-sync after status change failed: $e');
+          // Ignore sync errors
         }
       }
 
-      setState(() {}); // Refresh
+      _loadOrders();
 
       if (mounted) {
         String message = 'Status changed to $newStatus';
@@ -807,26 +1114,19 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error changing status: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Error changing status: $e'), backgroundColor: Colors.red),
         );
       }
     }
   }
 
-  // Sync all unsynced data (orders, tickets, customers, sessions)
   Future<void> _syncAll() async {
     final isOnline = ref.read(networkStateProvider);
 
     if (!isOnline) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No network connection'),
-            backgroundColor: Colors.red,
-          ),
+          const SnackBar(content: Text('No network connection'), backgroundColor: Colors.red),
         );
       }
       return;
@@ -852,27 +1152,25 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         );
 
         if (result.totalSynced > 0) {
-          setState(() {}); // Refresh the list
+          _loadOrders();
         }
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isSyncing = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sync error: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Sync error: $e'), backgroundColor: Colors.red),
         );
       }
     }
   }
 
-  // Show pending operations (deletes/updates) dialog
   Future<void> _showPendingOperationsDialog() async {
     try {
       final database = ref.read(databaseProvider);
-      final operations = await (database.select(database.pendingSyncOperations)..orderBy([(t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.desc)])).get();
+      final operations = await (database.select(database.pendingSyncOperations)
+            ..orderBy([(t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.desc)]))
+          .get();
 
       if (!mounted) return;
 
@@ -918,7 +1216,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                           trailing: IconButton(
                             icon: const Icon(Icons.delete_forever, color: Colors.red),
                             onPressed: () async {
-                              await (database.delete(database.pendingSyncOperations)..where((t) => t.id.equals(op.id))).go();
+                              await (database.delete(database.pendingSyncOperations)
+                                    ..where((t) => t.id.equals(op.id)))
+                                  .go();
                               Navigator.pop(context);
                               _showPendingOperationsDialog();
                             },
@@ -938,7 +1238,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               ElevatedButton.icon(
                 onPressed: () async {
                   Navigator.pop(context);
-                  await _syncAll(); // Trigger sync to process pending operations
+                  await _syncAll();
                 },
                 icon: const Icon(Icons.sync),
                 label: const Text('Sync Now'),
@@ -958,7 +1258,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
 // Order Details Dialog
 class _OrderDetailsDialog extends StatelessWidget {
-
   final OrderFullDetails fullDetails;
 
   const _OrderDetailsDialog({required this.fullDetails});
@@ -974,6 +1273,7 @@ class _OrderDetailsDialog extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Header
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -1002,7 +1302,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                         Text(
                           'Order Details',
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
+                            color: Colors.white.withValues(alpha: 0.9),
                             fontSize: 14,
                           ),
                         ),
@@ -1016,6 +1316,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                 ],
               ),
             ),
+            // Content
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
@@ -1034,11 +1335,14 @@ class _OrderDetailsDialog extends StatelessWidget {
                             _buildInfoRow('Order Code', order.code),
                             _buildInfoRow('Status', order.status),
                             _buildInfoRow('Type', order.type.replaceAll('_', ' ')),
-                            _buildInfoRow('Number of Persons', '${order.persons ?? 1}'),
+                            _buildInfoRow('Number of Persons', '${order.persons}'),
                             if (fullDetails.tableName != null)
                               _buildInfoRow('Table', fullDetails.tableName!),
+                            if (fullDetails.customerName != null)
+                              _buildInfoRow('Customer', fullDetails.customerName!),
                             _buildInfoRow('Username', fullDetails.userName ?? 'N/A'),
                             _buildInfoRow('Date', _formatFullDateTime(order.date)),
+                            _buildInfoRow('Synced', order.isSynced ? 'Yes' : 'No'),
                           ],
                         ),
                       ),
@@ -1046,11 +1350,11 @@ class _OrderDetailsDialog extends StatelessWidget {
                     const SizedBox(height: 24),
                     const Text('Order Items', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    ...fullDetails.items.map((item) => _buildOrderItem(item)),
+                    ...fullDetails.items.map((item) => _buildOrderItem(context, item)),
                     const SizedBox(height: 24),
                     const Text('Financial Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    _buildFinancialCard(),
+                    _buildFinancialCard(context),
                   ],
                 ),
               ),
@@ -1068,7 +1372,7 @@ class _OrderDetailsDialog extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 120,
+            width: 140,
             child: Text(
               '$label:',
               style: TextStyle(
@@ -1081,10 +1385,7 @@ class _OrderDetailsDialog extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -1092,7 +1393,7 @@ class _OrderDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildOrderItem(dynamic item) {
+  Widget _buildOrderItem(BuildContext context, OrderItemDetails item) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -1116,10 +1417,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                           Flexible(
                             child: Text(
                               item.productName,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                             ),
                           ),
                         ],
@@ -1127,15 +1425,12 @@ class _OrderDetailsDialog extends StatelessWidget {
                       if (item.components.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         ...item.components.map((comp) => Padding(
-                          padding: const EdgeInsets.only(left: 24, top: 4),
-                          child: Text(
-                            '+ ${comp.name} x${comp.quantity}',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        )),
+                              padding: const EdgeInsets.only(left: 24, top: 4),
+                              child: Text(
+                                '+ ${comp.name} x${comp.quantity}',
+                                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                              ),
+                            )),
                       ],
                     ],
                   ),
@@ -1146,19 +1441,12 @@ class _OrderDetailsDialog extends StatelessWidget {
                   children: [
                     Text(
                       'x${item.quantity}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: TextStyle(fontSize: 14, color: Colors.grey[700], fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       '\$${item.totalPrice.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -1169,17 +1457,13 @@ class _OrderDetailsDialog extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
+                  color: Colors.green.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: Colors.green),
                 ),
                 child: Text(
                   'Paid in Ticket #${item.ticketNum ?? 'N/A'}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.green[800],
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: TextStyle(fontSize: 12, color: Colors.green[800], fontWeight: FontWeight.w600),
                 ),
               ),
             ],
@@ -1189,7 +1473,7 @@ class _OrderDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildFinancialCard() {
+  Widget _buildFinancialCard(BuildContext context) {
     return Card(
       elevation: 2,
       child: Padding(

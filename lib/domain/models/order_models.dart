@@ -339,6 +339,8 @@ class OrderFullDetails {
   final Order order; // Order from database
   final String? userName;
   final String? tableName;
+  final String? customerName; // Customer name if exists
+  final int? customerId; // Customer ID if exists
   final int productCount;
   final double subtotal;
   final double itemDiscount; // Total item-level discounts
@@ -354,6 +356,8 @@ class OrderFullDetails {
     required this.order,
     this.userName,
     this.tableName,
+    this.customerName,
+    this.customerId,
     required this.productCount,
     required this.subtotal,
     this.itemDiscount = 0.0,
@@ -366,3 +370,21 @@ class OrderFullDetails {
     this.items = const [],
   });
 }
+
+// Model for paginated order results
+class PaginatedOrders {
+  final List<OrderFullDetails> orders;
+  final int totalCount;
+  final int page;
+  final int pageSize;
+  final int totalPages;
+
+  PaginatedOrders({
+    required this.orders,
+    required this.totalCount,
+    required this.page,
+    required this.pageSize,
+    required this.totalPages,
+  });
+}
+

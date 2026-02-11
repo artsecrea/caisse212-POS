@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' as drift;
 import '../../providers/order_provider.dart';
@@ -423,7 +424,7 @@ class OrderPanel extends ConsumerWidget {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                    // Header: Name and Delete button
+                                    // Header: Name and Note button
                                     Row(
                                       children: [
                                         if (isPaid) ...[
@@ -447,8 +448,57 @@ class OrderPanel extends ConsumerWidget {
                                             overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
+                                        // Note icon button
+                                        if (!isPaid) ...[
+                                          IconButton(
+                                            onPressed: () => _showNoteDialog(context, ref, index, item),
+                                            icon: Icon(
+                                              item.note != null && item.note!.isNotEmpty
+                                                  ? Icons.sticky_note_2
+                                                  : Icons.sticky_note_2_outlined,
+                                              size: 30,
+                                              color: item.note != null && item.note!.isNotEmpty
+                                                  ? Colors.amber[700]
+                                                  : Theme.of(context).colorScheme.onSurfaceVariant,
+                                            ),
+                                            tooltip: 'Add note',
+                                            padding: const EdgeInsets.all(4),
+                                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                          ),
+                                        ],
                                       ],
                                     ),
+
+                                    // Show note if exists
+                                    if (item.note != null && item.note!.isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.amber[50],
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: Colors.amber[200]!),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.note, size: 12, color: Colors.amber[900]),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                item.note!,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Colors.amber[900],
+                                                  fontStyle: FontStyle.italic,
+                                                ),
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
 
                                     // Paid status badge
                                     if (isPaid) ...[
@@ -501,7 +551,7 @@ class OrderPanel extends ConsumerWidget {
 
                                     // Components
                                     if (item.components.isNotEmpty) ...[
-                                      SizedBox(height: isPaid ? 4 : 6),
+                                      SizedBox(height: 4),
                                       ...item.components.map((comp) => Padding(
                                         padding: const EdgeInsets.only(left: 4, top: 2),
                                         child: Row(
@@ -526,66 +576,59 @@ class OrderPanel extends ConsumerWidget {
                                       )),
                                     ],
 
-                                    SizedBox(height: isPaid ? 6 : 10),
+                                    SizedBox(height: 4),
                                     const Divider(height: 1),
-                                    SizedBox(height: isPaid ? 6 : 10),
+                                    SizedBox(height: 4),
 
-                                    // Bottom: Quantity controls and Price
+                                    // Bottom: Quantity and Price
                                     Row(
                                       children: [
-                                        // Quantity controls
-                                        Container(
-                                          decoration: BoxDecoration(
-                                            color: isPaid
-                                                ? Theme.of(context).colorScheme.surfaceContainerHighest
-                                                : Theme.of(context).colorScheme.surfaceContainerLow,
-                                            borderRadius: BorderRadius.circular(isPaid ? 4 : 6),
-                                            border: Border.all(color: Theme.of(context).dividerColor),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              if (!isPaid)
-                                                IconButton(
-                                                  onPressed: () {
-                                                    ref.read(orderProvider.notifier).updateItemQuantity(
-                                                      index,
-                                                      item.quantity - 1,
-                                                    );
-                                                  },
-                                                  icon: const Icon(Icons.remove, size: 16),
-                                                  padding: const EdgeInsets.all(4),
-                                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                                  visualDensity: VisualDensity.compact,
-                                                ),
-                                              Container(
-                                                constraints: BoxConstraints(minWidth: isPaid ? 16 : 24),
-                                                padding: EdgeInsets.symmetric(horizontal: isPaid ? 6 : 0),
-                                                child: Text(
-                                                  'x${item.quantity}',
-                                                  textAlign: TextAlign.center,
-                                                  style: TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: isPaid ? 11 : 14,
-                                                  ),
+                                        // Quantity - tappable button that opens dialog with on-screen keyboard
+                                        if (!isPaid)
+                                          InkWell(
+                                            onTap: () => _showQuantityDialog(context, ref, index, item),
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                                              constraints: const BoxConstraints(minWidth: 40),
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context).colorScheme.onInverseSurface,
+                                                borderRadius: BorderRadius.circular(10),
+
+
+                                                border: Border.all(
+                                                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                                                  width: 1,
                                                 ),
                                               ),
-                                              if (!isPaid)
-                                                IconButton(
-                                                  onPressed: () {
-                                                    ref.read(orderProvider.notifier).updateItemQuantity(
-                                                      index,
-                                                      item.quantity + 1,
-                                                    );
-                                                  },
-                                                  icon: const Icon(Icons.add, size: 16),
-                                                  padding: const EdgeInsets.all(4),
-                                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                                  visualDensity: VisualDensity.compact,
+                                              child: Text(
+                                                '${item.quantity}',
+
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 24,
+
+                                                  color: Theme.of(context).colorScheme.onPrimaryContainer,
                                                 ),
-                                            ],
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          // Paid item - show quantity in smaller format
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                              borderRadius: BorderRadius.circular(4),
+                                              border: Border.all(color: Theme.of(context).dividerColor),
+                                            ),
+                                            child: Text(
+                                              'x${item.quantity}',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 11,
+                                              ),
+                                            ),
                                           ),
-                                        ),
 
                                         const Spacer(),
 
@@ -718,6 +761,103 @@ class OrderPanel extends ConsumerWidget {
             ),
           ),
 
+        ],
+      ),
+    );
+  }
+
+  void _showQuantityDialog(BuildContext context, WidgetRef ref, int index, OrderItem item) {
+    final TextEditingController controller = TextEditingController(text: '${item.quantity}');
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enter Quantity'),
+        content: OnscreenKeyboardTextField(
+          controller: controller,
+          autofocus: true, // Auto-focus to show on-screen keyboard immediately
+          keyboardType: TextInputType.number,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+          decoration: InputDecoration(
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            contentPadding: const EdgeInsets.symmetric(vertical: 20),
+          ),
+          onSubmitted: (value) {
+            final qty = int.tryParse(value);
+            if (qty != null && qty > 0) {
+              ref.read(orderProvider.notifier).updateItemQuantity(index, qty);
+              Navigator.pop(context);
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final qty = int.tryParse(controller.text);
+              if (qty != null && qty > 0) {
+                ref.read(orderProvider.notifier).updateItemQuantity(index, qty);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showNoteDialog(BuildContext context, WidgetRef ref, int index, OrderItem item) {
+    final TextEditingController controller = TextEditingController(text: item.note ?? '');
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.sticky_note_2, color: Colors.amber[700]),
+            const SizedBox(width: 8),
+            const Text('Item Note'),
+          ],
+        ),
+        content: OnscreenKeyboardTextField(
+          controller: controller,
+          autofocus: true, // Auto-focus to show on-screen keyboard immediately
+          keyboardType: TextInputType.text,
+          maxLines: 3,
+          decoration: InputDecoration(
+            hintText: 'Add special instructions or notes...',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            filled: true,
+            fillColor: Colors.amber[50],
+          ),
+        ),
+        actions: [
+          if (item.note != null && item.note!.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                final updatedItem = item.copyWith(note: '');
+                ref.read(orderProvider.notifier).updateItem(index, updatedItem);
+                Navigator.pop(context);
+              },
+              child: const Text('Clear', style: TextStyle(color: Colors.red)),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final updatedItem = item.copyWith(note: controller.text.trim());
+              ref.read(orderProvider.notifier).updateItem(index, updatedItem);
+              Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
         ],
       ),
     );

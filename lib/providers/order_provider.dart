@@ -723,122 +723,195 @@ class OrderRepository {
 
     final result = <OrderFullDetails>[];
     for (final order in orders) {
-      // Get order products
-      final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
-
-      // Get user name
-      String? userName;
-      if (order.takenBy != null) {
-        final user = await (_database.select(_database.users)..where((tbl) => tbl.id.equals(order.takenBy!))).getSingleOrNull();
-        userName = user?.username;
-      }
-
-      // Get table name
-      String? tableName;
-      if (order.tableId != null) {
-        final table = await (_database.select(_database.areaTables)..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull();
-        tableName = table?.name;
-      }
-
-      // Calculate totals
-      double subtotal = 0.0;
-      double itemDiscount = 0.0;
-      double totalTva = 0.0;
-      double totalPaid = 0.0;
-      int? ticketId;
-    print(order.id);
-      final itemDetails = <OrderItemDetails>[];
-      for (final product in orderProducts) {
-
-        final productDetail = await (_database.select(_database.products)
-          ..where((tbl) => tbl.id.equals(product.productId)))
-            .getSingleOrNull();
-
-        // Get components
-        final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
-
-        // Calculate component total using stored prices
-        double componentTotal = 0.0;
-        final components = <ComponentDetails>[];
-        for (final orderComp in orderComponents) {
-          componentTotal += orderComp.price * orderComp.quantity;
-
-          final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
-          if (component != null) {
-            components.add(ComponentDetails(
-              name: component.name,
-              quantity: orderComp.quantity,
-            ));
-          }
-        }
-
-        final productDiscount = ((product.manualDiscount + product.unitaryDiscount ) * product.quantity) ;
-        final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) * product.quantity) + componentTotal;
-        final itemTva = product.unitaryTva * product.quantity;
-
-        subtotal += itemSubtotal;
-        itemDiscount += productDiscount ;
-        totalTva += itemTva;
-
-
-        // Check if item is paid (has a ticket)
-        bool isPaid = product.ticketId != null;
-        String? ticketNum;
-        if (isPaid) {
-          final ticket = await (_database.select(_database.tickets)..where((tbl) => tbl.id.equals(product.ticketId!))).getSingleOrNull();
-          ticketNum = ticket?.num;
-          if( ticketId == null || ticketId != ticket?.id){
-            totalPaid += ticket?.amount ?? 0.0;
-            ticketId = ticket?.id;
-          }
-
-        }
-
-
-        itemDetails.add(OrderItemDetails(
-          productName: productDetail?.name ?? 'Unknown Product',
-          quantity: product.quantity,
-          totalPrice: itemSubtotal - productDiscount,
-          isPaid: isPaid,
-          ticketNum: ticketNum,
-          components: components,
-        ));
-      }
-
-      // Calculate manual discount from percentage
-      final discountPercentage = order.discountPercentage;
-      final manualDiscountAmount = (subtotal  + totalTva - itemDiscount) * (discountPercentage / 100);
-      final totalDiscount = itemDiscount + manualDiscountAmount;
-
-      // Calculate final total
-      final total = subtotal + totalTva - totalDiscount;
-      print("$total = $subtotal $totalTva - $totalDiscount");
-
-
-      result.add(OrderFullDetails(
-        order: order,
-        userName: userName,
-        tableName: tableName,
-        productCount: orderProducts.length,
-        subtotal: subtotal,
-        itemDiscount: itemDiscount,
-        discountPercentage: discountPercentage,
-        manualDiscountAmount: manualDiscountAmount,
-        totalDiscount: totalDiscount,
-        totalTva: totalTva,
-        total: total,
-        totalPaid: totalPaid,
-        items: itemDetails,
-      ));
+      final fullDetails = await _buildOrderFullDetails(order);
+      result.add(fullDetails);
     }
 
     return result;
   }
 
-  // Get full details for a specific order
-  Future<OrderFullDetails> getOrderFullDetails(int orderId) async {
-    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingle();
+  // Get paginated orders with full details - real database-level pagination
+  Future<PaginatedOrders> getPaginatedOrdersWithFullDetails({
+    required int page,
+    required int pageSize,
+    String? statusFilter,
+    String? searchQuery,
+    int? customerId,
+    DateTime? startDate,
+    DateTime? endDate,
+    String sortColumn = 'createdAt',
+    bool sortAscending = false,
+  }) async {
+    // Build the base query with filters
+    var countQuery = _database.select(_database.orders);
 
+    // Get total count with filters
+    int totalCount = 0;
+    {
+      var query = _database.select(_database.orders);
+
+      if (statusFilter != null && statusFilter != 'ALL') {
+        query = query..where((tbl) => tbl.status.equals(statusFilter));
+      }
+
+      if (customerId != null) {
+        query = query..where((tbl) => tbl.clientId.equals(customerId));
+      }
+
+      if (startDate != null) {
+        query = query..where((tbl) => tbl.date.isBiggerOrEqualValue(startDate));
+      }
+
+      if (endDate != null) {
+        final endOfDay = DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
+        query = query..where((tbl) => tbl.date.isSmallerOrEqualValue(endOfDay));
+      }
+
+      final allOrders = await query.get();
+
+      // Filter by search query in memory (code and userName need joins)
+      if (searchQuery != null && searchQuery.isNotEmpty) {
+        final searchLower = searchQuery.toLowerCase();
+        final filteredOrders = <Order>[];
+        for (final order in allOrders) {
+          if (order.code.toLowerCase().contains(searchLower)) {
+            filteredOrders.add(order);
+            continue;
+          }
+          // Check user name
+          if (order.takenBy != null) {
+            final user = await (_database.select(_database.users)..where((tbl) => tbl.id.equals(order.takenBy!))).getSingleOrNull();
+            if (user?.username.toLowerCase().contains(searchLower) == true) {
+              filteredOrders.add(order);
+              continue;
+            }
+          }
+          // Check customer name
+          if (order.clientId != null) {
+            final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
+            if (customer != null) {
+              final fullName = '${customer.firstName} ${customer.lastName}'.toLowerCase();
+              if (fullName.contains(searchLower)) {
+                filteredOrders.add(order);
+              }
+            }
+          }
+        }
+        totalCount = filteredOrders.length;
+      } else {
+        totalCount = allOrders.length;
+      }
+    }
+
+    final totalPages = (totalCount / pageSize).ceil();
+    if (totalPages == 0) {
+      return PaginatedOrders(
+        orders: [],
+        totalCount: 0,
+        page: page,
+        pageSize: pageSize,
+        totalPages: 0,
+      );
+    }
+
+    // Build the paginated query
+    var query = _database.select(_database.orders);
+
+    // Apply filters
+    if (statusFilter != null && statusFilter != 'ALL') {
+      query = query..where((tbl) => tbl.status.equals(statusFilter));
+    }
+
+    if (customerId != null) {
+      query = query..where((tbl) => tbl.clientId.equals(customerId));
+    }
+
+    if (startDate != null) {
+      query = query..where((tbl) => tbl.date.isBiggerOrEqualValue(startDate));
+    }
+
+    if (endDate != null) {
+      final endOfDay = DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
+      query = query..where((tbl) => tbl.date.isSmallerOrEqualValue(endOfDay));
+    }
+
+    // Apply sorting
+    query = query..orderBy([(tbl) {
+      switch (sortColumn) {
+        case 'id':
+          return sortAscending ? OrderingTerm.asc(tbl.id) : OrderingTerm.desc(tbl.id);
+        case 'code':
+          return sortAscending ? OrderingTerm.asc(tbl.code) : OrderingTerm.desc(tbl.code);
+        case 'status':
+          return sortAscending ? OrderingTerm.asc(tbl.status) : OrderingTerm.desc(tbl.status);
+        case 'date':
+        case 'createdAt':
+        default:
+          return sortAscending ? OrderingTerm.asc(tbl.createdAt) : OrderingTerm.desc(tbl.createdAt);
+      }
+    }]);
+
+    // Get all filtered orders (we need to filter by search in memory)
+    final allFilteredOrders = await query.get();
+
+    // Apply search filter in memory
+    List<Order> ordersToProcess;
+    if (searchQuery != null && searchQuery.isNotEmpty) {
+      final searchLower = searchQuery.toLowerCase();
+      ordersToProcess = [];
+      for (final order in allFilteredOrders) {
+        if (order.code.toLowerCase().contains(searchLower)) {
+          ordersToProcess.add(order);
+          continue;
+        }
+        // Check user name
+        if (order.takenBy != null) {
+          final user = await (_database.select(_database.users)..where((tbl) => tbl.id.equals(order.takenBy!))).getSingleOrNull();
+          if (user?.username.toLowerCase().contains(searchLower) == true) {
+            ordersToProcess.add(order);
+            continue;
+          }
+        }
+        // Check customer name
+        if (order.clientId != null) {
+          final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
+          if (customer != null) {
+            final fullName = '${customer.firstName} ${customer.lastName}'.toLowerCase();
+            if (fullName.contains(searchLower)) {
+              ordersToProcess.add(order);
+            }
+          }
+        }
+      }
+    } else {
+      ordersToProcess = allFilteredOrders;
+    }
+
+    // Apply pagination in memory after search
+    final start = page * pageSize;
+    final end = (start + pageSize).clamp(0, ordersToProcess.length);
+    final paginatedOrders = start < ordersToProcess.length
+        ? ordersToProcess.sublist(start, end)
+        : <Order>[];
+
+    // Build full details for each order
+    final result = <OrderFullDetails>[];
+    for (final order in paginatedOrders) {
+      final fullDetails = await _buildOrderFullDetails(order);
+      result.add(fullDetails);
+    }
+
+    return PaginatedOrders(
+      orders: result,
+      totalCount: totalCount,
+      page: page,
+      pageSize: pageSize,
+      totalPages: totalPages,
+    );
+  }
+
+  // Helper method to build OrderFullDetails from an Order
+  Future<OrderFullDetails> _buildOrderFullDetails(Order order) async {
     // Get order products
     final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
 
@@ -856,6 +929,17 @@ class OrderRepository {
       tableName = table?.name;
     }
 
+    // Get customer name
+    String? customerName;
+    int? customerId;
+    if (order.clientId != null) {
+      final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
+      if (customer != null) {
+        customerName = '${customer.firstName} ${customer.lastName}';
+        customerId = customer.id;
+      }
+    }
+
     // Calculate totals
     double subtotal = 0.0;
     double itemDiscount = 0.0;
@@ -865,14 +949,17 @@ class OrderRepository {
 
     final itemDetails = <OrderItemDetails>[];
     for (final product in orderProducts) {
-      final productDetail = await (_database.select(_database.products)..where((tbl) => tbl.id.equals(product.productId))).getSingleOrNull();
+      final productDetail = await (_database.select(_database.products)
+        ..where((tbl) => tbl.id.equals(product.productId)))
+          .getSingleOrNull();
 
-      // Get components and calculate total using stored prices
-      final productComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
+      // Get components
+      final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
 
+      // Calculate component total using stored prices
       double componentTotal = 0.0;
       final components = <ComponentDetails>[];
-      for (final orderComp in productComponents) {
+      for (final orderComp in orderComponents) {
         componentTotal += orderComp.price * orderComp.quantity;
 
         final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
@@ -904,7 +991,6 @@ class OrderRepository {
         }
       }
 
-
       itemDetails.add(OrderItemDetails(
         productName: productDetail?.name ?? 'Unknown Product',
         quantity: product.quantity,
@@ -927,6 +1013,8 @@ class OrderRepository {
       order: order,
       userName: userName,
       tableName: tableName,
+      customerName: customerName,
+      customerId: customerId,
       productCount: orderProducts.length,
       subtotal: subtotal,
       itemDiscount: itemDiscount,
@@ -934,10 +1022,16 @@ class OrderRepository {
       manualDiscountAmount: manualDiscountAmount,
       totalDiscount: totalDiscount,
       totalTva: totalTva,
-      total: total < 0 ? 0.0 : total,
+      total: total,
       totalPaid: totalPaid,
       items: itemDetails,
     );
+  }
+
+  // Get full details for a specific order
+  Future<OrderFullDetails> getOrderFullDetails(int orderId) async {
+    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingle();
+    return _buildOrderFullDetails(order);
   }
 
   // Delete an order
