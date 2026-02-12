@@ -6,30 +6,37 @@ import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:loggecrea/loggecrea.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// Update information model
+/// Update information model matching LatestUpdateResponse from API
 class UpdateInfo {
+  final String appName;
+  final String platform;
   final String version;
   final String downloadUrl;
+  final String checksum; // sha256
   final bool isMandatory;
-  final String releaseNotes;
-  final String checksum;
+  final String? releaseNotes;
 
   UpdateInfo({
+    required this.appName,
+    required this.platform,
     required this.version,
     required this.downloadUrl,
-    required this.isMandatory,
-    required this.releaseNotes,
     required this.checksum,
+    required this.isMandatory,
+    this.releaseNotes,
   });
 
   factory UpdateInfo.fromJson(Map<String, dynamic> json) {
     return UpdateInfo(
+      appName: json['appName'] as String? ?? '',
+      platform: json['platform'] as String? ?? '',
       version: json['version'] as String,
       downloadUrl: json['downloadUrl'] as String,
-      isMandatory: json['isMandatory'] as bool? ?? false,
-      releaseNotes: json['releaseNotes'] as String? ?? '',
-      checksum: json['checksum'] as String? ?? '',
+      checksum: json['sha256'] as String? ?? '',
+      isMandatory: json['mandatory'] as bool? ?? false,
+      releaseNotes: json['releaseNotes'] as String?,
     );
   }
 }
@@ -38,17 +45,55 @@ class UpdateInfo {
 class UpdateService {
   final _logger = Logger.instance;
   final Dio _dio = Dio();
+  SharedPreferences? _prefs;
 
-  /// Check for available updates
-  /// This will be implemented later to call your update API
+  static const String _baseUrlKey = 'api_base_url';
+
+  /// Initialize SharedPreferences
+  Future<void> _initPrefs() async {
+    _prefs ??= await SharedPreferences.getInstance();
+  }
+
+  /// Get current platform string for API
+  String get _platform {
+    if (Platform.isAndroid) return 'android';
+    if (Platform.isWindows) return 'windows';
+    if (Platform.isIOS) return 'ios';
+    if (Platform.isMacOS) return 'macos';
+    if (Platform.isLinux) return 'linux';
+    return 'unknown';
+  }
+
+  /// Check for available updates by calling api/pos/update_check
   Future<UpdateInfo?> checkForUpdates() async {
     try {
-      // TODO: Implement API call to check for updates
-      // Example:
-      // final response = await http.get(Uri.parse('YOUR_UPDATE_API_URL'));
-      // if (response.statusCode == 200) {
-      //   return UpdateInfo.fromJson(jsonDecode(response.body));
-      // }
+      await _initPrefs();
+
+      final baseUrl = _prefs?.getString(_baseUrlKey);
+      if (baseUrl == null || baseUrl.isEmpty) {
+        _logger.warning('No base URL configured for update check');
+        return null;
+      }
+
+      final url = '$baseUrl/api/pos/update_check?platform=$_platform';
+      _logger.info('Checking for updates: $url');
+
+      final response = await _dio.get(url);
+
+      if (response.statusCode == 200 && response.data != null) {
+        final updateInfo = UpdateInfo.fromJson(response.data);
+        _logger.info('Update info received: version ${updateInfo.version}');
+        return updateInfo;
+      }
+
+      _logger.info('No update available');
+      return null;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        _logger.info('No update available (404)');
+        return null;
+      }
+      _logger.error('Failed to check for updates: ${e.message}');
       return null;
     } catch (e) {
       _logger.error('Failed to check for updates: $e');

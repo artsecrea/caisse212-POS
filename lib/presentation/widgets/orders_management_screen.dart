@@ -10,7 +10,9 @@ import '../../providers/sync_manager_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
+import '../../services/api_service.dart';
 import 'permission_guard.dart';
+import 'order_details_dialog.dart';
 
 class OrdersManagementScreen extends ConsumerStatefulWidget {
   const OrdersManagementScreen({super.key});
@@ -207,6 +209,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               size: 20,
             ),
           ),
+        ),
+        // Search by code button
+        IconButton(
+          icon: const Icon(Icons.search),
+          onPressed: _showSearchByCodeDialog,
+          tooltip: 'Search Order by Code',
         ),
         // View pending operations queue
         PermissionIconButton(
@@ -951,7 +959,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
     showDialog(
       context: context,
-      builder: (context) => _OrderDetailsDialog(fullDetails: fullDetails),
+      builder: (dialogContext) => _OrderDetailsDialog(fullDetails: fullDetails),
     );
   }
 
@@ -968,16 +976,16 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   void _deleteOrder(Order order) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Delete Order'),
         content: Text('Are you sure you want to delete order ${order.code}?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Delete'),
           ),
@@ -1011,8 +1019,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
     final result = await showDialog<String>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (builderContext, setDialogState) {
           return AlertDialog(
             title: Text('Change Status - ${order.code}'),
             content: Column(
@@ -1059,12 +1067,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.pop(dialogContext),
                 child: const Text('Cancel'),
               ),
               ElevatedButton(
                 onPressed: selectedStatus != null && selectedStatus != order.status
-                    ? () => Navigator.pop(context, selectedStatus)
+                    ? () => Navigator.pop(dialogContext, selectedStatus)
                     : null,
                 child: const Text('Change'),
               ),
@@ -1176,7 +1184,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
       showDialog(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (dialogContext) => AlertDialog(
           title: Row(
             children: [
               const Icon(Icons.pending_actions),
@@ -1191,7 +1199,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 ? const Center(child: Text('No pending operations'))
                 : ListView.builder(
                     itemCount: operations.length,
-                    itemBuilder: (context, index) {
+                    itemBuilder: (listContext, index) {
                       final op = operations[index];
                       final isDelete = op.operationType == 'DELETE';
                       return Card(
@@ -1219,7 +1227,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                               await (database.delete(database.pendingSyncOperations)
                                     ..where((t) => t.id.equals(op.id)))
                                   .go();
-                              Navigator.pop(context);
+                              Navigator.pop(dialogContext);
                               _showPendingOperationsDialog();
                             },
                             tooltip: 'Remove from queue',
@@ -1231,13 +1239,13 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Close'),
             ),
             if (operations.isNotEmpty)
               ElevatedButton.icon(
                 onPressed: () async {
-                  Navigator.pop(context);
+                  Navigator.pop(dialogContext);
                   await _syncAll();
                 },
                 icon: const Icon(Icons.sync),
@@ -1253,6 +1261,152 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         );
       }
     }
+  }
+
+  // ========== SEARCH BY CODE FUNCTIONALITY ==========
+
+  void _showSearchByCodeDialog() {
+    final TextEditingController codeController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.search),
+            SizedBox(width: 12),
+            Text('Search Order by Code'),
+          ],
+        ),
+        content: SizedBox(
+          width: 400,
+          child: TextField(
+            controller: codeController,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: 'Enter order code (e.g., ORD-001)',
+              prefixIcon: const Icon(Icons.qr_code),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onSubmitted: (value) {
+              if (value.trim().isNotEmpty) {
+                Navigator.of(dialogContext).pop();
+                _searchOrderByCode(value.trim());
+              }
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final code = codeController.text.trim();
+              if (code.isNotEmpty) {
+                Navigator.of(dialogContext).pop();
+                _searchOrderByCode(code);
+              }
+            },
+            child: const Text('Search'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _searchOrderByCode(String orderCode) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Searching for order...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      // Step 1: Search in local database first
+      final database = ref.read(databaseProvider);
+      final localOrders = await (database.select(database.orders)
+            ..where((tbl) => tbl.code.equals(orderCode)))
+          .get();
+
+      if (localOrders.isNotEmpty) {
+        // Order found in local database
+        if (mounted) Navigator.of(context).pop(); // Close loading dialog
+
+        final order = localOrders.first;
+        final orderRepo = ref.read(orderRepositoryProvider);
+        final fullDetails = await orderRepo.getOrderFullDetails(order.id);
+
+        if (mounted) {
+          _showOrderDetails(order);
+        }
+        return;
+      }
+
+      // Step 2: Order not found locally, try API
+      final isOnline = ref.read(networkStateProvider);
+      if (!isOnline) {
+        if (mounted) Navigator.of(context).pop(); // Close loading dialog
+        if (mounted) _showErrorSnackBar('Order not found locally and you are offline');
+        return;
+      }
+
+      final apiService = ref.read(apiServiceProvider);
+      final orderData = await apiService.fetchOrderByCode(orderCode);
+
+      if (mounted) Navigator.of(context).pop(); // Close loading dialog
+
+      // Convert to WebOrderResponse and show dialog
+      final webOrder = WebOrderResponse.fromJson(orderData);
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (dialogContext) => OrderDetailsDialog(order: webOrder),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        _showErrorSnackBar('Error: ${e.toString()}');
+      }
+    }
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.red[700],
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Dismiss',
+          textColor: Colors.white,
+          onPressed: () {},
+        ),
+      ),
+    );
   }
 }
 
@@ -1545,4 +1699,3 @@ class _OrderDetailsDialog extends StatelessWidget {
     return '${dateTime.day}/${dateTime.month}/${dateTime.year} at ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}:${dateTime.second.toString().padLeft(2, '0')}';
   }
 }
-

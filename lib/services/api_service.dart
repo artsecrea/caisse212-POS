@@ -415,6 +415,24 @@ class ApiService {
     }
   }
 
+  /// Fetch a single order by code from server
+  Future<Map<String, dynamic>> fetchOrderByCode(String orderCode) async {
+    try {
+      final response = await _dio.get('/pos/orders/$orderCode');
+      if (response.statusCode == 200) {
+        return response.data as Map<String, dynamic>;
+      }
+      throw Exception('Failed to fetch order');
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        throw Exception('Order not found');
+      }
+      throw Exception('Network error: ${e.message ?? 'Failed to fetch order. Check connection.'}');
+    } catch (e) {
+      throw Exception('Error fetching order: ${e.toString()}');
+    }
+  }
+
   // ============ SYNC DATA TO SERVER ============
 
   /// Sync orders to server (bulk)

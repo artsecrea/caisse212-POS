@@ -45,7 +45,7 @@ class UpdateDialog extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              if (updateInfo.releaseNotes.isNotEmpty) ...[
+              if (updateInfo.releaseNotes!.isNotEmpty) ...[
                 const Text(
                   'What\'s New:',
                   style: TextStyle(fontWeight: FontWeight.bold),
@@ -58,7 +58,7 @@ class UpdateDialog extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    updateInfo.releaseNotes,
+                    updateInfo.releaseNotes ?? 'No release notes provided.',
                     style: const TextStyle(fontSize: 14),
                   ),
                 ),

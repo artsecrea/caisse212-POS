@@ -11,6 +11,7 @@ class UpdateState {
   final UpdateInfo? availableUpdate;
   final String? error;
   final bool updateRequired;
+  final String? currentVersion;
 
   UpdateState({
     this.isChecking = false,
@@ -19,6 +20,7 @@ class UpdateState {
     this.availableUpdate,
     this.error,
     this.updateRequired = false,
+    this.currentVersion,
   });
 
   UpdateState copyWith({
@@ -28,16 +30,21 @@ class UpdateState {
     UpdateInfo? availableUpdate,
     String? error,
     bool? updateRequired,
+    String? currentVersion,
+    bool clearUpdate = false,
   }) {
     return UpdateState(
       isChecking: isChecking ?? this.isChecking,
       isDownloading: isDownloading ?? this.isDownloading,
       downloadProgress: downloadProgress ?? this.downloadProgress,
-      availableUpdate: availableUpdate ?? this.availableUpdate,
-      error: error ?? this.error,
+      availableUpdate: clearUpdate ? null : (availableUpdate ?? this.availableUpdate),
+      error: error,
       updateRequired: updateRequired ?? this.updateRequired,
+      currentVersion: currentVersion ?? this.currentVersion,
     );
   }
+
+  bool get hasUpdate => availableUpdate != null;
 }
 
 /// Update notifier
@@ -46,34 +53,54 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
 
   UpdateNotifier(this._updateService) : super(UpdateState());
 
-  /// Check for updates
-  Future<void> checkForUpdates() async {
+  /// Check for updates by calling the API and comparing versions
+  Future<bool> checkForUpdates() async {
     state = state.copyWith(isChecking: true, error: null);
 
     try {
+      // Get current app version
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = packageInfo.version;
+
+      state = state.copyWith(currentVersion: currentVersion);
+
+      // Call API to check for updates
       final updateInfo = await _updateService.checkForUpdates();
 
       if (updateInfo != null) {
-        // Compare versions
-        final packageInfo = await PackageInfo.fromPlatform();
-        final currentVersion = packageInfo.version;
+        // Compare remote version with local version
+        final comparisonResult = _compareVersions(updateInfo.version, currentVersion);
 
-        final shouldUpdate = _compareVersions(updateInfo.version, currentVersion) > 0;
-
-        if (shouldUpdate) {
+        if (comparisonResult > 0) {
+          // Remote version is newer
+          print('Update available: ${updateInfo.version} > $currentVersion');
           state = state.copyWith(
+            isChecking: false,
             availableUpdate: updateInfo,
             updateRequired: updateInfo.isMandatory,
           );
+          return true;
+        } else {
+          // Current version is up to date
+          print('App is up to date: $currentVersion >= ${updateInfo.version}');
+          state = state.copyWith(
+            isChecking: false,
+            clearUpdate: true,
+          );
+          return false;
         }
+      } else {
+        // No update info returned
+        state = state.copyWith(isChecking: false);
+        return false;
       }
-
-      state = state.copyWith(isChecking: false);
     } catch (e) {
+      print('Error checking for updates: $e');
       state = state.copyWith(
         isChecking: false,
         error: 'Failed to check for updates: $e',
       );
+      return false;
     }
   }
 
