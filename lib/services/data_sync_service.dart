@@ -354,6 +354,7 @@ class DataSyncService {
           'manualDiscount': product.manualDiscount,
           'manualDiscountReason': product.manualDiscountReason,
           'state': product.state,
+          'note': product.manualDiscountReason,
           'components': componentsList,
         });
       }
@@ -373,6 +374,8 @@ class DataSyncService {
         'discountPercentage': order.discountPercentage,
         'note': order.note,
         'products': productsList,
+        'createdBy': order.createdBy,
+        'servedBy': order.takenBy,
         'createdAt': order.createdAt.toIso8601String(),
         'updatedAt': order.updatedAt.toIso8601String(),
       });

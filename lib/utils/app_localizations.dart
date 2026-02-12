@@ -51,6 +51,8 @@ class AppLocalizations {
       'invalid_credentials': 'Invalid credentials',
       'login_failed': 'Login failed',
       'exit_to_tenant': 'Exit to Tenant Login',
+      'username_required': 'Username is required',
+      'password_required': 'Password is required',
 
       // Tenant
       'tenant_id': 'Tenant ID',

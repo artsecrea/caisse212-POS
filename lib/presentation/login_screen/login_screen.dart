@@ -97,9 +97,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ElevatedButton(
                   onPressed: () {
                     final password = passwordController.text.trim();
-
-                    // final verified = BCrypt.checkpw(password, tenantPasswordHash);
-                    final verified = true;
+                    final verified = BCrypt.checkpw(password, tenantPasswordHash);
                     Navigator.of(context).pop(verified);
                   },
                   style: ElevatedButton.styleFrom(
@@ -167,16 +165,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         return;
       }
 
-      final username = _usernameController.text;
-      final password = _passwordController.text;
+      final username = _usernameController.text.trim();
+      final password = _passwordController.text.trim();
 
       // Try local authentication first
       final user = await (database.select(database.users)
             ..where((tbl) => tbl.username.equals(username)))
           .getSingleOrNull();
-      final hash = user?.password ?? '';
 
+      if (user == null) {
+        setState(() {
+          _errorMessage = 'User not found. Please check your username.';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final hash = user.password;
       final verified = BCrypt.checkpw(password, hash);
+
+      if (!verified) {
+        setState(() {
+          _errorMessage = 'Invalid password. Please try again.';
+          _isLoading = false;
+        });
+        return;
+      }
 
       if (user != null && verified) {
         // Local authentication successful
@@ -421,22 +435,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 32),
-                            OnscreenKeyboardTextField(
+                            TextFormField(
                               controller: _usernameController,
                               decoration: InputDecoration(
-                                labelText: l10n.translate('username'),
+                                labelText: '${l10n.translate('username')} *',
                                 prefixIcon: const Icon(Icons.person),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
+                              style: const TextStyle(fontSize: 16),
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return l10n.translate('username_required');
+                                }
+                                if (value.trim().length < 3) {
+                                  return 'Username must be at least 3 characters';
+                                }
+                                return null;
+                              },
                             ),
-                            const SizedBox(height: 16),
-                            OnscreenKeyboardTextField(
+                            const SizedBox(height: 20),
+                            TextFormField(
                               controller: _passwordController,
                               obscureText: _obscurePassword,
                               decoration: InputDecoration(
-                                labelText: l10n.translate('password'),
+                                labelText: '${l10n.translate('password')} *',
                                 prefixIcon: const Icon(Icons.lock),
                                 suffixIcon: IconButton(
                                   icon: Icon(
@@ -454,9 +478,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
+                              style: const TextStyle(fontSize: 16),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return l10n.translate('password_required');
+                                }
+                                return null;
+                              },
                             ),
-                            const SizedBox(height: 16),
-                            OnscreenKeyboardTextField(
+                            const SizedBox(height: 20),
+                            TextFormField(
                               controller: _startingBalanceController,
                               keyboardType: TextInputType.number,
                               decoration: InputDecoration(
@@ -465,52 +496,87 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
+                                hintText: '0.0',
                               ),
+                              style: const TextStyle(fontSize: 16),
+                              validator: (value) {
+                                if (value != null && value.isNotEmpty) {
+                                  final amount = double.tryParse(value);
+                                  if (amount == null) {
+                                    return 'Please enter a valid number';
+                                  }
+                                  if (amount < 0) {
+                                    return 'Amount cannot be negative';
+                                  }
+                                }
+                                return null;
+                              },
                             ),
                             if (_errorMessage != null) ...[
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 20),
                               Container(
-                                padding: const EdgeInsets.all(12),
+                                padding: const EdgeInsets.all(16),
                                 decoration: BoxDecoration(
                                   color: Colors.red[50],
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.red[300]!),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.red[300]!, width: 2),
                                 ),
                                 child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Icon(Icons.error_outline, color: Colors.red[700]),
-                                    const SizedBox(width: 8),
+                                    Icon(Icons.error_outline, color: Colors.red[700], size: 24),
+                                    const SizedBox(width: 12),
                                     Expanded(
                                       child: Text(
                                         _errorMessage!,
-                                        style: TextStyle(color: Colors.red[700]),
+                                        style: TextStyle(
+                                          color: Colors.red[700],
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
                             ],
-                            const SizedBox(height: 24),
-                            ElevatedButton(
-                              onPressed: _isLoading ? null : _handleLogin,
-                              style: ElevatedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                            const SizedBox(height: 32),
+                            SizedBox(
+                              height: 60,
+                              child: ElevatedButton(
+                                onPressed: _isLoading ? null : _handleLogin,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(context).primaryColor,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  elevation: 4,
                                 ),
-                              ),
-                              child: _isLoading
-                                  ? const SizedBox(
-                                      height: 20,
-                                      width: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
+                                child: _isLoading
+                                    ? const SizedBox(
+                                        height: 24,
+                                        width: 24,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.5,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(Icons.login, size: 24),
+                                          const SizedBox(width: 12),
+                                          Text(
+                                            l10n.translate('sign_in'),
+                                            style: const TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    )
-                                  : Text(
-                                      l10n.translate('sign_in'),
-                                      style: const TextStyle(fontSize: 16),
-                                    ),
+                              ),
                             ),
                           ],
                         ),
@@ -521,34 +587,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
           ),
-          // Exit button positioned at top-left
+          // Exit button positioned at top-left - BIGGER
           Positioned(
-            top: 16,
-            left: 16,
+            top: 20,
+            left: 20,
             child: Material(
-              color: Colors.black26,
-              borderRadius: BorderRadius.circular(12),
+              color: Colors.black38,
+              borderRadius: BorderRadius.circular(16),
+              elevation: 4,
               child: InkWell(
                 onTap: _handleExitToTenant,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 child: Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   child: const Icon(
                     Icons.exit_to_app,
-                    size: 32,
+                    size: 36,
                     color: Colors.white,
                   ),
                 ),
               ),
             ),
           ),
-          // Report Issue button positioned at top-right
+          // Report Issue button positioned at top-right - BIGGER
           Positioned(
-            top: 16,
-            right: 16,
+            top: 20,
+            right: 20,
             child: Material(
-              color: Colors.black26,
-              borderRadius: BorderRadius.circular(12),
+              color: Colors.black38,
+              borderRadius: BorderRadius.circular(16),
+              elevation: 4,
               child: InkWell(
                 onTap: () {
                   showDialog(
@@ -556,12 +624,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     builder: (context) => const ReportIssueDialog(),
                   );
                 },
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 child: Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   child: const Icon(
                     Icons.bug_report,
-                    size: 32,
+                    size: 36,
                     color: Colors.white,
                   ),
                 ),

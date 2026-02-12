@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,7 @@ import 'package:posecrea/services/data_sync_service.dart';
 import 'package:posecrea/utils/sample_data_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/database_providers.dart';
+import '../widgets/report_issue_dialog.dart';
 
 class TenantLoginScreen extends ConsumerStatefulWidget {
   const TenantLoginScreen({super.key});
@@ -29,11 +31,19 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
   String _loadingMessage = '';
   double _loadingProgress = 0.0;
 
+  // Hard-coded password for server URL settings - change this in production
+  static const String _serverSettingsPassword = 'admin123';
+
   @override
   void initState() {
     super.initState();
-    // Set default server URL - can be changed
-    _serverUrlController.text = 'http://localhost:8080';
+    _loadServerUrl();
+  }
+
+  Future<void> _loadServerUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedUrl = prefs.getString('server_url') ?? 'http://localhost:8080';
+    _serverUrlController.text = savedUrl;
     _posNameController.text = 'test';
   }
 
@@ -60,8 +70,10 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       final prefs = await SharedPreferences.getInstance();
       final apiService = ApiService(prefs);
 
-      // Set the base URL
-      await apiService.setBaseUrl(_serverUrlController.text.trim());
+      // Save and set the base URL
+      final serverUrl = _serverUrlController.text.trim();
+      await prefs.setString('server_url', serverUrl);
+      await apiService.setBaseUrl(serverUrl);
       await apiService.setDemoMode(false);
 
       // Attempt login
@@ -123,8 +135,23 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       }
     } catch (e) {
       print(e);
+      String errorMsg = e.toString().replaceFirst('Exception: ', '');
+
+      // Better error messages
+      if (errorMsg.contains('Connection failed') || errorMsg.contains('Failed host lookup')) {
+        errorMsg = 'Cannot connect to server. Please check:\n• Server URL is correct\n• Server is running\n• Network connection is active';
+      } else if (errorMsg.contains('Network error')) {
+        errorMsg = errorMsg.replaceFirst('Network error: ', '');
+      } else if (errorMsg.contains('401') || errorMsg.contains('Unauthorized')) {
+        errorMsg = 'Invalid credentials. Please check your username and password.';
+      } else if (errorMsg.contains('404')) {
+        errorMsg = 'Server endpoint not found. Please check the server URL.';
+      } else if (errorMsg.contains('500')) {
+        errorMsg = 'Server error. Please contact your administrator.';
+      }
+
       setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+        _errorMessage = errorMsg;
         _isLoading = false;
         _isLoadingData = false;
       });
@@ -306,8 +333,9 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Theme.of(context).primaryColor,
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                   ),
-                  child: const Text('Set Password'),
+                  child: const Text('Set Password', style: TextStyle(fontSize: 16)),
                 ),
               ],
             );
@@ -319,6 +347,169 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       confirmPasswordController.dispose();
       return value;
     });
+  }
+
+  /// Show server settings dialog with password protection
+  Future<void> _showServerSettingsDialog() async {
+    final passwordController = TextEditingController();
+
+    // First, verify password
+    final verified = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        bool obscurePassword = true;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Server Settings'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Enter admin password to modify server URL:'),
+                  const SizedBox(height: 16),
+                  OnscreenKeyboardTextField(
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    decoration: InputDecoration(
+                      labelText: 'Admin Password',
+                      prefixIcon: const Icon(Icons.admin_panel_settings),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            obscurePassword = !obscurePassword;
+                          });
+                        },
+                      ),
+                      border: const OutlineInputBorder(),
+                      hintText: 'Default: admin123',
+                    ),
+                    autofocus: true,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final password = passwordController.text.trim();
+                    Navigator.of(context).pop(password == _serverSettingsPassword);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Verify'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+
+    if (verified != true) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid admin password'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show server URL editor
+    final urlController = TextEditingController(text: _serverUrlController.text);
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit Server URL'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              OnscreenKeyboardTextField(
+                controller: urlController,
+                decoration: const InputDecoration(
+                  labelText: 'Server URL',
+                  prefixIcon: Icon(Icons.dns),
+                  border: OutlineInputBorder(),
+                  hintText: 'http://localhost:8080',
+                ),
+                autofocus: true,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Examples:\n'
+                '• http://localhost:8080\n'
+                '• http://192.168.1.100:8080\n'
+                '• https://api.example.com',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final newUrl = urlController.text.trim();
+                if (newUrl.isNotEmpty) {
+                  // Validate URL format
+                  if (!newUrl.startsWith('http://') && !newUrl.startsWith('https://')) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('URL must start with http:// or https://'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+
+                  setState(() {
+                    _serverUrlController.text = newUrl;
+                  });
+
+                  // Save to shared preferences
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setString('server_url', newUrl);
+
+                  Navigator.of(context).pop();
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Server URL updated to: $newUrl'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    urlController.dispose();
   }
 
   @override
@@ -429,52 +620,91 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                         ),
                         const SizedBox(height: 32),
 
-                        // Server URL
-                        OnscreenKeyboardTextField(
-                          controller: _serverUrlController,
-                          decoration: InputDecoration(
-                            labelText: 'Server URL',
-                            prefixIcon: const Icon(Icons.dns),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
+                        // Server URL (read-only, protected by settings button)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                controller: _serverUrlController,
+                                readOnly: true,
+                                decoration: InputDecoration(
+                                  labelText: 'Server URL',
+                                  prefixIcon: const Icon(Icons.dns),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  filled: true,
+                                  fillColor: Colors.grey[100],
+                                ),
+                                style: const TextStyle(fontSize: 14),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: _showServerSettingsDialog,
+                              icon: const Icon(Icons.settings),
+                              tooltip: 'Server Settings (Protected)',
+                              style: IconButton.styleFrom(
+                                backgroundColor: Colors.grey[200],
+                                padding: const EdgeInsets.all(16),
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
 
                         // POS Name
-                        OnscreenKeyboardTextField(
+                        TextFormField(
                           controller: _posNameController,
                           decoration: InputDecoration(
-                            labelText: 'POS Name',
+                            labelText: 'POS Name *',
                             prefixIcon: const Icon(Icons.point_of_sale),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-
+                          style: const TextStyle(fontSize: 16),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'POS name is required';
+                            }
+                            if (value.trim().length < 2) {
+                              return 'POS name must be at least 2 characters';
+                            }
+                            return null;
+                          },
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
 
                         // Username
-                        OnscreenKeyboardTextField(
+                        TextFormField(
                           controller: _usernameController,
                           decoration: InputDecoration(
-                            labelText: 'Username',
+                            labelText: 'Username *',
                             prefixIcon: const Icon(Icons.person),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
+                          style: const TextStyle(fontSize: 16),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'Username is required';
+                            }
+                            if (value.trim().length < 3) {
+                              return 'Username must be at least 3 characters';
+                            }
+                            return null;
+                          },
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
 
                         // Password
-                        OnscreenKeyboardTextField(
+                        TextFormField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
                           decoration: InputDecoration(
-                            labelText: 'Password',
+                            labelText: 'Password *',
                             prefixIcon: const Icon(Icons.lock),
                             suffixIcon: IconButton(
                               icon: Icon(
@@ -492,7 +722,16 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-
+                          style: const TextStyle(fontSize: 16),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Password is required';
+                            }
+                            if (value.length < 4) {
+                              return 'Password must be at least 4 characters';
+                            }
+                            return null;
+                          },
                         ),
 
                         if (_errorMessage != null) ...[
@@ -519,89 +758,131 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                           ),
                         ],
 
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 32),
 
-                        // Connect to Server button
-                        ElevatedButton.icon(
-                          onPressed: _isLoading ? null : _handleServerLogin,
-                          icon: _isLoading
-                              ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
+                        // Connect to Server button - BIGGER
+                        SizedBox(
+                          height: 60,
+                          child: ElevatedButton.icon(
+                            onPressed: _isLoading ? null : _handleServerLogin,
+                            icon: _isLoading
+                                ? const SizedBox(
+                              height: 24,
+                              width: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Colors.white,
+                              ),
+                            )
+                                : const Icon(Icons.cloud_done, size: 28),
+                            label: Text(
+                              _isLoading ? 'Connecting...' : 'Connect to Server',
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                             ),
-                          )
-                              : const Icon(Icons.cloud_done),
-                          label: Text(
-                            _isLoading ? 'Connecting...' : 'Connect to Server',
-                            style: const TextStyle(fontSize: 16),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Theme.of(context).primaryColor,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 4,
                             ),
                           ),
                         ),
 
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 24),
 
                         // Divider with "OR"
                         Row(
                           children: [
-                            Expanded(child: Divider(color: Colors.grey[400])),
+                            Expanded(child: Divider(color: Colors.grey[400], thickness: 1.5)),
                             Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              padding: const EdgeInsets.symmetric(horizontal: 20),
                               child: Text(
                                 'OR',
                                 style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
+                                  color: Colors.grey[700],
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
                                 ),
                               ),
                             ),
-                            Expanded(child: Divider(color: Colors.grey[400])),
+                            Expanded(child: Divider(color: Colors.grey[400], thickness: 1.5)),
                           ],
+                        ),
+
+                        const SizedBox(height: 24),
+
+                        // Demo Mode button - BIGGER
+                        SizedBox(
+                          height: 60,
+                          child: OutlinedButton.icon(
+                            onPressed: _isLoading ? null : _handleDemoMode,
+                            icon: const Icon(Icons.science, size: 28),
+                            label: const Text(
+                              'Use Demo Mode',
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Theme.of(context).primaryColor,
+                              side: BorderSide(
+                                color: Theme.of(context).primaryColor,
+                                width: 2,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        // API Tester button
+                        SizedBox(
+                          height: 50,
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.of(context).pushNamed('/api-tester');
+                            },
+                            icon: const Icon(Icons.bug_report, size: 24),
+                            label: const Text(
+                              'Test API Endpoints',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.orange[700],
+                              side: BorderSide(
+                                color: Colors.orange[700]!,
+                                width: 1.5,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
                         ),
 
                         const SizedBox(height: 16),
 
-                        // Demo Mode button
-                        OutlinedButton.icon(
-                          onPressed: _isLoading ? null : _handleDemoMode,
-                          icon: const Icon(Icons.science),
-                          label: const Text(
-                            'Use Demo Mode',
-                            style: TextStyle(fontSize: 16),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                        // Report Issue button
+                        SizedBox(
+                          height: 50,
+                          child: TextButton.icon(
+                            onPressed: () {
+                              showDialog(
+                                context: context,
+                                builder: (context) => const ReportIssueDialog(),
+                              );
+                            },
+                            icon: const Icon(Icons.report_problem, size: 24),
+                            label: const Text(
+                              'Report Issue',
+                              style: TextStyle(fontSize: 16),
                             ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        // API Tester button
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.of(context).pushNamed('/api-tester');
-                          },
-                          icon: const Icon(Icons.bug_report),
-                          label: const Text(
-                            'Test API Endpoints',
-                            style: TextStyle(fontSize: 16),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.grey[700],
                             ),
-                            side: BorderSide(color: Colors.orange[700]!),
-                            foregroundColor: Colors.orange[700],
                           ),
                         ),
                       ],

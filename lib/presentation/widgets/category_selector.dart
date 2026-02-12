@@ -20,7 +20,7 @@ class CategorySelector extends ConsumerWidget {
         boxShadow: [
           BoxShadow(
             color: Theme.of(context).shadowColor.withValues(alpha: 0.05),
-            blurRadius: 4,
+            blurRadius: 20,
             offset: const Offset(0, 2),
           ),
         ],
@@ -39,7 +39,7 @@ class CategorySelector extends ConsumerWidget {
                 width: 76,
                 decoration: BoxDecoration(
                   color: Colors.blue[700],
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.blue.withValues(alpha: 0.3),
@@ -259,7 +259,7 @@ class _CategoryChip extends StatelessWidget {
       padding: const EdgeInsets.only(right: 12),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(4),
         child: Container(
           width: 120,
           constraints: const BoxConstraints(
@@ -270,7 +270,7 @@ class _CategoryChip extends StatelessWidget {
             color: isSelected
                 ? Theme.of(context).primaryColor
                 : Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(4),
             border: Border.all(
               color: isSelected
                   ? Theme.of(context).primaryColor
