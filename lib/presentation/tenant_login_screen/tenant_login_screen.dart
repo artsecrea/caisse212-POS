@@ -30,9 +30,14 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
   String? _errorMessage;
   String _loadingMessage = '';
   double _loadingProgress = 0.0;
+  bool _showServerUrl = false; // Hide server URL by default
 
-  // Hard-coded password for server URL settings - change this in production
-  static const String _serverSettingsPassword = 'admin123';
+  // Generate date-based password (YYYYMMDD format)
+  String get _serverSettingsPassword {
+    final now = DateTime.now();
+    print('${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}');
+    return '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+  }
 
   @override
   void initState() {
@@ -73,6 +78,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       // Save and set the base URL
       final serverUrl = _serverUrlController.text.trim();
       await prefs.setString('server_url', serverUrl);
+      await prefs.setString('pos_name', _posNameController.text);
       await apiService.setBaseUrl(serverUrl);
       await apiService.setDemoMode(false);
 
@@ -365,13 +371,14 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Enter admin password to modify server URL:'),
+                  const Text('Enter today\'s date as password (YYYYMMDD):'),
                   const SizedBox(height: 16),
                   OnscreenKeyboardTextField(
                     controller: passwordController,
                     obscureText: obscurePassword,
+                    keyboardType: TextInputType.number,
                     decoration: InputDecoration(
-                      labelText: 'Admin Password',
+                      labelText: 'Password',
                       prefixIcon: const Icon(Icons.admin_panel_settings),
                       suffixIcon: IconButton(
                         icon: Icon(
@@ -384,7 +391,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                         },
                       ),
                       border: const OutlineInputBorder(),
-                      hintText: 'Default: admin123',
+                      hintText: 'Example: 20250213',
                     ),
                     autofocus: true,
                   ),
@@ -419,7 +426,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Invalid admin password'),
+            content: Text('Invalid password. Use today\'s date in YYYYMMDD format.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -427,89 +434,20 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       return;
     }
 
-    // Show server URL editor
-    final urlController = TextEditingController(text: _serverUrlController.text);
+    // Password verified - show server URL in the form
+    setState(() {
+      _showServerUrl = true;
+    });
 
-    await showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Edit Server URL'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              OnscreenKeyboardTextField(
-                controller: urlController,
-                decoration: const InputDecoration(
-                  labelText: 'Server URL',
-                  prefixIcon: Icon(Icons.dns),
-                  border: OutlineInputBorder(),
-                  hintText: 'http://localhost:8080',
-                ),
-                autofocus: true,
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Examples:\n'
-                '• http://localhost:8080\n'
-                '• http://192.168.1.100:8080\n'
-                '• https://api.example.com',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final newUrl = urlController.text.trim();
-                if (newUrl.isNotEmpty) {
-                  // Validate URL format
-                  if (!newUrl.startsWith('http://') && !newUrl.startsWith('https://')) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('URL must start with http:// or https://'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                    return;
-                  }
-
-                  setState(() {
-                    _serverUrlController.text = newUrl;
-                  });
-
-                  // Save to shared preferences
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('server_url', newUrl);
-
-                  Navigator.of(context).pop();
-
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Server URL updated to: $newUrl'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-
-    urlController.dispose();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Server URL unlocked. You can now edit it.'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   @override
@@ -620,64 +558,92 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                         ),
                         const SizedBox(height: 32),
 
-                        // Server URL (read-only, protected by settings button)
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: _serverUrlController,
-                                readOnly: true,
-                                decoration: InputDecoration(
-                                  labelText: 'Server URL',
-                                  prefixIcon: const Icon(Icons.dns),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
+                        // Server URL (hidden behind config icon)
+                        if (_showServerUrl) ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _serverUrlController,
+                                  decoration: InputDecoration(
+                                    labelText: 'Server URL',
+                                    prefixIcon: const Icon(Icons.dns),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
                                   ),
-                                  filled: true,
-                                  fillColor: Colors.grey[100],
+                                  style: const TextStyle(fontSize: 14),
+                                  validator: (value) {
+                                    if (value == null || value.trim().isEmpty) {
+                                      return 'Server URL is required';
+                                    }
+                                    if (!value.startsWith('http://') && !value.startsWith('https://')) {
+                                      return 'URL must start with http:// or https://';
+                                    }
+                                    return null;
+                                  },
                                 ),
-                                style: const TextStyle(fontSize: 14),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              onPressed: _showServerSettingsDialog,
-                              icon: const Icon(Icons.settings),
-                              tooltip: 'Server Settings (Protected)',
-                              style: IconButton.styleFrom(
-                                backgroundColor: Colors.grey[200],
-                                padding: const EdgeInsets.all(16),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _showServerUrl = false;
+                                  });
+                                },
+                                icon: const Icon(Icons.visibility_off),
+                                tooltip: 'Hide Server URL',
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Colors.grey[200],
+                                  padding: const EdgeInsets.all(16),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 20),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                        ] else ...[
+                          // Config icon to reveal server URL
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.grey[300]!),
+                                ),
+                                child: IconButton(
+                                  onPressed: _showServerSettingsDialog,
+                                  icon: const Icon(Icons.settings),
+                                  tooltip: 'Configure Server (Protected)',
+                                  iconSize: 32,
+                                  style: IconButton.styleFrom(
+                                    padding: const EdgeInsets.all(16),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                        ],
 
                         // POS Name
-                        TextFormField(
+                        OnscreenKeyboardTextField(
                           controller: _posNameController,
                           decoration: InputDecoration(
                             labelText: 'POS Name *',
                             prefixIcon: const Icon(Icons.point_of_sale),
+
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
                           style: const TextStyle(fontSize: 16),
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return 'POS name is required';
-                            }
-                            if (value.trim().length < 2) {
-                              return 'POS name must be at least 2 characters';
-                            }
-                            return null;
-                          },
                         ),
                         const SizedBox(height: 20),
 
                         // Username
-                        TextFormField(
+                        OnscreenKeyboardTextField(
                           controller: _usernameController,
                           decoration: InputDecoration(
                             labelText: 'Username *',
@@ -687,20 +653,11 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                             ),
                           ),
                           style: const TextStyle(fontSize: 16),
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return 'Username is required';
-                            }
-                            if (value.trim().length < 3) {
-                              return 'Username must be at least 3 characters';
-                            }
-                            return null;
-                          },
                         ),
                         const SizedBox(height: 20),
 
                         // Password
-                        TextFormField(
+                        OnscreenKeyboardTextField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
                           decoration: InputDecoration(
@@ -723,15 +680,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                             ),
                           ),
                           style: const TextStyle(fontSize: 16),
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Password is required';
-                            }
-                            if (value.length < 4) {
-                              return 'Password must be at least 4 characters';
-                            }
-                            return null;
-                          },
                         ),
 
                         if (_errorMessage != null) ...[

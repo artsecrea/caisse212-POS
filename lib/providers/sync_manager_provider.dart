@@ -113,7 +113,7 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
         return false;
       }
 
-      // Then check if server is reachable
+      // Check if demo mode
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
 
@@ -121,7 +121,9 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
         return false; // Demo mode doesn't sync
       }
 
-      return await apiService.checkConnection();
+      // Assume online if we have network (let actual sync fail if server is down)
+      // This avoids extra health check requests
+      return true;
     } catch (e) {
       print('Connectivity check failed: $e');
       return false;
@@ -134,14 +136,9 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
       final hasNetwork = result != ConnectivityResult.none;
 
       if (hasNetwork && !state.isSyncing) {
-        // Verify server is actually reachable before syncing
-        final serverReachable = await _checkServerConnectivity();
-        if (serverReachable) {
-          print('Connection restored and server reachable - triggering auto-sync');
-          await performFullSync();
-        } else {
-          print('Network available but server not reachable');
-        }
+        print('Connection restored - triggering auto-sync');
+        // Let the actual sync fail if server is down, no need for health check
+        await performFullSync();
       }
     });
   }

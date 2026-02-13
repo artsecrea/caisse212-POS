@@ -740,7 +740,12 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('#${session.code}'),
+                        Flexible(
+                          child: Text(
+                            '#${session.code}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                         const SizedBox(width: 4),
                         if (isEnded)
                           Tooltip(
@@ -754,8 +759,18 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                       ],
                     ),
                   ),
-                  DataCell(Text('#${session.cashierId}')),
-                  DataCell(Text(_formatDateTime(session.startedAt))),
+                  DataCell(
+                    Text(
+                      '#${session.cashierId}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      _formatDateTime(session.startedAt),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   DataCell(
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -770,12 +785,28 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                           fontWeight: FontWeight.bold,
                           fontSize: 12,
                         ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ),
-                  DataCell(Text('\$${session.moneyAtStart.toStringAsFixed(2)}')),
-                  DataCell(Text('\$${(summary?.totalAmount ?? 0).toStringAsFixed(2)}')),
-                  DataCell(Text(_formatDuration(session.startedAt, session.endedAt))),
+                  DataCell(
+                    Text(
+                      '\$${session.moneyAtStart.toStringAsFixed(2)}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      '\$${(summary?.totalAmount ?? 0).toStringAsFixed(2)}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      _formatDuration(session.startedAt, session.endedAt),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   DataCell(
                     Row(
                       mainAxisSize: MainAxisSize.min,

@@ -10,23 +10,14 @@ final connectivityProvider = StreamProvider<ConnectivityResult>((ref) async* {
   }
 });
 
-/// Provider that checks if the device is online (has network AND can reach server)
+/// Provider that checks if the device is online (has network)
 final isOnlineProvider = StreamProvider<bool>((ref) async* {
   final connectivity = Connectivity();
-  final apiService = ref.read(apiServiceProvider);
 
   await for (final result in connectivity.onConnectivityChanged) {
-    if (result == ConnectivityResult.none) {
-      yield false;
-    } else {
-      // Has network, but check if server is reachable
-      try {
-        final canReachServer = await apiService.checkConnection();
-        yield canReachServer;
-      } catch (e) {
-        yield false;
-      }
-    }
+    // Just check network connectivity, not server health
+    // Let actual sync operations fail if server is down
+    yield result != ConnectivityResult.none;
   }
 });
 

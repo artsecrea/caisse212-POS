@@ -28,6 +28,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
+  bool _showServerConfig = false;
+  List<String> _availableUsernames = [];
+
+  // Generate date-based password (YYYYMMDD format)
+  String get _configPassword {
+    final now = DateTime.now();
+    return '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUsernames();
+  }
+
+  /// Load available usernames from database
+  Future<void> _loadUsernames() async {
+    try {
+      final database = ref.read(databaseProvider);
+      final users = await database.select(database.users).get();
+      setState(() {
+        _availableUsernames = users.map((u) => u.username).toList();
+      });
+    } catch (e) {
+      print('Error loading usernames: $e');
+    }
+  }
 
   @override
   void dispose() {
@@ -35,6 +62,167 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     _passwordController.dispose();
     _startingBalanceController.dispose();
     super.dispose();
+  }
+
+  /// Show server configuration dialog (protected by date password)
+  Future<void> _showServerConfigDialog() async {
+    final passwordController = TextEditingController();
+    final l10n = AppLocalizations.of(context)!;
+
+    // First, verify password
+    final verified = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        bool obscurePassword = true;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Server Configuration'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Enter today\'s date as password (YYYYMMDD):'),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      prefixIcon: const Icon(Icons.key),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            obscurePassword = !obscurePassword;
+                          });
+                        },
+                      ),
+                      border: const OutlineInputBorder(),
+                      hintText: 'Example: 20250213',
+                    ),
+                    autofocus: true,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(l10n.translate('cancel')),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final password = passwordController.text.trim();
+                    Navigator.of(context).pop(password == _configPassword);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Verify'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+
+    if (verified != true) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid password. Use today\'s date in YYYYMMDD format.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show server URL info
+    final prefs = ref.read(sharedPreferencesProvider);
+    final serverUrl = prefs.getString('server_url') ?? 'Not set';
+    final demoMode = prefs.getBool('demo_mode') ?? false;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Server Configuration'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Current Configuration:',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              _buildConfigRow('Server URL:', serverUrl),
+              const SizedBox(height: 8),
+              _buildConfigRow('Demo Mode:', demoMode ? 'Yes' : 'No'),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue[300]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'To change server settings, logout completely and reconnect from the tenant screen.',
+                        style: TextStyle(color: Colors.blue[700], fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildConfigRow(String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 100,
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.grey),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+        ),
+      ],
+    );
   }
 
   /// Handle exit to tenant screen - requires tenant password verification
@@ -435,24 +623,107 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 32),
-                            TextFormField(
-                              controller: _usernameController,
-                              decoration: InputDecoration(
-                                labelText: '${l10n.translate('username')} *',
-                                prefixIcon: const Icon(Icons.person),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              style: const TextStyle(fontSize: 16),
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return l10n.translate('username_required');
+                            // Username autocomplete field
+                            Autocomplete<String>(
+                              initialValue: TextEditingValue(text: _usernameController.text),
+                              optionsBuilder: (TextEditingValue textEditingValue) {
+                                if (textEditingValue.text.isEmpty) {
+                                  return _availableUsernames;
                                 }
-                                if (value.trim().length < 3) {
-                                  return 'Username must be at least 3 characters';
-                                }
-                                return null;
+                                return _availableUsernames.where((String username) {
+                                  return username.toLowerCase().contains(
+                                    textEditingValue.text.toLowerCase(),
+                                  );
+                                });
+                              },
+                              onSelected: (String selection) {
+                                _usernameController.text = selection;
+                              },
+                              fieldViewBuilder: (
+                                BuildContext context,
+                                TextEditingController fieldController,
+                                FocusNode fieldFocusNode,
+                                VoidCallback onFieldSubmitted,
+                              ) {
+                                // Sync with our main controller
+                                fieldController.addListener(() {
+                                  _usernameController.text = fieldController.text;
+                                });
+
+                                return TextFormField(
+                                  controller: fieldController,
+                                  focusNode: fieldFocusNode,
+                                  decoration: InputDecoration(
+                                    labelText: '${l10n.translate('username')} *',
+                                    prefixIcon: const Icon(Icons.person),
+                                    suffixIcon: _availableUsernames.isNotEmpty
+                                        ? Icon(Icons.arrow_drop_down, color: Colors.grey[600])
+                                        : null,
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  style: const TextStyle(fontSize: 16),
+                                  validator: (value) {
+                                    if (value == null || value.trim().isEmpty) {
+                                      return l10n.translate('username_required');
+                                    }
+                                    if (value.trim().length < 3) {
+                                      return 'Username must be at least 3 characters';
+                                    }
+                                    return null;
+                                  },
+                                  onFieldSubmitted: (value) => onFieldSubmitted(),
+                                );
+                              },
+                              optionsViewBuilder: (
+                                BuildContext context,
+                                AutocompleteOnSelected<String> onSelected,
+                                Iterable<String> options,
+                              ) {
+                                return Align(
+                                  alignment: Alignment.topLeft,
+                                  child: Material(
+                                    elevation: 4.0,
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Container(
+                                      constraints: const BoxConstraints(maxHeight: 200),
+                                      width: 380, // Match the field width approximately
+                                      child: ListView.builder(
+                                        padding: const EdgeInsets.all(8.0),
+                                        itemCount: options.length,
+                                        shrinkWrap: true,
+                                        itemBuilder: (BuildContext context, int index) {
+                                          final String option = options.elementAt(index);
+                                          return InkWell(
+                                            onTap: () {
+                                              onSelected(option);
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 16.0,
+                                                vertical: 12.0,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  const Icon(Icons.person, size: 20),
+                                                  const SizedBox(width: 12),
+                                                  Text(
+                                                    option,
+                                                    style: const TextStyle(fontSize: 16),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                );
                               },
                             ),
                             const SizedBox(height: 20),
@@ -613,27 +884,51 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           Positioned(
             top: 20,
             right: 20,
-            child: Material(
-              color: Colors.black38,
-              borderRadius: BorderRadius.circular(16),
-              elevation: 4,
-              child: InkWell(
-                onTap: () {
-                  showDialog(
-                    context: context,
-                    builder: (context) => const ReportIssueDialog(),
-                  );
-                },
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  child: const Icon(
-                    Icons.bug_report,
-                    size: 36,
-                    color: Colors.white,
+            child: Row(
+              children: [
+                // Config button
+                Material(
+                  color: Colors.black38,
+                  borderRadius: BorderRadius.circular(16),
+                  elevation: 4,
+                  child: InkWell(
+                    onTap: _showServerConfigDialog,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      child: const Icon(
+                        Icons.settings,
+                        size: 36,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(width: 12),
+                // Report Issue button
+                Material(
+                  color: Colors.black38,
+                  borderRadius: BorderRadius.circular(16),
+                  elevation: 4,
+                  child: InkWell(
+                    onTap: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => const ReportIssueDialog(),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      child: const Icon(
+                        Icons.bug_report,
+                        size: 36,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
