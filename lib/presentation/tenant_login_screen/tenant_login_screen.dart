@@ -8,7 +8,9 @@ import 'package:posecrea/services/data_sync_service.dart';
 import 'package:posecrea/utils/sample_data_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/update_provider.dart';
 import '../widgets/report_issue_dialog.dart';
+import '../widgets/update_dialog.dart';
 
 class TenantLoginScreen extends ConsumerStatefulWidget {
   const TenantLoginScreen({super.key});
@@ -58,6 +60,32 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     _passwordController.dispose();
     _posNameController.dispose();
     super.dispose();
+  }
+
+  /// Check for updates and show dialog if available
+  Future<void> _checkForUpdates() async {
+    try {
+      final updateNotifier = ref.read(updateProvider.notifier);
+      final hasUpdate = await updateNotifier.checkForUpdates();
+
+      if (hasUpdate && mounted) {
+        final updateState = ref.read(updateProvider);
+        final isMandatory = updateState.updateRequired;
+
+        // Show update dialog
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: !isMandatory,
+          builder: (context) => UpdateDialog(isMandatory: isMandatory),
+        );
+
+        // Note: We don't block navigation here, just inform the user
+        // The login screen will also check and can enforce mandatory updates
+      }
+    } catch (e) {
+      print('Error checking for updates: $e');
+      // Don't block login flow if update check fails
+    }
   }
 
   Future<void> _handleServerLogin() async {
@@ -131,6 +159,10 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
 
       await syncService.syncAllData();
 
+      // Check for updates after successful sync
+      if (mounted) {
+        await _checkForUpdates();
+      }
 
       // Navigate to login screen
       if (mounted) {
@@ -176,6 +208,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       await apiService.setDemoMode(true);
       await apiService.setTenantId(0); // Demo tenant ID is 0
       await apiService.setPosName('DEMO-POS');
+      await apiService.setBusinessName('Demo Restaurant'); // Set default business name for demo
 
       final database = ref.read(databaseProvider);
 
@@ -201,6 +234,11 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         _loadingMessage = 'Demo setup complete!';
         _loadingProgress = 1.0;
       });
+
+      // Check for updates (demo mode typically skips server calls, but we can still check)
+      if (mounted) {
+        await _checkForUpdates();
+      }
 
       // Navigate to login screen
       if (mounted) {

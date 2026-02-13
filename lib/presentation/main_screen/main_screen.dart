@@ -83,48 +83,54 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   // Number of persons button
-                  _buildActionButton(
-                    icon: Icons.people,
-                    label: "${currentOrder.numberOfPersons} ${currentOrder.numberOfPersons == 1 ? l10n.translate('person') : l10n.translate('persons')}",
-                    color: currentOrder.numberOfPersons > 1 ? Colors.blue : null,
-                    onPressed: () async {
-                      final result = await showDialog<int>(
-                        context: context,
-                        builder: (context) => _NumberOfPersonsDialog(
-                          currentNumber: currentOrder.numberOfPersons,
-                        ),
-                      );
-                      if (result != null) {
-                        ref.read(orderProvider.notifier).setNumberOfPersons(result);
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 8),
+                  if (settings.showPersonsButton)
+                    _buildActionButton(
+                      icon: Icons.people,
+                      label: "${currentOrder.numberOfPersons} ${currentOrder.numberOfPersons == 1 ? l10n.translate('person') : l10n.translate('persons')}",
+                      color: currentOrder.numberOfPersons > 1 ? Colors.blue : null,
+                      onPressed: () async {
+                        final result = await showDialog<int>(
+                          context: context,
+                          builder: (context) => _NumberOfPersonsDialog(
+                            currentNumber: currentOrder.numberOfPersons,
+                          ),
+                        );
+                        if (result != null) {
+                          ref.read(orderProvider.notifier).setNumberOfPersons(result);
+                        }
+                      },
+                    ),
+                  if (settings.showPersonsButton)
+                    const SizedBox(width: 8),
                   // Order type toggle button
-                  _buildActionButton(
-                    icon: currentOrder.type == 'DINE_IN' ? Icons.restaurant : Icons.takeout_dining,
-                    label: currentOrder.type == 'DINE_IN' ? l10n.translate('dine_in') : l10n.translate('take_away'),
-                    color: currentOrder.type == 'TAKE_AWAY' ? Colors.orange : Colors.green,
-                    onPressed: () {
-                      final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
-                      ref.read(orderProvider.notifier).setOrderType(newType);
-                    },
-                  ),
-                  const SizedBox(width: 8),
+                  if (settings.showOrderTypeButton)
+                    _buildActionButton(
+                      icon: currentOrder.type == 'DINE_IN' ? Icons.restaurant : Icons.takeout_dining,
+                      label: currentOrder.type == 'DINE_IN' ? l10n.translate('dine_in') : l10n.translate('take_away'),
+                      color: currentOrder.type == 'TAKE_AWAY' ? Colors.orange : Colors.green,
+                      onPressed: () {
+                        final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
+                        ref.read(orderProvider.notifier).setOrderType(newType);
+                      },
+                    ),
+                  if (settings.showOrderTypeButton)
+                    const SizedBox(width: 8),
                   // Confirm Order button
-                  _buildActionButton(
-                    icon: Icons.task_alt,
-                    label: l10n.translate('confirm_order'),
-                    color: Colors.purple,
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const OrderConfirmationScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(width: 8),
+                  if (settings.showConfirmOrderButton)
+                    _buildActionButton(
+                      icon: Icons.task_alt,
+                      label: l10n.translate('confirm_order'),
+                      color: Colors.purple,
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const OrderConfirmationScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  if (settings.showConfirmOrderButton)
+                    const SizedBox(width: 8),
                   // Table button - conditionally shown
                   if (settings.showTableButton)
                     _buildActionButton(
@@ -387,81 +393,83 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 //     }
                 //   },
                 // ),
-                _buildActionButton(
-                  icon: Icons.payment,
-                  label: l10n.translate('pay'),
-                  color: Colors.green[700],
-                  onPressed: currentOrder.items.isEmpty
-                      ? null
-                      : () async {
-                    final orderRepo = ref.read(orderRepositoryProvider);
-                    final currentUser = ref.read(currentUserProvider);
-                    final settings = ref.read(settingsProvider);
+                // Pay button
+                if (settings.showPayButton)
+                  _buildActionButton(
+                    icon: Icons.payment,
+                    label: l10n.translate('pay'),
+                    color: Colors.green[700],
+                    onPressed: currentOrder.items.isEmpty
+                        ? null
+                        : () async {
+                      final orderRepo = ref.read(orderRepositoryProvider);
+                      final currentUser = ref.read(currentUserProvider);
+                      final settings = ref.read(settingsProvider);
 
-                    if (currentUser == null) return;
+                      if (currentUser == null) return;
 
-                    try {
-                      int orderId;
-                      // Save or update order first
-                      if (currentOrder.isSaved()) {
-                        _logger.error("order updated before payment");
-                        await orderRepo.updateOrder(currentOrder);
-                        orderId = currentOrder.orderId!;
-                      } else {
-                        _logger.error("new order created before payment");
-                        orderId = await orderRepo.saveOrder(
-                          currentOrder,
-                          currentUser.id,
-                          status: settings.defaultOrderStatus, // Use default status from settings
-                        );
-
-                        if (currentOrder.tableId != null) {
-                          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
-                        }
-                      }
-
-                      // Reload the order from database to get updated IDs and states
-                      final reloadedOrder = await orderRepo.getOrderById(orderId);
-                      if (reloadedOrder == null) {
-                        throw Exception('Failed to reload order');
-                      }
-
-                      if (context.mounted) {
-                        // Open payment screen with reloaded order
-                        final result = await showDialog<bool>(
-                          context: context,
-                          builder: (context) => PaymentScreen(order: reloadedOrder),
-                        );
-
-                        if (result == true && context.mounted) {
-                          // Payment completed, clear order
-                          ref.read(orderProvider.notifier).clearOrder();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Payment completed successfully'),
-                              backgroundColor: Colors.green,
-                            ),
+                      try {
+                        int orderId;
+                        // Save or update order first
+                        if (currentOrder.isSaved()) {
+                          _logger.error("order updated before payment");
+                          await orderRepo.updateOrder(currentOrder);
+                          orderId = currentOrder.orderId!;
+                        } else {
+                          _logger.error("new order created before payment");
+                          orderId = await orderRepo.saveOrder(
+                            currentOrder,
+                            currentUser.id,
+                            status: settings.defaultOrderStatus, // Use default status from settings
                           );
-                        } else if (context.mounted) {
-                          // Payment screen closed without completion, reload order to show updated state
-                          final updatedOrder = await orderRepo.getOrderById(orderId);
-                          if (updatedOrder != null) {
-                            ref.read(orderProvider.notifier).loadOrder(updatedOrder);
+
+                          if (currentOrder.tableId != null) {
+                            await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
                           }
                         }
+
+                        // Reload the order from database to get updated IDs and states
+                        final reloadedOrder = await orderRepo.getOrderById(orderId);
+                        if (reloadedOrder == null) {
+                          throw Exception('Failed to reload order');
+                        }
+
+                        if (context.mounted) {
+                          // Open payment screen with reloaded order
+                          final result = await showDialog<bool>(
+                            context: context,
+                            builder: (context) => PaymentScreen(order: reloadedOrder),
+                          );
+
+                          if (result == true && context.mounted) {
+                            // Payment completed, clear order
+                            ref.read(orderProvider.notifier).clearOrder();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Payment completed successfully'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          } else if (context.mounted) {
+                            // Payment screen closed without completion, reload order to show updated state
+                            final updatedOrder = await orderRepo.getOrderById(orderId);
+                            if (updatedOrder != null) {
+                              ref.read(orderProvider.notifier).loadOrder(updatedOrder);
+                            }
+                          }
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
                       }
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Error: $e'),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
-                    }
-                  },
-                ),
+                    },
+                  ),
                 _buildActionButton(
                   icon: Icons.check_circle,
                   label: l10n.translate('proceed'),

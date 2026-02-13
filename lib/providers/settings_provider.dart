@@ -22,6 +22,10 @@ class SettingsKeys {
   static const String showCouponButton = 'show_coupon_button';
   static const String showDiscountButton = 'show_discount_button';
   static const String showPrintButton = 'show_print_button';
+  static const String showPersonsButton = 'show_persons_button';
+  static const String showOrderTypeButton = 'show_order_type_button';
+  static const String showConfirmOrderButton = 'show_confirm_order_button';
+  static const String showPayButton = 'show_pay_button';
   static const String autoClearSyncedData = 'auto_clear_synced_data';
   static const String lastDataClearDate = 'last_data_clear_date';
 }
@@ -59,6 +63,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showCouponButton: _prefs.getBool(SettingsKeys.showCouponButton) ?? true,
       showDiscountButton: _prefs.getBool(SettingsKeys.showDiscountButton) ?? true,
       showPrintButton: _prefs.getBool(SettingsKeys.showPrintButton) ?? true,
+      showPersonsButton: _prefs.getBool(SettingsKeys.showPersonsButton) ?? true,
+      showOrderTypeButton: _prefs.getBool(SettingsKeys.showOrderTypeButton) ?? true,
+      showConfirmOrderButton: _prefs.getBool(SettingsKeys.showConfirmOrderButton) ?? true,
+      showPayButton: _prefs.getBool(SettingsKeys.showPayButton) ?? true,
       autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
     );
   }
@@ -154,6 +162,26 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setShowPrintButton(bool value) async {
     await _prefs.setBool(SettingsKeys.showPrintButton, value);
     state = state.copyWith(showPrintButton: value);
+  }
+
+  Future<void> setShowPersonsButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showPersonsButton, value);
+    state = state.copyWith(showPersonsButton: value);
+  }
+
+  Future<void> setShowOrderTypeButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showOrderTypeButton, value);
+    state = state.copyWith(showOrderTypeButton: value);
+  }
+
+  Future<void> setShowConfirmOrderButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showConfirmOrderButton, value);
+    state = state.copyWith(showConfirmOrderButton: value);
+  }
+
+  Future<void> setShowPayButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showPayButton, value);
+    state = state.copyWith(showPayButton: value);
   }
 
   Future<void> setAutoClearSyncedData(bool value) async {

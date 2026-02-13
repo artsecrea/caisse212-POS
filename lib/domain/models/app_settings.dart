@@ -21,6 +21,10 @@ class AppSettings {
   final bool showCouponButton;
   final bool showDiscountButton;
   final bool showPrintButton;
+  final bool showPersonsButton;
+  final bool showOrderTypeButton;
+  final bool showConfirmOrderButton;
+  final bool showPayButton;
 
   // Sync settings
   final bool autoSyncOnline; // Auto-sync orders when online
@@ -43,6 +47,10 @@ class AppSettings {
     this.showCouponButton = true,
     this.showDiscountButton = true,
     this.showPrintButton = true,
+    this.showPersonsButton = true,
+    this.showOrderTypeButton = true,
+    this.showConfirmOrderButton = true,
+    this.showPayButton = true,
     this.autoSyncOnline = true,
     this.bulkSyncSize = 50,
     this.dataRetentionDays = 7,
@@ -64,6 +72,10 @@ class AppSettings {
     bool? showCouponButton,
     bool? showDiscountButton,
     bool? showPrintButton,
+    bool? showPersonsButton,
+    bool? showOrderTypeButton,
+    bool? showConfirmOrderButton,
+    bool? showPayButton,
     bool? autoSyncOnline,
     int? bulkSyncSize,
     int? dataRetentionDays,
@@ -84,6 +96,10 @@ class AppSettings {
       showCouponButton: showCouponButton ?? this.showCouponButton,
       showDiscountButton: showDiscountButton ?? this.showDiscountButton,
       showPrintButton: showPrintButton ?? this.showPrintButton,
+      showPersonsButton: showPersonsButton ?? this.showPersonsButton,
+      showOrderTypeButton: showOrderTypeButton ?? this.showOrderTypeButton,
+      showConfirmOrderButton: showConfirmOrderButton ?? this.showConfirmOrderButton,
+      showPayButton: showPayButton ?? this.showPayButton,
       autoSyncOnline: autoSyncOnline ?? this.autoSyncOnline,
       bulkSyncSize: bulkSyncSize ?? this.bulkSyncSize,
       dataRetentionDays: dataRetentionDays ?? this.dataRetentionDays,
@@ -107,6 +123,10 @@ class AppSettings {
       'showCouponButton': showCouponButton,
       'showDiscountButton': showDiscountButton,
       'showPrintButton': showPrintButton,
+      'showPersonsButton': showPersonsButton,
+      'showOrderTypeButton': showOrderTypeButton,
+      'showConfirmOrderButton': showConfirmOrderButton,
+      'showPayButton': showPayButton,
       'autoSyncOnline': autoSyncOnline,
       'bulkSyncSize': bulkSyncSize,
       'dataRetentionDays': dataRetentionDays,
@@ -130,6 +150,10 @@ class AppSettings {
       showCouponButton: json['showCouponButton'] as bool? ?? true,
       showDiscountButton: json['showDiscountButton'] as bool? ?? true,
       showPrintButton: json['showPrintButton'] as bool? ?? true,
+      showPersonsButton: json['showPersonsButton'] as bool? ?? true,
+      showOrderTypeButton: json['showOrderTypeButton'] as bool? ?? true,
+      showConfirmOrderButton: json['showConfirmOrderButton'] as bool? ?? true,
+      showPayButton: json['showPayButton'] as bool? ?? true,
       autoSyncOnline: json['autoSyncOnline'] as bool? ?? true,
       bulkSyncSize: json['bulkSyncSize'] as int? ?? 50,
       dataRetentionDays: json['dataRetentionDays'] as int? ?? 7,
@@ -141,4 +165,3 @@ class AppSettings {
     return 'AppSettings(isDarkMode: $isDarkMode, defaultOrderType: $defaultOrderType, showProductImages: $showProductImages, defaultOrderStatus: $defaultOrderStatus, categoryDisplayMode: $categoryDisplayMode, currency: $currency)';
   }
 }
-

@@ -11,6 +11,7 @@ class ApiService {
   static const String _baseUrlKey = 'api_base_url';
   static const String _tenantIdKey = 'tenant_id';
   static const String _isDemoModeKey = 'is_demo_mode';
+  static const String _businessNameKey = 'business_name';
 
   // Public getter for Dio instance (for testing/debugging)
   Dio get dio => _dio;
@@ -91,6 +92,7 @@ class ApiService {
   int? getTenantId() => _prefs.getInt(_tenantIdKey);
   String? getBaseUrl() => _prefs.getString(_baseUrlKey);
   bool isDemoMode() => _prefs.getBool(_isDemoModeKey) ?? false;
+  String? getBusinessName() => _prefs.getString(_businessNameKey);
 
   // Setters for stored values
   Future<void> setAccessToken(String token) async {
@@ -113,6 +115,10 @@ class ApiService {
     await _prefs.setBool(_isDemoModeKey, isDemoMode);
   }
 
+  Future<void> setBusinessName(String name) async {
+    await _prefs.setString(_businessNameKey, name);
+  }
+
   /// Clear all authentication data
   Future<void> clearAuthData() async {
     await _prefs.remove(_accessTokenKey);
@@ -120,6 +126,7 @@ class ApiService {
     await _prefs.remove(_tenantIdKey);
     await _prefs.remove(_baseUrlKey);
     await _prefs.remove(_isDemoModeKey);
+    await _prefs.remove(_businessNameKey);
     // NOTE: We do NOT remove 'tenant_password_hash' here - it should only be cleared on full logout
   }
 
@@ -155,6 +162,13 @@ class ApiService {
           } else if (tenantId is String) {
             await setTenantId(int.parse(tenantId));
           }
+        }
+
+        // Save business name from posTerminal data
+        if (data['posTerminal'] != null && data['posTerminal']['businessName'] != null) {
+          final businessName = data['posTerminal']['businessName'] as String;
+          await setBusinessName(businessName);
+          print('Business name saved: $businessName');
         }
 
         return data;

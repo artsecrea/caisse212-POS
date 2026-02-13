@@ -115,6 +115,12 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     await printingService.setPaperSize(prefs, size);
   }
 
+  Future<void> _setTextSize(int size) async {
+    final printingService = ref.read(printingServiceProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+    await printingService.setTextSize(prefs, size);
+  }
+
   Future<void> _testPrint(PrinterPurpose purpose) async {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -230,6 +236,21 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         ],
                         selected: {_config.paperSize},
                         onSelectionChanged: (values) => _setPaperSize(values.first),
+                      ),
+                    ),
+                    const Divider(),
+                    // Text Size
+                    ListTile(
+                      title: const Text('Text Size'),
+                      subtitle: Text(_config.textSize == 1 ? 'Normal' : (_config.textSize == 2 ? 'Large' : 'Extra Large')),
+                      trailing: SegmentedButton<int>(
+                        segments: const [
+                          ButtonSegment(value: 1, label: Text('Normal')),
+                          ButtonSegment(value: 2, label: Text('Large')),
+                          ButtonSegment(value: 3, label: Text('Extra')),
+                        ],
+                        selected: {_config.textSize},
+                        onSelectionChanged: (values) => _setTextSize(values.first),
                       ),
                     ),
                   ],

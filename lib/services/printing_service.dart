@@ -23,6 +23,7 @@ class PrinterConfig {
   final ConnectionType? kdsConnectionType;
   final bool kdsEnabled;
   final PaperSize paperSize;
+  final int textSize; // 1=Normal, 2=Medium, 3=Large
 
   const PrinterConfig({
     this.receiptPrinterAddress,
@@ -33,6 +34,7 @@ class PrinterConfig {
     this.kdsConnectionType,
     this.kdsEnabled = true,
     this.paperSize = PaperSize.mm80,
+    this.textSize = 1,
   });
 
   PrinterConfig copyWith({
@@ -44,6 +46,7 @@ class PrinterConfig {
     ConnectionType? kdsConnectionType,
     bool? kdsEnabled,
     PaperSize? paperSize,
+    int? textSize,
   }) {
     return PrinterConfig(
       receiptPrinterAddress: receiptPrinterAddress ?? this.receiptPrinterAddress,
@@ -54,6 +57,7 @@ class PrinterConfig {
       kdsConnectionType: kdsConnectionType ?? this.kdsConnectionType,
       kdsEnabled: kdsEnabled ?? this.kdsEnabled,
       paperSize: paperSize ?? this.paperSize,
+      textSize: textSize ?? this.textSize,
     );
   }
 
@@ -66,6 +70,7 @@ class PrinterConfig {
     'kdsConnectionType': kdsConnectionType?.index,
     'kdsEnabled': kdsEnabled,
     'paperSize': paperSize.value,
+    'textSize': textSize,
   };
 
   factory PrinterConfig.fromJson(Map<String, dynamic> json) {
@@ -82,6 +87,7 @@ class PrinterConfig {
           : null,
       kdsEnabled: json['kdsEnabled'] ?? true,
       paperSize: json['paperSize'] == 58 ? PaperSize.mm58 : PaperSize.mm80,
+      textSize: json['textSize'] ?? 1,
     );
   }
 }
@@ -138,6 +144,7 @@ class PrintingService {
     final kdsType = prefs.getInt('printer_kds_type');
     final kdsEnabled = prefs.getBool('printer_kds_enabled') ?? true;
     final paperSizeValue = prefs.getInt('printer_paper_size') ?? 80;
+    final textSizeValue = prefs.getInt('printer_text_size') ?? 1;
 
     _config = PrinterConfig(
       receiptPrinterAddress: receiptAddress,
@@ -148,6 +155,7 @@ class PrintingService {
       kdsConnectionType: kdsType != null ? ConnectionType.values[kdsType] : null,
       kdsEnabled: kdsEnabled,
       paperSize: paperSizeValue == 58 ? PaperSize.mm58 : PaperSize.mm80,
+      textSize: textSizeValue,
     );
     _configController.add(_config);
   }
@@ -194,6 +202,7 @@ class PrintingService {
 
     await prefs.setBool('printer_kds_enabled', newConfig.kdsEnabled);
     await prefs.setInt('printer_paper_size', newConfig.paperSize.value);
+    await prefs.setInt('printer_text_size', newConfig.textSize);
 
     _configController.add(_config);
   }
@@ -302,6 +311,7 @@ class PrintingService {
         kdsConnectionType: _config.kdsConnectionType,
         kdsEnabled: _config.kdsEnabled,
         paperSize: _config.paperSize,
+        textSize: _config.textSize,
       );
     } else {
       newConfig = PrinterConfig(
@@ -310,6 +320,7 @@ class PrintingService {
         receiptConnectionType: _config.receiptConnectionType,
         kdsEnabled: _config.kdsEnabled,
         paperSize: _config.paperSize,
+        textSize: _config.textSize,
       );
     }
 
@@ -326,6 +337,30 @@ class PrintingService {
   Future<void> setPaperSize(SharedPreferences prefs, PaperSize size) async {
     final newConfig = _config.copyWith(paperSize: size);
     await saveConfig(prefs, newConfig);
+  }
+
+  /// Set text size
+  Future<void> setTextSize(SharedPreferences prefs, int size) async {
+    final newConfig = _config.copyWith(textSize: size);
+    await saveConfig(prefs, newConfig);
+  }
+
+  /// Resolve text size based on config
+  PosTextSize _resolveTextSize({bool isHeader = false}) {
+    if (isHeader) {
+      if (_config.textSize >= 2) return PosTextSize.size2; // Max size for comfortable header
+      return PosTextSize.size2; // Default header size
+    } else {
+      if (_config.textSize == 2) return PosTextSize.size2;
+      if (_config.textSize >= 3) return PosTextSize.size2; // size3 is too big for body usually
+      return PosTextSize.size1; // Default
+    }
+  }
+
+  /// Resolve header text size based on config
+  PosTextSize _resolveHeaderSize() {
+    if (_config.textSize >= 2) return PosTextSize.size3;
+    return PosTextSize.size2;
   }
 
   /// Print order receipt
@@ -355,46 +390,46 @@ class PrintingService {
       if (storeName != null) {
         bytes += generator.text(
           storeName,
-          styles: const PosStyles(
+          styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: PosTextSize.size2,
-            width: PosTextSize.size2,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
           ),
         );
       }
 
       if (storeAddress != null) {
-        bytes += generator.text(storeAddress, styles: const PosStyles(align: PosAlign.center));
+        bytes += generator.text(storeAddress, styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
       }
 
       if (storePhone != null) {
-        bytes += generator.text('Tel: $storePhone', styles: const PosStyles(align: PosAlign.center));
+        bytes += generator.text('Tel: $storePhone', styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
       }
 
       bytes += generator.hr();
 
       // Order info
       bytes += generator.text('Order #${order.orderCode ?? "N/A"}',
-          styles: const PosStyles(align: PosAlign.left, bold: true));
+          styles: PosStyles(align: PosAlign.left, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
       bytes += generator.text('Date: ${_formatDateTime(DateTime.now())}',
-          styles: const PosStyles(align: PosAlign.left));
+          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
       if (cashierName != null) {
         bytes += generator.text('Cashier: $cashierName',
-            styles: const PosStyles(align: PosAlign.left));
+            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
       }
       if (order.tableName != null) {
         bytes += generator.text('Table: ${order.tableName}',
-            styles: const PosStyles(align: PosAlign.left));
+            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
       }
       if (order.customerName != null) {
         bytes += generator.text('Customer: ${order.customerName}',
-            styles: const PosStyles(align: PosAlign.left));
+            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
       }
       bytes += generator.text('Type: ${order.type == "DINE_IN" ? "Dine In" : "Take Away"}',
-          styles: const PosStyles(align: PosAlign.left));
+          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
       bytes += generator.text('Persons: ${order.numberOfPersons}',
-          styles: const PosStyles(align: PosAlign.left));
+          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
 
       bytes += generator.hr();
 
@@ -404,25 +439,25 @@ class PrintingService {
           PosColumn(
             text: '${item.quantity}x ${item.productName}',
             width: 8,
-            styles: const PosStyles(align: PosAlign.left),
+            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
           PosColumn(
             text: '\$${item.totalPrice.toStringAsFixed(2)}',
             width: 4,
-            styles: const PosStyles(align: PosAlign.right),
+            styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
         ]);
 
         // Components
         for (final comp in item.components) {
           bytes += generator.text('  + ${comp.name} x${comp.quantity}',
-              styles: const PosStyles(align: PosAlign.left));
+              styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
         }
 
         // Note
         if (item.note != null && item.note!.isNotEmpty) {
           bytes += generator.text('  Note: ${item.note}',
-              styles: const PosStyles(align: PosAlign.left, fontType: PosFontType.fontB));
+              styles: PosStyles(align: PosAlign.left, fontType: PosFontType.fontB, height: _resolveTextSize(), width: _resolveTextSize()));
         }
       }
 
@@ -430,32 +465,32 @@ class PrintingService {
 
       // Totals
       bytes += generator.row([
-        PosColumn(text: 'Subtotal:', width: 8),
+        PosColumn(text: 'Subtotal:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
         PosColumn(
           text: '\$${order.subtotal.toStringAsFixed(2)}',
           width: 4,
-          styles: const PosStyles(align: PosAlign.right),
+          styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
         ),
       ]);
 
       if (order.totalDiscount > 0) {
         bytes += generator.row([
-          PosColumn(text: 'Discount:', width: 8),
+          PosColumn(text: 'Discount:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
             text: '-\$${order.totalDiscount.toStringAsFixed(2)}',
             width: 4,
-            styles: const PosStyles(align: PosAlign.right),
+            styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
         ]);
       }
 
       if (order.tax > 0) {
         bytes += generator.row([
-          PosColumn(text: 'Tax:', width: 8),
+          PosColumn(text: 'Tax:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
             text: '\$${order.tax.toStringAsFixed(2)}',
             width: 4,
-            styles: const PosStyles(align: PosAlign.right),
+            styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
         ]);
       }
@@ -466,22 +501,23 @@ class PrintingService {
         PosColumn(
           text: 'TOTAL:',
           width: 6,
-          styles: const PosStyles(bold: true, height: PosTextSize.size2),
+          styles: PosStyles(bold: true, height: _resolveHeaderSize(), width: _resolveHeaderSize()),
         ),
         PosColumn(
           text: '\$${order.total.toStringAsFixed(2)}',
           width: 6,
-          styles: const PosStyles(
+          styles: PosStyles(
             align: PosAlign.right,
             bold: true,
-            height: PosTextSize.size2,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
           ),
         ),
       ]);
 
       bytes += generator.emptyLines(1);
       bytes += generator.text('Thank you for your purchase!',
-          styles: const PosStyles(align: PosAlign.center));
+          styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
 
       // Add barcode if order code exists
       if (order.orderCode != null && order.orderCode!.isNotEmpty) {
@@ -537,12 +573,12 @@ class PrintingService {
 
       // Large order number
       bytes += generator.text(
-        'ORDER #${order.orderId ?? "N/A"}',
-        styles: const PosStyles(
+        'ORDER #${order.orderCode ?? "N/A"}',
+        styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: PosTextSize.size2,
-          width: PosTextSize.size2,
+          height: _resolveHeaderSize(), // Using resolveHeaderSize
+          width: _resolveHeaderSize(),
         ),
       );
 
@@ -550,27 +586,28 @@ class PrintingService {
 
       // Order info
       bytes += generator.text('Time: ${_formatTime(DateTime.now())}',
-          styles: const PosStyles(align: PosAlign.center, bold: true));
+          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
       bytes += generator.text('Type: ${order.type == "DINE_IN" ? "DINE IN" : "TAKE AWAY"}',
-          styles: const PosStyles(align: PosAlign.center, bold: true));
+          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
 
       if (order.tableName != null) {
         bytes += generator.text(
           'TABLE: ${order.tableName}',
-          styles: const PosStyles(
+          styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: PosTextSize.size2,
+            height: _resolveHeaderSize(), // Table name is important
+            width: _resolveHeaderSize(),
           ),
         );
       }
 
       bytes += generator.text('Persons: ${order.numberOfPersons}',
-          styles: const PosStyles(align: PosAlign.center));
+          styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
 
       if (order.customerName != null) {
         bytes += generator.text('Customer: ${order.customerName}',
-            styles: const PosStyles(align: PosAlign.center));
+            styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
       }
 
       bytes += generator.hr(ch: '=');
@@ -579,10 +616,11 @@ class PrintingService {
       for (final item in order.items) {
         bytes += generator.text(
           '${item.quantity}x ${item.productName}',
-          styles: const PosStyles(
+          styles: PosStyles(
             align: PosAlign.left,
             bold: true,
-            height: PosTextSize.size2,
+            height: _resolveHeaderSize(), // Items are main content for KDS
+            width: _resolveHeaderSize(),
           ),
         );
 
@@ -590,7 +628,7 @@ class PrintingService {
         for (final comp in item.components) {
           bytes += generator.text(
             '   + ${comp.name} x${comp.quantity}',
-            styles: const PosStyles(align: PosAlign.left, bold: true),
+            styles: PosStyles(align: PosAlign.left, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
           );
         }
 
@@ -598,7 +636,7 @@ class PrintingService {
         if (item.note != null && item.note!.isNotEmpty) {
           bytes += generator.text(
             '   *** ${item.note} ***',
-            styles: const PosStyles(align: PosAlign.left, bold: true),
+            styles: PosStyles(align: PosAlign.left, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
           );
         }
 
@@ -611,7 +649,7 @@ class PrintingService {
       if (order.orderCode != null && order.orderCode!.isNotEmpty) {
         bytes += generator.emptyLines(1);
         bytes += generator.barcode(
-          Barcode.code128(order.orderCode!.codeUnits),
+          Barcode.code128(("B${order.orderCode!}").codeUnits),
           height: 80,
           align: PosAlign.center,
         );
@@ -667,36 +705,37 @@ class PrintingService {
       if (storeName != null) {
         bytes += generator.text(
           storeName,
-          styles: const PosStyles(
+          styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: PosTextSize.size2,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
           ),
         );
       }
 
       bytes += generator.text('PAYMENT RECEIPT',
-          styles: const PosStyles(align: PosAlign.center, bold: true));
+          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
       bytes += generator.hr();
 
       // Ticket info
       bytes += generator.text('Ticket #$ticketNumber',
-          styles: const PosStyles(align: PosAlign.center, bold: true));
+          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
 
       // Add order code if available
       if (orderCode != null && orderCode.isNotEmpty) {
         bytes += generator.text('Order: $orderCode',
-            styles: const PosStyles(align: PosAlign.center, bold: true));
+            styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
       }
 
       bytes += generator.text('Date: ${_formatDateTime(createdAt)}',
-          styles: const PosStyles(align: PosAlign.left));
+          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
       if (cashierName != null) {
         bytes += generator.text('Cashier: $cashierName',
-            styles: const PosStyles(align: PosAlign.left));
+            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
       }
       bytes += generator.text('Payment: $paymentMethod',
-          styles: const PosStyles(align: PosAlign.left));
+          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
 
       bytes += generator.hr();
 
@@ -707,11 +746,11 @@ class PrintingService {
         final price = item['price'] ?? 0.0;
 
         bytes += generator.row([
-          PosColumn(text: '${qty}x $name', width: 8),
+          PosColumn(text: '${qty}x $name', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
             text: '\$${(price as num).toStringAsFixed(2)}',
             width: 4,
-            styles: const PosStyles(align: PosAlign.right),
+            styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
         ]);
 
@@ -726,12 +765,12 @@ class PrintingService {
             if (compPrice > 0) {
               bytes += generator.text(
                 '  + ${compQty}x $compName (+\$${(compPrice * compQty).toStringAsFixed(2)})',
-                styles: const PosStyles(align: PosAlign.left, fontType: PosFontType.fontB),
+                styles: PosStyles(align: PosAlign.left, fontType: PosFontType.fontB, height: _resolveTextSize(), width: _resolveTextSize()),
               );
             } else {
               bytes += generator.text(
                 '  + ${compQty}x $compName',
-                styles: const PosStyles(align: PosAlign.left, fontType: PosFontType.fontB),
+                styles: PosStyles(align: PosAlign.left, fontType: PosFontType.fontB, height: _resolveTextSize(), width: _resolveTextSize()),
               );
             }
           }
@@ -745,28 +784,29 @@ class PrintingService {
         PosColumn(
           text: 'PAID:',
           width: 6,
-          styles: const PosStyles(bold: true, height: PosTextSize.size2),
+          styles: PosStyles(bold: true, height: _resolveHeaderSize(), width: _resolveHeaderSize()),
         ),
         PosColumn(
           text: '\$${amount.toStringAsFixed(2)}',
           width: 6,
-          styles: const PosStyles(
+          styles: PosStyles(
             align: PosAlign.right,
             bold: true,
-            height: PosTextSize.size2,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
           ),
         ),
       ]);
 
       bytes += generator.emptyLines(1);
       bytes += generator.text('Thank you!',
-          styles: const PosStyles(align: PosAlign.center));
+          styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
 
       // Add barcode if order code exists
       if (orderCode != null && orderCode.isNotEmpty) {
         bytes += generator.emptyLines(1);
         bytes += generator.barcode(
-          Barcode.code128(orderCode.codeUnits),
+          Barcode.code128(('B$orderCode').codeUnits),
           height: 80,
           align: PosAlign.center,
         );

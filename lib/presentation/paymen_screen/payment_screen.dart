@@ -400,10 +400,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         final isDark = Theme.of(context).brightness == Brightness.dark;
 
         return Container(
-          width: 320,
+          width: 380,
           decoration: BoxDecoration(
             color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(8), // Reduced from 12
             border: Border.all(
               color: isDraggingOver
                   ? Theme.of(context).colorScheme.primary
@@ -436,7 +436,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), // Reduced from 16, 12
       decoration: BoxDecoration(
         color: ticket.isPaid
             ? (isDark ? Colors.green[900]!.withValues(alpha: 0.3) : Colors.green[50])
@@ -454,16 +454,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           if (ticket.isPaid) ...[
             Icon(
               Icons.lock,
-              size: 16,
+              size: 20,
               color: isDark ? Colors.green[400] : Colors.green[700],
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
           ],
           Text(
             ticket.isPaid ? 'Ticket #${ticket.ticketNum}' : 'Ticket #${ticketIndex + 1}',
             style: TextStyle(
               fontWeight: FontWeight.w600,
-              fontSize: 14,
+              fontSize: 17, // Increased from 16
               color: ticket.isPaid
                   ? (isDark ? Colors.green[300] : Colors.green[900])
                   : Theme.of(context).colorScheme.onSurface,
@@ -474,17 +474,20 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             '${ticket.items.length} items',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-              fontSize: 12,
+              fontSize: 15, // Increased from 14
             ),
           ),
           if (ref.watch(ticketsProvider).length > 1 && !ticket.isPaid) ...[
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             InkWell(
               onTap: () => _removeTicket(ticketIndex),
-              child: Icon(
-                Icons.close,
-                size: 16,
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                child: Icon(
+                  Icons.close,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
               ),
             ),
           ],
@@ -789,22 +792,22 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 currencyFormatter,
                 color: Colors.blue[700],
               ),
-            const Divider(height: 16, thickness: 2),
+            const Divider(height: 20, thickness: 2),
             // Clickable total - highlighted to indicate it's clickable
             Container(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(10), // Reduced from 12
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(8), // Reduced from 12
                 border: Border.all(
                   color: ticket.isPaid ? Colors.green[600]! : Colors.blue[600]!,
-                  width: 2,
+                  width: 3,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: (ticket.isPaid ? Colors.green : Colors.blue).withValues(alpha: 0.2),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
+                    color: (ticket.isPaid ? Colors.green : Colors.blue).withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
                   ),
                 ],
               ),
@@ -815,14 +818,14 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                     children: [
                       Icon(
                         Icons.touch_app,
-                        size: 20,
+                        size: 28,
                         color: ticket.isPaid ? Colors.green[700] : Colors.blue[700],
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       Text(
                         '${l10n.translate('total')}:',
                         style: TextStyle(
-                          fontSize: 18,
+                          fontSize: 21, // Increased from 20
                           fontWeight: FontWeight.bold,
                           color: ticket.isPaid ? Colors.green[700] : Colors.blue[700],
                         ),
@@ -832,7 +835,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                   Text(
                     currencyFormatter.format(ticket.total),
                     style: TextStyle(
-                      fontSize: 20,
+                      fontSize: 25, // Increased from 24
                       fontWeight: FontWeight.bold,
                       color: ticket.isPaid ? Colors.green[700] : Colors.blue[700],
                     ),
@@ -843,46 +846,47 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             const SizedBox(height: 12),
             // Payment Method Dropdown
             _buildPaymentMethodDropdown(ticketIndex, ticket),
-            const SizedBox(height: 10),
-            // Action Buttons
+            const SizedBox(height: 16),
+            // Action Buttons - Made much bigger for touch
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: ticket.items.isEmpty ? null : () => _printTicket(ticketIndex),
-                    icon: const Icon(Icons.print, size: 16),
+                    icon: const Icon(Icons.print, size: 24),
                     label: Text(
                       ticket.isPaid ? l10n.translate('reprint') : l10n.translate('print'),
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600), // Increased from 16
                     ),
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      padding: const EdgeInsets.symmetric(vertical: 14), // Reduced from 18
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(2),
+                        borderRadius: BorderRadius.circular(6), // Reduced from 8
                       ),
-                      side: BorderSide(color: Colors.grey[400]!),
+                      side: BorderSide(color: Colors.grey[400]!, width: 1.5), // Thinner border
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: (ticket.items.isEmpty || ticket.isPaid) ? null : () => _payTicket(ticketIndex),
                     icon: Icon(
                       ticket.isPaid ? Icons.check_circle : Icons.payment,
-                      size: 14,
+                      size: 24,
                     ),
                     label: Text(
                       ticket.isPaid ? 'Paid' : 'Pay',
-                      style: const TextStyle(fontSize: 12),
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold), // Increased from 16
                     ),
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      backgroundColor: ticket.isPaid ? Colors.green[700] : Colors.grey[900],
+                      padding: const EdgeInsets.symmetric(vertical: 14), // Reduced from 18
+                      backgroundColor: ticket.isPaid ? Colors.green[700] : Colors.blue[700],
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(2),
+                        borderRadius: BorderRadius.circular(6), // Reduced from 8
                       ),
+                      elevation: 4,
                     ),
                   ),
                 ),
@@ -926,14 +930,17 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       initialValue: ticket.paymentMethod,
       decoration: InputDecoration(
         labelText: 'Payment Method',
-        labelStyle: const TextStyle(fontSize: 12),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(2)),
-        isDense: true,
+        labelStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500), // Increased from 16
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2), // Reduced from 16
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6), // Reduced from 8
+          borderSide: const BorderSide(width: 2),
+        ),
         filled: ticket.isPaid,
         fillColor: ticket.isPaid ? Colors.green[50] : null,
       ),
-      style: const TextStyle(fontSize: 12, color: Colors.black87),
+      style: const TextStyle(fontSize: 18, color: Colors.black87, fontWeight: FontWeight.w500), // Increased from 16
+      dropdownColor: Theme.of(context).cardColor,
       items: TransactionType.values.map((method) {
         IconData icon;
         switch (method) {
@@ -952,13 +959,20 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         }
 
         return DropdownMenuItem(
+
           value: method,
-          child: Row(
-            children: [
-              Icon(icon, size: 16),
-              const SizedBox(width: 8),
-              Text(method.value),
-            ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 5),
+            child: Row(
+              children: [
+                Icon(icon, size: 26), // Increased from 24
+                const SizedBox(width: 12),
+                Text(
+                  method.value,
+                  style: const TextStyle(fontSize: 18), // Increased from 16
+                ),
+              ],
+            ),
           ),
         );
       }).toList(),
@@ -1112,14 +1126,22 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           padding: const EdgeInsets.all(16),
           child: SizedBox(
             width: double.infinity,
+            height: 60,
             child: ElevatedButton.icon(
               onPressed: enteredAmount >= totalAmount ? () => _payTicket(selectedTicketIndex) : null,
-              icon: const Icon(Icons.payment),
-              label: Text(l10n.translate('pay_ticket'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              icon: const Icon(Icons.payment, size: 28),
+              label: Text(
+                l10n.translate('pay_ticket'),
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold), // Increased from 20
+              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green[600],
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8), // Reduced from 12
+                ),
+                elevation: 6,
               ),
             ),
           ),
@@ -1144,9 +1166,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 3,
-          childAspectRatio: 1.5,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
+          childAspectRatio: 1.3,
+          crossAxisSpacing: 8, // Reduced from 12
+          mainAxisSpacing: 8, // Reduced from 12
         ),
         itemCount: 12,
         itemBuilder: (context, index) {
@@ -1164,14 +1186,15 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                   ? Colors.white
                   : (isDark ? Colors.white : Colors.black87),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(8), // Reduced from 12
               ),
-              elevation: 2,
+              elevation: 4,
+              padding: const EdgeInsets.all(8),
             ),
             child: Text(
               button,
               style: const TextStyle(
-                fontSize: 24,
+                fontSize: 34, // Increased from 32
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -1326,6 +1349,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     final ticketNum = ticket.ticketNum ?? '${ticketIndex + 1}'.padLeft(4, '0');
 
+    // Get business name from SharedPreferences
+    final prefs = ref.read(sharedPreferencesProvider);
+    final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
+
     try {
       final success = await printingService.printTicketReceipt(
         ticketId: ticket.ticketId ?? ticketIndex,
@@ -1336,7 +1363,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         items: itemsForPrint,
         orderCode: widget.order.orderCode,
         cashierName: currentUser?.firstName,
-        storeName: 'POS Store',
+        storeName: businessName,
       );
 
       if (success) {
@@ -1497,6 +1524,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           };
         }).toList();
 
+        // Get business name from SharedPreferences
+        final prefs = ref.read(sharedPreferencesProvider);
+        final businessName = prefs.getString('business_name') ?? 'POS Store';
+
         await printingService.printTicketReceipt(
           ticketId: ticketId,
           ticketNumber: ticketNumStr,
@@ -1506,7 +1537,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           items: itemsForPrint,
           orderCode: widget.order.orderCode,
           cashierName: currentUser?.firstName,
-          storeName: 'POS Store',
+          storeName: businessName,
         );
 
         // Update print count

@@ -982,6 +982,10 @@ class _TicketDetailsDialog extends ConsumerWidget {
       });
     }
 
+    // Get business name from SharedPreferences
+    final prefs = ref.read(sharedPreferencesProvider);
+    final businessName = prefs.getString('business_name') ?? 'POS Store';
+
     try {
       final success = await printingService.printTicketReceipt(
         ticketId: ticket.id,
@@ -992,7 +996,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
         items: itemsForPrint,
         orderCode: orderData?.code,
         cashierName: currentUser?.firstName,
-        storeName: 'POS Store',
+        storeName: businessName,
       );
 
       if (success) {
