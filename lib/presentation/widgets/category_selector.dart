@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
@@ -20,7 +21,7 @@ class CategorySelector extends ConsumerWidget {
         boxShadow: [
           BoxShadow(
             color: Theme.of(context).shadowColor.withValues(alpha: 0.05),
-            blurRadius: 20,
+            blurRadius: 4,
             offset: const Offset(0, 2),
           ),
         ],
@@ -39,7 +40,7 @@ class CategorySelector extends ConsumerWidget {
                 width: 76,
                 decoration: BoxDecoration(
                   color: Colors.blue[700],
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.blue.withValues(alpha: 0.3),
@@ -93,7 +94,7 @@ class CategorySelector extends ConsumerWidget {
             if (index == 0) {
               // "All" category
               return _CategoryChip(
-                name: '*',
+                name: 'All',
                 imageUrl: null,
                 isSelected: selectedCategory == null,
                 onTap: () {
@@ -259,7 +260,6 @@ class _CategoryChip extends StatelessWidget {
       padding: const EdgeInsets.only(right: 12),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
         child: Container(
           width: 120,
           constraints: const BoxConstraints(
@@ -269,12 +269,11 @@ class _CategoryChip extends StatelessWidget {
           decoration: BoxDecoration(
             color: isSelected
                 ? Theme.of(context).primaryColor
-                : Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(4),
+                : Colors.grey[100],
             border: Border.all(
               color: isSelected
                   ? Theme.of(context).primaryColor
-                  : Theme.of(context).dividerColor,
+                  : Colors.grey[300]!,
               width: 2,
             ),
           ),

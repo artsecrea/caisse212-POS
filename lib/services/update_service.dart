@@ -68,7 +68,7 @@ class UpdateService {
   Future<UpdateInfo?> checkForUpdates() async {
     try {
       await _initPrefs();
-
+      
       final baseUrl = _prefs?.getString(_baseUrlKey);
       if (baseUrl == null || baseUrl.isEmpty) {
         _logger.warning('No base URL configured for update check');

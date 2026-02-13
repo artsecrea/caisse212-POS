@@ -7,7 +7,6 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
-import '../../utils/currency_formatter.dart';
 import 'product_modification_dialog.dart';
 
 class ProductGrid extends ConsumerWidget {
@@ -96,7 +95,7 @@ class _ProductCard extends ConsumerWidget {
         // Check if product has required components
         componentsDataAsync.whenData((componentsData) {
           final hasRequiredComponents = componentsData.any(
-            (data) => (data['isRequired'] as bool?) ?? false
+            (data) => data['isRequired'] as bool
           );
 
           if (hasRequiredComponents) {
@@ -123,14 +122,12 @@ class _ProductCard extends ConsumerWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(4),
         ),
-        child: showImages ? _buildWithImage(context, ref) : _buildCompact(context, ref),
+        child: showImages ? _buildWithImage(context) : _buildCompact(context),
       ),
     );
   }
 
-  Widget _buildWithImage(BuildContext context, WidgetRef ref) {
-    final currencyFormatter = ref.watch(currencyFormatterProvider);
-
+  Widget _buildWithImage(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -181,7 +178,7 @@ class _ProductCard extends ConsumerWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  currencyFormatter.format(product.finalPrice),
+                  '${product.finalPrice.toStringAsFixed(2)} \$',
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.bold,
@@ -196,26 +193,25 @@ class _ProductCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildCompact(BuildContext context, WidgetRef ref) {
-    final currencyFormatter = ref.watch(currencyFormatterProvider);
+  Widget _buildCompact(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Row(
         children: [
-          Text(
-            product.name,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
+          Expanded(
+            child: Text(
+              product.name,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 4),
+          const SizedBox(width: 8),
           Text(
-            currencyFormatter.format(product.finalPrice),
+            '${product.finalPrice.toStringAsFixed(2)} \$',
             style: TextStyle(
               color: Theme.of(context).colorScheme.primary,
               fontWeight: FontWeight.bold,

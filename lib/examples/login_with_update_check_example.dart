@@ -1,5 +1,5 @@
-// // Example: How to integrate update check in your login flow
-//
+// Example: How to integrate update check in your login flow
+
 // import 'package:flutter/material.dart';
 // import 'package:flutter_riverpod/flutter_riverpod.dart';
 // import '../providers/update_provider.dart';

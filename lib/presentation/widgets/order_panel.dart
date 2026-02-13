@@ -443,7 +443,14 @@ class OrderPanel extends ConsumerWidget {
                                                   ),
                                                 )
                                               : InkWell(
-                                                  onTap: () => _showQuantityDialog(context, ref, invertedIndex, item),
+                                                  onTap: () {
+                                                    // Directly add one to quantity
+                                                    ref.read(orderProvider.notifier).updateItemQuantity(
+                                                      invertedIndex, 
+                                                      item.quantity + 1
+                                                    );
+                                                  },
+                                                  onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
                                                   borderRadius: BorderRadius.circular(8),
                                                   child: Container(
                                                     width: 48,

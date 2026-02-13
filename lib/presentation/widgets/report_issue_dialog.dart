@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../utils/app_localizations.dart';
@@ -15,7 +14,7 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
-
+  
   String _selectedType = 'GENERAL';
   bool _isSubmitting = false;
 
@@ -45,7 +44,7 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
 
     try {
       final apiService = ref.read(apiServiceProvider);
-
+      
       // Get current user from shared preferences
       final prefs = ref.read(sharedPreferencesProvider);
       final userId = prefs.getInt('user_id');
@@ -53,8 +52,8 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
       await apiService.submitIssue(
         title: _titleController.text.trim(),
         type: _selectedType,
-        description: _descriptionController.text.trim().isEmpty
-            ? null
+        description: _descriptionController.text.trim().isEmpty 
+            ? null 
             : _descriptionController.text.trim(),
         userId: userId,
       );
@@ -64,7 +63,7 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              AppLocalizations.of(context)?.translate('issue_submitted') ??
+              AppLocalizations.of(context)?.translate('issue_submitted') ?? 
               'Issue submitted successfully'
             ),
             backgroundColor: Colors.green,
@@ -145,8 +144,8 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   filled: true,
-                  fillColor: isDarkMode
-                      ? Colors.grey[800]
+                  fillColor: isDarkMode 
+                      ? Colors.grey[800] 
                       : Colors.grey[100],
                 ),
                 dropdownColor: isDarkMode ? Colors.grey[850] : Colors.white,
@@ -170,7 +169,7 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
               const SizedBox(height: 20),
 
               // Title Field
-              OnscreenKeyboardTextFormField(
+              TextFormField(
                 controller: _titleController,
                 decoration: InputDecoration(
                   labelText: localizations?.translate('issue_title') ?? 'Issue Title',
@@ -180,8 +179,8 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   filled: true,
-                  fillColor: isDarkMode
-                      ? Colors.grey[800]
+                  fillColor: isDarkMode 
+                      ? Colors.grey[800] 
                       : Colors.grey[100],
                 ),
                 style: TextStyle(
@@ -197,12 +196,12 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
               const SizedBox(height: 20),
 
               // Description Field
-              OnscreenKeyboardTextField(
+              TextFormField(
                 controller: _descriptionController,
                 maxLines: 5,
                 decoration: InputDecoration(
                   labelText: localizations?.translate('issue_description') ?? 'Issue Description',
-                  hintText: localizations?.translate('enter_issue_description') ??
+                  hintText: localizations?.translate('enter_issue_description') ?? 
                       'Describe the issue (optional)',
                   prefixIcon: const Padding(
                     padding: EdgeInsets.only(bottom: 80),
@@ -212,8 +211,8 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   filled: true,
-                  fillColor: isDarkMode
-                      ? Colors.grey[800]
+                  fillColor: isDarkMode 
+                      ? Colors.grey[800] 
                       : Colors.grey[100],
                   alignLabelWithHint: true,
                 ),

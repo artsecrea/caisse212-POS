@@ -1,4 +1,4 @@
-e # Server Configuration Password Reference
+# Server Configuration Password Reference
 
 ## Quick Access Guide
 

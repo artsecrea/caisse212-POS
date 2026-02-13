@@ -354,7 +354,6 @@ class DataSyncService {
           'manualDiscount': product.manualDiscount,
           'manualDiscountReason': product.manualDiscountReason,
           'state': product.state,
-          'note': product.manualDiscountReason,
           'components': componentsList,
         });
       }
@@ -374,8 +373,6 @@ class DataSyncService {
         'discountPercentage': order.discountPercentage,
         'note': order.note,
         'products': productsList,
-        'createdBy': order.createdBy,
-        'servedBy': order.takenBy,
         'createdAt': order.createdAt.toIso8601String(),
         'updatedAt': order.updatedAt.toIso8601String(),
       });
@@ -1101,10 +1098,10 @@ class DataSyncService {
         _logger.info('Deleted session code=$sessionCode from server immediately');
       } catch (e) {
         _logger.error('Failed to delete session immediately, queuing: $e');
-        await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionCode: sessionCode);
+        await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionId: entityId);
       }
     } else {
-      await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionCode: sessionCode);
+      await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionId: entityId);
     }
   }
 
@@ -1121,10 +1118,10 @@ class DataSyncService {
         _logger.info('Updated session code=$sessionCode on server immediately');
       } catch (e) {
         _logger.error('Failed to update session immediately, queuing: $e');
-        await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionCode: sessionCode, updateData: updateData);
+        await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionId: entityId, updateData: updateData);
       }
     } else {
-      await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionCode: sessionCode, updateData: updateData);
+      await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionId: entityId, updateData: updateData);
     }
   }
 }

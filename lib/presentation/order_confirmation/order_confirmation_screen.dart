@@ -165,7 +165,7 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
         final component = await (database.select(database.components)
               ..where((tbl) => tbl.id.equals(orderComp.componentId)))
             .getSingleOrNull();
-
+        
         if (component != null) {
           components.add({
             'name': component.name,

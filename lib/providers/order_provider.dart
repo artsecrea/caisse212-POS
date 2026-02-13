@@ -838,10 +838,9 @@ class OrderRepository {
   }) async {
     // Build the base query with filters
     var countQuery = _database.select(_database.orders);
-
+    var totalCount = 0;
     // Get total count with filters
-    int totalCount = 0;
-        {
+    {
       var query = _database.select(_database.orders);
 
       if (statusFilter != null && statusFilter != 'ALL') {
@@ -1186,7 +1185,7 @@ class OrderRepository {
     // Emit event
     _emitEvent(OrderDeletedEvent(orderId: orderId));
   }
-  
+
   /// Helper to queue order delete operation
   Future<void> _queueOrderDelete(int orderId, String orderCode) async {
     try {

@@ -466,7 +466,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
       // Get API service and call logout endpoint
       final apiService = ApiService(prefs);
-
+      
       // Call logout API (this won't throw error, just logs if it fails)
       await apiService.logout();
 

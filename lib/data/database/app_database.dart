@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:io';
 import 'package:drift/drift.dart' hide Column;
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
@@ -62,7 +61,7 @@ class AppDatabase extends _$AppDatabase {
   static LazyDatabase _openConnection() {
     return LazyDatabase(() async {
       final dbFolder = await getApplicationDocumentsDirectory();
-      final file = File(p.join(dbFolder.path, 'qcqc.db'));
+      final file = File(p.join(dbFolder.path, 'caisse212.db'));
       return NativeDatabase(file);
     });
   }

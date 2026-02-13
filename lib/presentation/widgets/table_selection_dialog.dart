@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../utils/button_styles.dart';
 
 class TableSelectionDialog extends ConsumerStatefulWidget {
   const TableSelectionDialog({Key? key}) : super(key: key);
@@ -591,11 +592,12 @@ class _ActiveOrdersTab extends ConsumerWidget {
                               });
                             }
                           },
-                          icon: const Icon(Icons.payment, size: 18),
+                          icon: const Icon(Icons.payment, size: 22),
                           label: const Text('Pay'),
-                          style: OutlinedButton.styleFrom(
+                          style: AppButtonStyles.outlinedButtonStyle(
                             foregroundColor: Colors.green[700],
-                            side: BorderSide(color: Colors.green[700]!),
+                            borderColor: Colors.green[700]!,
+                            isLarge: true,
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -614,11 +616,12 @@ class _ActiveOrdersTab extends ConsumerWidget {
                               });
                             }
                           },
-                          icon: const Icon(Icons.add, size: 18),
+                          icon: const Icon(Icons.add, size: 22),
                           label: const Text('Add Items'),
-                          style: ElevatedButton.styleFrom(
+                          style: AppButtonStyles.elevatedButtonStyle(
                             backgroundColor: Theme.of(context).primaryColor,
                             foregroundColor: Colors.white,
+                            isLarge: true,
                           ),
                         ),
                         const SizedBox(width: 8),

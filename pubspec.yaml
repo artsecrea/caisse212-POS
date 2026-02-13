@@ -55,7 +55,7 @@ dependencies:
   esc_pos_utils_plus: ^2.0.4
 
   # Barcode Scanner
-  flutter_barcode_listener: ^0.1.5
+  flutter_barcode_listener: ^0.1.4
 
   # Update Service
   package_info_plus: ^8.0.0

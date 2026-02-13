@@ -4,6 +4,7 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show O
 import '../../providers/database_providers.dart';
 import '../../domain/models/order_models.dart';
 import '../../services/permission_service.dart';
+import '../../utils/button_styles.dart';
 import 'permission_guard.dart';
 
 class ProductModificationDialog extends ConsumerStatefulWidget {
@@ -325,8 +326,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               child: Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton(
+                    flex: 1,
+                    child: TextButton(
                       onPressed: () => Navigator.of(context).pop(),
+                      style: AppButtonStyles.textButtonStyle(isLarge: true),
                       child: const Text('Cancel'),
                     ),
                   ),
@@ -335,6 +338,11 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                     flex: 2,
                     child: ElevatedButton(
                       onPressed: () => _handleSave(context),
+                      style: AppButtonStyles.elevatedButtonStyle(
+                        backgroundColor: Theme.of(context).primaryColor,
+                        foregroundColor: Colors.white,
+                        isLarge: true,
+                      ),
                       child: Text(widget.isEditMode ? 'Update' : 'Add to Order'),
                     ),
                   ),
@@ -416,129 +424,176 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                         }
                         final quantity = _componentQuantities[component.id] ?? 0;
 
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          elevation: isRequired ? 3 : 1,
-                          color: isRequired ? Colors.orange.withValues(alpha: 0.05) : null,
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Text(
-                                            component.name,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                          if (isRequired) ...[
-                                            const SizedBox(width: 8),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                              decoration: BoxDecoration(
-                                                color: Colors.orange,
-                                                borderRadius: BorderRadius.circular(4),
-                                              ),
-                                              child: const Text(
-                                                'REQUIRED',
-                                                style: TextStyle(
-                                                  fontSize: 10,
+                        return LayoutBuilder(
+                          builder: (context, constraints) {
+                            return GestureDetector(
+                              onTapDown: (details) {
+                                final cardWidth = constraints.maxWidth;
+                                final tapPosition = details.localPosition.dx;
+                                
+                                // If tapped on right half, add; if left half, subtract
+                                if (tapPosition > cardWidth / 2) {
+                                  // Right side - Add
+                                  if (quantity < maxQuantity) {
+                                    setState(() {
+                                      _componentQuantities[component.id] = quantity + 1;
+                                    });
+                                  }
+                                } else {
+                                  // Left side - Subtract
+                                  if (quantity > minQuantity) {
+                                    setState(() {
+                                      final newQuantity = quantity - 1;
+                                      
+                                      if (isRequired) {
+                                        _componentQuantities[component.id] = newQuantity;
+                                      } else {
+                                        if (newQuantity > 0) {
+                                          _componentQuantities[component.id] = newQuantity;
+                                        } else {
+                                          _componentQuantities.remove(component.id);
+                                          _componentSpecial.remove(component.id);
+                                        }
+                                      }
+                                    });
+                                  }
+                                }
+                              },
+                              child: Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            elevation: isRequired ? 3 : 1,
+                            color: isRequired ? Colors.orange.withValues(alpha: 0.05) : null,
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  // Left indicator (subtract zone)
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: quantity > minQuantity 
+                                          ? Colors.red.withValues(alpha: 0.1)
+                                          : Colors.grey.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Icon(
+                                      Icons.remove,
+                                      color: quantity > minQuantity ? Colors.red : Colors.grey,
+                                      size: 24,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  // Component info
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                component.name,
+                                                style: const TextStyle(
                                                   fontWeight: FontWeight.bold,
-                                                  color: Colors.white,
+                                                  fontSize: 16,
                                                 ),
                                               ),
                                             ),
+                                            if (isRequired) ...[
+                                              const SizedBox(width: 8),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.orange,
+                                                  borderRadius: BorderRadius.circular(4),
+                                                ),
+                                                child: const Text(
+                                                  'REQUIRED',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ],
-                                        ],
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          if (component.price > 0)
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Row(
+                                          children: [
+                                            if (component.price > 0)
+                                              Text(
+                                                '+\$${component.price.toStringAsFixed(2)}',
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: Colors.green[700],
+                                                ),
+                                              ),
+                                            const SizedBox(width: 12),
                                             Text(
-                                              '+\$${component.price.toStringAsFixed(2)}',
+                                              'Min: $minQuantity, Max: $maxQuantity',
                                               style: TextStyle(
+                                                fontSize: 12,
                                                 color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                                               ),
                                             ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            'Min: $minQuantity, Max: $maxQuantity',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                                              fontStyle: FontStyle.italic,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                          ],
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                                Row(
-                                  children: [
-                                    IconButton(
-                                      onPressed: quantity > minQuantity
-                                          ? () {
-                                        setState(() {
-                                          final newQuantity = quantity - 1;
-
-                                          // For required components, keep at minimum
-                                          // For optional components, can go to 0 (which removes them)
-                                          if (isRequired) {
-                                            _componentQuantities[component.id] = newQuantity;
-                                          } else {
-                                            if (newQuantity > 0) {
-                                              _componentQuantities[component.id] = newQuantity;
-                                            } else {
-                                              // Remove optional component if quantity reaches 0
-                                              _componentQuantities.remove(component.id);
-                                              _componentSpecial.remove(component.id);
-                                            }
-                                          }
-                                        });
-                                      }
-                                          : null,
-                                      icon: Icon(
-                                        Icons.remove_circle_outline,
-                                        color: quantity > minQuantity ? null : Colors.grey,
+                                  const SizedBox(width: 12),
+                                  // Quantity display
+                                  Container(
+                                    width: 50,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: Theme.of(context).primaryColor,
+                                        width: 2,
                                       ),
                                     ),
-                                    SizedBox(
-                                      width: 30,
+                                    child: Center(
                                       child: Text(
                                         quantity.toString(),
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontWeight: FontWeight.bold,
+                                          fontSize: 20,
+                                          color: Theme.of(context).primaryColor,
                                         ),
                                       ),
                                     ),
-                                    IconButton(
-                                      onPressed: quantity < maxQuantity
-                                          ? () {
-                                        setState(() {
-                                          _componentQuantities[component.id] = quantity + 1;
-                                        });
-                                      }
-                                          : null,
-                                      icon: Icon(
-                                        Icons.add_circle,
-                                        color: quantity < maxQuantity
-                                            ? Theme.of(context).primaryColor
-                                            : Colors.grey,
-                                      ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  // Right indicator (add zone)
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: quantity < maxQuantity
+                                          ? Colors.green.withValues(alpha: 0.1)
+                                          : Colors.grey.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
-                                  ],
-                                ),
-                              ],
+                                    child: Icon(
+                                      Icons.add,
+                                      color: quantity < maxQuantity 
+                                          ? Colors.green 
+                                          : Colors.grey,
+                                      size: 24,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
+                        );
+                          },
                         );
                       }).toList(),
                     ],

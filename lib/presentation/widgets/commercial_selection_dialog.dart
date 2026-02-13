@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
+import '../../utils/button_styles.dart';
 
 class CommercialSelectionDialog extends ConsumerStatefulWidget {
   const CommercialSelectionDialog({Key? key}) : super(key: key);
@@ -123,9 +124,10 @@ class _CommercialSelectionDialogState extends ConsumerState<CommercialSelectionD
               },
               icon: const Icon(Icons.clear),
               label: const Text('Unselect Commercial'),
-              style: OutlinedButton.styleFrom(
+              style: AppButtonStyles.outlinedButtonStyle(
                 foregroundColor: Colors.red,
-                side: const BorderSide(color: Colors.red),
+                borderColor: Colors.red,
+                isLarge: true,
               ),
             ),
           ],

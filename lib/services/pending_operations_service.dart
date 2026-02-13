@@ -58,7 +58,7 @@ class PendingOperationsService {
   /// Queue a delete operation for a session
   Future<void> queueSessionDelete({
     required int entityId,
-    required String sessionCode,
+    required int sessionId,
   }) async {
     try {
       await _database.into(_database.pendingSyncOperations).insert(
@@ -66,10 +66,11 @@ class PendingOperationsService {
           operationType: 'DELETE',
           entityType: 'SESSION',
           entityId: entityId,
-          updateData: Value(jsonEncode({'_sessionCode': sessionCode})),
+          serverId: Value(sessionId),
+          updateData: Value(jsonEncode({'_sessionId': sessionId})),
         ),
       );
-      _logger.info('Queued DELETE operation for SESSION code=$sessionCode');
+      _logger.info('Queued DELETE operation for SESSION id=$sessionId');
     } catch (e) {
       _logger.error('Failed to queue session delete operation: $e');
       rethrow;
@@ -79,22 +80,23 @@ class PendingOperationsService {
   /// Queue an update operation for a session
   Future<void> queueSessionUpdate({
     required int entityId,
-    required String sessionCode,
+    required int sessionId,
     required Map<String, dynamic> updateData,
   }) async {
     try {
       final dataWithMeta = Map<String, dynamic>.from(updateData);
-      dataWithMeta['_sessionCode'] = sessionCode;
+      dataWithMeta['_sessionId'] = sessionId;
 
       await _database.into(_database.pendingSyncOperations).insert(
         PendingSyncOperationsCompanion.insert(
           operationType: 'UPDATE',
           entityType: 'SESSION',
           entityId: entityId,
+          serverId: Value(sessionId),
           updateData: Value(jsonEncode(dataWithMeta)),
         ),
       );
-      _logger.info('Queued UPDATE operation for SESSION code=$sessionCode');
+      _logger.info('Queued UPDATE operation for SESSION id=$sessionId');
     } catch (e) {
       _logger.error('Failed to queue session update operation: $e');
       rethrow;

@@ -3,7 +3,7 @@ import 'package:drift/drift.dart';
 class Orders extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get code => text().unique()();
-  TextColumn get status => text().withDefault(const Constant('ONHOLD'))(); // ONHOLD, PENDING, PREPARING, READY, DELIVERED, COMPLETED
+  TextColumn get status => text().withDefault(const Constant('ONHOLD'))(); // ONHOLD, PENDING, PREPARING, READY, DELIVERED
   TextColumn get type => text().withDefault(const Constant('DINE_IN'))(); // DINE_IN, TAKE_AWAY, DELIVERY
   IntColumn get priority => integer().withDefault(const Constant(0))();
   TextColumn get coupon => text().nullable()();
@@ -19,8 +19,6 @@ class Orders extends Table {
   IntColumn get clientId => integer().nullable()();
   IntColumn get commercialId => integer().nullable()();
   TextColumn get note => text().nullable()();
-  IntColumn get printCount => integer().withDefault(const Constant(0))(); // Number of times printed
-  BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

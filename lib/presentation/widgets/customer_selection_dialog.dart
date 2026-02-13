@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
+import '../../utils/button_styles.dart';
 import 'package:drift/drift.dart' show Value;
 
 class CustomerSelectionDialog extends ConsumerStatefulWidget {
@@ -83,9 +84,10 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                     },
                     icon: const Icon(Icons.clear),
                     label: const Text('Unselect Customer'),
-                    style: OutlinedButton.styleFrom(
+                    style: AppButtonStyles.outlinedButtonStyle(
                       foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
+                      borderColor: Colors.red,
+                      isLarge: true,
                     ),
                   ),
                 ),
@@ -97,6 +99,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                     },
                     icon: const Icon(Icons.add),
                     label: const Text('Add New Customer'),
+                    style: AppButtonStyles.elevatedButtonStyle(isLarge: true),
                   ),
                 ),
               ],
@@ -255,6 +258,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
+            style: AppButtonStyles.textButtonStyle(isLarge: true),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -283,6 +287,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                 );
               }
             },
+            style: AppButtonStyles.elevatedButtonStyle(isLarge: true),
             child: const Text('Add'),
           ),
         ],

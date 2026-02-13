@@ -151,7 +151,7 @@ class UpdateDialog extends ConsumerWidget {
                 ? null
                 : () async {
                     final success = await ref.read(updateProvider.notifier).downloadAndInstall();
-
+                    
                     if (success && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(

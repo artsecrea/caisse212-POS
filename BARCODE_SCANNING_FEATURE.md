@@ -109,4 +109,3 @@ To test barcode printing:
 - Debounce timer (100ms) ensures complete barcode capture
 - Code 39 format chosen for wide compatibility with standard barcode scanners
 - Text size affects all printed receipts, KDS tickets, and payment tickets
-

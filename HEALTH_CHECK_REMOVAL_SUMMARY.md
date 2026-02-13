@@ -260,5 +260,4 @@ Consider adding:
 
 ---
 
-# **Imple`~~**~~[mentation Complete!*]()~~**~~`* 🎉
-
+**Implementation Complete!** 🎉

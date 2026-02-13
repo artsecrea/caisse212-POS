@@ -8,6 +8,7 @@ import '../../services/api_service.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/button_styles.dart';
 import '../main_screen/main_screen.dart';
 import '../widgets/report_issue_dialog.dart';
 import '../widgets/update_dialog.dart';
@@ -191,9 +192,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           actions: [
             ElevatedButton(
               onPressed: () => Navigator.of(context).pop(),
-              style: ElevatedButton.styleFrom(
+              style: AppButtonStyles.elevatedButtonStyle(
                 backgroundColor: Theme.of(context).primaryColor,
                 foregroundColor: Colors.white,
+                isLarge: true,
               ),
               child: const Text('OK'),
             ),
@@ -279,6 +281,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(false),
+                  style: AppButtonStyles.textButtonStyle(isLarge: true),
                   child: Text(l10n.translate('cancel')),
                 ),
                 ElevatedButton(
@@ -287,9 +290,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     final verified = BCrypt.checkpw(password, tenantPasswordHash);
                     Navigator.of(context).pop(verified);
                   },
-                  style: ElevatedButton.styleFrom(
+                  style: AppButtonStyles.elevatedButtonStyle(
                     backgroundColor: Colors.orange,
                     foregroundColor: Colors.white,
+                    isLarge: true,
                   ),
                   child: Text(l10n.translate('verify')),
                 ),
@@ -521,9 +525,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           actions: [
             ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(
+              style: AppButtonStyles.elevatedButtonStyle(
                 backgroundColor: Colors.red,
                 foregroundColor: Colors.white,
+                isLarge: true,
               ),
               child: const Text('Reconnect'),
             ),
@@ -817,16 +822,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ],
                             const SizedBox(height: 32),
                             SizedBox(
-                              height: 60,
+                              height: 70,
                               child: ElevatedButton(
                                 onPressed: _isLoading ? null : _handleLogin,
-                                style: ElevatedButton.styleFrom(
+                                style: AppButtonStyles.elevatedButtonStyle(
                                   backgroundColor: Theme.of(context).primaryColor,
                                   foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  elevation: 4,
+                                  isLarge: true,
                                 ),
                                 child: _isLoading
                                     ? const SizedBox(
@@ -840,7 +842,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     : Row(
                                         mainAxisAlignment: MainAxisAlignment.center,
                                         children: [
-                                          const Icon(Icons.login, size: 24),
+                                          const Icon(Icons.login, size: 28),
                                           const SizedBox(width: 12),
                                           Text(
                                             l10n.translate('sign_in'),

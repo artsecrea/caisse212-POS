@@ -61,7 +61,7 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
       // Get current app version
       final packageInfo = await PackageInfo.fromPlatform();
       final currentVersion = packageInfo.version;
-
+      
       state = state.copyWith(currentVersion: currentVersion);
 
       // Call API to check for updates

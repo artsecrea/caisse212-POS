@@ -31,7 +31,7 @@ class MainScreen extends ConsumerStatefulWidget {
 class _MainScreenState extends ConsumerState<MainScreen> {
   final _logger = Logger.instance;
   final _focusNode = FocusNode();
-
+  
   @override
   void initState() {
     super.initState();
@@ -41,12 +41,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   void _initializeBarcodeScanner() {
     final barcodeService = ref.read(barcodeScannerServiceProvider);
     barcodeService.initialize(_focusNode);
-
+    
     // Listen to barcode scans
     barcodeService.barcodeStream.listen((barcode) {
       _handleBarcodeScanned(barcode);
     });
-
+    
     // Request focus for barcode scanner
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
@@ -55,17 +55,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
   Future<void> _handleBarcodeScanned(String barcode) async {
     _logger.info('Barcode scanned: $barcode');
-
+    
     final orderRepo = ref.read(orderRepositoryProvider);
-
+    
     try {
       // Search for order by code
       final order = await orderRepo.getOrderByCode(barcode);
-
+      
       if (order != null) {
         // Load the order
         ref.read(orderProvider.notifier).loadOrder(order);
-
+        
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

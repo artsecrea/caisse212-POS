@@ -108,7 +108,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     // Get POS name from SharedPreferences, use default if not set
     final posName = sharedPreferences.getString('pos_name') ?? 'POS-UNKNOWN';
-
+    
     // Use POS name for both deviceId and deviceName
     s.start(deviceId: posName, deviceName: posName, role: DeviceRole.host);
 
@@ -119,6 +119,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       title: 'POSECREA',
       builder : OnscreenKeyboard.builder(
         width: (context) => MediaQuery.sizeOf(context).width / 2,
+
       ),
       debugShowCheckedModeBanner: false,
 

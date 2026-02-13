@@ -12,6 +12,7 @@ import 'package:posecrea/providers/sync_manager_provider.dart';
 import 'package:posecrea/services/printing_service.dart';
 import 'package:posecrea/utils/app_localizations.dart';
 import 'package:posecrea/utils/currency_formatter.dart';
+import 'package:posecrea/utils/button_styles.dart';
 import '../../domain/models/order_models.dart';
 import '../../core/enums.dart';
 
@@ -332,14 +333,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               const Spacer(),
               ElevatedButton.icon(
                 onPressed: _addNewTicket,
-                icon: const Icon(Icons.add, size: 20),
-                label: Text(l10n.translate('new_ticket'), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                icon: const Icon(Icons.add, size: 24),
+                label: Text(l10n.translate('new_ticket'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                style: AppButtonStyles.elevatedButtonStyle(
                   backgroundColor: Colors.green[600],
                   foregroundColor: Colors.white,
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  isLarge: true,
                 ),
               ),
             ],
@@ -873,20 +872,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                     onPressed: (ticket.items.isEmpty || ticket.isPaid) ? null : () => _payTicket(ticketIndex),
                     icon: Icon(
                       ticket.isPaid ? Icons.check_circle : Icons.payment,
-                      size: 24,
+                      size: 28,
                     ),
                     label: Text(
                       ticket.isPaid ? 'Paid' : 'Pay',
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold), // Increased from 16
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14), // Reduced from 18
+                    style: AppButtonStyles.elevatedButtonStyle(
                       backgroundColor: ticket.isPaid ? Colors.green[700] : Colors.blue[700],
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6), // Reduced from 8
-                      ),
-                      elevation: 4,
+                      isLarge: true,
                     ),
                   ),
                 ),
@@ -1178,23 +1173,21 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
           return ElevatedButton(
             onPressed: () => _onCalculatorButtonPressed(button),
-            style: ElevatedButton.styleFrom(
+            style: AppButtonStyles.elevatedButtonStyle(
               backgroundColor: button == 'C'
                   ? Colors.red[isDark ? 700 : 600]
                   : (isDark ? Colors.grey[800] : Colors.grey[300]),
               foregroundColor: button == 'C'
                   ? Colors.white
                   : (isDark ? Colors.white : Colors.black87),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8), // Reduced from 12
-              ),
-              elevation: 4,
-              padding: const EdgeInsets.all(8),
+              isLarge: true,
+            ).copyWith(
+              padding: WidgetStateProperty.all(const EdgeInsets.all(12)),
             ),
             child: Text(
               button,
               style: const TextStyle(
-                fontSize: 34, // Increased from 32
+                fontSize: 36,
                 fontWeight: FontWeight.bold,
               ),
             ),
