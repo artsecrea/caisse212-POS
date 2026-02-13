@@ -522,14 +522,15 @@ class PrintingService {
       // Add barcode if order code exists
       if (order.orderCode != null && order.orderCode!.isNotEmpty) {
         bytes += generator.emptyLines(1);
-        bytes += generator.barcode(
-          Barcode.code128(order.orderCode!.codeUnits),
-          height: 80,
-          align: PosAlign.center,
-        );
+        // Use text() to print the order code as text above barcode for clarity
         bytes += generator.text(
           order.orderCode!,
-          styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB),
+          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+        );
+        bytes += generator.barcode(
+          Barcode.code39(order.orderCode!.codeUnits),
+          height: 80,
+          align: PosAlign.center,
         );
       }
 
@@ -648,14 +649,14 @@ class PrintingService {
       // Add barcode if order code exists
       if (order.orderCode != null && order.orderCode!.isNotEmpty) {
         bytes += generator.emptyLines(1);
-        bytes += generator.barcode(
-          Barcode.code128(("B${order.orderCode!}").codeUnits),
-          height: 80,
-          align: PosAlign.center,
-        );
         bytes += generator.text(
           order.orderCode!,
-          styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB),
+          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+        );
+        bytes += generator.barcode(
+          Barcode.code39(order.orderCode!.codeUnits),
+          height: 80,
+          align: PosAlign.center,
         );
       }
 
@@ -805,14 +806,14 @@ class PrintingService {
       // Add barcode if order code exists
       if (orderCode != null && orderCode.isNotEmpty) {
         bytes += generator.emptyLines(1);
-        bytes += generator.barcode(
-          Barcode.code128(('B$orderCode').codeUnits),
-          height: 80,
-          align: PosAlign.center,
-        );
         bytes += generator.text(
           orderCode,
-          styles: const PosStyles(align: PosAlign.center, fontType: PosFontType.fontB),
+          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+        );
+        bytes += generator.barcode(
+          Barcode.code39(orderCode.codeUnits),
+          height: 80,
+          align: PosAlign.center,
         );
       }
 

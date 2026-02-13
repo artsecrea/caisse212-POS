@@ -9,6 +9,7 @@ import '../services/data_sync_service.dart';
 import '../services/printing_service.dart';
 import '../services/pending_operations_service.dart';
 import '../services/sync_job_service.dart';
+import '../services/barcode_scanner_service.dart';
 
 // Database Provider
 final databaseProvider = Provider<AppDatabase>((ref) {
@@ -49,6 +50,11 @@ final printingServiceProvider = Provider<PrintingService>((ref) {
   final service = PrintingService();
   service.initialize(prefs);
   return service;
+});
+
+// Barcode Scanner Service Provider
+final barcodeScannerServiceProvider = Provider<BarcodeScannerService>((ref) {
+  return BarcodeScannerService();
 });
 
 // Session Service Provider

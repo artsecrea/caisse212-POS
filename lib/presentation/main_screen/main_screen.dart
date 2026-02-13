@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import '../../providers/database_providers.dart';
@@ -28,8 +29,83 @@ class MainScreen extends ConsumerStatefulWidget {
 }
 
 class _MainScreenState extends ConsumerState<MainScreen> {
-
   final _logger = Logger.instance;
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeBarcodeScanner();
+  }
+
+  void _initializeBarcodeScanner() {
+    final barcodeService = ref.read(barcodeScannerServiceProvider);
+    barcodeService.initialize(_focusNode);
+
+    // Listen to barcode scans
+    barcodeService.barcodeStream.listen((barcode) {
+      _handleBarcodeScanned(barcode);
+    });
+
+    // Request focus for barcode scanner
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+    });
+  }
+
+  Future<void> _handleBarcodeScanned(String barcode) async {
+    _logger.info('Barcode scanned: $barcode');
+
+    final orderRepo = ref.read(orderRepositoryProvider);
+
+    try {
+      // Search for order by code
+      final order = await orderRepo.getOrderByCode(barcode);
+
+      if (order != null) {
+        // Load the order
+        ref.read(orderProvider.notifier).loadOrder(order);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Order $barcode loaded'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Order $barcode not found'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      _logger.error('Error loading order from barcode: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentOrder = ref.watch(orderProvider);
@@ -42,12 +118,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final showCategoryGrid = displayMode == CategoryDisplayMode.fullPage &&
                              selectedCategory == null;
 
-    return Scaffold(
-      body: Column(
-        children: [
-          // Top Bar with status, network state, and update button
-          const TopBar(),
-          Expanded(
+    return Focus(
+      focusNode: _focusNode,
+      onKeyEvent: (node, event) {
+        final barcodeService = ref.read(barcodeScannerServiceProvider);
+        return barcodeService.handleKeyEvent(event);
+      },
+      child: Scaffold(
+        body: Column(
+          children: [
+            // Top Bar with status, network state, and update button
+            const TopBar(),
+            Expanded(
             child: Row(
               children: [
                 // Main content area
@@ -557,6 +639,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           ),
 
         ],
+      ),
       ),
     );
   }

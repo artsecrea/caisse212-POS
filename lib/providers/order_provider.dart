@@ -569,6 +569,14 @@ class OrderRepository {
     return await loadOrderDetails(order);
   }
 
+  Future<CurrentOrder?> getOrderByCode(String orderCode) async {
+    final order = await (_database.select(_database.orders)..where((tbl) => tbl.code.equals(orderCode))).getSingleOrNull();
+
+    if (order == null) return null;
+
+    return await loadOrderDetails(order);
+  }
+
   Future<CurrentOrder> loadOrderDetails(Order order) async {
     // Get order products
     final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
@@ -833,7 +841,7 @@ class OrderRepository {
 
     // Get total count with filters
     int totalCount = 0;
-    {
+        {
       var query = _database.select(_database.orders);
 
       if (statusFilter != null && statusFilter != 'ALL') {
@@ -1205,4 +1213,6 @@ final orderRepositoryProvider = Provider<OrderRepository>((ref) {
 
   return repository;
 });
+
+
 
