@@ -35,7 +35,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
   // Generate date-based password (YYYYMMDD format)
   String get _serverSettingsPassword {
     final now = DateTime.now();
-    print('${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}');
     return '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
   }
 
@@ -88,8 +87,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         password: _passwordController.text.trim(),
         posName: _posNameController.text.trim(),
       );
-
-      print(data);
 
       // Login successful - ALWAYS prompt user to set a NEW tenant password
       // This ensures fresh security on each server connection

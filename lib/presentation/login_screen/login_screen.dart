@@ -81,7 +81,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Enter today\'s date as password (YYYYMMDD):'),
+                  const Text('Enter password:'),
                   const SizedBox(height: 16),
                   TextField(
                     controller: passwordController,
@@ -101,7 +101,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         },
                       ),
                       border: const OutlineInputBorder(),
-                      hintText: 'Example: 20250213',
                     ),
                     autofocus: true,
                   ),
@@ -538,9 +537,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ref.read(currentUserProvider.notifier).state = null;
       ref.read(currentSessionProvider.notifier).state = null;
 
-      // Clear API service data INCLUDING tenant password hash
+      // Get API service and call logout endpoint
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
+
+      // Call logout API (this won't throw error, just logs if it fails)
+      await apiService.logout();
+
+      // Clear API service data INCLUDING tenant password hash
       await apiService.clearAllAuthData(); // Use clearAllAuthData for full logout
 
       // Clear the database

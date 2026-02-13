@@ -224,6 +224,56 @@ class ApiService {
     }
   }
 
+  /// Logout from the server
+  Future<void> logout() async {
+    // Skip API call in demo mode
+    if (isDemoMode()) {
+      print('Logout: Skipping API call (demo mode)');
+      return;
+    }
+
+    try {
+      final posName = getPosName();
+      final accessToken = getAccessToken();
+
+      // Only call API if we have credentials
+      if (posName == null || accessToken == null) {
+        print('Logout: No credentials found, skipping API call');
+        return;
+      }
+
+      print('Logout: Calling /logout API for POS: $posName');
+
+      final response = await _dio.post(
+        '/pos/logout',
+        options: Options(
+          headers: {
+            'X-POS-Name': posName,
+            'Authorization': 'Bearer $accessToken',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        print('Logout: Successfully logged out from server');
+      } else {
+        print('Logout: Server returned status ${response.statusCode}');
+      }
+    } on DioException catch (e) {
+      // Log error but don't throw - logout should succeed locally even if server call fails
+      print('Logout API error: ${e.type}');
+      print('Logout error message: ${e.message}');
+      print('Logout error response: ${e.response?.data}');
+
+      // Don't throw exception - we still want to clear local data
+      print('Logout: Continuing with local logout despite server error');
+    } catch (e) {
+      print('Logout general error: $e');
+      // Don't throw exception - we still want to clear local data
+      print('Logout: Continuing with local logout despite error');
+    }
+  }
+
   /// Fetch categories from server
   Future<List<Map<String, dynamic>>> fetchCategories() async {
     try {

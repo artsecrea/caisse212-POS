@@ -307,7 +307,7 @@ class OrderPanel extends ConsumerWidget {
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
               border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
@@ -318,7 +318,6 @@ class OrderPanel extends ConsumerWidget {
                   Icons.shopping_cart,
                   color: Theme.of(context).colorScheme.primary,
                 ),
-                const SizedBox(width: 8),
                 Text(
                   currentOrder.orderCode?.toString() ?? l10n.translate('current_order'),
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -329,7 +328,10 @@ class OrderPanel extends ConsumerWidget {
                     onPressed: () {
                       ref.read(orderProvider.notifier).clearOrder();
                     },
-                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    icon: const Icon(Icons.delete_outline,
+                        color: Colors.red,
+                        size: 40,
+                    ),
                     tooltip: l10n.translate('clear'),
                   ),
               ],
@@ -862,4 +864,5 @@ class OrderPanel extends ConsumerWidget {
       ),
     );
   }
+
 }

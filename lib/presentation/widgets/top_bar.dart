@@ -464,8 +464,13 @@ class _TopBarState extends ConsumerState<TopBar> {
       // Clear current order state
       ref.read(orderProvider.notifier).clearOrder();
 
-      // Clear API service data INCLUDING tenant password hash
+      // Get API service and call logout endpoint
       final apiService = ApiService(prefs);
+
+      // Call logout API (this won't throw error, just logs if it fails)
+      await apiService.logout();
+
+      // Clear API service data INCLUDING tenant password hash
       await apiService.clearAllAuthData(); // Use clearAllAuthData for full logout
 
       // Clear the database
