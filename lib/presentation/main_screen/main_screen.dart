@@ -722,6 +722,20 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           };
         }).toList();
 
+        // Print KDS ticket first (for kitchen)
+        if (printingService.config.kdsEnabled) {
+          try {
+            await printingService.printKdsTicket(
+              order: reloadedOrder,
+              cashierName: currentUser.firstName,
+            );
+          } catch (kdsError) {
+            _logger.error('KDS print failed on direct payment: $kdsError');
+            // Continue even if KDS fails
+          }
+        }
+
+        // Then print customer receipt
         await printingService.printTicketReceipt(
           ticketId: ticketId,
           ticketNumber: ticketNumStr,

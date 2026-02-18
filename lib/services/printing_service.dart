@@ -388,6 +388,70 @@ class PrintingService {
     return 'USD'; // Fallback default
   }
 
+  /// Ensure printer is connected, with automatic rescan and reconnect if needed
+  Future<bool> _ensurePrinterConnected(PrinterPurpose purpose) async {
+    final isReceipt = purpose == PrinterPurpose.receipt;
+    final currentPrinter = isReceipt ? _connectedReceiptPrinter : _connectedKdsPrinter;
+    final savedAddress = isReceipt ? _config.receiptPrinterAddress : _config.kdsPrinterAddress;
+
+    // If printer already connected, we're good
+    if (currentPrinter != null) {
+      debugPrint('${purpose.name} printer already connected');
+      return true;
+    }
+
+    // Check if we have saved printer config
+    if (savedAddress == null) {
+      debugPrint('No saved ${purpose.name} printer configuration found');
+      return false;
+    }
+
+    debugPrint('${purpose.name} printer not connected, attempting to reconnect to saved printer: $savedAddress');
+
+    // Step 1: Try to find printer in current available printers list
+    Printer? printer = _findPrinterByAddress(savedAddress);
+
+    if (printer != null) {
+      debugPrint('Found saved ${purpose.name} printer in available list, attempting connection');
+      final connected = await connectPrinter(printer, purpose);
+      if (connected) {
+        debugPrint('Successfully connected to ${purpose.name} printer');
+        return true;
+      }
+      debugPrint('Failed to connect to ${purpose.name} printer found in list');
+    }
+
+    // Step 2: Printer not in list or connection failed - try rescanning
+    debugPrint('Printer not found in available list or connection failed, rescanning...');
+
+    try {
+      await startScan();
+
+      // Wait a bit longer for scan to complete and populate list
+      await Future.delayed(const Duration(seconds: 4));
+
+      // Try to find printer again after scan
+      printer = _findPrinterByAddress(savedAddress);
+
+      if (printer != null) {
+        debugPrint('Found ${purpose.name} printer after rescan, attempting connection');
+        final connected = await connectPrinter(printer, purpose);
+        if (connected) {
+          debugPrint('Successfully connected to ${purpose.name} printer after rescan');
+          return true;
+        }
+        debugPrint('Failed to connect to ${purpose.name} printer after rescan');
+      } else {
+        debugPrint('${purpose.name} printer still not found after rescan');
+      }
+    } catch (e) {
+      debugPrint('Error during rescan and reconnect: $e');
+    }
+
+    debugPrint('Unable to establish ${purpose.name} printer connection');
+    return false;
+  }
+
   /// Print order receipt
   Future<bool> printOrderReceipt({
     required CurrentOrder order,
@@ -397,25 +461,10 @@ class PrintingService {
     String? storeAddress,
     String? storePhone,
   }) async {
-    if (_connectedReceiptPrinter == null) {
-      debugPrint('Receipt printer not connected, attempting auto-connect');
-      // Try to find and connect to saved printer
-      final savedPrinter = _findPrinterByAddress(_config.receiptPrinterAddress);
-      if (savedPrinter != null) {
-        final connected = await connectPrinter(savedPrinter, PrinterPurpose.receipt);
-        if (!connected) {
-          debugPrint('Failed to auto-connect to saved receipt printer');
-          return false;
-        }
-      } else {
-        debugPrint('No saved receipt printer found in config');
-        return false;
-      }
-    }
-
-    // Double-check connection
-    if (_connectedReceiptPrinter == null) {
-      debugPrint('Receipt printer still not connected after auto-connect attempt');
+    // Try to ensure printer is connected
+    final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
+    if (!printerReady) {
+      debugPrint('Could not establish receipt printer connection');
       return false;
     }
 
@@ -603,25 +652,10 @@ class PrintingService {
       return true; // KDS disabled, consider success
     }
 
-    if (_connectedKdsPrinter == null) {
-      debugPrint('KDS printer not connected, attempting auto-connect');
-      // Try to find and connect to saved printer
-      final savedPrinter = _findPrinterByAddress(_config.kdsPrinterAddress);
-      if (savedPrinter != null) {
-        final connected = await connectPrinter(savedPrinter, PrinterPurpose.kds);
-        if (!connected) {
-          debugPrint('Failed to auto-connect to saved KDS printer');
-          return false;
-        }
-      } else {
-        debugPrint('No saved KDS printer found in config');
-        return false;
-      }
-    }
-
-    // Double-check connection
-    if (_connectedKdsPrinter == null) {
-      debugPrint('KDS printer still not connected after auto-connect attempt');
+    // Try to ensure printer is connected
+    final printerReady = await _ensurePrinterConnected(PrinterPurpose.kds);
+    if (!printerReady) {
+      debugPrint('Could not establish KDS printer connection');
       return false;
     }
 
@@ -751,24 +785,10 @@ class PrintingService {
     String? cashierName,
     String? storeName,
   }) async {
-    if (_connectedReceiptPrinter == null) {
-      debugPrint('Receipt printer not connected for ticket, attempting auto-connect');
-      final savedPrinter = _findPrinterByAddress(_config.receiptPrinterAddress);
-      if (savedPrinter != null) {
-        final connected = await connectPrinter(savedPrinter, PrinterPurpose.receipt);
-        if (!connected) {
-          debugPrint('Failed to auto-connect to saved receipt printer for ticket');
-          return false;
-        }
-      } else {
-        debugPrint('No saved receipt printer found in config for ticket');
-        return false;
-      }
-    }
-
-    // Double-check connection
-    if (_connectedReceiptPrinter == null) {
-      debugPrint('Receipt printer still not connected after auto-connect attempt for ticket');
+    // Try to ensure printer is connected
+    final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
+    if (!printerReady) {
+      debugPrint('Could not establish receipt printer connection for ticket');
       return false;
     }
 

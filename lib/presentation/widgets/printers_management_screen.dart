@@ -6,6 +6,7 @@ import 'package:flutter_thermal_printer/utils/printer.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import '../../providers/database_providers.dart';
 import '../../services/printing_service.dart';
+import '../../utils/app_localizations.dart';
 
 class PrintersManagementScreen extends ConsumerStatefulWidget {
   const PrintersManagementScreen({Key? key}) : super(key: key);
@@ -74,14 +75,20 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   Future<void> _setPrinter(Printer printer, PrinterPurpose purpose) async {
     final printingService = ref.read(printingServiceProvider);
     final prefs = ref.read(sharedPreferencesProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     await printingService.setPrinter(prefs, printer, purpose);
 
     if (mounted) {
+      final printerType = purpose == PrinterPurpose.receipt
+        ? l10n.translate('receipt_printer')
+        : l10n.translate('kds_printer');
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${purpose == PrinterPurpose.receipt ? "Receipt" : "KDS"} printer set: ${printer.name}'),
+          content: Text('$printerType: ${printer.name}'),
           backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
         ),
       );
     }
@@ -90,14 +97,20 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   Future<void> _clearPrinter(PrinterPurpose purpose) async {
     final printingService = ref.read(printingServiceProvider);
     final prefs = ref.read(sharedPreferencesProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     await printingService.clearPrinter(prefs, purpose);
 
     if (mounted) {
+      final printerType = purpose == PrinterPurpose.receipt
+        ? l10n.translate('receipt_printer')
+        : l10n.translate('kds_printer');
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${purpose == PrinterPurpose.receipt ? "Receipt" : "KDS"} printer cleared'),
+          content: Text('${l10n.translate('remove')}: $printerType'),
           backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
         ),
       );
     }
@@ -122,72 +135,90 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   }
 
   Future<void> _testPrint(PrinterPurpose purpose) async {
+    final l10n = AppLocalizations.of(context)!;
+    final printerType = purpose == PrinterPurpose.receipt
+      ? l10n.translate('receipt_printer')
+      : l10n.translate('kds_printer');
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Test print sent to ${purpose == PrinterPurpose.receipt ? "receipt" : "KDS"} printer'),
+        content: Text('${l10n.translate('test_print')}: $printerType'),
         backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Printer Management'),
+        title: Text(l10n.translate('printer_management')),
         actions: [
           IconButton(
             icon: Icon(_isScanning ? Icons.stop : Icons.refresh),
+            iconSize: 32,
             onPressed: _isScanning ? _stopScan : _startScan,
-            tooltip: _isScanning ? 'Stop Scan' : 'Scan for Printers',
+            tooltip: _isScanning ? l10n.translate('stop_scan') : l10n.translate('scan_for_printers'),
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Scan controls
             Card(
+              elevation: 3,
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.search, size: 24),
-                        const SizedBox(width: 12),
-                        const Text(
-                          'Scan for Printers',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        const Icon(Icons.search, size: 32),
+                        const SizedBox(width: 16),
+                        Text(
+                          l10n.translate('scan_for_printers'),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                         ),
                         const Spacer(),
                         if (_isScanning)
                           const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(strokeWidth: 3),
                           ),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 20),
                     Row(
                       children: [
                         Expanded(
                           child: ElevatedButton.icon(
                             onPressed: _isScanning ? null : _startScan,
-                            icon: const Icon(Icons.search),
-                            label: Text(_isScanning ? 'Scanning...' : 'Start Scan'),
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+                              textStyle: const TextStyle(fontSize: 18),
+                            ),
+                            icon: const Icon(Icons.search, size: 28),
+                            label: Text(_isScanning ? l10n.translate('scanning') : l10n.translate('start_scan')),
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 16),
                         Expanded(
                           child: OutlinedButton.icon(
                             onPressed: _isScanning ? _stopScan : null,
-                            icon: const Icon(Icons.stop),
-                            label: const Text('Stop Scan'),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+                              textStyle: const TextStyle(fontSize: 18),
+                            ),
+                            icon: const Icon(Icons.stop, size: 28),
+                            label: Text(l10n.translate('stop_scan')),
                           ),
                         ),
                       ],
@@ -201,35 +232,54 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
 
             // Settings
             Card(
+              elevation: 3,
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Row(
+                    Row(
                       children: [
-                        Icon(Icons.settings, size: 24),
-                        SizedBox(width: 12),
+                        const Icon(Icons.settings, size: 32),
+                        const SizedBox(width: 16),
                         Text(
-                          'Printer Settings',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          l10n.translate('printer_settings'),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 20),
                     // KDS Toggle
                     SwitchListTile(
-                      title: const Text('Enable KDS Printing'),
-                      subtitle: const Text('Print kitchen tickets automatically'),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('enable_kds_printing'),
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                      subtitle: Text(
+                        l10n.translate('print_kitchen_tickets_automatically'),
+                        style: const TextStyle(fontSize: 15),
+                      ),
                       value: _config.kdsEnabled,
                       onChanged: _toggleKds,
                     ),
-                    const Divider(),
+                    const Divider(height: 32),
                     // Paper Size
                     ListTile(
-                      title: const Text('Paper Size'),
-                      subtitle: Text(_config.paperSize == PaperSize.mm58 ? '58mm' : '80mm'),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('paper_size'),
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                      subtitle: Text(
+                        _config.paperSize == PaperSize.mm58 ? '58mm' : '80mm',
+                        style: const TextStyle(fontSize: 15),
+                      ),
                       trailing: SegmentedButton<PaperSize>(
+                        style: SegmentedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
                         segments: const [
                           ButtonSegment(value: PaperSize.mm58, label: Text('58mm')),
                           ButtonSegment(value: PaperSize.mm80, label: Text('80mm')),
@@ -238,16 +288,31 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         onSelectionChanged: (values) => _setPaperSize(values.first),
                       ),
                     ),
-                    const Divider(),
+                    const Divider(height: 32),
                     // Text Size
                     ListTile(
-                      title: const Text('Text Size'),
-                      subtitle: Text(_config.textSize == 1 ? 'Normal' : (_config.textSize == 2 ? 'Large' : 'Extra Large')),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('text_size'),
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                      subtitle: Text(
+                        _config.textSize == 1
+                          ? l10n.translate('normal')
+                          : (_config.textSize == 2
+                            ? l10n.translate('large')
+                            : l10n.translate('extra_large')),
+                        style: const TextStyle(fontSize: 15),
+                      ),
                       trailing: SegmentedButton<int>(
-                        segments: const [
-                          ButtonSegment(value: 1, label: Text('Normal')),
-                          ButtonSegment(value: 2, label: Text('Large')),
-                          ButtonSegment(value: 3, label: Text('Extra')),
+                        style: SegmentedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
+                        segments: [
+                          ButtonSegment(value: 1, label: Text(l10n.translate('normal'))),
+                          ButtonSegment(value: 2, label: Text(l10n.translate('large'))),
+                          ButtonSegment(value: 3, label: Text(l10n.translate('extra'))),
                         ],
                         selected: {_config.textSize},
                         onSelectionChanged: (values) => _setTextSize(values.first),
@@ -262,20 +327,22 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
 
             // Receipt Printer
             _buildPrinterSection(
-              title: 'Receipt Printer',
-              subtitle: 'For customer receipts and payment confirmations',
+              context: context,
+              title: l10n.translate('receipt_printer'),
+              subtitle: l10n.translate('for_customer_receipts'),
               icon: Icons.receipt_long,
               purpose: PrinterPurpose.receipt,
               configuredName: _config.receiptPrinterName,
               configuredType: _config.receiptConnectionType,
             ),
 
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
 
             // KDS Printer
             _buildPrinterSection(
-              title: 'KDS Printer',
-              subtitle: 'For kitchen display tickets',
+              context: context,
+              title: l10n.translate('kds_printer'),
+              subtitle: l10n.translate('for_kitchen_display_tickets'),
               icon: Icons.restaurant,
               purpose: PrinterPurpose.kds,
               configuredName: _config.kdsPrinterName,
@@ -287,39 +354,44 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
 
             // Available Printers
             Card(
+              elevation: 3,
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.print, size: 24),
-                        const SizedBox(width: 12),
-                        const Text(
-                          'Available Printers',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        const Icon(Icons.print, size: 32),
+                        const SizedBox(width: 16),
+                        Text(
+                          l10n.translate('available_printers'),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                         ),
                         const Spacer(),
                         Text(
-                          '${_printers.length} found',
-                          style: TextStyle(color: Colors.grey[600]),
+                          '${_printers.length} ${l10n.translate('found')}',
+                          style: TextStyle(color: Colors.grey[600], fontSize: 16),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 20),
                     if (_printers.isEmpty)
-                      const Center(
+                      Center(
                         child: Padding(
-                          padding: EdgeInsets.all(32),
+                          padding: const EdgeInsets.all(40),
                           child: Column(
                             children: [
-                              Icon(Icons.print_disabled, size: 48, color: Colors.grey),
-                              SizedBox(height: 12),
-                              Text('No printers found'),
+                              const Icon(Icons.print_disabled, size: 64, color: Colors.grey),
+                              const SizedBox(height: 16),
                               Text(
-                                'Click "Start Scan" to search for printers',
-                                style: TextStyle(color: Colors.grey),
+                                l10n.translate('no_printers_found'),
+                                style: const TextStyle(fontSize: 18),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                l10n.translate('click_start_scan'),
+                                style: TextStyle(color: Colors.grey, fontSize: 15),
                               ),
                             ],
                           ),
@@ -330,74 +402,102 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         itemCount: _printers.length,
-                        separatorBuilder: (_, __) => const Divider(),
+                        separatorBuilder: (_, __) => const Divider(height: 24),
                         itemBuilder: (context, index) {
                           final printer = _printers[index];
                           final isReceiptPrinter = printer.address == _config.receiptPrinterAddress;
                           final isKdsPrinter = printer.address == _config.kdsPrinterAddress;
 
                           return ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                             leading: Icon(
                               printer.connectionType == ConnectionType.USB
                                   ? Icons.usb
                                   : Icons.wifi,
+                              size: 36,
                               color: (isReceiptPrinter || isKdsPrinter)
                                   ? Colors.green
                                   : null,
                             ),
-                            title: Text(printer.name ?? 'Unknown Printer'),
+                            title: Text(
+                              printer.name ?? l10n.translate('unknown_printer'),
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                            ),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Type: ${printer.connectionType?.name ?? "Unknown"}'),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${l10n.translate('type')}: ${printer.connectionType?.name ?? l10n.translate('unknown')}',
+                                  style: const TextStyle(fontSize: 15),
+                                ),
                                 if (isReceiptPrinter)
-                                  const Text(
-                                    '✓ Receipt Printer',
-                                    style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      '✓ ${l10n.translate('receipt_printer')}',
+                                      style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 15),
+                                    ),
                                   ),
                                 if (isKdsPrinter)
-                                  const Text(
-                                    '✓ KDS Printer',
-                                    style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      '✓ ${l10n.translate('kds_printer')}',
+                                      style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 15),
+                                    ),
                                   ),
                               ],
                             ),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (value) {
-                                if (value == 'receipt') {
-                                  _setPrinter(printer, PrinterPurpose.receipt);
-                                } else if (value == 'kds') {
-                                  _setPrinter(printer, PrinterPurpose.kds);
-                                }
-                              },
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'receipt',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.receipt_long),
-                                      SizedBox(width: 8),
-                                      Text('Set as Receipt Printer'),
-                                    ],
-                                  ),
-                                ),
-                                PopupMenuItem(
-                                  value: 'kds',
-                                  enabled: _config.kdsEnabled,
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.restaurant),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Set as KDS Printer',
-                                        style: TextStyle(
-                                          color: _config.kdsEnabled ? null : Colors.grey,
+                            trailing: IconButton(
+                              icon: const Icon(Icons.more_vert, size: 28),
+                              onPressed: () {
+                                showModalBottomSheet(
+                                  context: context,
+                                  builder: (context) => Container(
+                                    padding: const EdgeInsets.all(20),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        ListTile(
+                                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                                          leading: const Icon(Icons.receipt_long, size: 32),
+                                          title: Text(
+                                            l10n.translate('set_as_receipt_printer'),
+                                            style: const TextStyle(fontSize: 18),
+                                          ),
+                                          onTap: () {
+                                            Navigator.pop(context);
+                                            _setPrinter(printer, PrinterPurpose.receipt);
+                                          },
                                         ),
-                                      ),
-                                    ],
+                                        ListTile(
+                                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                                          enabled: _config.kdsEnabled,
+                                          leading: Icon(
+                                            Icons.restaurant,
+                                            size: 32,
+                                            color: _config.kdsEnabled ? null : Colors.grey,
+                                          ),
+                                          title: Text(
+                                            l10n.translate('set_as_kds_printer'),
+                                            style: TextStyle(
+                                              fontSize: 18,
+                                              color: _config.kdsEnabled ? null : Colors.grey,
+                                            ),
+                                          ),
+                                          onTap: _config.kdsEnabled
+                                              ? () {
+                                                  Navigator.pop(context);
+                                                  _setPrinter(printer, PrinterPurpose.kds);
+                                                }
+                                              : null,
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              ],
+                                );
+                              },
                             ),
                           );
                         },
@@ -413,6 +513,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   }
 
   Widget _buildPrinterSection({
+    required BuildContext context,
     required String title,
     required String subtitle,
     required IconData icon,
@@ -421,19 +522,21 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     required ConnectionType? configuredType,
     bool enabled = true,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     final isConfigured = configuredName != null;
 
     return Card(
+      elevation: 3,
       color: enabled ? null : Colors.grey[100],
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(icon, size: 24, color: enabled ? null : Colors.grey),
-                const SizedBox(width: 12),
+                Icon(icon, size: 32, color: enabled ? null : Colors.grey),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -441,15 +544,16 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                       Text(
                         title,
                         style: TextStyle(
-                          fontSize: 18,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: enabled ? null : Colors.grey,
                         ),
                       ),
+                      const SizedBox(height: 4),
                       Text(
                         subtitle,
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 15,
                           color: enabled ? Colors.grey[600] : Colors.grey,
                         ),
                       ),
@@ -457,73 +561,81 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                   ),
                 ),
                 if (!enabled)
-                  const Chip(
-                    label: Text('Disabled'),
+                  Chip(
+                    label: Text(l10n.translate('disabled')),
                     backgroundColor: Colors.grey,
-                    labelStyle: TextStyle(color: Colors.white),
+                    labelStyle: const TextStyle(color: Colors.white, fontSize: 15),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             if (isConfigured)
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: Colors.green.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.green.withValues(alpha: 0.3), width: 2),
                 ),
                 child: Row(
                   children: [
                     Icon(
                       configuredType == ConnectionType.USB ? Icons.usb : Icons.wifi,
                       color: Colors.green,
+                      size: 32,
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             configuredName,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
                           ),
+                          const SizedBox(height: 4),
                           Text(
-                            configuredType?.name ?? 'Unknown',
-                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            configuredType?.name ?? l10n.translate('unknown'),
+                            style: TextStyle(fontSize: 15, color: Colors.grey[600]),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.print, color: Colors.blue),
+                      iconSize: 32,
+                      padding: const EdgeInsets.all(12),
                       onPressed: enabled ? () => _testPrint(purpose) : null,
-                      tooltip: 'Test Print',
+                      tooltip: l10n.translate('test_print'),
                     ),
+                    const SizedBox(width: 8),
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.red),
+                      iconSize: 32,
+                      padding: const EdgeInsets.all(12),
                       onPressed: enabled ? () => _clearPrinter(purpose) : null,
-                      tooltip: 'Remove',
+                      tooltip: l10n.translate('remove'),
                     ),
                   ],
                 ),
               )
             else
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
                   color: Colors.grey.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.3), width: 2),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.print_disabled, color: Colors.grey[400]),
-                    const SizedBox(width: 8),
+                    Icon(Icons.print_disabled, color: Colors.grey[400], size: 32),
+                    const SizedBox(width: 12),
                     Text(
-                      'No printer configured',
-                      style: TextStyle(color: Colors.grey[600]),
+                      l10n.translate('no_printer_configured'),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 17),
                     ),
                   ],
                 ),

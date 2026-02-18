@@ -30,16 +30,15 @@ class PrintOptionsDialog extends ConsumerStatefulWidget {
 
 class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
   bool _printReceipt = true;
-  bool _printKds = true;
+  bool _printKds = false; // KDS should only print on direct payment by default
   bool _isPrinting = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    // Get KDS setting
-    final printingService = ref.read(printingServiceProvider);
-    _printKds = printingService.config.kdsEnabled;
+    // KDS should be off by default - it's meant for direct payment
+    // User can still manually enable it if needed
   }
 
   Future<void> _handlePrint() async {
@@ -286,6 +285,7 @@ color: Colors.red.withValues(alpha: 0.1),
         ),
         ElevatedButton.icon(
           onPressed: _isPrinting ? null : _handlePrint,
+
           icon: _isPrinting
               ? const SizedBox(
                   width: 18,
