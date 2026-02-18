@@ -252,17 +252,24 @@ class PrintingService {
   /// Connect to a printer for a specific purpose
   Future<bool> connectPrinter(Printer printer, PrinterPurpose purpose) async {
     try {
-      await _thermalPrinter.connect(printer);
+      debugPrint('Attempting to connect to ${purpose.name} printer: ${printer.name} (${printer.address})');
+
+      final result = await _thermalPrinter.connect(printer);
+
+      debugPrint('Connection result: $result');
 
       if (purpose == PrinterPurpose.receipt) {
         _connectedReceiptPrinter = printer;
+        debugPrint('Receipt printer connected successfully');
       } else {
         _connectedKdsPrinter = printer;
+        debugPrint('KDS printer connected successfully');
       }
 
       return true;
-    } catch (e) {
-      debugPrint('Error connecting to printer: $e');
+    } catch (e, stackTrace) {
+      debugPrint('Error connecting to ${purpose.name} printer: $e');
+      debugPrint('Stack trace: $stackTrace');
       return false;
     }
   }
@@ -391,13 +398,25 @@ class PrintingService {
     String? storePhone,
   }) async {
     if (_connectedReceiptPrinter == null) {
+      debugPrint('Receipt printer not connected, attempting auto-connect');
       // Try to find and connect to saved printer
       final savedPrinter = _findPrinterByAddress(_config.receiptPrinterAddress);
       if (savedPrinter != null) {
-        await connectPrinter(savedPrinter, PrinterPurpose.receipt);
+        final connected = await connectPrinter(savedPrinter, PrinterPurpose.receipt);
+        if (!connected) {
+          debugPrint('Failed to auto-connect to saved receipt printer');
+          return false;
+        }
       } else {
+        debugPrint('No saved receipt printer found in config');
         return false;
       }
+    }
+
+    // Double-check connection
+    if (_connectedReceiptPrinter == null) {
+      debugPrint('Receipt printer still not connected after auto-connect attempt');
+      return false;
     }
 
     try {
@@ -548,7 +567,7 @@ class PrintingService {
           styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
         );
         bytes += generator.barcode(
-          Barcode.code39(order.orderCode!.codeUnits),
+          Barcode.code128(order.orderCode!.codeUnits),
           height: 80,
           align: PosAlign.center,
         );
@@ -557,15 +576,19 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
+      debugPrint('Attempting to print receipt. Bytes length: ${bytes.length}');
+
       await _thermalPrinter.printData(
         _connectedReceiptPrinter!,
         bytes,
         longData: true,
       );
 
+      debugPrint('Receipt printed successfully');
       return true;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('Error printing receipt: $e');
+      debugPrint('Stack trace: $stackTrace');
       return false;
     }
   }
@@ -575,16 +598,31 @@ class PrintingService {
     required CurrentOrder order,
     required String? cashierName,
   }) async {
-    if (!_config.kdsEnabled) return true; // KDS disabled, consider success
+    if (!_config.kdsEnabled) {
+      debugPrint('KDS printing is disabled in config');
+      return true; // KDS disabled, consider success
+    }
 
     if (_connectedKdsPrinter == null) {
+      debugPrint('KDS printer not connected, attempting auto-connect');
       // Try to find and connect to saved printer
       final savedPrinter = _findPrinterByAddress(_config.kdsPrinterAddress);
       if (savedPrinter != null) {
-        await connectPrinter(savedPrinter, PrinterPurpose.kds);
+        final connected = await connectPrinter(savedPrinter, PrinterPurpose.kds);
+        if (!connected) {
+          debugPrint('Failed to auto-connect to saved KDS printer');
+          return false;
+        }
       } else {
+        debugPrint('No saved KDS printer found in config');
         return false;
       }
+    }
+
+    // Double-check connection
+    if (_connectedKdsPrinter == null) {
+      debugPrint('KDS printer still not connected after auto-connect attempt');
+      return false;
     }
 
     try {
@@ -674,7 +712,7 @@ class PrintingService {
           styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
         );
         bytes += generator.barcode(
-          Barcode.code39(order.orderCode!.codeUnits),
+          Barcode.code128(order.orderCode!.codeUnits),
           height: 80,
           align: PosAlign.center,
         );
@@ -683,15 +721,19 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
+      debugPrint('Attempting to print KDS ticket. Bytes length: ${bytes.length}');
+
       await _thermalPrinter.printData(
         _connectedKdsPrinter!,
         bytes,
         longData: true,
       );
 
+      debugPrint('KDS ticket printed successfully');
       return true;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('Error printing KDS ticket: $e');
+      debugPrint('Stack trace: $stackTrace');
       return false;
     }
   }
@@ -710,12 +752,24 @@ class PrintingService {
     String? storeName,
   }) async {
     if (_connectedReceiptPrinter == null) {
+      debugPrint('Receipt printer not connected for ticket, attempting auto-connect');
       final savedPrinter = _findPrinterByAddress(_config.receiptPrinterAddress);
       if (savedPrinter != null) {
-        await connectPrinter(savedPrinter, PrinterPurpose.receipt);
+        final connected = await connectPrinter(savedPrinter, PrinterPurpose.receipt);
+        if (!connected) {
+          debugPrint('Failed to auto-connect to saved receipt printer for ticket');
+          return false;
+        }
       } else {
+        debugPrint('No saved receipt printer found in config for ticket');
         return false;
       }
+    }
+
+    // Double-check connection
+    if (_connectedReceiptPrinter == null) {
+      debugPrint('Receipt printer still not connected after auto-connect attempt for ticket');
+      return false;
     }
 
     try {
@@ -833,7 +887,7 @@ class PrintingService {
           styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
         );
         bytes += generator.barcode(
-          Barcode.code39(orderCode.codeUnits),
+          Barcode.code128(orderCode.codeUnits),
           height: 80,
           align: PosAlign.center,
         );
@@ -842,15 +896,19 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
+      debugPrint('Attempting to print ticket receipt. Bytes length: ${bytes.length}');
+
       await _thermalPrinter.printData(
         _connectedReceiptPrinter!,
         bytes,
         longData: true,
       );
 
+      debugPrint('Ticket receipt printed successfully');
       return true;
-    } catch (e) {
-      debugPrint('Error printing ticket: $e');
+    } catch (e, stackTrace) {
+      debugPrint('Error printing ticket receipt: $e');
+      debugPrint('Stack trace: $stackTrace');
       return false;
     }
   }
