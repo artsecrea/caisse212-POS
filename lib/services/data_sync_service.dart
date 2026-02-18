@@ -1,7 +1,7 @@
 import 'package:drift/drift.dart';
-import 'package:posecrea/data/database/app_database.dart';
-import 'package:posecrea/services/api_service.dart';
-import 'package:posecrea/services/pending_operations_service.dart';
+import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/services/api_service.dart';
+import 'package:caisse212/services/pending_operations_service.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'dart:convert';
 

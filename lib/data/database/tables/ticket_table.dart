@@ -1,6 +1,6 @@
 import 'package:drift/drift.dart';
-import 'package:posecrea/data/database/app_database.dart';
-import 'package:posecrea/data/database/tables/order_table.dart';
+import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/data/database/tables/order_table.dart';
 
 class Tickets extends Table {
   IntColumn get id => integer().autoIncrement()();

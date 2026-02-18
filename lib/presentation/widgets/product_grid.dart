@@ -2,11 +2,12 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:posecrea/data/database/app_database.dart';
+import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
+import '../../utils/currency_formatter.dart';
 import 'product_modification_dialog.dart';
 
 class ProductGrid extends ConsumerWidget {
@@ -122,12 +123,15 @@ class _ProductCard extends ConsumerWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(4),
         ),
-        child: showImages ? _buildWithImage(context) : _buildCompact(context),
+        child: showImages ? _buildWithImage(context,ref) : _buildCompact(context),
       ),
     );
   }
 
-  Widget _buildWithImage(BuildContext context) {
+  Widget _buildWithImage(BuildContext context, WidgetRef ref) {
+
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -178,7 +182,7 @@ class _ProductCard extends ConsumerWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  '${product.finalPrice.toStringAsFixed(2)} \$',
+                  currencyFormatter.format(product.finalPrice),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.bold,

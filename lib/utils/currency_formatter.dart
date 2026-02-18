@@ -9,7 +9,12 @@ class CurrencyFormatter {
 
   /// Format amount with currency symbol
   String format(double amount) {
-    return '$symbol${amount.toStringAsFixed(2)}';
+    return '${amount.toStringAsFixed(2)} $symbol';
+  }
+
+  /// Format amount with currency symbol (static helper)
+  static String formatWithCurrency(double amount, String currency) {
+    return '${amount.toStringAsFixed(2)} $currency';
   }
 
   /// Format amount with currency symbol (no decimals)

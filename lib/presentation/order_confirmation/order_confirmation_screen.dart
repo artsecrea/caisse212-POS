@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' hide Column;
-import 'package:posecrea/data/database/app_database.dart';
-import 'package:posecrea/providers/database_providers.dart';
-import 'package:posecrea/providers/order_provider.dart';
-import 'package:posecrea/presentation/paymen_screen/payment_screen.dart';
-import 'package:posecrea/utils/app_localizations.dart';
-import 'package:posecrea/utils/currency_formatter.dart';
+import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/providers/database_providers.dart';
+import 'package:caisse212/providers/order_provider.dart';
+import 'package:caisse212/presentation/paymen_screen/payment_screen.dart';
+import 'package:caisse212/utils/app_localizations.dart';
+import 'package:caisse212/utils/currency_formatter.dart';
 
 class OrderConfirmationScreen extends ConsumerStatefulWidget {
   const OrderConfirmationScreen({super.key});

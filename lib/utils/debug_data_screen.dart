@@ -1,6 +1,6 @@
+import 'package:caisse212/utils/sample_data_generator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:posecrea/utils/sample_data_generator.dart';
 
 import '../data/database/app_database.dart';
 

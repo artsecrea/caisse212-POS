@@ -1,11 +1,13 @@
+import 'dart:math';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
-import 'package:posecrea/services/api_service.dart';
-import 'package:posecrea/services/data_sync_service.dart';
-import 'package:posecrea/utils/sample_data_generator.dart';
+import 'package:caisse212/services/api_service.dart';
+import 'package:caisse212/services/data_sync_service.dart';
+import 'package:caisse212/utils/sample_data_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
@@ -48,9 +50,9 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
 
   Future<void> _loadServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedUrl = prefs.getString('server_url') ?? 'http://localhost:8080';
+    final savedUrl = prefs.getString('server_url') ?? 'https://app.caisse212';
     _serverUrlController.text = savedUrl;
-    _posNameController.text = 'test';
+    _posNameController.text = 'example';
   }
 
   @override
@@ -83,6 +85,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         // The login screen will also check and can enforce mandatory updates
       }
     } catch (e) {
+
       print('Error checking for updates: $e');
       // Don't block login flow if update check fails
     }
@@ -406,7 +409,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Enter today\'s date as password (YYYYMMDD):'),
+                  const Text('Enter password:'),
                   const SizedBox(height: 16),
                   OnscreenKeyboardTextField(
                     controller: passwordController,
@@ -426,7 +429,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                         },
                       ),
                       border: const OutlineInputBorder(),
-                      hintText: 'Example: 20250213',
                     ),
                     autofocus: true,
                   ),
@@ -461,7 +463,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Invalid password. Use today\'s date in YYYYMMDD format.'),
+            content: Text('Invalid password.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -822,29 +824,29 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                         const SizedBox(height: 12),
 
                         // API Tester button
-                        SizedBox(
-                          height: 50,
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              Navigator.of(context).pushNamed('/api-tester');
-                            },
-                            icon: const Icon(Icons.bug_report, size: 24),
-                            label: const Text(
-                              'Test API Endpoints',
-                              style: TextStyle(fontSize: 16),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.orange[700],
-                              side: BorderSide(
-                                color: Colors.orange[700]!,
-                                width: 1.5,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                        ),
+                        // SizedBox(
+                        //   height: 50,
+                        //   child: OutlinedButton.icon(
+                        //     onPressed: () {
+                        //       Navigator.of(context).pushNamed('/api-tester');
+                        //     },
+                        //     icon: const Icon(Icons.bug_report, size: 24),
+                        //     label: const Text(
+                        //       'Test API Endpoints',
+                        //       style: TextStyle(fontSize: 16),
+                        //     ),
+                        //     style: OutlinedButton.styleFrom(
+                        //       foregroundColor: Colors.orange[700],
+                        //       side: BorderSide(
+                        //         color: Colors.orange[700]!,
+                        //         width: 1.5,
+                        //       ),
+                        //       shape: RoundedRectangleBorder(
+                        //         borderRadius: BorderRadius.circular(12),
+                        //       ),
+                        //     ),
+                        //   ),
+                        // ),
 
                         const SizedBox(height: 16),
 

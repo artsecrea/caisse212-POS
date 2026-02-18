@@ -5,7 +5,9 @@ import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/models/order_models.dart';
+import '../utils/currency_formatter.dart';
 
 /// Enum for printer purpose
 enum PrinterPurpose {
@@ -105,6 +107,7 @@ class PrintingService {
   Printer? _connectedKdsPrinter;
   PrinterConfig _config = const PrinterConfig();
   bool _isScanning = false;
+  Ref? _ref; // Store ref for accessing providers
 
   // Stream controllers
   final _printersController = StreamController<List<Printer>>.broadcast();
@@ -123,7 +126,9 @@ class PrintingService {
   Stream<PrinterConfig> get configStream => _configController.stream;
 
   /// Initialize the printing service
-  Future<void> initialize(SharedPreferences prefs) async {
+  Future<void> initialize(SharedPreferences prefs, Ref ref) async {
+    _ref = ref; // Store the ref
+
     // Load saved configuration
     await _loadConfig(prefs);
 
@@ -363,10 +368,24 @@ class PrintingService {
     return PosTextSize.size2;
   }
 
+  /// Get currency symbol from settings provider
+  String _getCurrency(String? providedCurrency) {
+    if (providedCurrency != null) return providedCurrency;
+    if (_ref != null) {
+      try {
+        return _ref!.read(currencySymbolProvider);
+      } catch (e) {
+        debugPrint('Error reading currency from provider: $e');
+      }
+    }
+    return 'USD'; // Fallback default
+  }
+
   /// Print order receipt
   Future<bool> printOrderReceipt({
     required CurrentOrder order,
     required String? cashierName,
+    String? currency,
     String? storeName,
     String? storeAddress,
     String? storePhone,
@@ -382,6 +401,7 @@ class PrintingService {
     }
 
     try {
+      final currencySymbol = _getCurrency(currency);
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
@@ -442,7 +462,7 @@ class PrintingService {
             styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
           PosColumn(
-            text: '\$${item.totalPrice.toStringAsFixed(2)}',
+            text: CurrencyFormatter.formatWithCurrency(item.totalPrice, currencySymbol),
             width: 4,
             styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
@@ -467,7 +487,7 @@ class PrintingService {
       bytes += generator.row([
         PosColumn(text: 'Subtotal:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
         PosColumn(
-          text: '\$${order.subtotal.toStringAsFixed(2)}',
+          text: CurrencyFormatter.formatWithCurrency(order.subtotal, currencySymbol),
           width: 4,
           styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
         ),
@@ -477,7 +497,7 @@ class PrintingService {
         bytes += generator.row([
           PosColumn(text: 'Discount:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
-            text: '-\$${order.totalDiscount.toStringAsFixed(2)}',
+            text: '-${CurrencyFormatter.formatWithCurrency(order.totalDiscount, currencySymbol)}',
             width: 4,
             styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
@@ -488,7 +508,7 @@ class PrintingService {
         bytes += generator.row([
           PosColumn(text: 'Tax:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
-            text: '\$${order.tax.toStringAsFixed(2)}',
+            text: CurrencyFormatter.formatWithCurrency(order.tax, currencySymbol),
             width: 4,
             styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
@@ -504,7 +524,7 @@ class PrintingService {
           styles: PosStyles(bold: true, height: _resolveHeaderSize(), width: _resolveHeaderSize()),
         ),
         PosColumn(
-          text: '\$${order.total.toStringAsFixed(2)}',
+          text: CurrencyFormatter.formatWithCurrency(order.total, currencySymbol),
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
@@ -684,6 +704,7 @@ class PrintingService {
     required String paymentMethod,
     required DateTime createdAt,
     required List<Map<String, dynamic>> items,
+    String? currency,
     String? orderCode,
     String? cashierName,
     String? storeName,
@@ -698,6 +719,7 @@ class PrintingService {
     }
 
     try {
+      final currencySymbol = _getCurrency(currency);
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
@@ -749,7 +771,7 @@ class PrintingService {
         bytes += generator.row([
           PosColumn(text: '${qty}x $name', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
-            text: '\$${(price as num).toStringAsFixed(2)}',
+            text: CurrencyFormatter.formatWithCurrency(price as double, currencySymbol),
             width: 4,
             styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
           ),
@@ -765,7 +787,7 @@ class PrintingService {
 
             if (compPrice > 0) {
               bytes += generator.text(
-                '  + ${compQty}x $compName (+\$${(compPrice * compQty).toStringAsFixed(2)})',
+                '  + ${compQty}x $compName (+${CurrencyFormatter.formatWithCurrency(compPrice * compQty, currencySymbol)})',
                 styles: PosStyles(align: PosAlign.left, fontType: PosFontType.fontB, height: _resolveTextSize(), width: _resolveTextSize()),
               );
             } else {
@@ -788,7 +810,7 @@ class PrintingService {
           styles: PosStyles(bold: true, height: _resolveHeaderSize(), width: _resolveHeaderSize()),
         ),
         PosColumn(
-          text: '\$${amount.toStringAsFixed(2)}',
+          text: CurrencyFormatter.formatWithCurrency(amount, currencySymbol),
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,

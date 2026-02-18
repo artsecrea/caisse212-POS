@@ -3,6 +3,8 @@
 import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../utils/currency_formatter.dart';
+
 import 'package:data_table_2/data_table_2.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/order_provider.dart';
@@ -10,7 +12,6 @@ import '../../providers/sync_manager_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
-import '../../services/api_service.dart';
 import 'permission_guard.dart';
 import 'order_details_dialog.dart';
 
@@ -136,6 +137,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   @override
   Widget build(BuildContext context) {
+    final currency = ref.watch(currencySymbolProvider);
+
     return Scaffold(
       appBar: _buildAppBar(),
       body: Column(
@@ -150,8 +153,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                     : _paginatedOrders == null || _paginatedOrders!.orders.isEmpty
                         ? _buildEmptyView()
                         : _groupBy == 'none'
-                            ? _buildOrdersTable()
-                            : _buildGroupedView(),
+                            ? _buildOrdersTable(currency)
+                            : _buildGroupedView(currency),
           ),
         ],
       ),
@@ -465,7 +468,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  Widget _buildGroupedView() {
+  Widget _buildGroupedView(String currency) {
     final orders = _paginatedOrders!.orders;
 
     Map<String, List<OrderFullDetails>> grouped = {};
@@ -515,7 +518,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                     ),
                   ],
                 ),
-                children: groupOrders.map((order) => _buildOrderListTile(order)).toList(),
+                children: groupOrders.map((order) => _buildOrderListTile(order, currency)).toList(),
               );
             },
           ),
@@ -525,7 +528,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  Widget _buildOrderListTile(OrderFullDetails orderDetails) {
+  Widget _buildOrderListTile(OrderFullDetails orderDetails, String currency) {
     final order = orderDetails.order;
     final needsSync = order.status == 'COMPLETED' && !order.isSynced;
 
@@ -556,7 +559,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             const SizedBox(width: 12),
           ],
           Text(
-            '\$${orderDetails.total.toStringAsFixed(2)}',
+            CurrencyFormatter.formatWithCurrency(orderDetails.total, currency),
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(width: 8),
@@ -583,7 +586,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  Widget _buildOrdersTable() {
+  Widget _buildOrdersTable(String currency) {
     final orders = _paginatedOrders!.orders;
 
     return Column(
@@ -630,7 +633,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               ),
               const DataColumn2(label: Text('Actions'), size: ColumnSize.L),
             ],
-            rows: orders.map((orderDetails) => _buildDataRow(orderDetails)).toList(),
+            rows: orders.map((orderDetails) => _buildDataRow(orderDetails, currency)).toList(),
           ),
         ),
         _buildPaginationControls(),
@@ -638,7 +641,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  DataRow _buildDataRow(OrderFullDetails orderDetails) {
+  DataRow _buildDataRow(OrderFullDetails orderDetails, String currency) {
     final order = orderDetails.order;
     final isCompleted = order.status == 'COMPLETED';
     final isSynced = order.isSynced;
@@ -687,13 +690,13 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         DataCell(Text(orderDetails.productCount.toString())),
         DataCell(
           Text(
-            '\$${orderDetails.total.toStringAsFixed(0)}',
+            CurrencyFormatter.formatWithCurrency(orderDetails.total, currency),
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
         ),
         DataCell(
           Text(
-            '\$${orderDetails.totalPaid.toStringAsFixed(0)}',
+            CurrencyFormatter.formatWithCurrency(orderDetails.totalPaid, currency),
             style: TextStyle(
               color: orderDetails.totalPaid >= orderDetails.total ? Colors.green : Colors.orange,
               fontWeight: FontWeight.w600,
@@ -1411,14 +1414,15 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 }
 
 // Order Details Dialog
-class _OrderDetailsDialog extends StatelessWidget {
+class _OrderDetailsDialog extends ConsumerWidget {
   final OrderFullDetails fullDetails;
 
-  const _OrderDetailsDialog({required this.fullDetails});
+  const _OrderDetailsDialog({super.key, required this.fullDetails});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final order = fullDetails.order;
+    final currency = ref.watch(currencySymbolProvider);
 
     return Dialog(
       child: Container(
@@ -1504,11 +1508,11 @@ class _OrderDetailsDialog extends StatelessWidget {
                     const SizedBox(height: 24),
                     const Text('Order Items', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    ...fullDetails.items.map((item) => _buildOrderItem(context, item)),
+                    ...fullDetails.items.map((item) => _buildOrderItem(context, item, currency)),
                     const SizedBox(height: 24),
                     const Text('Financial Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    _buildFinancialCard(context),
+                    _buildFinancialCard(context, currency),
                   ],
                 ),
               ),
@@ -1547,7 +1551,7 @@ class _OrderDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildOrderItem(BuildContext context, OrderItemDetails item) {
+  Widget _buildOrderItem(BuildContext context, OrderItemDetails item, String currency) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -1599,8 +1603,8 @@ class _OrderDetailsDialog extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '\$${item.totalPrice.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      CurrencyFormatter.formatWithCurrency(item.totalPrice, currency),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -1627,7 +1631,7 @@ class _OrderDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildFinancialCard(BuildContext context) {
+  Widget _buildFinancialCard(BuildContext context, String currency) {
     return Card(
       elevation: 2,
       child: Padding(
@@ -1636,30 +1640,30 @@ class _OrderDetailsDialog extends StatelessWidget {
           children: [
             _buildFinancialRow('Product Count', fullDetails.productCount.toString(), isBold: false),
             const Divider(height: 20),
-            _buildFinancialRow('Subtotal', '\$${fullDetails.subtotal.toStringAsFixed(2)}'),
+            _buildFinancialRow('Subtotal', CurrencyFormatter.formatWithCurrency(fullDetails.subtotal, currency)),
             if (fullDetails.itemDiscount > 0)
-              _buildFinancialRow('Item Discounts', '-\$${fullDetails.itemDiscount.toStringAsFixed(2)}', color: Colors.orange),
+              _buildFinancialRow('Item Discounts', '-${CurrencyFormatter.formatWithCurrency(fullDetails.itemDiscount, currency)}', color: Colors.orange),
             if (fullDetails.discountPercentage > 0)
               _buildFinancialRow(
                 'Manual Discount (${fullDetails.discountPercentage.toStringAsFixed(0)}%)',
-                '-\$${fullDetails.manualDiscountAmount.toStringAsFixed(2)}',
+                '-${CurrencyFormatter.formatWithCurrency(fullDetails.manualDiscountAmount, currency)}',
                 color: Colors.deepOrange,
               ),
             if (fullDetails.totalDiscount > 0)
-              _buildFinancialRow('Total Discount', '-\$${fullDetails.totalDiscount.toStringAsFixed(2)}', color: Colors.red),
-            _buildFinancialRow('Total TVA', '\$${fullDetails.totalTva.toStringAsFixed(2)}'),
+              _buildFinancialRow('Total Discount', '-${CurrencyFormatter.formatWithCurrency(fullDetails.totalDiscount, currency)}', color: Colors.red),
+            _buildFinancialRow('Total TVA', CurrencyFormatter.formatWithCurrency(fullDetails.totalTva, currency)),
             const Divider(height: 20, thickness: 2),
-            _buildFinancialRow('Total', '\$${fullDetails.total.toStringAsFixed(2)}', fontSize: 18, isBold: true),
+            _buildFinancialRow('Total', CurrencyFormatter.formatWithCurrency(fullDetails.total, currency), fontSize: 18, isBold: true),
             const Divider(height: 20),
             _buildFinancialRow(
               'Total Paid',
-              '\$${fullDetails.totalPaid.toStringAsFixed(2)}',
+              CurrencyFormatter.formatWithCurrency(fullDetails.totalPaid, currency),
               color: fullDetails.totalPaid >= fullDetails.total ? Colors.green : Colors.orange,
               isBold: true,
             ),
             _buildFinancialRow(
               'Balance',
-              '\$${(fullDetails.total - fullDetails.totalPaid).toStringAsFixed(2)}',
+              CurrencyFormatter.formatWithCurrency(fullDetails.total - fullDetails.totalPaid, currency),
               color: fullDetails.totalPaid >= fullDetails.total ? Colors.green : Colors.red,
             ),
           ],

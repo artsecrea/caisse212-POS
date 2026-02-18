@@ -29,7 +29,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
-  bool _showServerConfig = false;
+  // bool _showServerConfig = false;
   List<String> _availableUsernames = [];
 
   // Generate date-based password (YYYYMMDD format)
@@ -66,9 +66,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   /// Show server configuration dialog (protected by date password)
-  Future<void> _showServerConfigDialog() async {
+  Future<void> _showServerConfig() async {
     final passwordController = TextEditingController();
-    final l10n = AppLocalizations.of(context)!;
 
     // First, verify password
     final verified = await showDialog<bool>(
@@ -77,19 +76,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         bool obscurePassword = true;
         return StatefulBuilder(
           builder: (context, setState) {
+            final l10n = AppLocalizations.of(context)!;
             return AlertDialog(
-              title: const Text('Server Configuration'),
+              title: Text(l10n.translate('server_configuration')),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Enter password:'),
+                  Text(l10n.translate('enter_password')),
                   const SizedBox(height: 16),
                   TextField(
                     controller: passwordController,
                     obscureText: obscurePassword,
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
-                      labelText: 'Password',
+                      labelText: l10n.translate('password'),
                       prefixIcon: const Icon(Icons.key),
                       suffixIcon: IconButton(
                         icon: Icon(
@@ -121,7 +121,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     backgroundColor: Theme.of(context).primaryColor,
                     foregroundColor: Colors.white,
                   ),
-                  child: const Text('Verify'),
+                  child: Text(l10n.translate('verify')),
                 ),
               ],
             );
@@ -134,9 +134,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     if (verified != true) {
       if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invalid password. Use today\'s date in YYYYMMDD format.'),
+          SnackBar(
+            content: Text(l10n.translate('invalid_password_date')),
             backgroundColor: Colors.red,
           ),
         );
@@ -145,27 +146,28 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
 
     // Show server URL info
+    final l10n = AppLocalizations.of(context)!;
     final prefs = ref.read(sharedPreferencesProvider);
-    final serverUrl = prefs.getString('server_url') ?? 'Not set';
+    final serverUrl = prefs.getString('server_url') ?? l10n.translate('not_set');
     final demoMode = prefs.getBool('demo_mode') ?? false;
 
     await showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Server Configuration'),
+          title: Text(l10n.translate('server_configuration')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Current Configuration:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              Text(
+                l10n.translate('current_configuration'),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               const SizedBox(height: 16),
-              _buildConfigRow('Server URL:', serverUrl),
+              _buildConfigRow('${l10n.translate('server_url')}:', serverUrl),
               const SizedBox(height: 8),
-              _buildConfigRow('Demo Mode:', demoMode ? 'Yes' : 'No'),
+              _buildConfigRow('${l10n.translate('demo_mode')}:', demoMode ? l10n.translate('yes') : l10n.translate('no')),
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -180,7 +182,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'To change server settings, logout completely and reconnect from the tenant screen.',
+                        l10n.translate('to_change_server_logout'),
                         style: TextStyle(color: Colors.blue[700], fontSize: 12),
                       ),
                     ),
@@ -332,6 +334,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return;
     }
 
+    final l10n = AppLocalizations.of(context)!;
+
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -366,7 +370,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
       if (user == null) {
         setState(() {
-          _errorMessage = 'User not found. Please check your username.';
+          _errorMessage = l10n.translate('user_not_found');
           _isLoading = false;
         });
         return;
@@ -377,7 +381,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
       if (!verified) {
         setState(() {
-          _errorMessage = 'Invalid password. Please try again.';
+          _errorMessage = l10n.translate('invalid_password_try_again');
           _isLoading = false;
         });
         return;
@@ -406,7 +410,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Resumed your previous session #${existingSession.id}'),
+                    content: Text(l10n.translate('resumed_session').replaceAll('{0}', existingSession.id.toString())),
                     backgroundColor: Colors.green,
                   ),
                 );
@@ -426,7 +430,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Started new session #${newSession.id}'),
+                  content: Text(l10n.translate('started_new_session').replaceAll('{0}', newSession.id.toString())),
                   backgroundColor: Colors.blue,
                 ),
               );
@@ -437,7 +441,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Session error: $e'),
+                content: Text(l10n.translate('session_error').replaceAll('{0}', e.toString())),
                 backgroundColor: Colors.orange,
               ),
             );
@@ -898,7 +902,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   borderRadius: BorderRadius.circular(16),
                   elevation: 4,
                   child: InkWell(
-                    onTap: _showServerConfigDialog,
+                    onTap: _showServerConfig,
                     borderRadius: BorderRadius.circular(16),
                     child: Container(
                       padding: const EdgeInsets.all(16),

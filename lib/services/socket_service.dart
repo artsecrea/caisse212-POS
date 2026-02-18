@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:cmdecrea/cmdecrea.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:posecrea/data/database/app_database.dart';
+import 'package:caisse212/data/database/app_database.dart';
 import 'package:uuid/uuid.dart';
 import '../domain/models/socket_models.dart';
 import '../domain/models/order_events.dart';

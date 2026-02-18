@@ -1,9 +1,12 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import '../../providers/database_providers.dart';
 import '../../domain/models/order_models.dart';
 import '../../services/permission_service.dart';
+import '../../utils/app_localizations.dart';
 import '../../utils/button_styles.dart';
 import 'permission_guard.dart';
 
@@ -131,6 +134,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     // Get components available for this product
     final componentsAsync = ref.watch(productComponentsProvider(productId));
     final componentGroupsAsync = ref.watch(componentGroupsProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -138,6 +142,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         width: 600,
         constraints: const BoxConstraints(maxHeight: 700),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Header
@@ -206,8 +211,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   // Quantity Row with on-screen keyboard
                   Row(
                     children: [
-                      const Text(
-                        'Quantity:',
+                      Text(
+                        '${l10n.translate("quantity")}:',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -275,7 +280,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                       const Spacer(),
                       // Total for quantity
                       Text(
-                        'Total: \$${(productPrice * _quantity).toStringAsFixed(2)}',
+                        '${l10n.translate("total")}: \$${(productPrice * _quantity).toStringAsFixed(2)}',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -294,14 +299,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               labelColor: Theme.of(context).primaryColor,
               unselectedLabelColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
               indicatorColor: Theme.of(context).primaryColor,
-              tabs: const [
+              tabs: [
                 Tab(
                   icon: Icon(Icons.restaurant_menu),
-                  text: 'Components',
+                  text: l10n.translate("components"),
                 ),
                 Tab(
                   icon: Icon(Icons.attach_money),
-                  text: 'Price & Discount',
+                  text: '${l10n.translate("price")} & ${l10n.translate("discounts")}',
                 ),
               ],
             ),
@@ -330,7 +335,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                     child: TextButton(
                       onPressed: () => Navigator.of(context).pop(),
                       style: AppButtonStyles.textButtonStyle(isLarge: true),
-                      child: const Text('Cancel'),
+                      child:  Text(l10n.translate("cancel")),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -343,7 +348,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                         foregroundColor: Colors.white,
                         isLarge: true,
                       ),
-                      child: Text(widget.isEditMode ? 'Update' : 'Add to Order'),
+                      child: Text(widget.isEditMode ? l10n.translate("update") : l10n.translate("add_to_order")),
                     ),
                   ),
                 ],
@@ -356,13 +361,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   }
 
   Widget _buildComponentsTab(AsyncValue<List<dynamic>> componentsAsync, AsyncValue<List<dynamic>> componentGroupsAsync) {
+    final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: const EdgeInsets.all(16),
       child: componentsAsync.when(
         data: (componentsData) {
           if (componentsData.isEmpty) {
-            return const Center(
-              child: Text('No modifications available'),
+            return Center(
+              child: Text(l10n.translate("no_notifications")),
             );
           }
 
@@ -462,7 +468,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                               child: Card(
                                 margin: const EdgeInsets.only(bottom: 8),
                                 elevation: isRequired ? 3 : 1,
-                                color: isRequired ? Colors.orange.withValues(alpha: 0.05) : null,
                                 child: Padding(
                                   padding: const EdgeInsets.all(16),
                                   child: Row(
@@ -508,8 +513,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                                       color: Colors.orange,
                                                       borderRadius: BorderRadius.circular(4),
                                                     ),
-                                                    child: const Text(
-                                                      'REQUIRED',
+                                                    child:  Text(
+                                                      l10n.translate('required').toUpperCase(),
                                                       style: TextStyle(
                                                         fontSize: 11,
                                                         fontWeight: FontWeight.bold,
@@ -534,7 +539,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                                   ),
                                                 const SizedBox(width: 12),
                                                 Text(
-                                                  'Min: $minQuantity, Max: $maxQuantity',
+                                                  'Min: $minQuantity || Max: $maxQuantity',
                                                   style: TextStyle(
                                                     fontSize: 12,
                                                     color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
@@ -603,7 +608,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             },
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, stack) => Center(
-              child: Text('Error loading groups: $error'),
+              child: Text('Error: $error'),
             ),
           );
         },
@@ -612,7 +617,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           print(error);
           print(stack);
           return Center(
-            child: Text('Error loading components: $error'),
+            child: Text('Error.'),
           );
         },
       ),
@@ -620,6 +625,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   }
 
   Widget _buildPriceDiscountTab(double basePrice) {
+    final l10n = AppLocalizations.of(context)!;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -633,8 +640,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Base Price:',
+                  Text(
+                    '${l10n.translate("base_price")}:',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                   Text(
@@ -654,8 +661,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
           // Product Discount (Read-only)
           if (_productDiscount > 0) ...[
-            const Text(
-              'Product Discount',
+            Text(
+              l10n.translate("product_discount"),
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
@@ -672,20 +679,13 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Built-in Discount',
+                            l10n.translate("built_in_discount"),
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
                               color: Colors.green[900],
                             ),
-                          ),
-                          Text(
-                            'This discount is included with the product',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.green[700],
-                            ),
-                          ),
+                          )
                         ],
                       ),
                     ),
@@ -710,8 +710,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Additional Discount',
+                Text(
+                  l10n.translate("additional_discount"),
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
@@ -770,11 +770,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
           TextField(
             controller: _noteController,
-            decoration: const InputDecoration(
-              labelText: 'Add a note (optional)',
+            decoration: InputDecoration(
+              labelText: l10n.translate('add_note'),
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.note),
-              hintText: 'e.g., No onions, extra sauce',
             ),
             maxLines: 3,
           ),
@@ -789,19 +788,19 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Preview',
+                  Text(
+                    l10n.translate('Preview'),
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const Divider(),
-                  _buildPreviewRow('Original Price', basePrice),
+                  _buildPreviewRow(l10n.translate('original_price'), basePrice),
                   if (_productDiscount > 0)
-                    _buildPreviewRow('Product Discount', _productDiscount, isDiscount: true),
+                    _buildPreviewRow(l10n.translate('product_discount'), _productDiscount, isDiscount: true),
                   if (_manualDiscountController.text.isNotEmpty && _calculateManualDiscount(basePrice) > 0)
-                    _buildPreviewRow('Manual Discount', _calculateManualDiscount(basePrice), isDiscount: true),
+                    _buildPreviewRow(l10n.translate('added_discount'), _calculateManualDiscount(basePrice), isDiscount: true),
                   const Divider(),
                   _buildPreviewRow(
-                      'Final Price',
+                      l10n.translate('finale_price'),
                       basePrice - _productDiscount - _calculateManualDiscount(basePrice),
                       isFinal: true
                   ),

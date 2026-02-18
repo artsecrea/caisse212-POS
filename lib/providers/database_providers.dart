@@ -48,7 +48,7 @@ final syncJobServiceProvider = Provider<SyncJobService>((ref) {
 final printingServiceProvider = Provider<PrintingService>((ref) {
   final prefs = ref.watch(sharedPreferencesProvider);
   final service = PrintingService();
-  service.initialize(prefs);
+  service.initialize(prefs,ref);
   return service;
 });
 

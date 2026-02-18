@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
+import 'package:drift/drift.dart' hide Column;
+import '../../core/enums.dart';
+import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
@@ -475,82 +478,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 //     }
                 //   },
                 // ),
-                // Pay button
+                // Pay button - Single click: direct payment, Long press: show payment dialog
                 if (settings.showPayButton)
                   _buildActionButton(
                     icon: Icons.payment,
                     label: l10n.translate('pay'),
                     color: Colors.green[700],
-                    onPressed: currentOrder.items.isEmpty
-                        ? null
-                        : () async {
-                      final orderRepo = ref.read(orderRepositoryProvider);
-                      final currentUser = ref.read(currentUserProvider);
-                      final settings = ref.read(settingsProvider);
-
-                      if (currentUser == null) return;
-
-                      try {
-                        int orderId;
-                        // Save or update order first
-                        if (currentOrder.isSaved()) {
-                          _logger.error("order updated before payment");
-                          await orderRepo.updateOrder(currentOrder);
-                          orderId = currentOrder.orderId!;
-                        } else {
-                          _logger.error("new order created before payment");
-                          orderId = await orderRepo.saveOrder(
-                            currentOrder,
-                            currentUser.id,
-                            status: settings.defaultOrderStatus, // Use default status from settings
-                          );
-
-                          if (currentOrder.tableId != null) {
-                            await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
-                          }
-                        }
-
-                        // Reload the order from database to get updated IDs and states
-                        final reloadedOrder = await orderRepo.getOrderById(orderId);
-                        if (reloadedOrder == null) {
-                          throw Exception('Failed to reload order');
-                        }
-
-                        if (context.mounted) {
-                          // Open payment screen with reloaded order
-                          final result = await showDialog<bool>(
-                            context: context,
-                            builder: (context) => PaymentScreen(order: reloadedOrder),
-                          );
-
-                          if (result == true && context.mounted) {
-                            // Payment completed, clear order
-                            ref.read(orderProvider.notifier).clearOrder();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Payment completed successfully'),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                          } else if (context.mounted) {
-                            // Payment screen closed without completion, reload order to show updated state
-                            final updatedOrder = await orderRepo.getOrderById(orderId);
-                            if (updatedOrder != null) {
-                              ref.read(orderProvider.notifier).loadOrder(updatedOrder);
-                            }
-                          }
-                        }
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Error: $e'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      }
-                    },
+                    onPressed: currentOrder.items.isEmpty ? null : () => _payDirectly(),
+                    onLongPress: currentOrder.items.isEmpty ? null : () => _showPaymentDialog(),
                   ),
                 _buildActionButton(
                   icon: Icons.check_circle,
@@ -650,6 +585,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     required IconData icon,
     required String label,
     required VoidCallback? onPressed,
+    VoidCallback? onLongPress,
     Color? color,
     bool isPrimary = false,
   }) {
@@ -659,6 +595,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       child: isPrimary
           ? ElevatedButton(
         onPressed: onPressed,
+        onLongPress: onLongPress,
         style: ElevatedButton.styleFrom(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.zero,
@@ -669,13 +606,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           children: [
             Icon(icon, size: 32),
             const SizedBox(height: 8),
-            Text(label,
-            textAlign: TextAlign.justify,),
+            Text(label, textAlign: TextAlign.justify,),
           ],
         ),
       )
           : OutlinedButton(
         onPressed: onPressed,
+        onLongPress: onLongPress,
         style: OutlinedButton.styleFrom(
           foregroundColor: color,
           side: BorderSide(color: color ?? Colors.grey),
@@ -693,6 +630,209 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         ),
       ),
     );
+  }
+
+  /// Pay directly with a single ticket (no dialog)
+  Future<void> _payDirectly() async {
+    final currentOrder = ref.read(orderProvider);
+    final orderRepo = ref.read(orderRepositoryProvider);
+    final currentUser = ref.read(currentUserProvider);
+    final settings = ref.read(settingsProvider);
+    final database = ref.read(databaseProvider);
+    final session = ref.read(currentSessionProvider);
+    final printingService = ref.read(printingServiceProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+
+    if (currentUser == null) return;
+
+    try {
+      int orderId;
+      // Save or update order first
+      if (currentOrder.isSaved()) {
+        await orderRepo.updateOrder(currentOrder);
+        orderId = currentOrder.orderId!;
+      } else {
+        orderId = await orderRepo.saveOrder(
+          currentOrder,
+          currentUser.id,
+          status: settings.defaultOrderStatus,
+        );
+        if (currentOrder.tableId != null) {
+          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
+        }
+      }
+
+      // ✅ RELOAD order from database to get the auto-generated product IDs
+      final reloadedOrder = await orderRepo.getOrderById(orderId);
+      if (reloadedOrder == null) {
+        throw Exception('Failed to reload order after saving');
+      }
+
+      // Get next ticket number
+      final existingTickets = await (database.select(database.tickets)
+        ..where((t) => t.orderId.equals(orderId))).get();
+
+      final maxTicketNum = existingTickets.isEmpty
+          ? 0
+          : existingTickets.map((t) => int.tryParse(t.num) ?? 0).reduce((a, b) => a > b ? a : b);
+
+      final newTicketNum = maxTicketNum + 1;
+      final ticketNumStr = newTicketNum.toString().padLeft(4, '0');
+
+      // Calculate total from reloaded order
+      final total = reloadedOrder.total;
+
+      // Insert ticket with default payment method (cash)
+      final ticketId = await database.into(database.tickets).insert(
+        TicketsCompanion.insert(
+          num: ticketNumStr,
+          orderId: orderId,
+          paymentMethod: TransactionType.cash.value,
+          amount: total,
+          sessionId: Value(session?.id),
+          isPaid: const Value(true),
+          printCount: const Value(0),
+        ),
+      );
+
+      // ✅ Update ALL order items using the RELOADED order (which has database IDs)
+      for (final item in reloadedOrder.items) {
+        if (item.id != null) {
+          await (database.update(database.orderProducts)
+            ..where((tbl) => tbl.id.equals(item.id!))).write(
+            OrderProductsCompanion(
+              ticketId: Value(ticketId),
+              state: const Value('PAID'),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+        }
+      }
+
+      // Print receipt using reloaded order items
+      try {
+        final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
+
+        final itemsForPrint = reloadedOrder.items.map((item) {
+          return {
+            'name': item.productName,
+            'quantity': item.quantity,
+            'price': item.totalPrice,
+            'components': item.components.map((c) => {'name': c.name, 'quantity': c.quantity}).toList(),
+          };
+        }).toList();
+
+        await printingService.printTicketReceipt(
+          ticketId: ticketId,
+          ticketNumber: ticketNumStr,
+          amount: total,
+          paymentMethod: TransactionType.cash.value,
+          createdAt: DateTime.now(),
+          items: itemsForPrint,
+          orderCode: reloadedOrder.orderCode,
+          cashierName: currentUser.firstName,
+          storeName: businessName,
+        );
+
+        await database.customStatement(
+          'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
+          [ticketId],
+        );
+      } catch (e) {
+        _logger.error('Print failed: $e');
+      }
+
+      if (context.mounted) {
+        // Clear order
+        ref.read(orderProvider.notifier).clearOrder();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment completed! Ticket #$ticketNumStr'),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+    } catch (e) {
+      _logger.error('Direct payment failed: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Show payment dialog for split payment
+  Future<void> _showPaymentDialog() async {
+    final currentOrder = ref.read(orderProvider);
+    final orderRepo = ref.read(orderRepositoryProvider);
+    final currentUser = ref.read(currentUserProvider);
+    final settings = ref.read(settingsProvider);
+
+    if (currentUser == null) return;
+
+    try {
+      int orderId;
+      // Save or update order first
+      if (currentOrder.isSaved()) {
+        await orderRepo.updateOrder(currentOrder);
+        orderId = currentOrder.orderId!;
+      } else {
+        orderId = await orderRepo.saveOrder(
+          currentOrder,
+          currentUser.id,
+          status: settings.defaultOrderStatus,
+        );
+        if (currentOrder.tableId != null) {
+          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
+        }
+      }
+
+      // Reload the order from database to get updated IDs
+      final reloadedOrder = await orderRepo.getOrderById(orderId);
+      if (reloadedOrder == null) {
+        throw Exception('Failed to reload order');
+      }
+
+      if (context.mounted) {
+        // Open payment screen dialog
+        final result = await showDialog<bool>(
+          context: context,
+          builder: (context) => PaymentScreen(order: reloadedOrder),
+        );
+
+        if (result == true && context.mounted) {
+          // Payment completed, clear order
+          ref.read(orderProvider.notifier).clearOrder();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment completed successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else if (context.mounted) {
+          // Dialog closed without completion, reload order state
+          final updatedOrder = await orderRepo.getOrderById(orderId);
+          if (updatedOrder != null) {
+            ref.read(orderProvider.notifier).loadOrder(updatedOrder);
+          }
+        }
+      }
+    } catch (e) {
+      _logger.error('Error opening payment dialog: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
 }
