@@ -26,6 +26,7 @@ class SettingsKeys {
   static const String showOrderTypeButton = 'show_order_type_button';
   static const String showConfirmOrderButton = 'show_confirm_order_button';
   static const String showPayButton = 'show_pay_button';
+  static const String showDailySummaryButton = 'show_daily_summary_button';
   static const String autoClearSyncedData = 'auto_clear_synced_data';
   static const String lastDataClearDate = 'last_data_clear_date';
 }
@@ -67,6 +68,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showOrderTypeButton: _prefs.getBool(SettingsKeys.showOrderTypeButton) ?? true,
       showConfirmOrderButton: _prefs.getBool(SettingsKeys.showConfirmOrderButton) ?? true,
       showPayButton: _prefs.getBool(SettingsKeys.showPayButton) ?? true,
+      showDailySummaryButton: _prefs.getBool(SettingsKeys.showDailySummaryButton) ?? true,
       autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
     );
   }
@@ -182,6 +184,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setShowPayButton(bool value) async {
     await _prefs.setBool(SettingsKeys.showPayButton, value);
     state = state.copyWith(showPayButton: value);
+  }
+
+  Future<void> setShowDailySummaryButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showDailySummaryButton, value);
+    state = state.copyWith(showDailySummaryButton: value);
   }
 
   Future<void> setAutoClearSyncedData(bool value) async {

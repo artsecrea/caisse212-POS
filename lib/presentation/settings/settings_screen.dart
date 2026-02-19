@@ -252,6 +252,15 @@ class SettingsScreen extends ConsumerWidget {
               value: settings.showPayButton,
               onChanged: (value) => settingsNotifier.setShowPayButton(value),
             ),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.summarize,
+              title: 'Daily Summary Button',
+              subtitle: 'Show daily summary report button',
+              value: settings.showDailySummaryButton,
+              onChanged: (value) => settingsNotifier.setShowDailySummaryButton(value),
+            ),
 
             const SizedBox(height: 24),
 

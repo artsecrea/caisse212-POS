@@ -1,13 +1,15 @@
-import 'dart:math';
-
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import '../../providers/database_providers.dart';
+import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
 import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/button_styles.dart';
+import '../../utils/currency_formatter.dart';
 import 'permission_guard.dart';
 
 class ProductModificationDialog extends ConsumerStatefulWidget {
@@ -32,10 +34,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   late TextEditingController _manualDiscountController;
   late TextEditingController _noteController;
   late TextEditingController _quantityController;
+  late FocusNode _discountFocusNode;
   bool _isPercentageDiscount = false;
   late TabController _tabController;
   double _productDiscount = 0.0; // Product's built-in discount
   int _quantity = 1;
+  String? _discountError;
 
   @override
   void initState() {
@@ -44,6 +48,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     _manualDiscountController = TextEditingController();
     _noteController = TextEditingController();
     _quantityController = TextEditingController(text: '1');
+    _discountFocusNode = FocusNode();
 
     // Get product discount from product data
     if (widget.product is OrderItem) {
@@ -112,6 +117,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     _manualDiscountController.dispose();
     _noteController.dispose();
     _quantityController.dispose();
+    _discountFocusNode.dispose();
     super.dispose();
   }
 
@@ -135,6 +141,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     final componentsAsync = ref.watch(productComponentsProvider(productId));
     final componentGroupsAsync = ref.watch(componentGroupsProvider);
     final l10n = AppLocalizations.of(context)!;
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -179,26 +186,96 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                         ),
                       const SizedBox(width: 16),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              productName,
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
+                        child: componentsAsync.when(
+                          data: (componentsData) {
+                            // Calculate component total
+                            final componentTotal = _calculateComponentTotal(componentsData);
+                            final priceWithComponents = productPrice + componentTotal;
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  productName,
+                                  style: const TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                // Base price
+                                Text(
+                                  currencyFormatter.format(productPrice),
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                // Components total if any
+                                if (componentTotal > 0) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '+${currencyFormatter.format(componentTotal)} ${l10n.translate("components")}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.green[700],
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 4),
+                                // Total with components
+                                Text(
+                                  currencyFormatter.format(priceWithComponents),
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                          loading: () => Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                productName,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '\$${productPrice.toStringAsFixed(2)}',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Theme.of(context).primaryColor,
-                                fontWeight: FontWeight.bold,
+                              const SizedBox(height: 4),
+                              Text(
+                                currencyFormatter.format(productPrice),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
+                          error: (_, __) => Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                productName,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                currencyFormatter.format(productPrice),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                       IconButton(
@@ -209,85 +286,249 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   ),
                   const SizedBox(height: 16),
                   // Quantity Row with on-screen keyboard
-                  Row(
-                    children: [
-                      Text(
-                        '${l10n.translate("quantity")}:',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      // Decrease button
-                      IconButton(
-                        onPressed: _quantity > 1
-                            ? () {
-                          setState(() {
-                            _quantity--;
-                            _quantityController.text = _quantity.toString();
-                          });
-                        }
-                            : null,
-                        icon: Icon(
-                          Icons.remove_circle,
-                          color: _quantity > 1 ? Colors.red : Colors.grey,
-                          size: 32,
-                        ),
-                      ),
-                      // Quantity input with on-screen keyboard
-                      SizedBox(
-                        width: 100,
-                        child: OnscreenKeyboardTextField(
-                          controller: _quantityController,
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          decoration: InputDecoration(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
+                  componentsAsync.when(
+                    data: (componentsData) {
+                      final componentTotal = _calculateComponentTotal(componentsData);
+                      final totalPrice = (productPrice + componentTotal) * _quantity;
+
+                      return Row(
+                        children: [
+                          Text(
+                            '${l10n.translate("quantity")}:',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
                             ),
-                            isDense: true,
                           ),
-                          onChanged: (value) {
-                            final parsed = int.tryParse(value);
-                            if (parsed != null && parsed > 0) {
+                          const SizedBox(width: 12),
+                          // Decrease button
+                          IconButton(
+                            onPressed: _quantity > 1
+                                ? () {
                               setState(() {
-                                _quantity = parsed;
+                                _quantity--;
+                                _quantityController.text = _quantity.toString();
                               });
                             }
+                                : null,
+                            icon: Icon(
+                              Icons.remove_circle,
+                              color: _quantity > 1 ? Colors.red : Colors.grey,
+                              size: 32,
+                            ),
+                          ),
+                          // Quantity input with on-screen keyboard
+                          SizedBox(
+                            width: 100,
+                            child: OnscreenKeyboardTextField(
+                              controller: _quantityController,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              decoration: InputDecoration(
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                isDense: true,
+                              ),
+                              onChanged: (value) {
+                                final parsed = int.tryParse(value);
+                                if (parsed != null && parsed > 0) {
+                                  setState(() {
+                                    _quantity = parsed;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                          // Increase button
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _quantity++;
+                                _quantityController.text = _quantity.toString();
+                              });
+                            },
+                            icon: Icon(
+                              Icons.add_circle,
+                              color: Theme.of(context).primaryColor,
+                              size: 32,
+                            ),
+                          ),
+                          const Spacer(),
+                          // Total for quantity
+                          Text(
+                            '${l10n.translate("total")}: ${currencyFormatter.format(totalPrice)}',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                    loading: () => Row(
+                      children: [
+                        Text(
+                          '${l10n.translate("quantity")}:',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // Decrease button
+                        IconButton(
+                          onPressed: _quantity > 1
+                              ? () {
+                            setState(() {
+                              _quantity--;
+                              _quantityController.text = _quantity.toString();
+                            });
+                          }
+                              : null,
+                          icon: Icon(
+                            Icons.remove_circle,
+                            color: _quantity > 1 ? Colors.red : Colors.grey,
+                            size: 32,
+                          ),
+                        ),
+                        // Quantity input with on-screen keyboard
+                        SizedBox(
+                          width: 100,
+                          child: OnscreenKeyboardTextField(
+                            controller: _quantityController,
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            decoration: InputDecoration(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              isDense: true,
+                            ),
+                            onChanged: (value) {
+                              final parsed = int.tryParse(value);
+                              if (parsed != null && parsed > 0) {
+                                setState(() {
+                                  _quantity = parsed;
+                                });
+                              }
+                            },
+                          ),
+                        ),
+                        // Increase button
+                        IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _quantity++;
+                              _quantityController.text = _quantity.toString();
+                            });
                           },
+                          icon: Icon(
+                            Icons.add_circle,
+                            color: Theme.of(context).primaryColor,
+                            size: 32,
+                          ),
                         ),
-                      ),
-                      // Increase button
-                      IconButton(
-                        onPressed: () {
-                          setState(() {
-                            _quantity++;
-                            _quantityController.text = _quantity.toString();
-                          });
-                        },
-                        icon: Icon(
-                          Icons.add_circle,
-                          color: Theme.of(context).primaryColor,
-                          size: 32,
+                        const Spacer(),
+                        // Total for quantity
+                        Text(
+                          '${l10n.translate("total")}: ${currencyFormatter.format(productPrice * _quantity)}',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      const Spacer(),
-                      // Total for quantity
-                      Text(
-                        '${l10n.translate("total")}: \$${(productPrice * _quantity).toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).primaryColor,
+                      ],
+                    ),
+                    error: (_, __) => Row(
+                      children: [
+                        Text(
+                          '${l10n.translate("quantity")}:',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 12),
+                        // Decrease button
+                        IconButton(
+                          onPressed: _quantity > 1
+                              ? () {
+                            setState(() {
+                              _quantity--;
+                              _quantityController.text = _quantity.toString();
+                            });
+                          }
+                              : null,
+                          icon: Icon(
+                            Icons.remove_circle,
+                            color: _quantity > 1 ? Colors.red : Colors.grey,
+                            size: 32,
+                          ),
+                        ),
+                        // Quantity input with on-screen keyboard
+                        SizedBox(
+                          width: 100,
+                          child: OnscreenKeyboardTextField(
+                            controller: _quantityController,
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            decoration: InputDecoration(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              isDense: true,
+                            ),
+                            onChanged: (value) {
+                              final parsed = int.tryParse(value);
+                              if (parsed != null && parsed > 0) {
+                                setState(() {
+                                  _quantity = parsed;
+                                });
+                              }
+                            },
+                          ),
+                        ),
+                        // Increase button
+                        IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _quantity++;
+                              _quantityController.text = _quantity.toString();
+                            });
+                          },
+                          icon: Icon(
+                            Icons.add_circle,
+                            color: Theme.of(context).primaryColor,
+                            size: 32,
+                          ),
+                        ),
+                        const Spacer(),
+                        // Total for quantity
+                        Text(
+                          '${l10n.translate("total")}: ${currencyFormatter.format(productPrice * _quantity)}',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -362,6 +603,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   Widget _buildComponentsTab(AsyncValue<List<dynamic>> componentsAsync, AsyncValue<List<dynamic>> componentGroupsAsync) {
     final l10n = AppLocalizations.of(context)!;
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
     return Padding(
       padding: const EdgeInsets.all(16),
       child: componentsAsync.when(
@@ -530,7 +772,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                               children: [
                                                 if (component.price > 0)
                                                   Text(
-                                                    '+\$${component.price.toStringAsFixed(2)}',
+                                                    '+${currencyFormatter.format(component.price)}',
                                                     style: TextStyle(
                                                       fontSize: 14,
                                                       fontWeight: FontWeight.w600,
@@ -569,7 +811,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                             style: TextStyle(
                                               fontWeight: FontWeight.bold,
                                               fontSize: 20,
-                                              color: Theme.of(context).primaryColor,
                                             ),
                                           ),
                                         ),
@@ -626,229 +867,426 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   Widget _buildPriceDiscountTab(double basePrice) {
     final l10n = AppLocalizations.of(context)!;
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+    final currency = ref.watch(settingsProvider).currency;
+    final componentsAsync = ref.watch(productComponentsProvider(
+        widget.product is OrderItem
+            ? (widget.product as OrderItem).productId
+            : widget.product.id
+    ));
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Base Price Info
-          Card(
-            color: Colors.blue[50],
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '${l10n.translate("base_price")}:',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                  Text(
-                    '\$${basePrice.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).primaryColor,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+    return componentsAsync.when(
+      data: (componentsData) {
+        // Calculate component total
+        final componentTotal = _calculateComponentTotal(componentsData);
+        final priceWithComponents = basePrice + componentTotal;
 
-          const SizedBox(height: 2),
+        // Calculate total with quantity
+        final totalBasePrice = basePrice * _quantity;
+        final totalComponentsPrice = componentTotal * _quantity;
+        final totalPriceWithComponents = priceWithComponents * _quantity;
+        final totalProductDiscount = _productDiscount * _quantity;
 
-          // Product Discount (Read-only)
-          if (_productDiscount > 0) ...[
-            Text(
-              l10n.translate("product_discount"),
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              color: Colors.green[50],
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Row(
-                  children: [
-                    Icon(Icons.local_offer, color: Colors.green[700]),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+        // Calculate max discount value based on type (should be on price with components)
+        final maxDiscountValue = _isPercentageDiscount ? 100.0 : (priceWithComponents - _productDiscount);
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Base Price Info
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            l10n.translate("built_in_discount"),
+                            '${l10n.translate("base_price")} (x1):',
                             style: TextStyle(
                               fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.green[900],
+                              fontWeight: FontWeight.w500,
+                              color: Theme.of(context).colorScheme.onSurface,
                             ),
-                          )
+                          ),
+                          Text(
+                            currencyFormatter.format(basePrice),
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
                         ],
                       ),
+                      if (componentTotal > 0) ...[
+                        const Divider(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '${l10n.translate("components")} (x1):',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                            Text(
+                              '+${currencyFormatter.format(componentTotal)}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).brightness == Brightness.dark
+                                    ? Colors.green[400]
+                                    : Colors.green[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '${l10n.translate("subtotal")} (x1):',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                            Text(
+                              currencyFormatter.format(priceWithComponents),
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (_quantity > 1) ...[
+                        const Divider(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '${l10n.translate("total")} (x$_quantity):',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                            Text(
+                              currencyFormatter.format(totalPriceWithComponents),
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                          ],
+                        )
+                      ], // Fixed: Added closing bracket for the if statement
+                    ],
+                  ),
+                ), // Fixed: Added closing parenthesis for Padding
+              ), // Fixed: Added closing parenthesis for Card
+
+              const SizedBox(height: 2),
+
+              // Product Discount (Read-only)
+              if (_productDiscount > 0) ...[
+                Text(
+                  l10n.translate("product_discount"),
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.green[900]!.withValues(alpha: 0.3)
+                      : Colors.green[50],
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.local_offer,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.green[400]
+                              : Colors.green[700],
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                l10n.translate("built_in_discount"),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context).brightness == Brightness.dark
+                                      ? Colors.green[300]
+                                      : Colors.green[900],
+                                ),
+                              ),
+                              if (_quantity > 1)
+                                Text(
+                                  '${currencyFormatter.format(_productDiscount)} x $_quantity',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(context).brightness == Brightness.dark
+                                        ? Colors.green[400]
+                                        : Colors.green[700],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          '-${currencyFormatter.format(totalProductDiscount)}',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? Colors.green[400]
+                                : Colors.green[700],
+                          ),
+                        ),
+                      ],
                     ),
+                  ),
+                ),
+                const SizedBox(height: 2),
+              ],
+
+              // Manual Discount Section - Protected by permission
+              PermissionGuard(
+                permission: Permissions.manualDiscount,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      '-\$${_productDiscount.toStringAsFixed(2)}',
+                      l10n.translate("additional_discount"),
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Colors.green[700],
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 2),
-          ],
+                    const SizedBox(height: 8),
 
-          // Manual Discount Section - Protected by permission
-          PermissionGuard(
-            permission: Permissions.manualDiscount,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  l10n.translate("additional_discount"),
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-
-                Row(
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: TextField(
-                        controller: _manualDiscountController,
-                        decoration: InputDecoration(
-                          border: const OutlineInputBorder(),
-                          prefixIcon: Icon(_isPercentageDiscount ? Icons.percent : Icons.attach_money),
-                          hintText: '0.00',
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: OnscreenKeyboardTextField(
+                            controller: _manualDiscountController,
+                            focusNode: _discountFocusNode,
+                            keyboardType: TextInputType.numberWithOptions(decimal: true),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+                            ],
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              prefixIcon: Icon(_isPercentageDiscount ? Icons.percent : Icons.attach_money),
+                              hintText: '0.00',
+                              suffixText: _isPercentageDiscount ? '%' : currency,
+                              errorText: _discountError,
+                              helperText: _isPercentageDiscount
+                                  ? '${l10n.translate("max")}: 100%'
+                                  : '${l10n.translate("max")}: ${currencyFormatter.format(maxDiscountValue > 0 ? maxDiscountValue : 0)}',
+                            ),
+                            onChanged: (value) {
+                              _validateAndUpdateDiscount(value, priceWithComponents);
+                            },
+                          ),
                         ),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        onChanged: (value) => setState(() {}),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Expanded(
-                      child: SegmentedButton<bool>(
-                        segments: const [
-                          ButtonSegment(
-                            value: false,
-                            label: Text('\$'),
-                            icon: Icon(Icons.attach_money, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SegmentedButton<bool>(
+                            segments: [
+                              ButtonSegment(
+                                value: false,
+                                label: Text(currency),
+                                icon: Icon(Icons.attach_money, size: 16),
+                              ),
+                              ButtonSegment(
+                                value: true,
+                                label: Text('%'),
+                                icon: Icon(Icons.percent, size: 16),
+                              ),
+                            ],
+                            selected: {_isPercentageDiscount},
+                            onSelectionChanged: (Set<bool> newSelection) {
+                              setState(() {
+                                _isPercentageDiscount = newSelection.first;
+                                // Re-validate with new type
+                                _validateAndUpdateDiscount(_manualDiscountController.text, priceWithComponents);
+                              });
+                            },
                           ),
-                          ButtonSegment(
-                            value: true,
-                            label: Text('%'),
-                            icon: Icon(Icons.percent, size: 16),
-                          ),
-                        ],
-                        selected: {_isPercentageDiscount},
-                        onSelectionChanged: (Set<bool> newSelection) {
-                          setState(() {
-                            _isPercentageDiscount = newSelection.first;
-                          });
-                        },
-                      ),
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 24),
                   ],
                 ),
-                const SizedBox(height: 24),
-              ],
-            ),
-          ),
-
-          // Note Section
-          const Text(
-            'Note',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 2),
-
-          TextField(
-            controller: _noteController,
-            decoration: InputDecoration(
-              labelText: l10n.translate('add_note'),
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.note),
-            ),
-            maxLines: 3,
-          ),
-
-          const SizedBox(height: 2),
-
-          // Preview
-          Card(
-            color: Colors.orange[50],
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    l10n.translate('Preview'),
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const Divider(),
-                  _buildPreviewRow(l10n.translate('original_price'), basePrice),
-                  if (_productDiscount > 0)
-                    _buildPreviewRow(l10n.translate('product_discount'), _productDiscount, isDiscount: true),
-                  if (_manualDiscountController.text.isNotEmpty && _calculateManualDiscount(basePrice) > 0)
-                    _buildPreviewRow(l10n.translate('added_discount'), _calculateManualDiscount(basePrice), isDiscount: true),
-                  const Divider(),
-                  _buildPreviewRow(
-                      l10n.translate('finale_price'),
-                      basePrice - _productDiscount - _calculateManualDiscount(basePrice),
-                      isFinal: true
-                  ),
-                ],
               ),
-            ),
+
+              // Note Section
+              Text(
+                l10n.translate('note'),
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 2),
+
+              TextField(
+                controller: _noteController,
+                decoration: InputDecoration(
+                  labelText: l10n.translate('add_note'),
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.note),
+                ),
+                maxLines: 3,
+              ),
+
+              const SizedBox(height: 2),
+
+              // Preview
+              Card(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.orange[900]!.withValues(alpha: 0.3)
+                    : Colors.orange[50],
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            l10n.translate('preview'),
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                          if (_quantity > 1) ...[
+                            const Spacer(),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                'x$_quantity',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const Divider(),
+                      _buildPreviewRow(l10n.translate('base_price'), totalBasePrice, currencyFormatter),
+                      if (totalComponentsPrice > 0)
+                        _buildPreviewRow(l10n.translate('components'), totalComponentsPrice, currencyFormatter),
+                      if (totalProductDiscount > 0)
+                        _buildPreviewRow(l10n.translate('product_discount'), totalProductDiscount, currencyFormatter, isDiscount: true),
+                      if (_manualDiscountController.text.isNotEmpty && _calculateManualDiscount(priceWithComponents) > 0)
+                        _buildPreviewRow(
+                            l10n.translate('added_discount'),
+                            _calculateManualDiscount(priceWithComponents) * _quantity,
+                            currencyFormatter,
+                            isDiscount: true
+                        ),
+                      const Divider(),
+                      _buildPreviewRow(
+                          l10n.translate('final_price'),
+                          (priceWithComponents - _productDiscount - _calculateManualDiscount(priceWithComponents)) * _quantity,
+                          currencyFormatter,
+                          isFinal: true
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => Center(child: Text(l10n.translate('error_loading_components'))),
     );
   }
 
-  Widget _buildPreviewRow(String label, double value, {bool isDiscount = false, bool isFinal = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: isFinal ? 16 : 14,
-              fontWeight: isFinal ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-          Text(
-            '${isDiscount ? '-' : ''}\$${value.toStringAsFixed(2)}',
-            style: TextStyle(
-              fontSize: isFinal ? 18 : 14,
-              fontWeight: isFinal ? FontWeight.bold : FontWeight.w600,
-              color: isDiscount
-                  ? Colors.orange[700]
-                  : isFinal
-                  ? Theme.of(context).primaryColor
-                  : Colors.black,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  void _validateAndUpdateDiscount(String value, double basePrice) {
+    setState(() {
+      if (value.isEmpty) {
+        _discountError = null;
+        return;
+      }
 
-  double _calculateManualDiscount(double basePrice) {
-    final discountValue = double.tryParse(_manualDiscountController.text) ?? 0.0;
-    if (_isPercentageDiscount) {
-      return basePrice * (discountValue / 100);
-    }
-    return discountValue;
+      final discountValue = double.tryParse(value);
+      if (discountValue == null) {
+        _discountError = 'Invalid number';
+        return;
+      }
+
+      if (discountValue < 0) {
+        _discountError = 'Cannot be negative';
+        return;
+      }
+
+      if (_isPercentageDiscount) {
+        // Percentage mode: 0-100
+        if (discountValue > 100) {
+          _discountError = 'Max 100%';
+          // Optionally auto-correct
+          _manualDiscountController.text = '100';
+          _manualDiscountController.selection = TextSelection.fromPosition(
+            TextPosition(offset: _manualDiscountController.text.length),
+          );
+        } else {
+          _discountError = null;
+        }
+      } else {
+        // Fixed amount mode: 0 to (product price - product discount)
+        final maxDiscount = basePrice - _productDiscount;
+        if (discountValue > maxDiscount) {
+          _discountError = 'Max ${maxDiscount.toStringAsFixed(2)}';
+          // Optionally auto-correct
+          _manualDiscountController.text = maxDiscount.toStringAsFixed(2);
+          _manualDiscountController.selection = TextSelection.fromPosition(
+            TextPosition(offset: _manualDiscountController.text.length),
+          );
+        } else {
+          _discountError = null;
+        }
+      }
+    });
   }
 
   void _handleSave(BuildContext context) {
@@ -1005,4 +1443,77 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       'quantity': quantity, // Added quantity
     });
   }
+
+  Widget _buildPreviewRow(String label, double value, CurrencyFormatter currencyFormatter, {bool isDiscount = false, bool isFinal = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isFinal ? 16 : 14,
+              fontWeight: isFinal ? FontWeight.bold : FontWeight.normal,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+          Text(
+            '${isDiscount ? '-' : ''}${currencyFormatter.format(value)}',
+            style: TextStyle(
+              fontSize: isFinal ? 18 : 14,
+              fontWeight: isFinal ? FontWeight.bold : FontWeight.w600,
+              color: isDiscount
+                  ? (Theme.of(context).brightness == Brightness.dark
+                      ? Colors.orange[400]
+                      : Colors.orange[700])
+                  : isFinal
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _calculateManualDiscount(double basePrice) {
+    final discountValue = double.tryParse(_manualDiscountController.text) ?? 0.0;
+    if (_isPercentageDiscount) {
+      return basePrice * (discountValue / 100);
+    }
+    return discountValue;
+  }
+
+  double _calculateComponentTotal(List<dynamic> componentsData) {
+    double total = 0.0;
+
+    for (final entry in _componentQuantities.entries) {
+      final componentId = entry.key;
+      final quantity = entry.value;
+
+      if (quantity > 0) {
+        // Find the component data
+        try {
+          final componentData = componentsData.firstWhere(
+            (cd) {
+              final comp = cd['component'];
+              return comp != null && comp.id == componentId;
+            },
+          );
+
+          final component = componentData['component'];
+          if (component != null && component.price != null) {
+            total += component.price * quantity;
+          }
+        } catch (e) {
+          // Component not found, skip
+          continue;
+        }
+      }
+    }
+
+    return total;
+  }
 }
+

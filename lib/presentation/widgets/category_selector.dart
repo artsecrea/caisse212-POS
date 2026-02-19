@@ -269,7 +269,7 @@ class _CategoryChip extends StatelessWidget {
           decoration: BoxDecoration(
             color: isSelected
                 ? Theme.of(context).primaryColor
-                : Colors.grey[100],
+                : Theme.of(context).colorScheme.surfaceContainerHighest,
             border: Border.all(
               color: isSelected
                   ? Theme.of(context).primaryColor

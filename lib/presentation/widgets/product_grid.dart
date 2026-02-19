@@ -8,7 +8,7 @@ import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
-import 'product_modification_dialog.dart';
+import 'product_modification_dialog.dart' as dialog;
 
 class ProductGrid extends ConsumerWidget {
   const ProductGrid({Key? key}) : super(key: key);
@@ -261,7 +261,7 @@ class _ProductCard extends ConsumerWidget {
   Future<void> _showModificationDialog(BuildContext context, WidgetRef ref) async {
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => ProductModificationDialog(product: product),
+      builder: (context) => dialog.ProductModificationDialog(product: product),
     );
 
     if (result != null) {

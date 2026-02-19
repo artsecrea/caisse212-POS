@@ -1060,12 +1060,14 @@ class OrderRepository {
           components.add(ComponentDetails(
             name: component.name,
             quantity: orderComp.quantity,
+            price: orderComp.price
           ));
         }
       }
 
       final productDiscount = ((product.manualDiscount + product.unitaryDiscount) * product.quantity);
-      final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) * product.quantity) + componentTotal;
+      print(componentTotal);
+      final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount)+ componentTotal ) * product.quantity ;
       final itemTva = product.unitaryTva * product.quantity;
 
       subtotal += itemSubtotal;

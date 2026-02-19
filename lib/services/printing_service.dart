@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/models/order_models.dart';
 import '../utils/currency_formatter.dart';
+import '../utils/app_localizations.dart';
+import 'daily_summary_service.dart';
 
 /// Enum for printer purpose
 enum PrinterPurpose {
@@ -952,6 +954,248 @@ class PrintingService {
   /// Format time only
   String _formatTime(DateTime dt) {
     return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
+  }
+
+  /// Format date only
+  String _formatDate(DateTime dt) {
+    return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+  }
+
+  /// Print daily summary report
+  Future<bool> printDailySummaryReport({
+    required DailySummaryReport report,
+    AppLocalizations? l10n,
+    CurrencyFormatter? currencyFormatter,
+    String? businessName,
+  }) async {
+    if (_connectedReceiptPrinter == null) {
+      debugPrint('No receipt printer connected');
+      return false;
+    }
+
+    try {
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(_config.paperSize, profile);
+      List<int> bytes = [];
+
+      final separator = ''.padLeft(32, '-');
+      final doubleSeparator = ''.padLeft(32, '=');
+
+      // Header
+      bytes += generator.text(
+        businessName ?? 'POS SYSTEM',
+        styles: PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
+      );
+      bytes += generator.emptyLines(1);
+      bytes += generator.text(
+        l10n?.translate('daily_summary_report') ?? 'DAILY SUMMARY REPORT',
+        styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+      );
+      bytes += generator.text(doubleSeparator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.emptyLines(1);
+
+      // Date range
+      bytes += generator.text(
+        '${l10n?.translate('date_range') ?? 'Date Range'}:',
+        styles: PosStyles(align: PosAlign.left, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+      );
+      bytes += generator.text(
+        '${_formatDate(report.startDate)} - ${_formatDate(report.endDate)}',
+        styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()),
+      );
+      bytes += generator.text(
+        '${l10n?.translate('number_of_sessions') ?? 'Sessions'}: ${report.totalSessions}',
+        styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()),
+      );
+      bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.emptyLines(1);
+
+      // Sessions details
+      for (final session in report.sessions) {
+        bytes += generator.text(
+          '${l10n?.translate('session') ?? 'Session'} #${session.sessionCode}',
+          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+        );
+        bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('cashier') ?? 'Cashier', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: session.cashierName ?? '#${session.cashierId}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('starting_balance') ?? 'Start Balance', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: currencyFormatter?.format(session.startingBalance) ?? session.startingBalance.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('total_orders') ?? 'Total Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: '${session.totalOrders}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('expected_from_orders') ?? 'Expected Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: currencyFormatter?.format(session.expectedFromOrders) ?? session.expectedFromOrders.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('total_tickets') ?? 'Total Tickets', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: '${session.totalTickets}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('expected_from_tickets') ?? 'Expected Tickets', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: currencyFormatter?.format(session.expectedFromTickets) ?? session.expectedFromTickets.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.emptyLines(1);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: '${session.unpaidOrders}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: currencyFormatter?.format(session.unpaidAmount) ?? session.unpaidAmount.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.emptyLines(1);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('paid_by_cash') ?? 'Cash', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: currencyFormatter?.format(session.paidByCash) ?? session.paidByCash.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('paid_by_card') ?? 'Card', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: currencyFormatter?.format(session.paidByCard) ?? session.paidByCard.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('paid_by_phone') ?? 'Phone', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: currencyFormatter?.format(session.paidByPhone) ?? session.paidByPhone.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('paid_by_other') ?? 'Other', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: currencyFormatter?.format(session.paidByOther) ?? session.paidByOther.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.emptyLines(1);
+
+        bytes += generator.row([
+          PosColumn(text: l10n?.translate('status') ?? 'Status', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(text: session.status.toUpperCase(), width: 6, styles: PosStyles(align: PosAlign.right, bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+        ]);
+
+        bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+        bytes += generator.emptyLines(1);
+      }
+
+      // Summary
+      bytes += generator.text(doubleSeparator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.text(
+        l10n?.translate('summary') ?? 'SUMMARY',
+        styles: PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
+      );
+      bytes += generator.text(doubleSeparator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.emptyLines(1);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('total_orders') ?? 'Total Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: '${report.totalOrders}', width: 6, styles: PosStyles(align: PosAlign.right, bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('expected_from_orders') ?? 'Expected Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalExpectedFromOrders) ?? report.totalExpectedFromOrders.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('total_tickets') ?? 'Total Tickets', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: '${report.totalTickets}', width: 6, styles: PosStyles(align: PosAlign.right, bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('expected_from_tickets') ?? 'Expected Tickets', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalExpectedFromTickets) ?? report.totalExpectedFromTickets.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.emptyLines(1);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: '${report.totalUnpaidOrders}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalUnpaidAmount) ?? report.totalUnpaidAmount.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.emptyLines(1);
+      bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('paid_by_cash') ?? 'Cash', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalPaidByCash) ?? report.totalPaidByCash.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('paid_by_card') ?? 'Card', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalPaidByCard) ?? report.totalPaidByCard.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('paid_by_phone') ?? 'Phone', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalPaidByPhone) ?? report.totalPaidByPhone.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('paid_by_other') ?? 'Other', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalPaidByOther) ?? report.totalPaidByOther.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('total_paid') ?? 'TOTAL PAID', width: 6, styles: PosStyles(bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalPaid) ?? report.totalPaid.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(text: l10n?.translate('total_starting_balance') ?? 'Start Balance', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(text: currencyFormatter?.format(report.totalStartingBalance) ?? report.totalStartingBalance.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+      ]);
+
+      bytes += generator.text(doubleSeparator, styles: const PosStyles(align: PosAlign.center));
+
+      // Footer
+      bytes += generator.emptyLines(1);
+      bytes += generator.text(
+        '${l10n?.translate('printed_at') ?? 'Printed'}: ${_formatDateTime(DateTime.now())}',
+        styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()),
+      );
+
+      bytes += generator.emptyLines(2);
+      bytes += generator.cut();
+
+      debugPrint('Attempting to print daily summary report. Bytes length: ${bytes.length}');
+
+      await _thermalPrinter.printData(
+        _connectedReceiptPrinter!,
+        bytes,
+        longData: true,
+      );
+
+      debugPrint('Daily summary report printed successfully');
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint('Error printing daily summary report: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return false;
+    }
   }
 
   /// Dispose streams

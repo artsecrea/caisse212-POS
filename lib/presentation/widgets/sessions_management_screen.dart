@@ -10,6 +10,7 @@ import '../../services/data_sync_service.dart';
 import '../../services/api_service.dart';
 import '../../services/pending_operations_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/currency_formatter.dart';
 import 'permission_guard.dart';
 
 class SessionsManagementScreen extends ConsumerStatefulWidget {
@@ -78,8 +79,9 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load sessions: $e')),
+          SnackBar(content: Text('${l10n.translate('failed_to_load_sessions')}: $e')),
         );
       }
     }
@@ -91,7 +93,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       context: context,
       builder: (context) => AlertDialog(
         title: Text(l10n.translate('delete')),
-        content: Text('${l10n.translate('are_you_sure')} ${l10n.translate('session')} #${session.id}?\n${l10n.translate('delete_confirm')}'),
+        content: Text('${l10n.translate('are_you_sure')} ${l10n.translate('session')} #${session.code}?\n${l10n.translate('delete_confirm')}'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -128,6 +130,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   }
 
   Future<void> _pauseSession(CashSession session) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
@@ -135,8 +138,8 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       await _loadSessions();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session paused'),
+          SnackBar(
+            content: Text(l10n.translate('session_paused')),
             backgroundColor: Colors.orange,
           ),
         );
@@ -144,13 +147,14 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to pause session: $e')),
+          SnackBar(content: Text('${l10n.translate('failed_to_pause_session')}: $e')),
         );
       }
     }
   }
 
   Future<void> _resumeSession(CashSession session) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
@@ -158,8 +162,8 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       await _loadSessions();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session resumed'),
+          SnackBar(
+            content: Text(l10n.translate('session_resumed_success')),
             backgroundColor: Colors.green,
           ),
         );
@@ -167,13 +171,14 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to resume session: $e')),
+          SnackBar(content: Text('${l10n.translate('failed_to_resume_session')}: $e')),
         );
       }
     }
   }
 
   Future<void> _endSession(CashSession session) async {
+    final l10n = AppLocalizations.of(context)!;
     // Check if this is the current user's active session
     final currentUser = ref.read(currentUserProvider);
     final isCurrentUserSession = currentUser != null && session.cashierId == currentUser.id &&
@@ -182,20 +187,20 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('End Session'),
+        title: Text(l10n.translate('end_session_action')),
         content: Text(
           isCurrentUserSession
-              ? 'Are you sure you want to end session #${session.id}?\nThe ending balance will be calculated from tickets.\n\n⚠️ You will be logged out automatically.'
-              : 'Are you sure you want to end session #${session.id}?\nThe ending balance will be calculated from tickets.',
+              ? '${l10n.translate('end_session_question').replaceAll('#{0}', session.code)}\n${l10n.translate('ending_balance_calculated')}\n\n${l10n.translate('will_logout_warning')}'
+              : '${l10n.translate('end_session_question').replaceAll('#{0}', session.code)}\n${l10n.translate('ending_balance_calculated')}',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(l10n.translate('cancel')),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('End Session'),
+            child: Text(l10n.translate('end_session_action')),
           ),
         ],
       ),
@@ -214,8 +219,8 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Session ended. Logging out...'),
+              SnackBar(
+                content: Text(l10n.translate('session_ended_logout')),
                 backgroundColor: Colors.green,
               ),
             );
@@ -227,14 +232,14 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
           await _loadSessions();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Session ended')),
+              SnackBar(content: Text(l10n.translate('session_ended_success'))),
             );
           }
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to end session: $e')),
+            SnackBar(content: Text('${l10n.translate('failed_to_end_session')}: $e')),
           );
         }
       }
@@ -242,40 +247,42 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   }
 
   void _showSessionDetails(CashSession session) {
+    final l10n = AppLocalizations.of(context)!;
     final summary = _summaries[session.id];
+    final currencyFormatter = ref.read(currencyFormatterProvider);
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Session #${session.id} Details'),
+        title: Text(l10n.translate('session_details_title').replaceAll('#{0}', session.code)),
         content: SizedBox(
           width: 400,
           child: ListView(
             key: ValueKey('session_dialog_${session.id}'),
             shrinkWrap: true,
             children: [
-              _buildDetailRow('Status', session.status.toUpperCase(), _getStatusColor(session.status)),
-              _buildDetailRow('Started At', _formatDateTime(session.startedAt)),
+              _buildDetailRow(l10n.translate('status'), session.status.toUpperCase(), _getStatusColor(session.status)),
+              _buildDetailRow(l10n.translate('started_at'), _formatDateTime(session.startedAt)),
               if (session.endedAt != null)
-                _buildDetailRow('Ended At', _formatDateTime(session.endedAt!)),
+                _buildDetailRow(l10n.translate('ended_at'), _formatDateTime(session.endedAt!)),
               if (session.pausedAt != null)
-                _buildDetailRow('Paused At', _formatDateTime(session.pausedAt!)),
+                _buildDetailRow(l10n.translate('paused_at'), _formatDateTime(session.pausedAt!)),
               const Divider(height: 24),
-              _buildDetailRow('Starting Balance', '\$${session.moneyAtStart.toStringAsFixed(2)}'),
+              _buildDetailRow(l10n.translate('starting_balance'), currencyFormatter.format(session.moneyAtStart)),
               if (session.moneyAtEnd != null)
-                _buildDetailRow('Ending Balance', '\$${session.moneyAtEnd!.toStringAsFixed(2)}'),
+                _buildDetailRow(l10n.translate('ending_balance'), currencyFormatter.format(session.moneyAtEnd!)),
               const Divider(height: 24),
               if (summary != null) ...[
-                const Text('Ticket Summary', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Text(l10n.translate('ticket_summary'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 const SizedBox(height: 8),
-                _buildDetailRow('Total Tickets', '${summary.ticketCount}'),
-                _buildDetailRow('Cash Total', '\$${summary.totalCash.toStringAsFixed(2)}'),
-                _buildDetailRow('Card Total', '\$${summary.totalCard.toStringAsFixed(2)}'),
-                _buildDetailRow('Check Total', '\$${summary.totalCheck.toStringAsFixed(2)}'),
-                _buildDetailRow('Other Total', '\$${summary.totalOther.toStringAsFixed(2)}'),
+                _buildDetailRow(l10n.translate('total_tickets'), '${summary.ticketCount}'),
+                _buildDetailRow(l10n.translate('cash_total'), currencyFormatter.format(summary.totalCash)),
+                _buildDetailRow(l10n.translate('card_total'), currencyFormatter.format(summary.totalCard)),
+                _buildDetailRow(l10n.translate('check_total'), currencyFormatter.format(summary.totalCheck)),
+                _buildDetailRow(l10n.translate('other_total'), currencyFormatter.format(summary.totalOther)),
                 const Divider(height: 16),
-                _buildDetailRow('Total Amount', '\$${summary.totalAmount.toStringAsFixed(2)}', Colors.blue),
-                _buildDetailRow('Expected Cash', '\$${summary.expectedCashAtEnd.toStringAsFixed(2)}', Colors.green),
+                _buildDetailRow(l10n.translate('total_amount'), currencyFormatter.format(summary.totalAmount), Colors.blue),
+                _buildDetailRow(l10n.translate('expected_cash'), currencyFormatter.format(summary.expectedCashAtEnd), Colors.green),
               ],
             ],
           ),
@@ -283,7 +290,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: Text(l10n.translate('close')),
           ),
           if (session.status == 'active' || session.status == 'paused')
             ElevatedButton(
@@ -291,7 +298,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 Navigator.of(context).pop();
                 _endSession(session);
               },
-              child: const Text('End Session'),
+              child: Text(l10n.translate('end_session_action')),
             ),
         ],
       ),
@@ -393,11 +400,11 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   @override
   Widget build(BuildContext context) {
     final isOnline = ref.watch(lastKnownOnlineStatusProvider);
-    final l10n = AppLocalizations.of(context);
+    final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Sessions Management'),
+        title: Text(l10n.translate('sessions_management')),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
         actions: [
@@ -413,7 +420,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                     child: const Icon(Icons.pending_actions),
                   ),
                   onPressed: hasPermission ? _showPendingOperationsDialog : null,
-                  tooltip: hasPermission ? 'Pending Operations' : 'Insufficient permissions',
+                  tooltip: hasPermission ? l10n.translate('pending_operations') : l10n.translate('insufficient_permissions'),
                   color: Colors.white,
                 );
               },
@@ -436,17 +443,17 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                       ),
                 onPressed: hasPermission && isOnline && !_isSyncing ? _syncAllSessions : null,
                 tooltip: !hasPermission
-                    ? 'Insufficient permissions'
+                    ? l10n.translate('insufficient_permissions')
                     : isOnline
-                        ? 'Sync All Sessions'
-                        : 'Offline',
+                        ? l10n.translate('sync_all_sessions')
+                        : l10n.translate('offline'),
               );
             },
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadSessions,
-            tooltip: 'Refresh',
+            tooltip: l10n.translate('refresh'),
           ),
         ],
       ),
@@ -466,6 +473,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   }
 
   Future<void> _syncAllSessions() async {
+    final l10n = AppLocalizations.of(context)!;
     setState(() => _isSyncing = true);
 
     try {
@@ -485,7 +493,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Synced $syncedCount sessions'),
+            content: Text(l10n.translate('synced_sessions').replaceAll('{0}', '$syncedCount')),
             backgroundColor: Colors.green,
           ),
         );
@@ -494,7 +502,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Sync failed: $e'),
+            content: Text('${l10n.translate('sync_failed')}: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -507,6 +515,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   }
 
   Future<void> _showPendingOperationsDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     final database = ref.read(databaseProvider);
     final pendingOpsService = PendingOperationsService(database);
     final operations = await pendingOpsService.getPendingOperationsByType('SESSION');
@@ -516,12 +525,12 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Pending Session Operations'),
+        title: Text(l10n.translate('pending_session_operations')),
         content: SizedBox(
           width: 400,
           height: 300,
           child: operations.isEmpty
-              ? const Center(child: Text('No pending operations'))
+              ? Center(child: Text(l10n.translate('no_pending_operations')))
               : ListView.builder(
                   itemCount: operations.length,
                   itemBuilder: (context, index) {
@@ -531,10 +540,10 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                         op.operationType == 'DELETE' ? Icons.delete : Icons.edit,
                         color: op.operationType == 'DELETE' ? Colors.red : Colors.blue,
                       ),
-                      title: Text('${op.operationType} Session #${op.entityId}'),
+                      title: Text('${op.operationType} ${l10n.translate('session')} #${op.entityId}'),
                       subtitle: Text(
-                        'Created: ${_formatDateTime(op.createdAt)}\n'
-                        'Retries: ${op.retryCount}${op.lastError != null ? '\nError: ${op.lastError}' : ''}',
+                        '${l10n.translate('created')}: ${_formatDateTime(op.createdAt)}\n'
+                        '${l10n.translate('retries')}: ${op.retryCount}${op.lastError != null ? '\n${l10n.translate('error')}: ${op.lastError}' : ''}',
                       ),
                       trailing: IconButton(
                         icon: const Icon(Icons.delete_forever, color: Colors.grey),
@@ -543,7 +552,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                           Navigator.of(context).pop();
                           _loadPendingOperationsCount();
                         },
-                        tooltip: 'Remove from queue',
+                        tooltip: l10n.translate('remove_from_queue'),
                       ),
                     );
                   },
@@ -552,7 +561,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: Text(l10n.translate('close')),
           ),
           if (operations.isNotEmpty)
             ElevatedButton(
@@ -560,16 +569,15 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 Navigator.of(context).pop();
                 await _syncAllSessions();
               },
-              child: const Text('Sync Now'),
+              child: Text(l10n.translate('sync_now')),
             ),
         ],
       ),
     );
   }
 
-// dart
-// dart
   Widget _buildFilters() {
+    final l10n = AppLocalizations.of(context)!;
     return Row(
       children: [
         Expanded(
@@ -577,7 +585,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
           child: TextField(
             key: const ValueKey('sessions_filter_search'),
             decoration: InputDecoration(
-              hintText: 'Search by ID...',
+              hintText: l10n.translate('search_by_id'),
               prefixIcon: const Icon(Icons.search),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -600,11 +608,11 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             ),
-            items: const [
-              DropdownMenuItem(value: 'ALL', child: Text('All Status')),
-              DropdownMenuItem(value: 'active', child: Text('Active')),
-              DropdownMenuItem(value: 'paused', child: Text('Paused')),
-              DropdownMenuItem(value: 'ended', child: Text('Ended')),
+            items: [
+              DropdownMenuItem(value: 'ALL', child: Text(l10n.translate('all_status'))),
+              DropdownMenuItem(value: 'active', child: Text(l10n.translate('active'))),
+              DropdownMenuItem(value: 'paused', child: Text(l10n.translate('paused'))),
+              DropdownMenuItem(value: 'ended', child: Text(l10n.translate('ended'))),
             ],
             onChanged: (value) {
               setState(() {
@@ -619,6 +627,8 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   }
 
   Widget _buildSessionsTable() {
+    final l10n = AppLocalizations.of(context)!;
+    final currencyFormatter = ref.read(currencyFormatterProvider);
     final filteredSessions = _filterSessions();
     final sortedSessions = _sortSessions(filteredSessions);
     final totalPages = (sortedSessions.length / _rowsPerPage).ceil();
@@ -634,7 +644,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
           children: [
             Icon(Icons.access_time, size: 64, color: Colors.grey[400]),
             const SizedBox(height: 16),
-            Text('No sessions found', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+            Text(l10n.translate('no_sessions_found'), style: TextStyle(fontSize: 18, color: Colors.grey[600])),
           ],
         ),
       );
@@ -658,7 +668,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
             ),
             columns: [
               DataColumn2(
-                label: const Text('Code', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('code'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
                 onSort: (columnIndex, ascending) {
                   setState(() {
@@ -668,7 +678,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 },
               ),
               DataColumn2(
-                label: const Text('Cashier', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('cashier'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
                 onSort: (columnIndex, ascending) {
                   setState(() {
@@ -678,7 +688,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 },
               ),
               DataColumn2(
-                label: const Text('Started At', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('started_at'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.M,
                 onSort: (columnIndex, ascending) {
                   setState(() {
@@ -688,7 +698,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 },
               ),
               DataColumn2(
-                label: const Text('Status', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('status'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
                 onSort: (columnIndex, ascending) {
                   setState(() {
@@ -698,7 +708,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 },
               ),
               DataColumn2(
-                label: const Text('Start Balance', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('start_balance'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
                 numeric: true,
                 onSort: (columnIndex, ascending) {
@@ -709,7 +719,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 },
               ),
               DataColumn2(
-                label: const Text('Total Sales', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('total_sales'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
                 numeric: true,
                 onSort: (columnIndex, ascending) {
@@ -720,11 +730,11 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 },
               ),
               DataColumn2(
-                label: const Text('Duration', style: TextStyle(fontWeight: FontWeight.bold)),
+                label: Text(l10n.translate('duration'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.S,
               ),
-              const DataColumn2(
-                label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold)),
+              DataColumn2(
+                label: Text(l10n.translate('actions'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 size: ColumnSize.M,
               ),
             ],
@@ -749,7 +759,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                         const SizedBox(width: 4),
                         if (isEnded)
                           Tooltip(
-                            message: needsSync ? 'Not synced to server' : 'Synced to server',
+                            message: needsSync ? l10n.translate('not_synced_to_server') : l10n.translate('synced_to_server'),
                             child: Icon(
                               needsSync ? Icons.cloud_off : Icons.cloud_done,
                               size: 14,
@@ -791,13 +801,13 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                   ),
                   DataCell(
                     Text(
-                      '\$${session.moneyAtStart.toStringAsFixed(2)}',
+                      currencyFormatter.format(session.moneyAtStart),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   DataCell(
                     Text(
-                      '\$${(summary?.totalAmount ?? 0).toStringAsFixed(2)}',
+                      currencyFormatter.format(summary?.totalAmount ?? 0),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -814,7 +824,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                         IconButton(
                           icon: const Icon(Icons.visibility, size: 20),
                           color: Colors.blue,
-                          tooltip: 'View Details',
+                          tooltip: l10n.translate('view_details'),
                           onPressed: () => _showSessionDetails(session),
                         ),
                         if (session.status != 'ended')
@@ -822,7 +832,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                             permission: Permissions.sessionsEnd,
                             icon: const Icon(Icons.stop, size: 20),
                             color: Colors.red,
-                            tooltip: 'End Session',
+                            tooltip: l10n.translate('end_session_action'),
                             onPressed: () => _endSession(session),
                           ),
                         // Delete - Protected by permission
@@ -830,7 +840,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                           permission: Permissions.sessionsDelete,
                           icon: const Icon(Icons.delete, size: 20),
                           color: Colors.grey,
-                          tooltip: 'Delete',
+                          tooltip: l10n.translate('delete'),
                           onPressed: () => _deleteSession(session),
                         ),
                       ],

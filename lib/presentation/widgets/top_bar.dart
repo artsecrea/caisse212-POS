@@ -12,6 +12,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/currency_formatter.dart';
 import '../settings/settings_screen.dart';
 import 'report_issue_dialog.dart';
 
@@ -52,6 +53,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   Widget _buildSearchBar() {
     final searchQuery = ref.watch(productSearchQueryProvider);
+    final l10n = AppLocalizations.of(context);
 
     // Sync controller with provider if changed externally
     if (_searchController.text != searchQuery) {
@@ -102,11 +104,11 @@ class _TopBarState extends ConsumerState<TopBar> {
                 controller: _searchController,
                 focusNode: _searchFocusNode,
                 style: const TextStyle( fontSize: 14),
-                decoration: const InputDecoration(
-                  hintText: 'Search products...',
-                  hintStyle: TextStyle(fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: l10n?.translate('search_products') ?? 'Search products...',
+                  hintStyle: const TextStyle(fontSize: 14),
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                   isDense: true,
                 ),
                 onChanged: (value) {
@@ -158,10 +160,12 @@ class _TopBarState extends ConsumerState<TopBar> {
   }
 
   void _showCurrentSessionDetails() async {
+    final l10n = AppLocalizations.of(context);
+    final currencyFormatter = ref.read(currencyFormatterProvider);
     final currentUser = ref.read(currentUserProvider);
     if (currentUser == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No user logged in')),
+        SnackBar(content: Text(l10n?.translate('no_user_logged_in') ?? 'No user logged in')),
       );
       return;
     }
@@ -173,7 +177,7 @@ class _TopBarState extends ConsumerState<TopBar> {
     if (session == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No active session')),
+          SnackBar(content: Text(l10n?.translate('no_active_session') ?? 'No active session')),
         );
       }
       return;
@@ -185,30 +189,30 @@ class _TopBarState extends ConsumerState<TopBar> {
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Current Session #${session.id}'),
+          title: Text('${l10n?.translate('current_session') ?? 'Current Session'} #${session.code}'),
           content: SizedBox(
             width: 350,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildSessionInfoRow('Status', session.status.toUpperCase(), _getStatusColor(session.status)),
-                _buildSessionInfoRow('Started', _formatDateTime(session.startedAt)),
-                _buildSessionInfoRow('Starting Balance', '\$${session.moneyAtStart.toStringAsFixed(2)}'),
+                _buildSessionInfoRow(l10n?.translate('status') ?? 'Status', session.status.toUpperCase(), _getStatusColor(session.status)),
+                _buildSessionInfoRow(l10n?.translate('started_at') ?? 'Started', _formatDateTime(session.startedAt)),
+                _buildSessionInfoRow(l10n?.translate('starting_balance') ?? 'Starting Balance', currencyFormatter.format(session.moneyAtStart)),
                 const Divider(height: 20),
-                _buildSessionInfoRow('Tickets', '${summary.ticketCount}'),
-                _buildSessionInfoRow('Cash Sales', '\$${summary.totalCash.toStringAsFixed(2)}'),
-                _buildSessionInfoRow('Card Sales', '\$${summary.totalCard.toStringAsFixed(2)}'),
-                _buildSessionInfoRow('Total Sales', '\$${summary.totalAmount.toStringAsFixed(2)}', Colors.blue),
+                _buildSessionInfoRow(l10n?.translate('tickets') ?? 'Tickets', '${summary.ticketCount}'),
+                _buildSessionInfoRow(l10n?.translate('cash_sales') ?? 'Cash Sales', currencyFormatter.format(summary.totalCash)),
+                _buildSessionInfoRow(l10n?.translate('card_sales') ?? 'Card Sales', currencyFormatter.format(summary.totalCard)),
+                _buildSessionInfoRow(l10n?.translate('total_sales') ?? 'Total Sales', currencyFormatter.format(summary.totalAmount), Colors.blue),
                 const Divider(height: 20),
-                _buildSessionInfoRow('Expected Cash', '\$${summary.expectedCashAtEnd.toStringAsFixed(2)}', Colors.green),
+                _buildSessionInfoRow(l10n?.translate('expected_cash') ?? 'Expected Cash', currencyFormatter.format(summary.expectedCashAtEnd), Colors.green),
               ],
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
+              child: Text(l10n?.translate('close') ?? 'Close'),
             ),
             if (session.status == 'active' || session.status == 'paused')
               ElevatedButton(
@@ -217,7 +221,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                   await _endCurrentSession(session.id);
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text('End Session'),
+                child: Text(l10n?.translate('end_session') ?? 'End Session'),
               ),
           ],
         ),
@@ -226,6 +230,7 @@ class _TopBarState extends ConsumerState<TopBar> {
   }
 
   Future<void> _handleLogout() async {
+    final l10n = AppLocalizations.of(context);
     try {
       final currentUser = ref.read(currentUserProvider);
       if (currentUser == null) {
@@ -248,26 +253,26 @@ class _TopBarState extends ConsumerState<TopBar> {
         context: context,
         barrierDismissible: false,
         builder: (context) => AlertDialog(
-          title: const Text('Logout'),
+          title: Text(l10n?.translate('logout') ?? 'Logout'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('What would you like to do with your current session?'),
+              Text(l10n?.translate('what_to_do_with_session') ?? 'What would you like to do with your current session?'),
               const SizedBox(height: 16),
-              const Text('• Pause: Resume when you login again'),
-              const Text('• End: Close session and calculate totals'),
+              Text(l10n?.translate('pause_resume_info') ?? '• Pause: Resume when you login again'),
+              Text(l10n?.translate('end_close_info') ?? '• End: Close session and calculate totals'),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop('cancel'),
-              child: const Text('Cancel'),
+              child: Text(l10n?.translate('cancel') ?? 'Cancel'),
             ),
             ElevatedButton.icon(
               onPressed: () => Navigator.of(context).pop('pause'),
               icon: const Icon(Icons.pause),
-              label: const Text('Pause Session'),
+              label: Text(l10n?.translate('pause_session') ?? 'Pause Session'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.orange,
                 foregroundColor: Colors.white,
@@ -276,7 +281,7 @@ class _TopBarState extends ConsumerState<TopBar> {
             ElevatedButton.icon(
               onPressed: () => Navigator.of(context).pop('end'),
               icon: const Icon(Icons.stop),
-              label: const Text('End Session'),
+              label: Text(l10n?.translate('end_session') ?? 'End Session'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red,
                 foregroundColor: Colors.white,
@@ -295,8 +300,8 @@ class _TopBarState extends ConsumerState<TopBar> {
         await sessionService.pauseSession(session.id);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Session paused. Resume when you login again.'),
+            SnackBar(
+              content: Text(l10n?.translate('session_paused_resume_login') ?? 'Session paused. Resume when you login again.'),
               backgroundColor: Colors.orange,
             ),
           );
@@ -308,8 +313,8 @@ class _TopBarState extends ConsumerState<TopBar> {
         await sessionService.endSession(sessionId: session.id);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Session ended successfully.'),
+            SnackBar(
+              content: Text(l10n?.translate('session_ended_successfully') ?? 'Session ended successfully.'),
               backgroundColor: Colors.green,
             ),
           );
@@ -322,7 +327,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
+            content: Text('${l10n?.translate('error') ?? 'Error'}: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -502,6 +507,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   /// Sync data from server
   Future<void> _handleSync() async {
+    final l10n = AppLocalizations.of(context);
     final prefs = ref.read(sharedPreferencesProvider);
     final apiService = ApiService(prefs);
     final settings = ref.read(settingsProvider);
@@ -509,8 +515,8 @@ class _TopBarState extends ConsumerState<TopBar> {
     // Check if in demo mode
     if (apiService.isDemoMode()) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Demo mode: Sync not available'),
+        SnackBar(
+          content: Text(l10n?.translate('demo_mode_sync_unavailable') ?? 'Demo mode: Sync not available'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -521,12 +527,12 @@ class _TopBarState extends ConsumerState<TopBar> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const AlertDialog(
+      builder: (context) => AlertDialog(
         content: Row(
           children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 20),
-            Text('Syncing data...'),
+            const CircularProgressIndicator(),
+            const SizedBox(width: 20),
+            Text(l10n?.translate('syncing_data') ?? 'Syncing data...'),
           ],
         ),
       ),
@@ -545,8 +551,8 @@ class _TopBarState extends ConsumerState<TopBar> {
       if (mounted) {
         Navigator.of(context).pop(); // Close dialog
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Data synced successfully!'),
+          SnackBar(
+            content: Text(l10n?.translate('data_synced_successfully') ?? 'Data synced successfully!'),
             backgroundColor: Colors.green,
           ),
         );
@@ -556,7 +562,7 @@ class _TopBarState extends ConsumerState<TopBar> {
         Navigator.of(context).pop(); // Close dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Sync failed: $e'),
+            content: Text('${l10n?.translate('sync_failed') ?? 'Sync failed'}: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -565,14 +571,15 @@ class _TopBarState extends ConsumerState<TopBar> {
   }
 
   Future<void> _pauseCurrentSession(int sessionId) async {
+    final l10n = AppLocalizations.of(context);
     try {
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
       await sessionService.pauseSession(sessionId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session paused'),
+          SnackBar(
+            content: Text(l10n?.translate('session_paused') ?? 'Session paused'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -580,21 +587,22 @@ class _TopBarState extends ConsumerState<TopBar> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to pause session: $e')),
+          SnackBar(content: Text('${l10n?.translate('failed_to_pause_session') ?? 'Failed to pause session'}: $e')),
         );
       }
     }
   }
 
   Future<void> _resumeCurrentSession(int sessionId) async {
+    final l10n = AppLocalizations.of(context);
     try {
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
       await sessionService.resumeSession(sessionId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session resumed'),
+          SnackBar(
+            content: Text(l10n?.translate('session_resumed') ?? 'Session resumed'),
             backgroundColor: Colors.green,
           ),
         );
@@ -602,29 +610,30 @@ class _TopBarState extends ConsumerState<TopBar> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to resume session: $e')),
+          SnackBar(content: Text('${l10n?.translate('failed_to_resume_session') ?? 'Failed to resume session'}: $e')),
         );
       }
     }
   }
 
   Future<void> _endCurrentSession(int sessionId) async {
+    final l10n = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('End Session'),
-        content: const Text(
-          'Are you sure you want to end this session?\n\nYou will be logged out automatically.',
+        title: Text(l10n?.translate('end_session') ?? 'End Session'),
+        content: Text(
+          l10n?.translate('end_session_confirm_logout') ?? 'Are you sure you want to end this session?\n\nYou will be logged out automatically.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(l10n?.translate('cancel') ?? 'Cancel'),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('End Session'),
+            child: Text(l10n?.translate('end_session') ?? 'End Session'),
           ),
         ],
       ),
@@ -643,8 +652,8 @@ class _TopBarState extends ConsumerState<TopBar> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session ended successfully. Logging out...'),
+          SnackBar(
+            content: Text(l10n?.translate('session_ended_logging_out') ?? 'Session ended successfully. Logging out...'),
             backgroundColor: Colors.green,
           ),
         );
@@ -656,7 +665,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to end session: $e'),
+            content: Text('${l10n?.translate('failed_to_end_session') ?? 'Failed to end session'}: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -696,6 +705,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final currentUser = ref.watch(currentUserProvider);
     final time = ref.watch(timeProvider).value ?? DateTime.now();
 
@@ -718,7 +728,7 @@ class _TopBarState extends ConsumerState<TopBar> {
           const Icon(Icons.point_of_sale, color: Colors.white, size: 28),
           const SizedBox(width: 12),
           const Text(
-            'POS',
+            'CAISSE212',
             style: TextStyle(
               color: Colors.white,
               fontSize: 20,
@@ -738,7 +748,7 @@ class _TopBarState extends ConsumerState<TopBar> {
           // Session icon - shows current session details
           IconButton(
             icon: const Icon(Icons.point_of_sale_outlined, color: Colors.white),
-            tooltip: 'Current Session',
+            tooltip: l10n?.translate('session') ?? 'session',
             onPressed: _showCurrentSessionDetails,
           ),
           const SizedBox(width: 8),
@@ -749,18 +759,18 @@ class _TopBarState extends ConsumerState<TopBar> {
               color: Colors.white.withOpacity(0.2),
               borderRadius: BorderRadius.circular(20),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
+                const Icon(
                   Icons.access_time,
                   color: Colors.white,
                   size: 16,
                 ),
-                SizedBox(width: 6),
+                const SizedBox(width: 6),
                 Text(
-                  'Active',
-                  style: TextStyle(color: Colors.white, fontSize: 14),
+                  l10n?.translate('active') ?? 'Active',
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
               ],
             ),
@@ -785,7 +795,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  _isOnline ? 'Online' : 'Offline',
+                  _isOnline ? (l10n?.translate('online') ?? 'Online') : (l10n?.translate('offline') ?? 'Offline'),
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
               ],
@@ -796,7 +806,7 @@ class _TopBarState extends ConsumerState<TopBar> {
           ElevatedButton.icon(
             onPressed: _isOnline ? _handleSync : null,
             icon: const Icon(Icons.sync, size: 18),
-            label: const Text('Update'),
+            label: Text(l10n?.translate('update') ?? 'Update'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: Theme.of(context).primaryColor,
@@ -821,7 +831,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  currentUser?.firstName ?? 'User',
+                  currentUser?.firstName ?? (l10n?.translate('user') ?? 'User'),
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
                 const Icon(Icons.arrow_drop_down, color: Colors.white),
@@ -844,17 +854,18 @@ class _TopBarState extends ConsumerState<TopBar> {
               }
             },
             itemBuilder: (context) {
+              final l10n = AppLocalizations.of(context);
               final permissionService = ref.read(permissionServiceProvider);
               final items = <PopupMenuEntry<String>>[];
 
               // Profile - always visible
-              items.add(const PopupMenuItem(
+              items.add(PopupMenuItem(
                 value: 'profile',
                 child: Row(
                   children: [
-                    Icon(Icons.person),
-                    SizedBox(width: 8),
-                    Text('Profile'),
+                    const Icon(Icons.person),
+                    const SizedBox(width: 8),
+                    Text(l10n?.translate('profile') ?? 'Profile'),
                   ],
                 ),
               ));
@@ -863,11 +874,11 @@ class _TopBarState extends ConsumerState<TopBar> {
               if (permissionService.hasPermission(Permissions.settingsView)) {
                 items.add(PopupMenuItem(
                   value: 'settings',
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.settings),
-                      SizedBox(width: 8),
-                      Text('Settings'),
+                      const Icon(Icons.settings),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('settings') ?? 'Settings'),
                     ],
                   ),
                   onTap: () {
@@ -885,11 +896,11 @@ class _TopBarState extends ConsumerState<TopBar> {
               if (permissionService.hasPermission(Permissions.sessionsView)) {
                 items.add(PopupMenuItem(
                   value: 'sessions',
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.access_time),
-                      SizedBox(width: 8),
-                      Text('Sessions'),
+                      const Icon(Icons.access_time),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('sessions') ?? 'Sessions'),
                     ],
                   ),
                   onTap: () {
@@ -902,11 +913,11 @@ class _TopBarState extends ConsumerState<TopBar> {
               if (permissionService.hasPermission(Permissions.ordersView)) {
                 items.add(PopupMenuItem(
                   value: 'orders',
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.list),
-                      SizedBox(width: 8),
-                      Text('Orders'),
+                      const Icon(Icons.list),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('orders') ?? 'Orders'),
                     ],
                   ),
                   onTap: () {
@@ -919,11 +930,11 @@ class _TopBarState extends ConsumerState<TopBar> {
               if (permissionService.hasPermission(Permissions.ticketsView)) {
                 items.add(PopupMenuItem(
                   value: 'tickets',
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.receipt),
-                      SizedBox(width: 8),
-                      Text('Tickets'),
+                      const Icon(Icons.receipt),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('tickets') ?? 'Tickets'),
                     ],
                   ),
                   onTap: () {
@@ -936,11 +947,11 @@ class _TopBarState extends ConsumerState<TopBar> {
               if (permissionService.hasPermission(Permissions.devicesView)) {
                 items.add(PopupMenuItem(
                   value: 'devices',
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.devices),
-                      SizedBox(width: 8),
-                      Text('Devices'),
+                      const Icon(Icons.devices),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('devices') ?? 'Devices'),
                     ],
                   ),
                   onTap: () {
@@ -953,11 +964,11 @@ class _TopBarState extends ConsumerState<TopBar> {
               if (permissionService.hasPermission(Permissions.devicesView)) {
                 items.add(PopupMenuItem(
                   value: 'printers',
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.print),
-                      SizedBox(width: 8),
-                      Text('Printers'),
+                      const Icon(Icons.print),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('printers') ?? 'Printers'),
                     ],
                   ),
                   onTap: () {
@@ -970,11 +981,11 @@ class _TopBarState extends ConsumerState<TopBar> {
               if (permissionService.hasPermission('pos:users:view')) {
                 items.add(PopupMenuItem(
                   value: 'users',
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.people),
-                      SizedBox(width: 8),
-                      Text('Users'),
+                      const Icon(Icons.people),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('users') ?? 'Users'),
                     ],
                   ),
                   onTap: () {
@@ -991,7 +1002,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                     Icon(Icons.bug_report, color: Colors.blue[700]),
                     const SizedBox(width: 8),
                     Text(
-                      AppLocalizations.of(context)?.translate('report_issue') ?? 'Report Issue',
+                      l10n?.translate('report_issue') ?? 'Report Issue',
                       style: TextStyle(color: Colors.blue[700]),
                     ),
                   ],
@@ -1002,29 +1013,37 @@ class _TopBarState extends ConsumerState<TopBar> {
               items.add(const PopupMenuDivider());
 
               // Logout - always visible
-              items.add(const PopupMenuItem(
+              items.add(PopupMenuItem(
                 value: 'logout',
                 child: Row(
                   children: [
-                    Icon(Icons.logout, color: Colors.orange),
-                    SizedBox(width: 8),
-                    Text('Logout', style: TextStyle(color: Colors.orange)),
+                    const Icon(Icons.logout, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Text(l10n?.translate('logout') ?? 'Logout', style: const TextStyle(color: Colors.orange)),
                   ],
                 ),
               ));
 
               // Full logout - permission protected (admin only)
-              if (permissionService.hasPermission('pos:admin')) {
-                items.add(const PopupMenuItem(
+              if (permissionService.hasPermission(Permissions.all)) {
+                items.add(PopupMenuItem(
                   value: 'full_logout',
                   child: Row(
                     children: [
-                      Icon(Icons.logout, color: Colors.red),
-                      SizedBox(width: 8),
-                      Text('Full Logout (Clear All)', style: TextStyle(color: Colors.red)),
+                      const Icon(Icons.logout, color: Colors.red),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          l10n?.translate('full_logout_clear_all') ?? 'Full Logout (Clear All)',
+                          style: const TextStyle(color: Colors.red),
+                          softWrap: true,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ],
                   ),
-                ));
+                ),
+                );
               }
 
               return items;

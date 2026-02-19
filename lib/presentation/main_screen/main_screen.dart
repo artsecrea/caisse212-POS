@@ -17,6 +17,7 @@ import '../widgets/category_selector.dart';
 import '../widgets/category_grid.dart';
 import '../widgets/commercial_selection_dialog.dart';
 import '../widgets/customer_selection_dialog.dart';
+import '../widgets/daily_summary_dialog.dart';
 import '../widgets/manual_discount_dialog.dart';
 import '../widgets/print_options_dialog.dart';
 import '../widgets/product_grid.dart';
@@ -443,6 +444,23 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     }
                   },
                 ),
+                if (settings.showPrintButton && ref.read(permissionServiceProvider).hasPermission(Permissions.printing))
+                    const SizedBox(width: 8),
+                // Daily Summary Report button
+                if (settings.showDailySummaryButton)
+                  _buildActionButton(
+                    icon: Icons.summarize,
+                    label: l10n.translate('daily_summary'),
+                    color: Colors.teal,
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => const DailySummaryDialog(),
+                      );
+                    },
+                  ),
+                if (settings.showDailySummaryButton)
+                  const SizedBox(width: 8),
                 // _buildActionButton(
                 //   icon: Icons.pause_circle_outline,
                 //   label: 'Hold',

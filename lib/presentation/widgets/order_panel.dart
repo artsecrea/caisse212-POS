@@ -11,7 +11,7 @@ import '../../services/permission_service.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../data/database/app_database.dart';
-import 'product_modification_dialog.dart';
+import 'product_modification_dialog.dart' show ProductModificationDialog;
 
 
 class OrderPanel extends ConsumerWidget {

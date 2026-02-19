@@ -25,6 +25,7 @@ class AppSettings {
   final bool showOrderTypeButton;
   final bool showConfirmOrderButton;
   final bool showPayButton;
+  final bool showDailySummaryButton;
 
   // Sync settings
   final bool autoSyncOnline; // Auto-sync orders when online
@@ -51,6 +52,7 @@ class AppSettings {
     this.showOrderTypeButton = true,
     this.showConfirmOrderButton = true,
     this.showPayButton = true,
+    this.showDailySummaryButton = true,
     this.autoSyncOnline = true,
     this.bulkSyncSize = 50,
     this.dataRetentionDays = 7,
@@ -76,6 +78,7 @@ class AppSettings {
     bool? showOrderTypeButton,
     bool? showConfirmOrderButton,
     bool? showPayButton,
+    bool? showDailySummaryButton,
     bool? autoSyncOnline,
     int? bulkSyncSize,
     int? dataRetentionDays,
@@ -100,6 +103,7 @@ class AppSettings {
       showOrderTypeButton: showOrderTypeButton ?? this.showOrderTypeButton,
       showConfirmOrderButton: showConfirmOrderButton ?? this.showConfirmOrderButton,
       showPayButton: showPayButton ?? this.showPayButton,
+      showDailySummaryButton: showDailySummaryButton ?? this.showDailySummaryButton,
       autoSyncOnline: autoSyncOnline ?? this.autoSyncOnline,
       bulkSyncSize: bulkSyncSize ?? this.bulkSyncSize,
       dataRetentionDays: dataRetentionDays ?? this.dataRetentionDays,
@@ -127,6 +131,7 @@ class AppSettings {
       'showOrderTypeButton': showOrderTypeButton,
       'showConfirmOrderButton': showConfirmOrderButton,
       'showPayButton': showPayButton,
+      'showDailySummaryButton': showDailySummaryButton,
       'autoSyncOnline': autoSyncOnline,
       'bulkSyncSize': bulkSyncSize,
       'dataRetentionDays': dataRetentionDays,
@@ -154,6 +159,7 @@ class AppSettings {
       showOrderTypeButton: json['showOrderTypeButton'] as bool? ?? true,
       showConfirmOrderButton: json['showConfirmOrderButton'] as bool? ?? true,
       showPayButton: json['showPayButton'] as bool? ?? true,
+      showDailySummaryButton: json['showDailySummaryButton'] as bool? ?? true,
       autoSyncOnline: json['autoSyncOnline'] as bool? ?? true,
       bulkSyncSize: json['bulkSyncSize'] as int? ?? 50,
       dataRetentionDays: json['dataRetentionDays'] as int? ?? 7,
