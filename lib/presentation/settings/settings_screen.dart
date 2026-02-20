@@ -4,11 +4,27 @@ import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../utils/app_localizations.dart';
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  int _selectedNavIndex = 0;
+
+  final List<NavItem> _navItems = const [
+    NavItem(icon: Icons.palette, label: 'Appearance'),
+    NavItem(icon: Icons.display_settings, label: 'Display'),
+    NavItem(icon: Icons.shopping_cart, label: 'Order Defaults'),
+    NavItem(icon: Icons.attach_money, label: 'Currency'),
+    NavItem(icon: Icons.touch_app, label: 'Action Buttons'),
+    NavItem(icon: Icons.sync, label: 'Sync Settings'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
     final settingsNotifier = ref.read(settingsProvider.notifier);
     final l10n = AppLocalizations.of(context)!;
@@ -16,12 +32,13 @@ class SettingsScreen extends ConsumerWidget {
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: 500,
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.85,
+        width: 1000,
+        height: MediaQuery.of(context).size.height * 0.85,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: Theme.of(context).dialogBackgroundColor,
         ),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header (non-scrollable)
@@ -50,335 +67,531 @@ class SettingsScreen extends ConsumerWidget {
               padding: EdgeInsets.symmetric(horizontal: 24),
               child: Divider(),
             ),
-            // Scrollable content
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-            // Appearance Section
-            Text(
-              l10n.translate('appearance'),
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.dark_mode,
-              title: l10n.translate('dark_mode'),
-              subtitle: 'Use dark theme',
-              value: settings.isDarkMode,
-              onChanged: (value) => settingsNotifier.setDarkMode(value),
-            ),
-            const SizedBox(height: 12),
-            _buildLanguageSelector(
-              context: context,
-              currentLanguage: settings.language,
-              onChanged: (value) => settingsNotifier.setLanguage(value),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Display Section
-            Text(
-              'Display',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.image,
-              title: l10n.translate('show_product_images'),
-              subtitle: 'Display product images in the grid',
-              value: settings.showProductImages,
-              onChanged: (value) => settingsNotifier.setShowProductImages(value),
-            ),
-            const SizedBox(height: 12),
-            _buildCategoryDisplayModeSelector(
-              context: context,
-              currentMode: settings.categoryDisplayMode,
-              onChanged: (value) => settingsNotifier.setCategoryDisplayMode(value),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Order Defaults Section
-            Text(
-              'Order Defaults',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildOrderTypeSelector(
-              context: context,
-              currentType: settings.defaultOrderType,
-              onChanged: (value) => settingsNotifier.setDefaultOrderType(value),
-            ),
-            const SizedBox(height: 12),
-            _buildOrderStatusSelector(
-              context: context,
-              currentStatus: settings.defaultOrderStatus,
-              onChanged: (value) => settingsNotifier.setDefaultOrderStatus(value),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Currency Section
-            const Text(
-              'Currency',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildCurrencySelector(
-              context: context,
-              currentCurrency: settings.currency,
-              onChanged: (value) => settingsNotifier.setCurrency(value),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Action Buttons Section
-            const Text(
-              'Action Buttons Visibility',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.table_bar,
-              title: 'Table Button',
-              subtitle: 'Show table selection button',
-              value: settings.showTableButton,
-              onChanged: (value) => settingsNotifier.setShowTableButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.person,
-              title: 'Customer Button',
-              subtitle: 'Show customer selection button',
-              value: settings.showCustomerButton,
-              onChanged: (value) => settingsNotifier.setShowCustomerButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.badge,
-              title: 'Commercial Button',
-              subtitle: 'Show commercial selection button',
-              value: settings.showCommercialButton,
-              onChanged: (value) => settingsNotifier.setShowCommercialButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.discount,
-              title: 'Coupon Button',
-              subtitle: 'Show coupon button',
-              value: settings.showCouponButton,
-              onChanged: (value) => settingsNotifier.setShowCouponButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.percent,
-              title: 'Discount Button',
-              subtitle: 'Show manual discount button',
-              value: settings.showDiscountButton,
-              onChanged: (value) => settingsNotifier.setShowDiscountButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.print,
-              title: 'Print Button',
-              subtitle: 'Show print button',
-              value: settings.showPrintButton,
-              onChanged: (value) => settingsNotifier.setShowPrintButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.people,
-              title: 'Persons Button',
-              subtitle: 'Show number of persons button',
-              value: settings.showPersonsButton,
-              onChanged: (value) => settingsNotifier.setShowPersonsButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.restaurant,
-              title: 'Order Type Button',
-              subtitle: 'Show order type toggle button',
-              value: settings.showOrderTypeButton,
-              onChanged: (value) => settingsNotifier.setShowOrderTypeButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.task_alt,
-              title: 'Confirm Order Button',
-              subtitle: 'Show confirm order button',
-              value: settings.showConfirmOrderButton,
-              onChanged: (value) => settingsNotifier.setShowConfirmOrderButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.payment,
-              title: 'Pay Button',
-              subtitle: 'Show pay button',
-              value: settings.showPayButton,
-              onChanged: (value) => settingsNotifier.setShowPayButton(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.summarize,
-              title: 'Daily Summary Button',
-              subtitle: 'Show daily summary report button',
-              value: settings.showDailySummaryButton,
-              onChanged: (value) => settingsNotifier.setShowDailySummaryButton(value),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Sync Settings Section
-            const Text(
-              'Sync Settings',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.sync,
-              title: 'Auto Sync Online',
-              subtitle: 'Automatically sync orders when online',
-              value: settings.autoSyncOnline,
-              onChanged: (value) => settingsNotifier.setAutoSyncOnline(value),
-            ),
-            const SizedBox(height: 8),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.auto_delete,
-              title: 'Auto Clear Synced Data',
-              subtitle: 'Clear old synced data daily',
-              value: settings.autoClearSyncedData,
-              onChanged: (value) => settingsNotifier.setAutoClearSyncedData(value),
-            ),
-            const SizedBox(height: 12),
-            _buildNumberSelector(
-              context: context,
-              icon: Icons.timer,
-              title: 'Sync Interval (minutes)',
-              subtitle: 'How often to sync data',
-              value: settings.autoSyncDurationMinutes,
-              min: 1,
-              max: 60,
-              onChanged: (value) => settingsNotifier.setAutoSyncDuration(value),
-            ),
-            const SizedBox(height: 12),
-            _buildNumberSelector(
-              context: context,
-              icon: Icons.backup,
-              title: 'Bulk Sync Size',
-              subtitle: 'Number of records to sync at once',
-              value: settings.bulkSyncSize,
-              min: 10,
-              max: 200,
-              onChanged: (value) => settingsNotifier.setBulkSyncSize(value),
-            ),
-            const SizedBox(height: 12),
-            _buildNumberSelector(
-              context: context,
-              icon: Icons.calendar_today,
-              title: 'Data Retention (days)',
-              subtitle: 'Days to keep synced data before deletion',
-              value: settings.dataRetentionDays,
-              min: 1,
-              max: 30,
-              onChanged: (value) => settingsNotifier.setDataRetentionDays(value),
-            ),
-
-            const SizedBox(height: 32),
-
-            // Reset Button
-            Center(
-              child: OutlinedButton.icon(
-                onPressed: () async {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Reset Settings'),
-                      content: const Text('Are you sure you want to reset all settings to defaults?'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Cancel'),
-                        ),
-                        ElevatedButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                            foregroundColor: Colors.white,
+            // Main content with navigation
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Left Navigation
+                  Container(
+                    width: 220,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.2),
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(16),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: ListView.separated(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            itemCount: _navItems.length,
+                            separatorBuilder: (context, index) => const Divider(height: 1, indent: 16, endIndent: 16),
+                            itemBuilder: (context, index) {
+                              final isSelected = _selectedNavIndex == index;
+                              return _buildNavItem(
+                                icon: _navItems[index].icon,
+                                label: _navItems[index].label,
+                                isSelected: isSelected,
+                                onTap: () => setState(() => _selectedNavIndex = index),
+                              );
+                            },
                           ),
-                          child: const Text('Reset'),
                         ),
                       ],
                     ),
-                  );
-                  if (confirm == true) {
-                    await settingsNotifier.resetToDefaults();
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Settings reset to defaults'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    }
-                  }
-                },
-                icon: const Icon(Icons.restore),
-                label: const Text('Reset to Defaults'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.red,
-                  side: const BorderSide(color: Colors.red),
-                ),
+                  ),
+                  const VerticalDivider(width: 1, thickness: 1),
+                  // Right Content
+                  Expanded(
+                    flex: 3,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(24),
+                      child: _buildContentForIndex(
+                        index: _selectedNavIndex,
+                        settings: settings,
+                        settingsNotifier: settingsNotifier,
+                        context: context,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-                  ],
+            // Reset Button at bottom
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(16),
+                  bottomRight: Radius.circular(16),
                 ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('Reset Settings'),
+                          content: const Text('Are you sure you want to reset all settings to defaults?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              child: const Text('Cancel'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () => Navigator.pop(context, true),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: const Text('Reset'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        await settingsNotifier.resetToDefaults();
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Settings reset to defaults'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.restore),
+                    label: const Text('Reset to Defaults'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildNavItem({
+    required IconData icon,
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
+          border: Border(
+            left: BorderSide(
+              color: isSelected ? Theme.of(context).primaryColor : Colors.transparent,
+              width: 3,
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Theme.of(context).primaryColor : null,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                color: isSelected ? Theme.of(context).primaryColor : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContentForIndex({
+    required int index,
+    required AppSettings settings,
+    required SettingsNotifier settingsNotifier,
+    required BuildContext context,
+  }) {
+    switch (index) {
+      case 0:
+        return _buildAppearanceContent(settings, settingsNotifier, context);
+      case 1:
+        return _buildDisplayContent(settings, settingsNotifier, context);
+      case 2:
+        return _buildOrderDefaultsContent(settings, settingsNotifier, context);
+      case 3:
+        return _buildCurrencyContent(settings, settingsNotifier, context);
+      case 4:
+        return _buildActionButtonsContent(settings, settingsNotifier, context);
+      case 5:
+        return _buildSyncSettingsContent(settings, settingsNotifier, context);
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _buildAppearanceContent(
+      AppSettings settings,
+      SettingsNotifier notifier,
+      BuildContext context,
+      ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Appearance',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Customize the look and feel of the application',
+          style: TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.dark_mode,
+          title: 'Dark Mode',
+          subtitle: 'Use dark theme throughout the app',
+          value: settings.isDarkMode,
+          onChanged: (value) => notifier.setDarkMode(value),
+        ),
+        const SizedBox(height: 12),
+        _buildLanguageSelector(
+          context: context,
+          currentLanguage: settings.language,
+          onChanged: (value) => notifier.setLanguage(value),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDisplayContent(
+      AppSettings settings,
+      SettingsNotifier notifier,
+      BuildContext context,
+      ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Display Settings',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Configure how content is displayed',
+          style: TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.image,
+          title: 'Show Product Images',
+          subtitle: 'Display product images in the grid view',
+          value: settings.showProductImages,
+          onChanged: (value) => notifier.setShowProductImages(value),
+        ),
+        const SizedBox(height: 12),
+        _buildCategoryDisplayModeSelector(
+          context: context,
+          currentMode: settings.categoryDisplayMode,
+          onChanged: (value) => notifier.setCategoryDisplayMode(value),
+        ),
+        const SizedBox(height: 12,),
+        _buildOrderPanelPositionSwitch(
+          context: context,
+          value: settings.orderPanelOnRight,
+          onChanged: (value) => notifier.setOrderPanelOnRight(value),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOrderDefaultsContent(
+      AppSettings settings,
+      SettingsNotifier notifier,
+      BuildContext context,
+      ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Order Defaults',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Set default values for new orders',
+          style: TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+        _buildOrderTypeSelector(
+          context: context,
+          currentType: settings.defaultOrderType,
+          onChanged: (value) => notifier.setDefaultOrderType(value),
+        ),
+        const SizedBox(height: 12),
+        _buildOrderStatusSelector(
+          context: context,
+          currentStatus: settings.defaultOrderStatus,
+          onChanged: (value) => notifier.setDefaultOrderStatus(value),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCurrencyContent(
+      AppSettings settings,
+      SettingsNotifier notifier,
+      BuildContext context,
+      ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Currency Settings',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Select your preferred currency',
+          style: TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+        _buildCurrencySelector(
+          context: context,
+          currentCurrency: settings.currency,
+          onChanged: (value) => notifier.setCurrency(value),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionButtonsContent(
+      AppSettings settings,
+      SettingsNotifier notifier,
+      BuildContext context,
+      ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Action Buttons',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Toggle visibility of action buttons',
+          style: TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: 2.8,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 8,
+          children: [
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.table_bar,
+              title: 'Table Button',
+              subtitle: 'Table selection',
+              value: settings.showTableButton,
+              onChanged: (value) => notifier.setShowTableButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.person,
+              title: 'Customer Button',
+              subtitle: 'Customer selection',
+              value: settings.showCustomerButton,
+              onChanged: (value) => notifier.setShowCustomerButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.badge,
+              title: 'Commercial Button',
+              subtitle: 'Commercial selection',
+              value: settings.showCommercialButton,
+              onChanged: (value) => notifier.setShowCommercialButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.discount,
+              title: 'Coupon Button',
+              subtitle: 'Apply coupons',
+              value: settings.showCouponButton,
+              onChanged: (value) => notifier.setShowCouponButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.percent,
+              title: 'Discount Button',
+              subtitle: 'Manual discount',
+              value: settings.showDiscountButton,
+              onChanged: (value) => notifier.setShowDiscountButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.print,
+              title: 'Print Button',
+              subtitle: 'Print orders',
+              value: settings.showPrintButton,
+              onChanged: (value) => notifier.setShowPrintButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.people,
+              title: 'Persons Button',
+              subtitle: 'Number of persons',
+              value: settings.showPersonsButton,
+              onChanged: (value) => notifier.setShowPersonsButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.restaurant,
+              title: 'Order Type Button',
+              subtitle: 'Toggle order type',
+              value: settings.showOrderTypeButton,
+              onChanged: (value) => notifier.setShowOrderTypeButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.task_alt,
+              title: 'Confirm Button',
+              subtitle: 'Confirm order',
+              value: settings.showConfirmOrderButton,
+              onChanged: (value) => notifier.setShowConfirmOrderButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.payment,
+              title: 'Pay Button',
+              subtitle: 'Process payment',
+              value: settings.showPayButton,
+              onChanged: (value) => notifier.setShowPayButton(value),
+            ),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.summarize,
+              title: 'Daily Summary',
+              subtitle: 'Daily report',
+              value: settings.showDailySummaryButton,
+              onChanged: (value) => notifier.setShowDailySummaryButton(value),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSyncSettingsContent(
+      AppSettings settings,
+      SettingsNotifier notifier,
+      BuildContext context,
+      ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Sync Settings',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Configure data synchronization',
+          style: TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.sync,
+          title: 'Auto Sync Online',
+          subtitle: 'Automatically sync orders when online',
+          value: settings.autoSyncOnline,
+          onChanged: (value) => notifier.setAutoSyncOnline(value),
+        ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.auto_delete,
+          title: 'Auto Clear Synced Data',
+          subtitle: 'Clear old synced data daily',
+          value: settings.autoClearSyncedData,
+          onChanged: (value) => notifier.setAutoClearSyncedData(value),
+        ),
+        const SizedBox(height: 12),
+        _buildNumberSelector(
+          context: context,
+          icon: Icons.timer,
+          title: 'Sync Interval',
+          subtitle: 'How often to sync data (minutes)',
+          value: settings.autoSyncDurationMinutes,
+          min: 1,
+          max: 60,
+          onChanged: (value) => notifier.setAutoSyncDuration(value),
+        ),
+        const SizedBox(height: 12),
+        _buildNumberSelector(
+          context: context,
+          icon: Icons.backup,
+          title: 'Bulk Sync Size',
+          subtitle: 'Number of records to sync at once',
+          value: settings.bulkSyncSize,
+          min: 10,
+          max: 200,
+          onChanged: (value) => notifier.setBulkSyncSize(value),
+        ),
+        const SizedBox(height: 12),
+        _buildNumberSelector(
+          context: context,
+          icon: Icons.calendar_today,
+          title: 'Data Retention',
+          subtitle: 'Days to keep synced data before deletion',
+          value: settings.dataRetentionDays,
+          min: 1,
+          max: 30,
+          onChanged: (value) => notifier.setDataRetentionDays(value),
+        ),
+      ],
     );
   }
 
@@ -392,7 +605,7 @@ class SettingsScreen extends ConsumerWidget {
   }) {
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: ListTile(
         leading: Icon(icon),
         title: Text(title),
@@ -412,7 +625,7 @@ class SettingsScreen extends ConsumerWidget {
   }) {
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -492,10 +705,10 @@ class SettingsScreen extends ConsumerWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
         decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.2) : Colors.transparent,
+          color: isSelected ? color.withOpacity(0.2) : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? color : Colors.grey.withValues(alpha: 0.3),
+            color: isSelected ? color : Colors.grey.withOpacity(0.3),
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -527,7 +740,7 @@ class SettingsScreen extends ConsumerWidget {
   }) {
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -548,7 +761,7 @@ class SettingsScreen extends ConsumerWidget {
                       ),
                     ),
                     Text(
-                      'Initial status for new orders (syncs when COMPLETED)',
+                      'Initial status for new orders',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey,
@@ -624,10 +837,10 @@ class SettingsScreen extends ConsumerWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
         decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.2) : Colors.transparent,
+          color: isSelected ? color.withOpacity(0.2) : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? color : Colors.grey.withValues(alpha: 0.3),
+            color: isSelected ? color : Colors.grey.withOpacity(0.3),
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -660,7 +873,7 @@ class SettingsScreen extends ConsumerWidget {
   }) {
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -743,10 +956,10 @@ class SettingsScreen extends ConsumerWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
         decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.2) : Colors.transparent,
+          color: isSelected ? color.withOpacity(0.2) : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? color : Colors.grey.withValues(alpha: 0.3),
+            color: isSelected ? color : Colors.grey.withOpacity(0.3),
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -770,7 +983,7 @@ class SettingsScreen extends ConsumerWidget {
               subtitle,
               style: TextStyle(
                 fontSize: 11,
-                color: isSelected ? color.withValues(alpha: 0.8) : Colors.grey,
+                color: isSelected ? color.withOpacity(0.8) : Colors.grey,
               ),
               textAlign: TextAlign.center,
             ),
@@ -798,7 +1011,7 @@ class SettingsScreen extends ConsumerWidget {
 
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -842,13 +1055,13 @@ class SettingsScreen extends ConsumerWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     decoration: BoxDecoration(
                       color: isSelected
-                          ? Theme.of(context).primaryColor.withValues(alpha: 0.2)
+                          ? Theme.of(context).primaryColor.withOpacity(0.2)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
                         color: isSelected
                             ? Theme.of(context).primaryColor
-                            : Colors.grey.withValues(alpha: 0.3),
+                            : Colors.grey.withOpacity(0.3),
                         width: isSelected ? 2 : 1,
                       ),
                     ),
@@ -869,7 +1082,7 @@ class SettingsScreen extends ConsumerWidget {
                           style: TextStyle(
                             fontSize: 10,
                             color: isSelected
-                                ? Theme.of(context).primaryColor.withValues(alpha: 0.8)
+                                ? Theme.of(context).primaryColor.withOpacity(0.8)
                                 : Colors.grey,
                           ),
                         ),
@@ -898,7 +1111,7 @@ class SettingsScreen extends ConsumerWidget {
 
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -943,13 +1156,13 @@ class SettingsScreen extends ConsumerWidget {
                     padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
                     decoration: BoxDecoration(
                       color: isSelected
-                          ? Theme.of(context).primaryColor.withValues(alpha: 0.2)
+                          ? Theme.of(context).primaryColor.withOpacity(0.2)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
                         color: isSelected
                             ? Theme.of(context).primaryColor
-                            : Colors.grey.withValues(alpha: 0.3),
+                            : Colors.grey.withOpacity(0.3),
                         width: isSelected ? 2 : 1,
                       ),
                     ),
@@ -993,7 +1206,7 @@ class SettingsScreen extends ConsumerWidget {
   }) {
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
@@ -1056,5 +1269,31 @@ class SettingsScreen extends ConsumerWidget {
       ),
     );
   }
+
+  Widget _buildOrderPanelPositionSwitch({
+    required BuildContext context,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+      child: ListTile(
+        leading: const Icon(Icons.swap_horiz),
+        title: const Text('Order Panel Position'),
+        subtitle: const Text('Show order panel on the right side'),
+        trailing: Switch(
+          value: value,
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
 }
 
+class NavItem {
+  final IconData icon;
+  final String label;
+
+  const NavItem({required this.icon, required this.label});
+}

@@ -131,9 +131,13 @@ class CategorySelector extends ConsumerWidget {
           String selectedCategoryName = 'All Categories';
 
           if (selectedCategory != null && categories.isNotEmpty) {
-            final foundCategory = categories.where((c) => c.id == selectedCategory).firstOrNull;
-            if (foundCategory != null) {
-              selectedCategoryName = foundCategory.name;
+            if (selectedCategory == -1) {
+              selectedCategoryName = 'All Products';
+            } else {
+              final foundCategory = categories.where((c) => c.id == selectedCategory).firstOrNull;
+              if (foundCategory != null) {
+                selectedCategoryName = foundCategory.name;
+              }
             }
           }
 

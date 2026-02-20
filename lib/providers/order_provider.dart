@@ -152,6 +152,13 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = state.copyWith(tableId: tableId, tableName: tableName);
   }
 
+  void clearTable() {
+    state = state.copyWith(
+      tableId: null,
+      tableName: null,
+    );
+  }
+
   void setCustomer(int? customerId, String? customerName) {
     state = state.copyWith(customerId: customerId, customerName: customerName);
   }

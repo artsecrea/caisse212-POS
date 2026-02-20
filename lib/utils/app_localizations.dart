@@ -236,6 +236,18 @@ class AppLocalizations {
       'remove': 'Remove',
       'no_printer_configured': 'No printer configured',
 
+      // Barcode Scanning
+      'barcode_scanning_disabled': 'Barcode scanning disabled',
+      'scanning_orders': 'Scanning orders',
+      'scanning_products': 'Scanning products',
+      'scanner_disabled': 'Disabled',
+      'scan_orders': 'Scan Orders',
+      'scan_products': 'Scan Products',
+      'clear_current_order': 'Clear Current Order?',
+      'clear_order_warning': 'This will clear the current order. Are you sure?',
+      'clear_and_load': 'Clear & Load',
+      'table_unselected': 'Table unselected',
+
       // Devices
       'devices': 'Devices',
       'devices_management': 'Devices Management',
@@ -846,6 +858,18 @@ class AppLocalizations {
       'test_print': 'اختبار الطباعة',
       'remove': 'إزالة',
       'no_printer_configured': 'لا توجد طابعة مكونة',
+
+      // Barcode Scanning
+      'barcode_scanning_disabled': 'مسح الباركود معطل',
+      'scanning_orders': 'مسح الطلبات',
+      'scanning_products': 'مسح المنتجات',
+      'scanner_disabled': 'معطل',
+      'scan_orders': 'مسح الطلبات',
+      'scan_products': 'مسح المنتجات',
+      'clear_current_order': 'مسح الطلب الحالي؟',
+      'clear_order_warning': 'سيؤدي هذا إلى مسح الطلب الحالي. هل أنت متأكد؟',
+      'clear_and_load': 'مسح وتحميل',
+      'table_unselected': 'تم إلغاء تحديد الطاولة',
 
       // Devices
       'devices': 'الأجهزة',
@@ -1462,6 +1486,18 @@ class AppLocalizations {
       'test_print': 'Test d\'impression',
       'remove': 'Supprimer',
       'no_printer_configured': 'Aucune imprimante configurée',
+
+      // Barcode Scanning
+      'barcode_scanning_disabled': 'Scan de code-barres désactivé',
+      'scanning_orders': 'Scan des commandes',
+      'scanning_products': 'Scan des produits',
+      'scanner_disabled': 'Désactivé',
+      'scan_orders': 'Scanner les commandes',
+      'scan_products': 'Scanner les produits',
+      'clear_current_order': 'Effacer la commande actuelle?',
+      'clear_order_warning': 'Cela effacera la commande actuelle. Êtes-vous sûr?',
+      'clear_and_load': 'Effacer et charger',
+      'table_unselected': 'Table désélectionnée',
 
       // Devices
       'devices': 'Appareils',

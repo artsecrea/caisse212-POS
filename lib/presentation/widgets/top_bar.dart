@@ -25,7 +25,6 @@ class TopBar extends ConsumerStatefulWidget {
 
 class _TopBarState extends ConsumerState<TopBar> {
   bool _isOnline = true;
-  bool _isSearchExpanded = false;
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
 
@@ -42,6 +41,24 @@ class _TopBarState extends ConsumerState<TopBar> {
 
     // Sync search controller with provider
     _searchController.text = ref.read(productSearchQueryProvider);
+
+    // Always focus search bar on init
+    _requestSearchFocus();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-request focus when returning to screen
+    _requestSearchFocus();
+  }
+
+  void _requestSearchFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _searchFocusNode.canRequestFocus) {
+        _searchFocusNode.requestFocus();
+      }
+    });
   }
 
   @override
@@ -60,9 +77,8 @@ class _TopBarState extends ConsumerState<TopBar> {
       _searchController.text = searchQuery;
     }
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      width: _isSearchExpanded ? 300 : 45,
+    return Container(
+      width: 300,
       height: 40,
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.2),
@@ -70,57 +86,39 @@ class _TopBarState extends ConsumerState<TopBar> {
       ),
       child: Row(
         children: [
-          // Search icon button
-          InkWell(
-            onTap: () {
-              setState(() {
-                _isSearchExpanded = !_isSearchExpanded;
-                if (_isSearchExpanded) {
-                  _searchFocusNode.requestFocus();
-                } else {
-                  _searchFocusNode.unfocus();
-                  // Clear search when closing
-                  _searchController.clear();
-                  ref.read(productSearchQueryProvider.notifier).state = '';
-                }
-              });
-            },
-            borderRadius: BorderRadius.circular(20),
-            child: Container(
-              width: 45,
-              height: 40,
-              alignment: Alignment.center,
-              child: Icon(
-                _isSearchExpanded ? Icons.close : Icons.search,
-                color: Colors.white,
-                size: 20,
-              ),
+          // Search icon
+          Container(
+            width: 45,
+            height: 40,
+            alignment: Alignment.center,
+            child: const Icon(
+              Icons.search,
+              color: Colors.white,
+              size: 20,
             ),
           ),
           // Search text field
-          if (_isSearchExpanded)
-            Expanded(
-              child: OnscreenKeyboardTextField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                style: const TextStyle( fontSize: 14),
-                decoration: InputDecoration(
-                  hintText: l10n?.translate('search_products') ?? 'Search products...',
-                  hintStyle: const TextStyle(fontSize: 14),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                  isDense: true,
-                ),
-                onChanged: (value) {
-                  ref.read(productSearchQueryProvider.notifier).state = value;
-                },
-                onSubmitted: (_) {
-                  // Keep search open after submit
-                },
+          Expanded(
+            child: OnscreenKeyboardTextField(
+              controller: _searchController,
+              focusNode: _searchFocusNode,
+              decoration: InputDecoration(
+                hintText: l10n?.translate('search_products') ?? 'Search products...',
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                isDense: true,
               ),
+              onChanged: (value) {
+                ref.read(productSearchQueryProvider.notifier).state = value;
+              },
+              onSubmitted: (_) {
+                // Keep focus after submit
+                _searchFocusNode.requestFocus();
+              },
             ),
+          ),
           // Clear button when there's text
-          if (_isSearchExpanded && searchQuery.isNotEmpty)
+          if (searchQuery.isNotEmpty)
             InkWell(
               onTap: () {
                 _searchController.clear();
@@ -141,6 +139,111 @@ class _TopBarState extends ConsumerState<TopBar> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildBarcodeScanToggle() {
+    final scanMode = ref.watch(barcodeScanModeProvider);
+    final l10n = AppLocalizations.of(context);
+
+    IconData icon;
+    Color? color;
+    String tooltip;
+
+    switch (scanMode) {
+      case BarcodeScanMode.disabled:
+        icon = Icons.qr_code_scanner_outlined;
+        color = Colors.white.withOpacity(0.5);
+        tooltip = l10n?.translate('barcode_scanning_disabled') ?? 'Barcode scanning disabled';
+        break;
+      case BarcodeScanMode.orders:
+        icon = Icons.qr_code_2;
+        color = Colors.blue;
+        tooltip = l10n?.translate('scanning_orders') ?? 'Scanning orders';
+        break;
+      case BarcodeScanMode.products:
+        icon = Icons.inventory_2;
+        color = Colors.green;
+        tooltip = l10n?.translate('scanning_products') ?? 'Scanning products';
+        break;
+    }
+
+    return PopupMenuButton<BarcodeScanMode>(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color ?? Colors.white, size: 20),
+            const SizedBox(width: 6),
+            Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
+          ],
+        ),
+      ),
+      tooltip: tooltip,
+      onSelected: (mode) {
+        ref.read(barcodeScanModeProvider.notifier).state = mode;
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: BarcodeScanMode.disabled,
+          child: Row(
+            children: [
+              Icon(
+                Icons.qr_code_scanner_outlined,
+                color: scanMode == BarcodeScanMode.disabled ? Colors.blue : null,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                l10n?.translate('scanner_disabled') ?? 'Disabled',
+                style: TextStyle(
+                  fontWeight: scanMode == BarcodeScanMode.disabled ? FontWeight.bold : null,
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: BarcodeScanMode.orders,
+          child: Row(
+            children: [
+              Icon(
+                Icons.qr_code_2,
+                color: scanMode == BarcodeScanMode.orders ? Colors.blue : null,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                l10n?.translate('scan_orders') ?? 'Scan Orders',
+                style: TextStyle(
+                  fontWeight: scanMode == BarcodeScanMode.orders ? FontWeight.bold : null,
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: BarcodeScanMode.products,
+          child: Row(
+            children: [
+              Icon(
+                Icons.inventory_2,
+                color: scanMode == BarcodeScanMode.products ? Colors.blue : null,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                l10n?.translate('scan_products') ?? 'Scan Products',
+                style: TextStyle(
+                  fontWeight: scanMode == BarcodeScanMode.products ? FontWeight.bold : null,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -744,6 +847,9 @@ class _TopBarState extends ConsumerState<TopBar> {
           const SizedBox(width: 20),
           // Search bar
           _buildSearchBar(),
+          const SizedBox(width: 16),
+          // Barcode scanner mode toggle
+          _buildBarcodeScanToggle(),
           const Spacer(),
           // Session icon - shows current session details
           IconButton(

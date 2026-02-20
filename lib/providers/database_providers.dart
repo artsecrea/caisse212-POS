@@ -57,6 +57,17 @@ final barcodeScannerServiceProvider = Provider<BarcodeScannerService>((ref) {
   return BarcodeScannerService();
 });
 
+// Barcode Scanner Mode Provider
+enum BarcodeScanMode {
+  disabled,  // Scanning disabled
+  orders,    // Scan order codes
+  products,  // Scan product barcodes
+}
+
+final barcodeScanModeProvider = StateProvider<BarcodeScanMode>((ref) {
+  return BarcodeScanMode.orders; // Default to scanning orders
+});
+
 // Session Service Provider
 final sessionServiceProvider = Provider<SessionService>((ref) {
   final database = ref.watch(databaseProvider);
@@ -147,7 +158,17 @@ final productSearchQueryProvider = StateProvider<String>((ref) => '');
 final productsByCategoryProvider = StreamProvider.autoDispose.family<List<db.Product>, int?>((ref, categoryId) {
   final database = ref.watch(databaseProvider);
 
+  // categoryId == null: Show category selection (no products)
+  // categoryId == -1: Show all products
+  // categoryId > 0: Show products for specific category
   if (categoryId == null) {
+    return (database.select(database.products)
+      ..where((tbl) => tbl.isActive.equals(true))
+      ..watch()).watch();
+  }
+
+  if (categoryId == -1) {
+    // Special value: Show ALL products
     return (database.select(database.products)
       ..where((tbl) => tbl.isActive.equals(true))
       ..watch()).watch();
@@ -181,6 +202,12 @@ final filteredProductsProvider = Provider.autoDispose<AsyncValue<List<db.Product
     loading: () => const AsyncValue.loading(),
     error: (error, stack) => AsyncValue.error(error, stack),
   );
+});
+
+// Areas Provider
+final areasProvider = StreamProvider<List<db.Area>>((ref) {
+  final database = ref.watch(databaseProvider);
+  return (database.select(database.areas)..watch()).watch();
 });
 
 // Area Tables Provider

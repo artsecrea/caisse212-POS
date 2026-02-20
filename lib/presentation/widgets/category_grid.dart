@@ -51,10 +51,8 @@ class CategoryGrid extends ConsumerWidget {
                   showImage: showImages,
                   isAllCategory: true,
                   onTap: () {
-                    // Select "All" (null category) and show products
-                    ref.read(selectedCategoryProvider.notifier).state = null;
-                    // In full page mode, we need to trigger showing products
-                    // This is handled by the main screen checking if a category is selected
+                    // Use -1 to indicate "All Products" (show all products, not categories)
+                    ref.read(selectedCategoryProvider.notifier).state = -1;
                   },
                 );
               }

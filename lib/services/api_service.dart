@@ -242,7 +242,7 @@ class ApiService {
   Future<void> logout() async {
     // Skip API call in demo mode
     if (isDemoMode()) {
-      print('Logout: Skipping API call (demo mode)');
+      print('Logout (demo mode)');
       return;
     }
 

@@ -12,8 +12,16 @@ class AppTheme {
       ),
       appBarTheme: const AppBarTheme(
         centerTitle: false,
-        elevation: 0,
+        toolbarHeight: 70,
+
+        elevation:20,
         backgroundColor: Colors.white,
+        actionsIconTheme: IconThemeData(
+          size: 30,
+        ),
+        iconTheme: IconThemeData(
+          size:50,
+        ),
         foregroundColor: Colors.black87,
         surfaceTintColor: Colors.transparent,
       ),
@@ -24,10 +32,13 @@ class AppTheme {
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
+
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          minimumSize: const Size(150, 60),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
+
           ),
         ),
       ),
@@ -62,6 +73,12 @@ class AppTheme {
       ),
       scaffoldBackgroundColor: Colors.grey[50],
       dividerColor: Colors.grey[300],
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.fixed,
+        dismissDirection: DismissDirection.endToStart,
+        showCloseIcon: true,
+
+      )
     );
   }
 

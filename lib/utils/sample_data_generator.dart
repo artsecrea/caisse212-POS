@@ -206,6 +206,7 @@ class SampleDataGenerator {
         'price': 8.50,
         'categoryId': 1,
         'stationId': 2,
+        'barcode': '1000000001',
         'imageUrl': 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=300',
         'discount': 0.0,
         'tva': 1.70
@@ -216,6 +217,7 @@ class SampleDataGenerator {
         'price': 10.50,
         'categoryId': 1,
         'stationId': 2,
+        'barcode': '1000000002',
         'imageUrl': 'https://images.unsplash.com/photo-1550547660-d9450f859349?w=300',
         'discount': 1.00,
         'tva': 2.10
@@ -226,6 +228,7 @@ class SampleDataGenerator {
         'price': 12.50,
         'categoryId': 1,
         'stationId': 2,
+        'barcode': '1000000003',
         'imageUrl': 'https://images.unsplash.com/photo-1606755962773-d324e0a13086?w=300',
         'discount': 0.0,
         'tva': 2.50
@@ -236,6 +239,7 @@ class SampleDataGenerator {
         'price': 9.50,
         'categoryId': 1,
         'stationId': 2,
+        'barcode': '1000000004',
         'imageUrl': 'https://images.unsplash.com/photo-1562547687-d607c2c218e0?w=300',
         'discount': 0.50,
         'tva': 1.90
@@ -247,6 +251,7 @@ class SampleDataGenerator {
         'name': 'Margherita',
         'price': 14.00,
         'categoryId': 2,
+        'barcode': '2000000001',
         'imageUrl': 'https://images.unsplash.com/photo-1574071318508-1cdbab80d002?w=300',
         'discount': 0.0,
         'tva': 2.80
@@ -256,6 +261,7 @@ class SampleDataGenerator {
         'name': 'Pepperoni',
         'price': 16.00,
         'categoryId': 2,
+        'barcode': '2000000002',
         'imageUrl': 'https://images.unsplash.com/photo-1628840042765-356cda07504e?w=300',
         'discount': 2.00,
         'tva': 3.20
@@ -265,6 +271,7 @@ class SampleDataGenerator {
         'name': 'Vegetarian',
         'price': 15.00,
         'categoryId': 2,
+        'barcode': '2000000003',
         'imageUrl': 'https://images.unsplash.com/photo-1511689660979-10d2b1aada49?w=300',
         'discount': 0.0,
         'tva': 3.00
@@ -274,6 +281,7 @@ class SampleDataGenerator {
         'name': 'Four Cheese',
         'price': 17.00,
         'categoryId': 2,
+        'barcode': '2000000004',
         'imageUrl': 'https://images.unsplash.com/photo-1571066811602-716837d681de?w=300',
         'discount': 1.50,
         'tva': 3.40
@@ -285,6 +293,7 @@ class SampleDataGenerator {
         'name': 'Coca Cola',
         'price': 2.50,
         'categoryId': 3,
+        'barcode': '3000000001',
         'imageUrl': 'https://images.unsplash.com/photo-1554866585-cd94860890b7?w=300',
         'discount': 0.0,
 
@@ -295,6 +304,7 @@ class SampleDataGenerator {
         'name': 'Orange Juice',
         'price': 3.50,
         'categoryId': 3,
+        'barcode': '3000000002',
         'imageUrl': 'https://images.unsplash.com/photo-1600271886742-f049cd451bba?w=300',
         'discount': 0.0,
         'tva': 0.70
@@ -304,6 +314,7 @@ class SampleDataGenerator {
         'name': 'Water',
         'price': 1.50,
         'categoryId': 3,
+        'barcode': '3000000003',
         'imageUrl': 'https://images.unsplash.com/photo-1548839140-29a749e1cf4d?w=300',
         'discount': 0.0,
         'tva': 0.30
@@ -313,6 +324,7 @@ class SampleDataGenerator {
         'name': 'Coffee',
         'price': 3.00,
         'categoryId': 3,
+        'barcode': '3000000004',
         'imageUrl': 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=300',
         'discount': 0.0,
         'tva': 0.60
@@ -324,6 +336,7 @@ class SampleDataGenerator {
         'name': 'Ice Cream',
         'price': 4.50,
         'categoryId': 4,
+        'barcode': '4000000001',
         'imageUrl': 'https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=300',
         'discount': 0.0,
         'tva': 0.90
@@ -333,6 +346,7 @@ class SampleDataGenerator {
         'name': 'Cake Slice',
         'price': 5.50,
         'categoryId': 4,
+        'barcode': '4000000002',
         'imageUrl': 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=300',
         'discount': 0.50,
         'tva': 1.10
@@ -342,6 +356,7 @@ class SampleDataGenerator {
         'name': 'Brownie',
         'price': 5.00,
         'categoryId': 4,
+        'barcode': '4000000003',
         'imageUrl': 'https://images.unsplash.com/photo-1607920591413-4ec007e70023?w=300',
         'discount': 0.0,
         'tva': 1.00
@@ -354,6 +369,7 @@ class SampleDataGenerator {
         'price': 9.00,
         'categoryId': 5,
         'stationId': 3,
+        'barcode': '5000000001',
         'imageUrl': 'https://images.unsplash.com/photo-1546793665-c74683f339c1?w=300',
         'discount': 1.0,
         'tva': 1.80
@@ -364,6 +380,7 @@ class SampleDataGenerator {
         'price': 8.00,
         'categoryId': 5,
         'stationId': 3,
+        'barcode': '5000000002',
         'imageUrl': 'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=300',
         'discount': 0.0,
         'tva': 1.60
@@ -374,6 +391,7 @@ class SampleDataGenerator {
         'price': 7.00,
         'categoryId': 5,
         'stationId': 3,
+        'barcode': '5000000003',
         'imageUrl': 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=300',
         'discount': 12.0,
         'tva': 1.40
@@ -390,6 +408,7 @@ class SampleDataGenerator {
           id: Value(prod['id'] as int),
           name: prod['name'] as String,
           stationId: Value(prod['stationId'] as int? ?? 1),
+          barcode: Value(prod['barcode'] as String?),
           price: price - discount + tva,
           finalPrice: price,
           categoryId: Value(prod['categoryId'] as int),

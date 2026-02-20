@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:caisse212/domain/models/order_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -35,41 +37,111 @@ class MainScreen extends ConsumerStatefulWidget {
 class _MainScreenState extends ConsumerState<MainScreen> {
   final _logger = Logger.instance;
   final _focusNode = FocusNode();
-  
+  StreamSubscription<String>? _barcodeSubscription;
+
   @override
   void initState() {
     super.initState();
     _initializeBarcodeScanner();
+    _requestSearchFocus();
+  }
+
+  void _requestSearchFocus() {
+    // Request focus on search bar after a short delay
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        // Clear any search query when returning to main screen
+        // This ensures fresh start for search
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) {
+            // Request focus will be handled by TopBar
+          }
+        });
+      }
+    });
   }
 
   void _initializeBarcodeScanner() {
     final barcodeService = ref.read(barcodeScannerServiceProvider);
     barcodeService.initialize(_focusNode);
-    
+
     // Listen to barcode scans
-    barcodeService.barcodeStream.listen((barcode) {
-      _handleBarcodeScanned(barcode);
+    _barcodeSubscription = barcodeService.barcodeStream.listen((barcode) {
+      // Check if widget is still mounted before processing
+      if (mounted) {
+        _handleBarcodeScanned(barcode);
+      }
     });
-    
+
     // Request focus for barcode scanner
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
+      if (mounted) {
+        _focusNode.requestFocus();
+      }
     });
   }
 
   Future<void> _handleBarcodeScanned(String barcode) async {
-    _logger.info('Barcode scanned: $barcode');
-    
+    // Double check mounted state before accessing ref
+    if (!mounted) return;
+
+    // Check scan mode
+    final scanMode = ref.read(barcodeScanModeProvider);
+
+    if (scanMode == BarcodeScanMode.disabled) {
+      _logger.info('Barcode scanning is disabled');
+      return;
+    }
+
+    _logger.info('Barcode scanned: $barcode (mode: ${scanMode.name})');
+
+    if (scanMode == BarcodeScanMode.orders) {
+      await _handleOrderBarcode(barcode);
+    } else if (scanMode == BarcodeScanMode.products) {
+      await _handleProductBarcode(barcode);
+    }
+  }
+
+  Future<void> _handleOrderBarcode(String barcode) async {
     final orderRepo = ref.read(orderRepositoryProvider);
-    
+    final currentOrder = ref.read(orderProvider);
+
     try {
       // Search for order by code
       final order = await orderRepo.getOrderByCode(barcode);
-      
+
       if (order != null) {
+        // Check if there's a current order with items
+        if (currentOrder.items.isNotEmpty && mounted) {
+          final l10n = AppLocalizations.of(context);
+          final confirm = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text(l10n?.translate('clear_current_order') ?? 'Clear Current Order?'),
+              content: Text(
+                l10n?.translate('clear_order_warning') ??
+                'This will clear the current order. Are you sure you want to load order $barcode?'
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(l10n?.translate('cancel') ?? 'Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                  child: Text(l10n?.translate('clear_and_load') ?? 'Clear & Load'),
+                ),
+              ],
+            ),
+          );
+
+          if (confirm != true) return;
+        }
+
         // Load the order
         ref.read(orderProvider.notifier).loadOrder(order);
-        
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -104,8 +176,60 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     }
   }
 
+  Future<void> _handleProductBarcode(String barcode) async {
+    final database = ref.read(databaseProvider);
+
+    try {
+      // Search for product by barcode
+      final product = await (database.select(database.products)
+        ..where((tbl) => tbl.barcode.equals(barcode))
+        ..where((tbl) => tbl.isActive.equals(true)))
+        .getSingleOrNull();
+
+
+      if (product != null) {
+        // Add product to current order
+        ref.read(orderProvider.notifier).addItem(
+          OrderItem(productId: product.id, productName: product.name, finalPrice: product.price,quantity: 1, tva: product.tvaAmount, discount: product.discountAmount),
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${product.name} added to order'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Product with barcode $barcode not found'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      _logger.error('Error loading product from barcode: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
+    _barcodeSubscription?.cancel();
     _focusNode.dispose();
     super.dispose();
   }
@@ -116,11 +240,39 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final settings = ref.watch(settingsProvider);
     final displayMode = ref.watch(categoryDisplayModeProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
+    final searchQuery = ref.watch(productSearchQueryProvider);
     final l10n = AppLocalizations.of(context)!;
 
-    // In fullPage mode, show CategoryGrid when no category selected, otherwise ProductGrid
+    // In fullPage mode:
+    // - Show ProductGrid if searching (regardless of category selection)
+    // - Show CategoryGrid when no category selected AND not searching
+    // - Show ProductGrid when category selected
     final showCategoryGrid = displayMode == CategoryDisplayMode.fullPage &&
-                             selectedCategory == null;
+                             selectedCategory == null &&
+                             searchQuery.isEmpty;
+
+    final orderPanelOnRight = settings.orderPanelOnRight;
+
+    final orderPanel = const SizedBox(
+      width: 400,
+      child: OrderPanel(),
+    );
+
+    final mainContent = Expanded(
+      flex: 2,
+      child: Column(
+        children: [
+          const CategorySelector(),
+          Expanded(
+            // ✅ Use showCategoryGrid instead of settings.categoryDisplayMode
+            child: showCategoryGrid
+                ? const CategoryGrid()
+                : const ProductGrid(),
+          ),
+        ],
+      ),
+    );
+
 
     return Focus(
       focusNode: _focusNode,
@@ -135,29 +287,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             const TopBar(),
             Expanded(
             child: Row(
-              children: [
-                // Main content area
-                Expanded(
-                  flex: 2,
-                  child: Column(
-                    children: [
-                      // Category selector (horizontal scroll)
-                      const CategorySelector(),
-                      // Products grid or Category grid based on display mode
-                      Expanded(
-                        child: showCategoryGrid
-                            ? const CategoryGrid()
-                            : const ProductGrid(),
-                      ),
-                    ],
-                  ),
-                ),
-                // Order panel (right side)
-                const SizedBox(
-                  width: 400,
-                  child: OrderPanel(),
-                ),
-              ],
+              children: orderPanelOnRight
+                  ? [mainContent, orderPanel] // Order panel on right
+                  : [orderPanel, mainContent], // Order panel on left
             ),
           ),
           Container(
@@ -235,6 +367,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     final existingOrder = result['existingOrder'];
                     final tableId = result['id'];
                     final tableName = result['name'];
+
+                    // Handle unselect action
+                    if (action == 'unselect') {
+                      ref.read(orderProvider.notifier).clearTable();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(l10n.translate('table_unselected') ?? 'Table unselected'),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
 
                     // Handle different actions
                     if (action == 'pay' && result['order'] != null) {

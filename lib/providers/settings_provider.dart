@@ -29,6 +29,8 @@ class SettingsKeys {
   static const String showDailySummaryButton = 'show_daily_summary_button';
   static const String autoClearSyncedData = 'auto_clear_synced_data';
   static const String lastDataClearDate = 'last_data_clear_date';
+
+  static const String orderPanelOnRight = 'order_panel_on_right';
 }
 
 // Settings Notifier
@@ -70,6 +72,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showPayButton: _prefs.getBool(SettingsKeys.showPayButton) ?? true,
       showDailySummaryButton: _prefs.getBool(SettingsKeys.showDailySummaryButton) ?? true,
       autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
+      orderPanelOnRight: _prefs.getBool(SettingsKeys.orderPanelOnRight) ?? false,
     );
   }
 
@@ -85,6 +88,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setLanguage(String languageCode) async {
     await _prefs.setString(SettingsKeys.language, languageCode);
     state = state.copyWith(language: languageCode);
+  }
+
+  Future<void> setOrderPanelOnRight(bool value) async {
+    await _prefs.setBool(SettingsKeys.orderPanelOnRight, value);
+    state = state.copyWith(orderPanelOnRight: value);
   }
 
   Future<void> setAutoSyncOnline(bool value) async {
