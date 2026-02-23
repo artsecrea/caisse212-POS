@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/server_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../utils/app_localizations.dart';
 
@@ -21,6 +22,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     NavItem(icon: Icons.attach_money, label: 'Currency'),
     NavItem(icon: Icons.touch_app, label: 'Action Buttons'),
     NavItem(icon: Icons.sync, label: 'Sync Settings'),
+    NavItem(icon: Icons.dns, label: 'Server Settings'),
   ];
 
   @override
@@ -242,6 +244,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return _buildActionButtonsContent(settings, settingsNotifier, context);
       case 5:
         return _buildSyncSettingsContent(settings, settingsNotifier, context);
+      case 6:
+        return _buildServerSettingsContent(settings, settingsNotifier, context);
       default:
         return const SizedBox.shrink();
     }
@@ -1286,6 +1290,355 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           value: value,
           onChanged: onChanged,
         ),
+      ),
+    );
+  }
+
+  Widget _buildServerSettingsContent(
+    AppSettings settings,
+    SettingsNotifier notifier,
+    BuildContext context,
+  ) {
+    final TextEditingController portController = TextEditingController(
+      text: (settings.serverPort ?? 8080).toString(),
+    );
+    final TextEditingController passwordController = TextEditingController(
+      text: settings.serverPassword ?? '',
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Server Settings',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Configure HTTP server for KDS and external communication',
+          style: TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+
+        // Auto-start server
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.power_settings_new,
+          title: 'Auto-Start Server',
+          subtitle: 'Automatically start server on app launch',
+          value: settings.autoStartServer,
+          onChanged: (value) => notifier.setAutoStartServer(value),
+        ),
+        const SizedBox(height: 16),
+
+        // Server Port
+        Card(
+          elevation: 0,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.settings_ethernet),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Server Port',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Port number for HTTP server (default: 8080)',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: portController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: '8080',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                  onChanged: (value) {
+                    final port = int.tryParse(value);
+                    if (port != null && port > 0 && port < 65536) {
+                      notifier.setServerPort(port);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Server Password
+        Card(
+          elevation: 0,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.lock),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Server Password',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Optional password for server authentication (sent as X-Server-Password header)',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    hintText: 'Leave empty to disable',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                  onChanged: (value) {
+                    notifier.setServerPassword(value.isEmpty ? null : value);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Server Status Card
+        Card(
+          elevation: 0,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.info_outline),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Server Information',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Consumer(
+                  builder: (context, ref, _) {
+                    final serverService = ref.read(serverServiceProvider);
+                    final isRunning = serverService.isRunning;
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              isRunning ? Icons.check_circle : Icons.cancel,
+                              color: isRunning ? Colors.green : Colors.red,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              isRunning ? 'Server Running' : 'Server Stopped',
+                              style: TextStyle(
+                                color: isRunning ? Colors.green : Colors.red,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (isRunning) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Server URL: http://localhost:${serverService.port}',
+                            style: const TextStyle(fontFamily: 'monospace'),
+                          ),
+                        ],
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+                Consumer(
+                  builder: (context, ref, _) {
+                    final serverService = ref.read(serverServiceProvider);
+                    final isRunning = serverService.isRunning;
+
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (isRunning)
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              await ref.read(serverServiceProvider).stop();
+                              ref.read(serverRunningProvider.notifier).state = false;
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Server stopped')),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.stop),
+                            label: const Text('Stop Server'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                            ),
+                          )
+                        else
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              try {
+                                await startServerWithSettings(ref);
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Server started successfully')),
+                                  );
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Failed to start server: $e')),
+                                  );
+                                }
+                              }
+                            },
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('Start Server'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // API Endpoints Documentation
+        Card(
+          elevation: 0,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.api),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Available Endpoints',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildEndpointDoc('GET', '/health', 'Health check'),
+                _buildEndpointDoc('GET', '/orders/', 'Get orders (with filters)'),
+                _buildEndpointDoc('POST', '/orders/', 'Create new order'),
+                _buildEndpointDoc('PUT', '/orders/{code}', 'Update order'),
+                _buildEndpointDoc('PUT', '/orders/{code}?status=X', 'Update order status'),
+                _buildEndpointDoc('PUT', '/orders/products/{id}?status=X', 'Update product status'),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEndpointDoc(String method, String path, String description) {
+    Color methodColor;
+    switch (method) {
+      case 'GET':
+        methodColor = Colors.blue;
+        break;
+      case 'POST':
+        methodColor = Colors.green;
+        break;
+      case 'PUT':
+        methodColor = Colors.orange;
+        break;
+      case 'DELETE':
+        methodColor = Colors.red;
+        break;
+      default:
+        methodColor = Colors.grey;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: methodColor.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              method,
+              style: TextStyle(
+                color: methodColor,
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              path,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            description,
+            style: const TextStyle(color: Colors.grey, fontSize: 11),
+          ),
+        ],
       ),
     );
   }

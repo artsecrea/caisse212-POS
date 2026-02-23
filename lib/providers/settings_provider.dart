@@ -31,6 +31,11 @@ class SettingsKeys {
   static const String lastDataClearDate = 'last_data_clear_date';
 
   static const String orderPanelOnRight = 'order_panel_on_right';
+
+  // Server settings
+  static const String serverPort = 'server_port';
+  static const String serverPassword = 'server_password';
+  static const String autoStartServer = 'auto_start_server';
 }
 
 // Settings Notifier
@@ -73,6 +78,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showDailySummaryButton: _prefs.getBool(SettingsKeys.showDailySummaryButton) ?? true,
       autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
       orderPanelOnRight: _prefs.getBool(SettingsKeys.orderPanelOnRight) ?? false,
+      serverPort: _prefs.getInt(SettingsKeys.serverPort) ?? 8080,
+      serverPassword: _prefs.getString(SettingsKeys.serverPassword),
+      autoStartServer: _prefs.getBool(SettingsKeys.autoStartServer) ?? false,
     );
   }
 
@@ -202,6 +210,26 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setAutoClearSyncedData(bool value) async {
     await _prefs.setBool(SettingsKeys.autoClearSyncedData, value);
     state = state.copyWith(autoClearSyncedData: value);
+  }
+
+  // Server settings
+  Future<void> setServerPort(int port) async {
+    await _prefs.setInt(SettingsKeys.serverPort, port);
+    state = state.copyWith(serverPort: port);
+  }
+
+  Future<void> setServerPassword(String? password) async {
+    if (password == null || password.isEmpty) {
+      await _prefs.remove(SettingsKeys.serverPassword);
+    } else {
+      await _prefs.setString(SettingsKeys.serverPassword, password);
+    }
+    state = state.copyWith(serverPassword: password);
+  }
+
+  Future<void> setAutoStartServer(bool value) async {
+    await _prefs.setBool(SettingsKeys.autoStartServer, value);
+    state = state.copyWith(autoStartServer: value);
   }
 
   /// Get the last data clear date

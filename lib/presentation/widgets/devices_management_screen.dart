@@ -27,9 +27,8 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
   Widget build(BuildContext context) {
     final kdsListAsync = ref.watch(kdsListProvider);
     final kioskListAsync = ref.watch(kioskListProvider);
-    final connectedDevices = ref.watch(discoveredDevicesProvider);
+
     
-    Logger.instance.debug('Rebuilding DevicesManagementScreen ${connectedDevices.length}');
 
     return Scaffold(
       appBar: _buildAppBar(),
@@ -41,7 +40,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
               data: (kdsList) => kioskListAsync.when(
                 data: (kioskList) {
                   return FutureBuilder<List<DeviceRowData>>(
-                    future: _combineDevices(kdsList, kioskList, connectedDevices),
+                    future: _combineDevices(kdsList, kioskList),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == widgets.ConnectionState.waiting) {
                         return const Center(child: CircularProgressIndicator());
@@ -287,7 +286,6 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
   Future<List<DeviceRowData>> _combineDevices(
     List<KDS> kdsList,
     List<Kiosk> kioskList,
-    List<DeviceInfo> connectedDevices,
   ) async {
     final devices = <DeviceRowData>[];
     final database = ref.read(databaseProvider);
@@ -309,7 +307,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
         port: kds.port,
         location: kds.location,
         isActive: kds.isActive,
-        isConnected: connectedDevices.any((item) => item.name == kds.name),
+        isConnected: false,
         description: kds.description,
         stationId: kds.stationId,
         stationName: stationName,
@@ -325,7 +323,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
         port: kiosk.port,
         location: kiosk.location,
         isActive: kiosk.isActive,
-        isConnected: connectedDevices.contains('KIOSK_${kiosk.id}'),
+        isConnected: false,
         description: kiosk.description,
       ));
     }
@@ -339,18 +337,16 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
     setState(() => _isScanning = true);
 
     try {
-      final socketService = ref.read(socketServiceProvider);
 
       if (mounted) {
-        final discoveredDevices = await socketService.scanNetwork();
-
-        if (discoveredDevices.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No devices found on network')),
-          );
-        } else {
-          _showDiscoveredDevicesDialog(discoveredDevices);
-        }
+        //
+        // if (discoveredDevices.isEmpty) {
+        //   ScaffoldMessenger.of(context).showSnackBar(
+        //     const SnackBar(content: Text('No devices found on network')),
+        //   );
+        // } else {
+        //   _showDiscoveredDevicesDialog(discoveredDevices);
+        // }
       }
     } catch (e) {
       if (mounted) {

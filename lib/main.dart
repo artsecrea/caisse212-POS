@@ -12,9 +12,10 @@ import 'package:caisse212/presentation/widgets/printers_management_screen.dart';
 import 'package:caisse212/presentation/widgets/sessions_management_screen.dart';
 import 'package:caisse212/presentation/widgets/users_management_screen.dart';
 import 'package:caisse212/presentation/widgets/tickets_management_screen.dart';
-import 'package:caisse212/services/socket_service.dart';
+
 import 'package:caisse212/services/session_service.dart';
 import 'package:caisse212/services/api_service.dart';
+import 'package:caisse212/services/server_startup_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme/app_theme.dart';
 import 'data/database/app_database.dart';
@@ -55,6 +56,20 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // Initialize server after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeServer();
+    });
+  }
+
+  Future<void> _initializeServer() async {
+    try {
+      final serverStartupService = ref.read(serverStartupServiceProvider);
+      await serverStartupService.initializeServer();
+    } catch (e) {
+      print('❌ Server initialization error: $e');
+    }
   }
 
   @override
@@ -95,7 +110,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final s = ref.watch(socketServiceProvider);
     final sharedPreferences = ref.watch(sharedPreferencesProvider);
     final settings = ref.watch(settingsProvider);
 
@@ -109,8 +123,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // Get POS name from SharedPreferences, use default if not set
     final posName = sharedPreferences.getString('pos_name') ?? 'POS-UNKNOWN';
     
-    // Use POS name for both deviceId and deviceName
-    s.start(deviceId: posName, deviceName: posName, role: DeviceRole.host);
+
 
     // Get locale from settings
     final locale = Locale(settings.language);

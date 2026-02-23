@@ -35,6 +35,11 @@ class AppSettings {
   final bool autoClearSyncedData; // Clear synced data at start of each day
   final bool orderPanelOnRight;
 
+  // Server settings
+  final int? serverPort; // HTTP server port (default: 8080)
+  final String? serverPassword; // Optional password for server authentication
+  final bool autoStartServer; // Auto-start server on app startup
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -60,6 +65,9 @@ class AppSettings {
     this.autoSyncDurationMinutes = 5,
     this.autoClearSyncedData = true,
     this.orderPanelOnRight = false,
+    this.serverPort = 8080,
+    this.serverPassword,
+    this.autoStartServer = true,
   });
 
   AppSettings copyWith({
@@ -87,6 +95,9 @@ class AppSettings {
     int? autoSyncDurationMinutes,
     bool? autoClearSyncedData,
     bool? orderPanelOnRight,
+    int? serverPort,
+    String? serverPassword,
+    bool? autoStartServer,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -113,6 +124,9 @@ class AppSettings {
       autoSyncDurationMinutes: autoSyncDurationMinutes ?? this.autoSyncDurationMinutes,
       autoClearSyncedData: autoClearSyncedData ?? this.autoClearSyncedData,
       orderPanelOnRight: orderPanelOnRight ?? this.orderPanelOnRight,
+      serverPort: serverPort ?? this.serverPort,
+      serverPassword: serverPassword ?? this.serverPassword,
+      autoStartServer: autoStartServer ?? this.autoStartServer,
     );
   }
 
@@ -142,6 +156,9 @@ class AppSettings {
       'autoSyncDurationMinutes': autoSyncDurationMinutes,
       'autoClearSyncedData': autoClearSyncedData,
       'orderPanelOnRight': orderPanelOnRight,
+      'serverPort': serverPort,
+      'serverPassword': serverPassword,
+      'autoStartServer': autoStartServer,
     };
   }
 
@@ -172,7 +189,10 @@ class AppSettings {
       dataRetentionDays: json['dataRetentionDays'] as int? ?? 7,
       autoSyncDurationMinutes: json['autoSyncDurationMinutes'] as int? ?? 5,
       autoClearSyncedData: json['autoClearSyncedData'] as bool? ?? true,
-      orderPanelOnRight: json['orderPanelOnRight'] as bool? ?? false
+      orderPanelOnRight: json['orderPanelOnRight'] as bool? ?? false,
+      serverPort: json['serverPort'] as int?,
+      serverPassword: json['serverPassword'] as String?,
+      autoStartServer: json['autoStartServer'] as bool? ?? true,
     );
   }
 
