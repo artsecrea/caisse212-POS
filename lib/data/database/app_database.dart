@@ -25,6 +25,7 @@ import 'tables/transaction_table.dart';
 import 'tables/cash_session_table.dart';
 import 'tables/ticket_table.dart';
 import 'tables/pending_sync_operation_table.dart';
+import 'tables/logs_table.dart';
 
 part 'app_database.g.dart';
 
@@ -50,6 +51,7 @@ part 'app_database.g.dart';
   CashSessions,
   Tickets,
   PendingSyncOperations,
+  OrderLogs,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
@@ -61,7 +63,7 @@ class AppDatabase extends _$AppDatabase {
   static LazyDatabase _openConnection() {
     return LazyDatabase(() async {
       final dbFolder = await getApplicationDocumentsDirectory();
-      final file = File(p.join(dbFolder.path, 'caisse212.db'));
+      final file = File(p.join(dbFolder.path, 'test.db'));
       return NativeDatabase(file);
     });
   }

@@ -19,7 +19,7 @@ final serverPasswordProvider = Provider<String?>((ref) {
   return settings.serverPassword;
 });
 
-/// Start server with settings
+/// Start server with settings (for WidgetRef)
 Future<void> startServerWithSettings(WidgetRef ref) async {
   final serverService = ref.read(serverServiceProvider);
   final settings = ref.read(settingsProvider);
@@ -36,8 +36,32 @@ Future<void> startServerWithSettings(WidgetRef ref) async {
   }
 }
 
-/// Stop server
+/// Start server with settings (for Ref - used in providers)
+Future<void> startServerWithRef(Ref ref) async {
+  final serverService = ref.read(serverServiceProvider);
+  final settings = ref.read(settingsProvider);
+
+  try {
+    await serverService.start(
+      port: settings.serverPort ?? 8080,
+      password: settings.serverPassword,
+    );
+    ref.read(serverRunningProvider.notifier).state = true;
+  } catch (e) {
+    print('❌ Failed to start server: $e');
+    rethrow;
+  }
+}
+
+/// Stop server (for WidgetRef)
 Future<void> stopServer(WidgetRef ref) async {
+  final serverService = ref.read(serverServiceProvider);
+  await serverService.stop();
+  ref.read(serverRunningProvider.notifier).state = false;
+}
+
+/// Stop server (for Ref - used in providers)
+Future<void> stopServerWithRef(Ref ref) async {
   final serverService = ref.read(serverServiceProvider);
   await serverService.stop();
   ref.read(serverRunningProvider.notifier).state = false;

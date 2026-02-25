@@ -5,6 +5,8 @@
 import FlutterMacOS
 import Foundation
 
+import audioplayers_darwin
+import bonsoir_darwin
 import connectivity_plus
 import flutter_thermal_printer
 import package_info_plus
@@ -15,6 +17,8 @@ import sqlite3_flutter_libs
 import universal_ble
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
+  AudioplayersDarwinPlugin.register(with: registry.registrar(forPlugin: "AudioplayersDarwinPlugin"))
+  SwiftBonsoirPlugin.register(with: registry.registrar(forPlugin: "SwiftBonsoirPlugin"))
   ConnectivityPlugin.register(with: registry.registrar(forPlugin: "ConnectivityPlugin"))
   FlutterThermalPrinterPlugin.register(with: registry.registrar(forPlugin: "FlutterThermalPrinterPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))

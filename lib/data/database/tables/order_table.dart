@@ -21,5 +21,6 @@ class Orders extends Table {
   TextColumn get note => text().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server
 }
 

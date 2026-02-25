@@ -7,6 +7,7 @@ import '../data/database/app_database.dart';
 import '../domain/models/order_events.dart';
 import '../services/pending_operations_service.dart';
 import '../services/data_sync_service.dart';
+import '../services/order_log_service.dart';
 import 'package:uuid/uuid.dart';
 import 'database_providers.dart';
 import 'network_provider.dart';
@@ -249,12 +250,15 @@ final orderProvider = StateNotifierProvider<OrderNotifier, CurrentOrder>((ref) {
 class OrderRepository {
   final AppDatabase _database;
   final _logger = Logger.instance;
+  late final OrderLogService _logService;
 
   // Optional sync service and network status callback for auto-sync
   DataSyncService? _syncService;
   bool Function()? _isOnlineCallback;
 
-  OrderRepository(this._database);
+  OrderRepository(this._database) {
+    _logService = OrderLogService(_database);
+  }
 
   /// Set sync service for auto-syncing completed orders
   void setSyncService(DataSyncService syncService, bool Function() isOnlineCallback) {
@@ -355,6 +359,9 @@ class OrderRepository {
       status: status,
     ));
 
+    // Log order creation
+    await _logService.logOrderCreated(orderId, 'Order created with code $orderCode, status $status');
+
     // Auto-sync if order is COMPLETED and network is available
     print("-----------------------------------------------");
     if (status == 'COMPLETED' && _syncService != null && _isOnlineCallback != null) {
@@ -448,8 +455,11 @@ class OrderRepository {
       clientId: Value(order.customerId),
       commercialId: Value(order.commercialId),
       discountPercentage: Value(order.discountPercentage),
+      persons: Value(order.numberOfPersons),
+
       note: Value(order.note),
       updatedAt: Value(DateTime.now()),
+
       // Mark as not synced if changes were made to a previously synced order
       isSynced: Value(wasAlreadySynced ? false : existingOrder?.isSynced ?? false),
     ));
@@ -522,6 +532,9 @@ class OrderRepository {
       orderId: orderId,
       itemCount: order.items.length,
     ));
+
+    // Log order update
+    await _logService.logOrderUpdated(orderId, 'Order updated: code=$orderCode');
   }
 
   /// Helper to queue order update operation
@@ -650,10 +663,14 @@ class OrderRepository {
       commercialName = commercial != null ? '${commercial.firstName} ${commercial.lastName}' : null;
     }
 
+    int numberOfPersons = order.persons ?? 1;
+
     return CurrentOrder(
       orderId: order.id,
       orderCode: order.code,
       items: items,
+      numberOfPersons: numberOfPersons,
+
 
       tableId: order.tableId,
       tableName: tableName,
@@ -803,6 +820,9 @@ class OrderRepository {
       oldStatus: oldStatus,
       newStatus: status,
     ));
+
+    // Log order status update
+    await _logService.logOrderUpdated(orderId, 'Order status changed from $oldStatus to $status');
   }
 
 
@@ -1187,6 +1207,11 @@ class OrderRepository {
 
     // Delete order products
     await (_database.delete(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))).go();
+
+    // Log order deletion BEFORE deleting the order
+    if (order != null) {
+      await _logService.logOrderDeleted(orderId, 'Order deleted: code=${order.code}');
+    }
 
     // Delete the order
     await (_database.delete(_database.orders)..where((tbl) => tbl.id.equals(orderId))).go();

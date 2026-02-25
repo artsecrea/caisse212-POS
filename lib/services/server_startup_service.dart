@@ -15,7 +15,7 @@ class ServerStartupService {
     if (settings.autoStartServer) {
       print('🚀 Auto-starting HTTP server...');
       try {
-        await startServerWithSettings(_ref as WidgetRef);
+        await startServerWithRef(_ref);
         print('✅ HTTP server started successfully');
       } catch (e) {
         print('❌ Failed to auto-start server: $e');
@@ -29,9 +29,9 @@ class ServerStartupService {
   Future<void> restartServer() async {
     print('🔄 Restarting HTTP server...');
     try {
-      await stopServer(_ref as WidgetRef);
+      await stopServerWithRef(_ref);
       await Future.delayed(const Duration(milliseconds: 500));
-      await startServerWithSettings(_ref as WidgetRef);
+      await startServerWithRef(_ref);
       print('✅ HTTP server restarted successfully');
     } catch (e) {
       print('❌ Failed to restart server: $e');

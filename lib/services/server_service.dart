@@ -14,6 +14,7 @@ import '../data/database/app_database.dart';
 import '../domain/models/socket_models.dart';
 import '../providers/database_providers.dart';
 import '../providers/settings_provider.dart';
+import 'order_log_service.dart';
 import 'package:drift/drift.dart' as drift;
 
 class ServerService {
@@ -72,9 +73,9 @@ class ServerService {
     // router.post('/login', _login)
 
     // Order endpoints
-    router.get('/orders/', _getOrders);
-    router.post('/orders/', _createOrder);
-    router.put('/orders/<code>', _updateOrder);
+    router.get('/orders', _getOrders);
+    router.post('/orders', _createOrder);
+    router.put('/orders/<orderId>', _updateOrder);
     router.put('/orders/products/<id>', _updateOrderProduct);
 
     // Catch-all for 404
@@ -144,23 +145,27 @@ class ServerService {
 
 
 
-  /// GET /orders/?since=date&after_id=int&station=string
+  /// GET /orders/?since=date&updated_after_log_id=int&station=string
+  /// Returns: orders (new orders), orders_updated (full updated orders), orders_deleted (deleted order IDs)
   Future<Response> _getOrders(Request request) async {
     try {
       final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
       final queryParams = request.url.queryParameters;
 
       // Parse query parameters
       final sinceStr = queryParams['since'];
       final afterIdStr = queryParams['after_id'];
+      final updatedAfterLogIdStr = queryParams['updated_after_log_id'];
       final stationName = queryParams['station'];
       final statusStr = queryParams['status'];
 
-
       DateTime? since;
-      int? afterId;
+      int? updatedAfterLogId;
+      final afterId = int.tryParse(afterIdStr ?? '');
       List<String> status = statusStr != null ? statusStr.split(',').map((s) => s.trim().toUpperCase()).toList() : [];
 
+      // Parse since date
       if (sinceStr != null) {
         try {
           since = DateTime.parse(sinceStr);
@@ -172,44 +177,97 @@ class ServerService {
         }
       }
 
-      if (afterIdStr != null) {
-        afterId = int.tryParse(afterIdStr);
-        if (afterId == null) {
+
+      // Parse updated_after_log_id
+      if (updatedAfterLogIdStr != null) {
+        updatedAfterLogId = int.tryParse(updatedAfterLogIdStr);
+        if (updatedAfterLogId == null) {
           return Response.badRequest(
-            body: jsonEncode({'error': 'Invalid integer for "after_id" parameter'}),
+            body: jsonEncode({'error': 'Invalid integer for "updated_after_log_id" parameter'}),
             headers: {'Content-Type': 'application/json'},
           );
         }
       }
 
-      // Build query
-      var query = database.select(database.orders).join([]);
+      // Default to today if no parameters provided
+      if (since == null && updatedAfterLogId == null) {
+        final now = DateTime.now();
+        since = DateTime(now.year, now.month, now.day);
+      }
 
+      // Get new orders (created today or since specific date)
+      var ordersQuery = database.select(database.orders).join([]);
       if (since != null) {
-        query = query..where(database.orders.createdAt.isBiggerOrEqualValue(since));
+        ordersQuery = ordersQuery..where(database.orders.createdAt.isBiggerOrEqualValue(since));
       }
-
-      if (afterId != null) {
-        query = query..where(database.orders.id.isBiggerThanValue(afterId));
-      }
-
       if (status.isNotEmpty) {
-        query = query..where(database.orders.status.isIn(status));
+        ordersQuery = ordersQuery..where(database.orders.status.isIn(status));
+      }
+      if(afterId != null) {
+        ordersQuery = ordersQuery..where(database.orders.id.isBiggerThanValue(afterId));
       }
 
-      // Execute query
-      final ordersData = await query.get();
-      final orders = ordersData.map((row) => row.readTable(database.orders)).toList();
+      final ordersData = await ordersQuery.get();
+      final newOrders = ordersData.map((row) => row.readTable(database.orders)).toList();
+
+      // Get updated order IDs from logs
+      // Get updated order IDs from logs
+      List<int> updatedOrderIds= [];
+
+      if (updatedAfterLogId != null) {
+        updatedOrderIds = await logService.getUpdatedOrdersSinceLogId(updatedAfterLogId);
+      } else {
+        updatedOrderIds = await logService.getUpdatedOrdersToday();
+      }
+
+      // Fetch full updated orders
+      final updatedOrders = <Order>[];
+      for (final orderId in updatedOrderIds) {
+        final order = await (database.select(database.orders)
+              ..where((tbl) => tbl.id.equals(orderId)))
+            .getSingleOrNull();
+        if (order != null) {
+          updatedOrders.add(order);
+        }
+      }
+
+      // Get deleted order IDs from logs
+      List<int> deletedOrderIds;
+      if (updatedAfterLogId != null) {
+        deletedOrderIds = await logService.getDeletedOrdersSinceLogId(updatedAfterLogId);
+      } else {
+        deletedOrderIds = await logService.getDeletedOrdersToday();
+      }
 
       // Convert to SocketOrderModel
-      final socketOrders = await Future.wait(
-        orders.map((order) => _buildSocketOrder(order, stationName)),
-      );
+      final socketNewOrders = (await Future.wait(
+        newOrders.map(
+              (order) => _buildSocketOrder(order, stationName),
+        ),
+      ))
+        .whereType<SocketOrderModel>()
+        .toList();
+
+      final socketUpdatedOrders = (await Future.wait(
+        updatedOrders.map(
+              (order) => _buildSocketOrder(order, stationName),
+        ),
+      ))
+          .whereType<SocketOrderModel>()
+          .toList();
+
+      // Get the last log ID for the client to use in next request
+      final lastLogId = await logService.getLastUpdateLogId();
 
       return Response.ok(
         jsonEncode({
-          'orders': socketOrders.map((o) => o.toJson()).toList(),
-          'count': socketOrders.length,
+          'orders': socketNewOrders.map((o) => o.toJson()).toList(),
+          'orders_updated': socketUpdatedOrders.map((o) => o.toJson()).toList(),
+          'orders_deleted': deletedOrderIds,
+          'last_log_id': lastLogId,
+          'count': socketNewOrders.length,
+          'updated_count': socketUpdatedOrders.length,
+          'deleted_count': deletedOrderIds.length,
         }),
         headers: {'Content-Type': 'application/json'},
       );
@@ -227,6 +285,7 @@ class ServerService {
   Future<Response> _createOrder(Request request) async {
     try {
       final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
       final body = await request.readAsString();
       final json = jsonDecode(body) as Map<String, dynamic>;
 
@@ -244,6 +303,7 @@ class ServerService {
           clientId: drift.Value(socketOrder.clientId),
           note: drift.Value(socketOrder.note),
           createdAt: drift.Value(socketOrder.date),
+          //todo add the neccessery fields like source and sourceId to know where the order come from
           updatedAt: drift.Value(DateTime.now()),
         ),
       );
@@ -276,6 +336,9 @@ class ServerService {
         }
       }
 
+      // Log order creation
+      await logService.logOrderCreated(orderId, 'Order created via API: code=${socketOrder.code}');
+
       return Response(
         201,
         body: jsonEncode({'id': orderId, 'code': socketOrder.code}),
@@ -293,16 +356,19 @@ class ServerService {
 
   /// PUT /orders/<code> - Update order
   /// PUT /orders/<code>?status=newstatus - Fast update order status
-  Future<Response> _updateOrder(Request request, String code) async {
+  Future<Response> _updateOrder(Request request, String orderId) async {
+    final id = int.tryParse(orderId)!;
+
     try {
       final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
       final queryParams = request.url.queryParameters;
       final statusParam = queryParams['status'];
 
       // Fast status update
       if (statusParam != null) {
         final updated = await (database.update(database.orders)
-              ..where((tbl) => tbl.code.equals(code)))
+              ..where((tbl) => tbl.id.equals(id)))
             .write(
           OrdersCompanion(
             status: drift.Value(statusParam.toUpperCase()),
@@ -318,7 +384,7 @@ class ServerService {
         }
 
         return Response.ok(
-          jsonEncode({'message': 'Order status updated', 'code': code}),
+          jsonEncode({'message': 'Order status updated', 'id': id}),
           headers: {'Content-Type': 'application/json'},
         );
       }
@@ -330,7 +396,7 @@ class ServerService {
 
       // Update order
       final updated = await (database.update(database.orders)
-            ..where((tbl) => tbl.code.equals(code)))
+            ..where((tbl) => tbl.id.equals(id)))
           .write(
         OrdersCompanion(
           status: drift.Value(socketOrder.status),
@@ -343,7 +409,7 @@ class ServerService {
           updatedAt: drift.Value(DateTime.now()),
         ),
       );
-
+      logService.logOrderUpdated(id, "Order updated via API with new data");
       if (updated == 0) {
         return Response.notFound(
           jsonEncode({'error': 'Order not found'}),
@@ -351,8 +417,11 @@ class ServerService {
         );
       }
 
+      // Log full order update
+      await logService.logOrderUpdated(id, 'Order fully updated via API');
+
       return Response.ok(
-        jsonEncode({'message': 'Order updated', 'code': code}),
+        jsonEncode({'message': 'Order updated', 'code': id}),
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
@@ -427,50 +496,79 @@ class ServerService {
   // ==================== HELPER METHODS ====================
 
   /// Build SocketOrderModel from database order
-  Future<SocketOrderModel> _buildSocketOrder(Order order, String? stationFilter) async {
+  Future<SocketOrderModel?> _buildSocketOrder(Order order, String? stationFilter) async {
     final database = _ref.read(databaseProvider);
 
-    // Get table name
-    String? tableName;
-    if (order.tableId != null) {
-      final table = await (database.select(database.areaTables)
-            ..where((tbl) => tbl.id.equals(order.tableId!)))
-          .getSingleOrNull();
-      tableName = table?.name;
-    }
-
-    // Get client name
-    String? clientName;
-    if (order.clientId != null) {
-      final client = await (database.select(database.customers)
-            ..where((tbl) => tbl.id.equals(order.clientId!)))
-          .getSingleOrNull();
-      if (client != null) {
-        clientName = '${client.firstName} ${client.lastName}';
-      }
-    }
-
-    // Get order products
+    // Get order products first - if none, return null
     final orderProducts = await (database.select(database.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(order.id)))
+      ..where((tbl) => tbl.orderId.equals(order.id)))
         .get();
 
+    if (orderProducts.isEmpty) {
+      print('⚠️ Order ${order.code} has no products, skipping...');
+      return null;
+    }
+
+    // Batch load all needed data in parallel
+    final [
+    table,
+    client,
+    products,
+    allComponents,
+    allStations,
+    ] = await Future.wait([
+      // Get table
+      order.tableId != null
+          ? (database.select(database.areaTables)
+        ..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull()
+          : Future.value(null),
+
+      // Get client
+      order.clientId != null
+          ? (database.select(database.customers)
+        ..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull()
+          : Future.value(null),
+
+      // Get all products for this order in one query
+      (database.select(database.products)
+        ..where((tbl) => tbl.id.isIn(orderProducts.map((p) => p.productId).toList())))
+          .get(),
+
+      // Get all components for all order products
+      (database.select(database.orderProductComponents)
+        ..where((tbl) => tbl.orderProductId.isIn(orderProducts.map((p) => p.id).toList())))
+          .get(),
+
+      // Get all stations (for filtering)
+      database.select(database.stations).get(),
+    ]);
+
+    // Create maps for quick lookup
+    final productsMap = {for (var p in products as List<dynamic>) p.id: p};
+    final stationsMap = {for (var s in allStations as List<dynamic>) s.id: s};
+    final componentsByOrderProduct = <int, List>{};
+
+    // Group components by order product ID
+    for (var comp in allComponents as List<dynamic>) {
+      componentsByOrderProduct.putIfAbsent(comp.orderProductId, () => []).add(comp);
+    }
+
+    final tableName = table != null ? (table as dynamic).name : null;
+    final clientName = client != null
+        ? '${(client as dynamic).firstName} ${(client as dynamic).lastName}'.trim()
+        : null;
+
+    // Process products
     final socketProducts = <SocketOrderProductModel>[];
 
     for (final orderProduct in orderProducts) {
-      // Get product details
-      final product = await (database.select(database.products)
-            ..where((tbl) => tbl.id.equals(orderProduct.productId)))
-          .getSingleOrNull();
-
+      final product = productsMap[orderProduct.productId];
       if (product == null) continue;
 
       // Get station name
       String? stationName;
       if (product.stationId != null) {
-        final station = await (database.select(database.stations)
-              ..where((tbl) => tbl.id.equals(product.stationId!)))
-            .getSingleOrNull();
+        final station = stationsMap[product.stationId];
         stationName = station?.name;
       }
 
@@ -479,15 +577,15 @@ class ServerService {
         continue;
       }
 
-      // Get components
-      final components = await (database.select(database.orderProductComponents)
-            ..where((tbl) => tbl.orderProductId.equals(orderProduct.id)))
-          .get();
+      // Get components for this order product
+      final productComponents = componentsByOrderProduct[orderProduct.id] ?? [];
 
       final socketComponents = <SocketOrderProductComponentModel>[];
-      for (final comp in components) {
+      for (final comp in productComponents) {
+        // Get component details (would need another batch query for components)
+        // For simplicity, keeping component query as is or you can batch load components too
         final component = await (database.select(database.components)
-              ..where((tbl) => tbl.id.equals(comp.componentId)))
+          ..where((tbl) => tbl.id.equals(comp.componentId)))
             .getSingleOrNull();
 
         if (component != null) {
@@ -512,10 +610,16 @@ class ServerService {
         stationId: product.stationId,
         stationName: stationName,
         components: socketComponents,
-        note: null, // OrderProduct doesn't have note field
+        note: null,
         tvaAmount: orderProduct.unitaryTva,
         discountAmount: orderProduct.unitaryDiscount,
       ));
+    }
+
+    // If no products after filtering, return null
+    if (socketProducts.isEmpty) {
+      print('⚠️ Order ${order.code} has no products after station filter, skipping...');
+      return null;
     }
 
     return SocketOrderModel(

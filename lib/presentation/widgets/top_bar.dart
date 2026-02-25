@@ -324,7 +324,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                   await _endCurrentSession(session.id);
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                child: Text(l10n?.translate('end_session') ?? 'End Session'),
+                child: Text(l10n?.translate('end_session') ?? 'End Session',style: TextStyle(color: Colors.white),),
               ),
           ],
         ),

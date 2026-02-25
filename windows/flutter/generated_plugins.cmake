@@ -3,6 +3,8 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  audioplayers_windows
+  bonsoir_windows
   connectivity_plus
   flutter_thermal_printer
   permission_handler_windows

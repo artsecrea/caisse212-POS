@@ -1,3 +1,5 @@
+import 'package:caisse212/services/discovery_service.dart';
+import 'package:caisse212/services/sound_service.dart';
 import 'package:cmdecrea/cmdecrea.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -39,9 +41,76 @@ void main() async {
       overrides: [
         sharedPreferencesProvider.overrideWithValue(sharedPreferences),
       ],
-      child: const MyApp(),
+      child: const GlobalSoundWrapper(
+        child: MyApp(),
+      ),
     ),
   );
+}
+
+class GlobalSoundWrapper extends ConsumerStatefulWidget {
+  final Widget child;
+  const GlobalSoundWrapper({required this.child});
+
+  @override
+  ConsumerState<GlobalSoundWrapper> createState() => _GlobalSoundWrapperState();
+}
+
+class _GlobalSoundWrapperState extends ConsumerState<GlobalSoundWrapper> {
+  bool _soundsEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize sound service but don't block UI
+    _initializeSounds();
+    // announce the app on the network for discovery
+    _appAnnounce();
+  }
+
+  Future<void> _initializeSounds() async {
+    try {
+
+      await Future.delayed(const Duration(milliseconds: 100));
+    } catch (e) {
+      setState(() {
+        _soundsEnabled = false;
+      });
+      print('Sound service initialization failed: $e');
+    }
+  }
+
+  Future<void> _appAnnounce() async {
+
+    final discoveryService = ref.read(discoveryServiceProvider);
+    final settings = ref.read(settingsProvider);
+    final posName = ref .read(sharedPreferencesProvider).getString('pos_name') ?? 'POS-UNKNOWN';
+
+    final port = settings.serverPort;
+    await discoveryService.announce(posName, null, port);
+
+
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_soundsEnabled) {
+      // Return child without sound wrapper if sounds are disabled
+      return widget.child;
+    }
+
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) {
+        try {
+          ref.read(soundServiceProvider).gestureTap();
+        } catch (e) {
+          // Silently fail if sound service has issues
+        }
+      },
+      child: widget.child,
+    );
+  }
 }
 
 class MyApp extends ConsumerStatefulWidget {
@@ -58,8 +127,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     // Initialize server after first frame
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeServer();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _initializeServer();
+      final soundService = ref.read(soundServiceProvider);
+      await soundService.preload(); // ✅ safe
     });
   }
 
