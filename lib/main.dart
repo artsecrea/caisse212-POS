@@ -1,3 +1,4 @@
+import 'package:caisse212/providers/localization_provider.dart';
 import 'package:caisse212/services/discovery_service.dart';
 import 'package:caisse212/services/sound_service.dart';
 import 'package:cmdecrea/cmdecrea.dart';
@@ -125,7 +126,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
     // Initialize server after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _initializeServer();
@@ -193,22 +193,33 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     // Get POS name from SharedPreferences, use default if not set
     final posName = sharedPreferences.getString('pos_name') ?? 'POS-UNKNOWN';
-    
+
+    final l10n = AppLocalizations.of(context);
 
 
     // Get locale from settings
     final locale = Locale(settings.language);
 
     return MaterialApp(
-      title: 'POSECREA',
-      builder : OnscreenKeyboard.builder(
-        width: (context) => MediaQuery.sizeOf(context).width / 2,
+      title: 'CAISSE212',
+      builder: (context, child) {
+        // Update localization provider whenever context changes
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final l10n = AppLocalizations.of(context);
+          if (l10n != null) {
+            ref.read(localizationProvider.notifier).state = l10n;
+          }
+        });
 
-      ),
+        return OnscreenKeyboard.builder(
+          width: (context) => MediaQuery.sizeOf(context).width / 2,
+        )(context, child);
+      },
       debugShowCheckedModeBanner: false,
 
       // Localization configuration
       locale: locale,
+
       localizationsDelegates: const [
         AppLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,

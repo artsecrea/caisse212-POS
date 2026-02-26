@@ -77,6 +77,7 @@ class ServerService {
     router.post('/orders', _createOrder);
     router.put('/orders/<orderId>', _updateOrder);
     router.put('/orders/products/<id>', _updateOrderProduct);
+    router.get('/stations', _getStations);
 
     // Catch-all for 404
     router.all('/<ignored|.*>', _notFound);
@@ -438,6 +439,7 @@ class ServerService {
   Future<Response> _updateOrderProduct(Request request, String id) async {
     try {
       final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
       final queryParams = request.url.queryParameters;
       final statusParam = queryParams['status'];
 
@@ -463,6 +465,25 @@ class ServerService {
           state: drift.Value(statusParam.toUpperCase()),
         ),
       );
+      // todo make the
+      // check all the products of the order and update the order status if all products are in the same status
+      final orderProduct = await (database.select(database.orderProducts)..where((tbl) => tbl.id.equals(productId))).getSingleOrNull();
+      if (orderProduct != null) {
+        final orderId = orderProduct.orderId;
+        final allProducts = await (database.select(database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))).get();
+        final allSameStatus = allProducts.every((p) => p.state == statusParam.toUpperCase());
+        if (allSameStatus) {
+          await (database.update(database.orders)..where((tbl) => tbl.id.equals(orderId))).write(
+            OrdersCompanion(
+              status: drift.Value(statusParam.toUpperCase()),
+              updatedAt: drift.Value(DateTime.now()),
+            ),
+          );
+        }
+      }
+
+      await logService.logOrderUpdated(orderProduct?.orderId ?? 0, "Product status updated via API to $statusParam");
+
 
       if (updated == 0) {
         return Response.notFound(
@@ -480,6 +501,29 @@ class ServerService {
       print(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to update product', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /stations/ - Get all stations (for KDS station selection)
+  Future<Response> _getStations(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final stations = await database.select(database.stations).get();
+      final stationList = stations
+          .map((s) => {'id': s.id, 'name': s.name, "description": s.description})
+          .toList();
+
+      return Response.ok(
+        jsonEncode({'stations': stationList}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _getStations: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch stations', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
       );
     }

@@ -636,6 +636,16 @@ class AppLocalizations {
       'generating_sample_data': 'Generating sample data...',
       'demo_setup_complete': 'Demo setup complete!',
       'demo_setup_failed': 'Demo setup failed: {0}',
+
+      'tel': 'Tel',
+      'date': 'Date',
+      'note': 'Note',
+      'thank_you_message': 'Thank you for your purchase!',
+      'time': 'Time',
+      'dine_in_upper': 'DINE IN',
+      'take_away_upper': 'TAKE AWAY',
+      'payment_receipt': 'PAYMENT RECEIPT',
+      'thank_you': 'Thank you!',
     },
     'ar': {
       // Common - Arabic
@@ -1264,6 +1274,15 @@ class AppLocalizations {
       'generating_sample_data': 'جاري إنشاء بيانات العينة...',
       'demo_setup_complete': 'اكتمل الإعداد التجريبي!',
       'demo_setup_failed': 'فشل الإعداد التجريبي: {0}',
+      'tel': 'هاتف',
+      'date': 'تاريخ',
+      'note': 'ملاحظة',
+      'thank_you_message': 'شكراً لزيارتك.',
+      'time': 'الوقت',
+      'dine_in_upper': 'dine in',
+      'take_away_upper': 'take away',
+      'payment_receipt': 'إيصال الدفع',
+      'thank_you': 'شكراً لك!',
     },
     'fr': {
       // Common - French
@@ -1894,6 +1913,15 @@ class AppLocalizations {
       'generating_sample_data': 'Génération des données d\'exemple...',
       'demo_setup_complete': 'Configuration de démo terminée!',
       'demo_setup_failed': 'Échec de la configuration de démo: {0}',
+      'tel': 'Téléphone',
+      'date': 'Date',
+      'note': 'Note',
+      'thank_you_message': 'Merci pour votre visite.',
+      'time': 'Heure',
+      'dine_in_upper': 'sur place',
+      'take_away_upper': 'À emporter',
+      'payment_receipt': 'Reçu de paiement',
+      'thank_you': 'Merci!',
     },
   };
 

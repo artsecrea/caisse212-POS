@@ -1,20 +1,22 @@
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/services/printing_service.dart
 import 'dart:async';
+
+import 'package:caisse212/providers/localization_provider.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
-import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../domain/models/order_models.dart';
-import '../utils/currency_formatter.dart';
 import '../utils/app_localizations.dart';
+import '../utils/currency_formatter.dart';
 import 'daily_summary_service.dart';
 
 /// Enum for printer purpose
 enum PrinterPurpose {
-  receipt,  // For customer receipts
-  kds,      // For kitchen display/tickets
+  receipt, // For customer receipts
+  kds, // For kitchen display/tickets
 }
 
 /// Model for saved printer configuration
@@ -53,9 +55,11 @@ class PrinterConfig {
     int? textSize,
   }) {
     return PrinterConfig(
-      receiptPrinterAddress: receiptPrinterAddress ?? this.receiptPrinterAddress,
+      receiptPrinterAddress:
+          receiptPrinterAddress ?? this.receiptPrinterAddress,
       receiptPrinterName: receiptPrinterName ?? this.receiptPrinterName,
-      receiptConnectionType: receiptConnectionType ?? this.receiptConnectionType,
+      receiptConnectionType:
+          receiptConnectionType ?? this.receiptConnectionType,
       kdsPrinterAddress: kdsPrinterAddress ?? this.kdsPrinterAddress,
       kdsPrinterName: kdsPrinterName ?? this.kdsPrinterName,
       kdsConnectionType: kdsConnectionType ?? this.kdsConnectionType,
@@ -99,7 +103,9 @@ class PrinterConfig {
 /// Printing service for thermal printers
 class PrintingService {
   static final PrintingService _instance = PrintingService._internal();
+
   factory PrintingService() => _instance;
+
   PrintingService._internal();
 
   final FlutterThermalPrinter _thermalPrinter = FlutterThermalPrinter.instance;
@@ -118,13 +124,19 @@ class PrintingService {
 
   // Getters
   List<Printer> get availablePrinters => _availablePrinters;
+
   Printer? get connectedReceiptPrinter => _connectedReceiptPrinter;
+
   Printer? get connectedKdsPrinter => _connectedKdsPrinter;
+
   PrinterConfig get config => _config;
+
   bool get isScanning => _isScanning;
 
   Stream<List<Printer>> get printersStream => _printersController.stream;
+
   Stream<bool> get scanningStream => _scanningController.stream;
+
   Stream<PrinterConfig> get configStream => _configController.stream;
 
   /// Initialize the printing service
@@ -156,10 +168,14 @@ class PrintingService {
     _config = PrinterConfig(
       receiptPrinterAddress: receiptAddress,
       receiptPrinterName: receiptName,
-      receiptConnectionType: receiptType != null ? ConnectionType.values[receiptType] : null,
+      receiptConnectionType: receiptType != null
+          ? ConnectionType.values[receiptType]
+          : null,
       kdsPrinterAddress: kdsAddress,
       kdsPrinterName: kdsName,
-      kdsConnectionType: kdsType != null ? ConnectionType.values[kdsType] : null,
+      kdsConnectionType: kdsType != null
+          ? ConnectionType.values[kdsType]
+          : null,
       kdsEnabled: kdsEnabled,
       paperSize: paperSizeValue == 58 ? PaperSize.mm58 : PaperSize.mm80,
       textSize: textSizeValue,
@@ -168,29 +184,44 @@ class PrintingService {
   }
 
   /// Save configuration to SharedPreferences
-  Future<void> saveConfig(SharedPreferences prefs, PrinterConfig newConfig) async {
+  Future<void> saveConfig(
+    SharedPreferences prefs,
+    PrinterConfig newConfig,
+  ) async {
     _config = newConfig;
 
     if (newConfig.receiptPrinterAddress != null) {
-      await prefs.setString('printer_receipt_address', newConfig.receiptPrinterAddress!);
+      await prefs.setString(
+        'printer_receipt_address',
+        newConfig.receiptPrinterAddress!,
+      );
     } else {
       await prefs.remove('printer_receipt_address');
     }
 
     if (newConfig.receiptPrinterName != null) {
-      await prefs.setString('printer_receipt_name', newConfig.receiptPrinterName!);
+      await prefs.setString(
+        'printer_receipt_name',
+        newConfig.receiptPrinterName!,
+      );
     } else {
       await prefs.remove('printer_receipt_name');
     }
 
     if (newConfig.receiptConnectionType != null) {
-      await prefs.setInt('printer_receipt_type', newConfig.receiptConnectionType!.index);
+      await prefs.setInt(
+        'printer_receipt_type',
+        newConfig.receiptConnectionType!.index,
+      );
     } else {
       await prefs.remove('printer_receipt_type');
     }
 
     if (newConfig.kdsPrinterAddress != null) {
-      await prefs.setString('printer_kds_address', newConfig.kdsPrinterAddress!);
+      await prefs.setString(
+        'printer_kds_address',
+        newConfig.kdsPrinterAddress!,
+      );
     } else {
       await prefs.remove('printer_kds_address');
     }
@@ -202,7 +233,10 @@ class PrintingService {
     }
 
     if (newConfig.kdsConnectionType != null) {
-      await prefs.setInt('printer_kds_type', newConfig.kdsConnectionType!.index);
+      await prefs.setInt(
+        'printer_kds_type',
+        newConfig.kdsConnectionType!.index,
+      );
     } else {
       await prefs.remove('printer_kds_type');
     }
@@ -223,10 +257,7 @@ class PrintingService {
 
     try {
       await _thermalPrinter.getPrinters(
-        connectionTypes: [
-          ConnectionType.USB,
-          ConnectionType.NETWORK,
-        ],
+        connectionTypes: [ConnectionType.USB, ConnectionType.NETWORK],
       );
 
       // Wait for results
@@ -254,7 +285,9 @@ class PrintingService {
   /// Connect to a printer for a specific purpose
   Future<bool> connectPrinter(Printer printer, PrinterPurpose purpose) async {
     try {
-      debugPrint('Attempting to connect to ${purpose.name} printer: ${printer.name} (${printer.address})');
+      debugPrint(
+        'Attempting to connect to ${purpose.name} printer: ${printer.name} (${printer.address})',
+      );
 
       final result = await _thermalPrinter.connect(printer);
 
@@ -279,10 +312,12 @@ class PrintingService {
   /// Disconnect a printer
   Future<void> disconnectPrinter(PrinterPurpose purpose) async {
     try {
-      if (purpose == PrinterPurpose.receipt && _connectedReceiptPrinter != null) {
+      if (purpose == PrinterPurpose.receipt &&
+          _connectedReceiptPrinter != null) {
         await _thermalPrinter.disconnect(_connectedReceiptPrinter!);
         _connectedReceiptPrinter = null;
-      } else if (purpose == PrinterPurpose.kds && _connectedKdsPrinter != null) {
+      } else if (purpose == PrinterPurpose.kds &&
+          _connectedKdsPrinter != null) {
         await _thermalPrinter.disconnect(_connectedKdsPrinter!);
         _connectedKdsPrinter = null;
       }
@@ -292,7 +327,11 @@ class PrintingService {
   }
 
   /// Set printer for a purpose (saves to config)
-  Future<void> setPrinter(SharedPreferences prefs, Printer printer, PrinterPurpose purpose) async {
+  Future<void> setPrinter(
+    SharedPreferences prefs,
+    Printer printer,
+    PrinterPurpose purpose,
+  ) async {
     PrinterConfig newConfig;
 
     if (purpose == PrinterPurpose.receipt) {
@@ -314,7 +353,10 @@ class PrintingService {
   }
 
   /// Clear printer for a purpose
-  Future<void> clearPrinter(SharedPreferences prefs, PrinterPurpose purpose) async {
+  Future<void> clearPrinter(
+    SharedPreferences prefs,
+    PrinterPurpose purpose,
+  ) async {
     await disconnectPrinter(purpose);
 
     PrinterConfig newConfig;
@@ -362,11 +404,13 @@ class PrintingService {
   /// Resolve text size based on config
   PosTextSize _resolveTextSize({bool isHeader = false}) {
     if (isHeader) {
-      if (_config.textSize >= 2) return PosTextSize.size2; // Max size for comfortable header
+      if (_config.textSize >= 2)
+        return PosTextSize.size2; // Max size for comfortable header
       return PosTextSize.size2; // Default header size
     } else {
       if (_config.textSize == 2) return PosTextSize.size2;
-      if (_config.textSize >= 3) return PosTextSize.size2; // size3 is too big for body usually
+      if (_config.textSize >= 3)
+        return PosTextSize.size2; // size3 is too big for body usually
       return PosTextSize.size1; // Default
     }
   }
@@ -393,8 +437,12 @@ class PrintingService {
   /// Ensure printer is connected, with automatic rescan and reconnect if needed
   Future<bool> _ensurePrinterConnected(PrinterPurpose purpose) async {
     final isReceipt = purpose == PrinterPurpose.receipt;
-    final currentPrinter = isReceipt ? _connectedReceiptPrinter : _connectedKdsPrinter;
-    final savedAddress = isReceipt ? _config.receiptPrinterAddress : _config.kdsPrinterAddress;
+    final currentPrinter = isReceipt
+        ? _connectedReceiptPrinter
+        : _connectedKdsPrinter;
+    final savedAddress = isReceipt
+        ? _config.receiptPrinterAddress
+        : _config.kdsPrinterAddress;
 
     // If printer already connected, we're good
     if (currentPrinter != null) {
@@ -408,13 +456,17 @@ class PrintingService {
       return false;
     }
 
-    debugPrint('${purpose.name} printer not connected, attempting to reconnect to saved printer: $savedAddress');
+    debugPrint(
+      '${purpose.name} printer not connected, attempting to reconnect to saved printer: $savedAddress',
+    );
 
     // Step 1: Try to find printer in current available printers list
     Printer? printer = _findPrinterByAddress(savedAddress);
 
     if (printer != null) {
-      debugPrint('Found saved ${purpose.name} printer in available list, attempting connection');
+      debugPrint(
+        'Found saved ${purpose.name} printer in available list, attempting connection',
+      );
       final connected = await connectPrinter(printer, purpose);
       if (connected) {
         debugPrint('Successfully connected to ${purpose.name} printer');
@@ -424,7 +476,9 @@ class PrintingService {
     }
 
     // Step 2: Printer not in list or connection failed - try rescanning
-    debugPrint('Printer not found in available list or connection failed, rescanning...');
+    debugPrint(
+      'Printer not found in available list or connection failed, rescanning...',
+    );
 
     try {
       await startScan();
@@ -436,10 +490,14 @@ class PrintingService {
       printer = _findPrinterByAddress(savedAddress);
 
       if (printer != null) {
-        debugPrint('Found ${purpose.name} printer after rescan, attempting connection');
+        debugPrint(
+          'Found ${purpose.name} printer after rescan, attempting connection',
+        );
         final connected = await connectPrinter(printer, purpose);
         if (connected) {
-          debugPrint('Successfully connected to ${purpose.name} printer after rescan');
+          debugPrint(
+            'Successfully connected to ${purpose.name} printer after rescan',
+          );
           return true;
         }
         debugPrint('Failed to connect to ${purpose.name} printer after rescan');
@@ -452,6 +510,24 @@ class PrintingService {
 
     debugPrint('Unable to establish ${purpose.name} printer connection');
     return false;
+  }
+
+  /// Translation helper with clear key-based fallback
+  String _translate(String key, {String? fallback}) {
+    final l10n = _ref?.read(localizationProvider);
+
+    if (l10n == null) {
+      // If no localizer, return formatted key or provided fallback
+      return fallback ?? key.replaceAll('_', ' ');
+    }
+
+    return l10n.translate(key);
+  }
+
+  /// Helper for static text that might not need translation but should be consistent
+  String _text(String key, {String? fallback}) {
+    // Use the same pattern for all static text to maintain consistency
+    return _translate(key, fallback: fallback);
   }
 
   /// Print order receipt
@@ -490,36 +566,93 @@ class PrintingService {
       }
 
       if (storeAddress != null) {
-        bytes += generator.text(storeAddress, styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
+        bytes += generator.text(
+          storeAddress,
+          styles: PosStyles(
+            align: PosAlign.center,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
       }
 
       if (storePhone != null) {
-        bytes += generator.text('Tel: $storePhone', styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
+        bytes += generator.text(
+          '${_text('tel', fallback: 'Tel')}: $storePhone',
+          styles: PosStyles(
+            align: PosAlign.center,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
       }
 
       bytes += generator.hr();
 
       // Order info
-      bytes += generator.text('Order #${order.orderCode ?? "N/A"}',
-          styles: PosStyles(align: PosAlign.left, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
-      bytes += generator.text('Date: ${_formatDateTime(DateTime.now())}',
-          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        '${_translate("order")} #${order.orderCode ?? "N/A"}',
+        styles: PosStyles(
+          align: PosAlign.left,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.text(
+        '${_text('date', fallback: 'Date')}: ${_formatDateTime(DateTime.now())}',
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
       if (cashierName != null) {
-        bytes += generator.text('Cashier: $cashierName',
-            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+        bytes += generator.text(
+          '${_translate("cashier")}: $cashierName',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
       }
       if (order.tableName != null) {
-        bytes += generator.text('Table: ${order.tableName}',
-            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+        bytes += generator.text(
+          '${_translate("table")}: ${order.tableName}',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
       }
       if (order.customerName != null) {
-        bytes += generator.text('Customer: ${order.customerName}',
-            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+        bytes += generator.text(
+          '${_text('customer', fallback: 'Customer')}: ${order.customerName}',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
       }
-      bytes += generator.text('Type: ${order.type == "DINE_IN" ? "Dine In" : "Take Away"}',
-          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
-      bytes += generator.text('Persons: ${order.numberOfPersons}',
-          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        '${_text('type', fallback: 'Type')}: ${_getOrderTypeText(order.type)}',
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.text(
+        '${_text('persons', fallback: 'Persons')}: ${order.numberOfPersons}',
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
 
       bytes += generator.hr();
 
@@ -529,25 +662,49 @@ class PrintingService {
           PosColumn(
             text: '${item.quantity}x ${item.productName}',
             width: 8,
-            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()),
+            styles: PosStyles(
+              align: PosAlign.left,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
           ),
           PosColumn(
-            text: CurrencyFormatter.formatWithCurrency(item.totalPrice, currencySymbol),
+            text: CurrencyFormatter.formatWithCurrency(
+              item.totalPrice,
+              currencySymbol,
+            ),
             width: 4,
-            styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
           ),
         ]);
 
         // Components
         for (final comp in item.components) {
-          bytes += generator.text('  + ${comp.name} x${comp.quantity}',
-              styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+          bytes += generator.text(
+            '  + ${comp.name} x${comp.quantity}',
+            styles: PosStyles(
+              align: PosAlign.left,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          );
         }
 
         // Note
         if (item.note != null && item.note!.isNotEmpty) {
-          bytes += generator.text('  Note: ${item.note}',
-              styles: PosStyles(align: PosAlign.left, fontType: PosFontType.fontB, height: _resolveTextSize(), width: _resolveTextSize()));
+          bytes += generator.text(
+            '  ${_text('note', fallback: 'Note')}: ${item.note}',
+            styles: PosStyles(
+              align: PosAlign.left,
+              fontType: PosFontType.fontB,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          );
         }
       }
 
@@ -555,32 +712,75 @@ class PrintingService {
 
       // Totals
       bytes += generator.row([
-        PosColumn(text: 'Subtotal:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
         PosColumn(
-          text: CurrencyFormatter.formatWithCurrency(order.subtotal, currencySymbol),
+          text: '${_text('subtotal', fallback: 'Subtotal')}:',
+          width: 8,
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text: CurrencyFormatter.formatWithCurrency(
+            order.subtotal,
+            currencySymbol,
+          ),
           width: 4,
-          styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
         ),
       ]);
 
       if (order.totalDiscount > 0) {
         bytes += generator.row([
-          PosColumn(text: 'Discount:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
-            text: '-${CurrencyFormatter.formatWithCurrency(order.totalDiscount, currencySymbol)}',
+            text: '${_text('discount', fallback: 'Discount')}:',
+            width: 8,
+            styles: PosStyles(
+              align: PosAlign.left,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+            '-${CurrencyFormatter.formatWithCurrency(order.totalDiscount, currencySymbol)}',
             width: 4,
-            styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
           ),
         ]);
       }
 
       if (order.tax > 0) {
         bytes += generator.row([
-          PosColumn(text: 'Tax:', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
-            text: CurrencyFormatter.formatWithCurrency(order.tax, currencySymbol),
+            text: '${_text('tax', fallback: 'Tax')}:',
+            width: 8,
+            styles: PosStyles(
+              align: PosAlign.left,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: CurrencyFormatter.formatWithCurrency(
+              order.tax,
+              currencySymbol,
+            ),
             width: 4,
-            styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
           ),
         ]);
       }
@@ -589,12 +789,19 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: 'TOTAL:',
+          text: '${_text('total', fallback: 'TOTAL')}:',
           width: 6,
-          styles: PosStyles(bold: true, height: _resolveHeaderSize(), width: _resolveHeaderSize()),
+          styles: PosStyles(
+            bold: true,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
+          ),
         ),
         PosColumn(
-          text: CurrencyFormatter.formatWithCurrency(order.total, currencySymbol),
+          text: CurrencyFormatter.formatWithCurrency(
+            order.total,
+            currencySymbol,
+          ),
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
@@ -606,8 +813,14 @@ class PrintingService {
       ]);
 
       bytes += generator.emptyLines(1);
-      bytes += generator.text('Thank you for your purchase!',
-          styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        _text('thank_you_message', fallback: 'Thank you for your purchase!'),
+        styles: PosStyles(
+          align: PosAlign.center,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
 
       // Add barcode if order code exists
       if (order.orderCode != null && order.orderCode!.isNotEmpty) {
@@ -615,7 +828,12 @@ class PrintingService {
         // Use text() to print the order code as text above barcode for clarity
         bytes += generator.text(
           order.orderCode!,
-          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
         );
         bytes += generator.barcode(
           Barcode.code128(order.orderCode!.codeUnits),
@@ -668,7 +886,7 @@ class PrintingService {
 
       // Large order number
       bytes += generator.text(
-        'ORDER #${order.orderCode ?? "N/A"}',
+        '${_text('order', fallback: 'ORDER')} #${order.orderCode ?? "N/A"}',
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
@@ -680,14 +898,28 @@ class PrintingService {
       bytes += generator.emptyLines(1);
 
       // Order info
-      bytes += generator.text('Time: ${_formatTime(DateTime.now())}',
-          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
-      bytes += generator.text('Type: ${order.type == "DINE_IN" ? "DINE IN" : "TAKE AWAY"}',
-          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        '${_text('time', fallback: 'Time')}: ${_formatTime(DateTime.now())}',
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.text(
+        '${_text('type', fallback: 'Type')}: ${_getOrderTypeText(order.type, uppercase: true)}',
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
 
       if (order.tableName != null) {
         bytes += generator.text(
-          'TABLE: ${order.tableName}',
+          '${_text('table', fallback: 'TABLE')}: ${order.tableName}',
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
@@ -697,12 +929,24 @@ class PrintingService {
         );
       }
 
-      bytes += generator.text('Persons: ${order.numberOfPersons}',
-          styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        '${_text('persons', fallback: 'Persons')}: ${order.numberOfPersons}',
+        styles: PosStyles(
+          align: PosAlign.center,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
 
       if (order.customerName != null) {
-        bytes += generator.text('Customer: ${order.customerName}',
-            styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
+        bytes += generator.text(
+          '${_text('customer', fallback: 'Customer')}: ${order.customerName}',
+          styles: PosStyles(
+            align: PosAlign.center,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
       }
 
       bytes += generator.hr(ch: '=');
@@ -723,7 +967,12 @@ class PrintingService {
         for (final comp in item.components) {
           bytes += generator.text(
             '   + ${comp.name} x${comp.quantity}',
-            styles: PosStyles(align: PosAlign.left, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+            styles: PosStyles(
+              align: PosAlign.left,
+              bold: true,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
           );
         }
 
@@ -731,7 +980,12 @@ class PrintingService {
         if (item.note != null && item.note!.isNotEmpty) {
           bytes += generator.text(
             '   *** ${item.note} ***',
-            styles: PosStyles(align: PosAlign.left, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+            styles: PosStyles(
+              align: PosAlign.left,
+              bold: true,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
           );
         }
 
@@ -745,7 +999,12 @@ class PrintingService {
         bytes += generator.emptyLines(1);
         bytes += generator.text(
           order.orderCode!,
-          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
         );
         bytes += generator.barcode(
           Barcode.code128(order.orderCode!.codeUnits),
@@ -757,7 +1016,9 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
-      debugPrint('Attempting to print KDS ticket. Bytes length: ${bytes.length}');
+      debugPrint(
+        'Attempting to print KDS ticket. Bytes length: ${bytes.length}',
+      );
 
       await _thermalPrinter.printData(
         _connectedKdsPrinter!,
@@ -813,28 +1074,67 @@ class PrintingService {
         );
       }
 
-      bytes += generator.text('PAYMENT RECEIPT',
-          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        _text('payment_receipt', fallback: 'PAYMENT RECEIPT'),
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
       bytes += generator.hr();
 
       // Ticket info
-      bytes += generator.text('Ticket #$ticketNumber',
-          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        '${_text('ticket', fallback: 'Ticket')} #$ticketNumber',
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
 
       // Add order code if available
       if (orderCode != null && orderCode.isNotEmpty) {
-        bytes += generator.text('Order: $orderCode',
-            styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()));
+        bytes += generator.text(
+          '${_text('order', fallback: 'Order')}: $orderCode',
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
       }
 
-      bytes += generator.text('Date: ${_formatDateTime(createdAt)}',
-          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        '${_text('date', fallback: 'Date')}: ${_formatDateTime(createdAt)}',
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
       if (cashierName != null) {
-        bytes += generator.text('Cashier: $cashierName',
-            styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+        bytes += generator.text(
+          '${_translate("cashier")}: $cashierName',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
       }
-      bytes += generator.text('Payment: $paymentMethod',
-          styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        '${_text('payment', fallback: 'Payment')}: $paymentMethod',
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
 
       bytes += generator.hr();
 
@@ -845,11 +1145,26 @@ class PrintingService {
         final price = item['price'] ?? 0.0;
 
         bytes += generator.row([
-          PosColumn(text: '${qty}x $name', width: 8, styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize())),
           PosColumn(
-            text: CurrencyFormatter.formatWithCurrency(price as double, currencySymbol),
+            text: '${qty}x $name',
+            width: 8,
+            styles: PosStyles(
+              align: PosAlign.left,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: CurrencyFormatter.formatWithCurrency(
+              price as double,
+              currencySymbol,
+            ),
             width: 4,
-            styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize()),
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
           ),
         ]);
 
@@ -864,12 +1179,22 @@ class PrintingService {
             if (compPrice > 0) {
               bytes += generator.text(
                 '  + ${compQty}x $compName (+${CurrencyFormatter.formatWithCurrency(compPrice * compQty, currencySymbol)})',
-                styles: PosStyles(align: PosAlign.left, fontType: PosFontType.fontB, height: _resolveTextSize(), width: _resolveTextSize()),
+                styles: PosStyles(
+                  align: PosAlign.left,
+                  fontType: PosFontType.fontB,
+                  height: _resolveTextSize(),
+                  width: _resolveTextSize(),
+                ),
               );
             } else {
               bytes += generator.text(
                 '  + ${compQty}x $compName',
-                styles: PosStyles(align: PosAlign.left, fontType: PosFontType.fontB, height: _resolveTextSize(), width: _resolveTextSize()),
+                styles: PosStyles(
+                  align: PosAlign.left,
+                  fontType: PosFontType.fontB,
+                  height: _resolveTextSize(),
+                  width: _resolveTextSize(),
+                ),
               );
             }
           }
@@ -881,9 +1206,13 @@ class PrintingService {
       // Total
       bytes += generator.row([
         PosColumn(
-          text: 'PAID:',
+          text: '${_text('paid', fallback: 'PAID')}:',
           width: 6,
-          styles: PosStyles(bold: true, height: _resolveHeaderSize(), width: _resolveHeaderSize()),
+          styles: PosStyles(
+            bold: true,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
+          ),
         ),
         PosColumn(
           text: CurrencyFormatter.formatWithCurrency(amount, currencySymbol),
@@ -898,15 +1227,26 @@ class PrintingService {
       ]);
 
       bytes += generator.emptyLines(1);
-      bytes += generator.text('Thank you!',
-          styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()));
+      bytes += generator.text(
+        _text('thank_you', fallback: 'Thank you!'),
+        styles: PosStyles(
+          align: PosAlign.center,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
 
       // Add barcode if order code exists
       if (orderCode != null && orderCode.isNotEmpty) {
         bytes += generator.emptyLines(1);
         bytes += generator.text(
           orderCode,
-          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
         );
         bytes += generator.barcode(
           Barcode.code128(orderCode.codeUnits),
@@ -918,7 +1258,9 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
-      debugPrint('Attempting to print ticket receipt. Bytes length: ${bytes.length}');
+      debugPrint(
+        'Attempting to print ticket receipt. Bytes length: ${bytes.length}',
+      );
 
       await _thermalPrinter.printData(
         _connectedReceiptPrinter!,
@@ -934,6 +1276,16 @@ class PrintingService {
       return false;
     }
   }
+
+  /// Helper method to get order type text
+  String _getOrderTypeText(String? type, {bool uppercase = false}) {
+    if (type == "DINE_IN") {
+      return uppercase ? _text('dine_in_upper', fallback: 'DINE IN') : _text('dine_in', fallback: 'Dine In');
+    } else {
+      return uppercase ? _text('take_away_upper', fallback: 'TAKE AWAY') : _text('take_away', fallback: 'Take Away');
+    }
+  }
+
 
   /// Find printer by address in available printers
   Printer? _findPrinterByAddress(String? address) {
@@ -984,204 +1336,685 @@ class PrintingService {
       // Header
       bytes += generator.text(
         businessName ?? 'POS SYSTEM',
-        styles: PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
       );
       bytes += generator.emptyLines(1);
       bytes += generator.text(
         l10n?.translate('daily_summary_report') ?? 'DAILY SUMMARY REPORT',
-        styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
       );
-      bytes += generator.text(doubleSeparator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.text(
+        doubleSeparator,
+        styles: const PosStyles(align: PosAlign.center),
+      );
       bytes += generator.emptyLines(1);
 
       // Date range
       bytes += generator.text(
         '${l10n?.translate('date_range') ?? 'Date Range'}:',
-        styles: PosStyles(align: PosAlign.left, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+        styles: PosStyles(
+          align: PosAlign.left,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
       );
       bytes += generator.text(
         '${_formatDate(report.startDate)} - ${_formatDate(report.endDate)}',
-        styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()),
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
       );
       bytes += generator.text(
         '${l10n?.translate('number_of_sessions') ?? 'Sessions'}: ${report.totalSessions}',
-        styles: PosStyles(align: PosAlign.left, height: _resolveTextSize(), width: _resolveTextSize()),
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
       );
-      bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.text(
+        separator,
+        styles: const PosStyles(align: PosAlign.center),
+      );
       bytes += generator.emptyLines(1);
 
       // Sessions details
       for (final session in report.sessions) {
         bytes += generator.text(
           '${l10n?.translate('session') ?? 'Session'} #${session.sessionCode}',
-          styles: PosStyles(align: PosAlign.center, bold: true, height: _resolveTextSize(), width: _resolveTextSize()),
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
         );
-        bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+        bytes += generator.text(
+          separator,
+          styles: const PosStyles(align: PosAlign.center),
+        );
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('cashier') ?? 'Cashier', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: session.cashierName ?? '#${session.cashierId}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('cashier') ?? 'Cashier',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: session.cashierName ?? '#${session.cashierId}',
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('starting_balance') ?? 'Start Balance', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: currencyFormatter?.format(session.startingBalance) ?? session.startingBalance.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('starting_balance') ?? 'Start Balance',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+                currencyFormatter?.format(session.startingBalance) ??
+                session.startingBalance.toStringAsFixed(2),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('total_orders') ?? 'Total Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: '${session.totalOrders}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('total_orders') ?? 'Total Orders',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: '${session.totalOrders}',
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('expected_from_orders') ?? 'Expected Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: currencyFormatter?.format(session.expectedFromOrders) ?? session.expectedFromOrders.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('expected_from_orders') ?? 'Expected Orders',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+                currencyFormatter?.format(session.expectedFromOrders) ??
+                session.expectedFromOrders.toStringAsFixed(2),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('total_tickets') ?? 'Total Tickets', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: '${session.totalTickets}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('total_tickets') ?? 'Total Tickets',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: '${session.totalTickets}',
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('expected_from_tickets') ?? 'Expected Tickets', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: currencyFormatter?.format(session.expectedFromTickets) ?? session.expectedFromTickets.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text:
+                l10n?.translate('expected_from_tickets') ?? 'Expected Tickets',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+                currencyFormatter?.format(session.expectedFromTickets) ??
+                session.expectedFromTickets.toStringAsFixed(2),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.emptyLines(1);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: '${session.unpaidOrders}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('unpaid_orders') ?? 'Unpaid Orders',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: '${session.unpaidOrders}',
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: currencyFormatter?.format(session.unpaidAmount) ?? session.unpaidAmount.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('unpaid_amount') ?? 'Unpaid Amount',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+                currencyFormatter?.format(session.unpaidAmount) ??
+                session.unpaidAmount.toStringAsFixed(2),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.emptyLines(1);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('paid_by_cash') ?? 'Cash', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: currencyFormatter?.format(session.paidByCash) ?? session.paidByCash.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('paid_by_cash') ?? 'Cash',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+                currencyFormatter?.format(session.paidByCash) ??
+                session.paidByCash.toStringAsFixed(2),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('paid_by_card') ?? 'Card', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: currencyFormatter?.format(session.paidByCard) ?? session.paidByCard.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('paid_by_card') ?? 'Card',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+                currencyFormatter?.format(session.paidByCard) ??
+                session.paidByCard.toStringAsFixed(2),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('paid_by_phone') ?? 'Phone', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: currencyFormatter?.format(session.paidByPhone) ?? session.paidByPhone.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('paid_by_phone') ?? 'Phone',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+                currencyFormatter?.format(session.paidByPhone) ??
+                session.paidByPhone.toStringAsFixed(2),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('paid_by_other') ?? 'Other', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: currencyFormatter?.format(session.paidByOther) ?? session.paidByOther.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('paid_by_other') ?? 'Other',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text:
+                currencyFormatter?.format(session.paidByOther) ??
+                session.paidByOther.toStringAsFixed(2),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
         bytes += generator.emptyLines(1);
 
         bytes += generator.row([
-          PosColumn(text: l10n?.translate('status') ?? 'Status', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-          PosColumn(text: session.status.toUpperCase(), width: 6, styles: PosStyles(align: PosAlign.right, bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+          PosColumn(
+            text: l10n?.translate('status') ?? 'Status',
+            width: 6,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: session.status.toUpperCase(),
+            width: 6,
+            styles: PosStyles(
+              align: PosAlign.right,
+              bold: true,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
         ]);
 
-        bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+        bytes += generator.text(
+          separator,
+          styles: const PosStyles(align: PosAlign.center),
+        );
         bytes += generator.emptyLines(1);
       }
 
       // Summary
-      bytes += generator.text(doubleSeparator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.text(
+        doubleSeparator,
+        styles: const PosStyles(align: PosAlign.center),
+      );
       bytes += generator.text(
         l10n?.translate('summary') ?? 'SUMMARY',
-        styles: PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
       );
-      bytes += generator.text(doubleSeparator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.text(
+        doubleSeparator,
+        styles: const PosStyles(align: PosAlign.center),
+      );
       bytes += generator.emptyLines(1);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('total_orders') ?? 'Total Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: '${report.totalOrders}', width: 6, styles: PosStyles(align: PosAlign.right, bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('total_orders') ?? 'Total Orders',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text: '${report.totalOrders}',
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('expected_from_orders') ?? 'Expected Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalExpectedFromOrders) ?? report.totalExpectedFromOrders.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('expected_from_orders') ?? 'Expected Orders',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalExpectedFromOrders) ??
+              report.totalExpectedFromOrders.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('total_tickets') ?? 'Total Tickets', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: '${report.totalTickets}', width: 6, styles: PosStyles(align: PosAlign.right, bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('total_tickets') ?? 'Total Tickets',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text: '${report.totalTickets}',
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('expected_from_tickets') ?? 'Expected Tickets', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalExpectedFromTickets) ?? report.totalExpectedFromTickets.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('expected_from_tickets') ?? 'Expected Tickets',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalExpectedFromTickets) ??
+              report.totalExpectedFromTickets.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.emptyLines(1);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: '${report.totalUnpaidOrders}', width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('unpaid_orders') ?? 'Unpaid Orders',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text: '${report.totalUnpaidOrders}',
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalUnpaidAmount) ?? report.totalUnpaidAmount.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('unpaid_amount') ?? 'Unpaid Amount',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalUnpaidAmount) ??
+              report.totalUnpaidAmount.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.emptyLines(1);
-      bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.text(
+        separator,
+        styles: const PosStyles(align: PosAlign.center),
+      );
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('paid_by_cash') ?? 'Cash', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalPaidByCash) ?? report.totalPaidByCash.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('paid_by_cash') ?? 'Cash',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalPaidByCash) ??
+              report.totalPaidByCash.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('paid_by_card') ?? 'Card', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalPaidByCard) ?? report.totalPaidByCard.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('paid_by_card') ?? 'Card',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalPaidByCard) ??
+              report.totalPaidByCard.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('paid_by_phone') ?? 'Phone', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalPaidByPhone) ?? report.totalPaidByPhone.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('paid_by_phone') ?? 'Phone',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalPaidByPhone) ??
+              report.totalPaidByPhone.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('paid_by_other') ?? 'Other', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalPaidByOther) ?? report.totalPaidByOther.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('paid_by_other') ?? 'Other',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalPaidByOther) ??
+              report.totalPaidByOther.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
-      bytes += generator.text(separator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.text(
+        separator,
+        styles: const PosStyles(align: PosAlign.center),
+      );
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('total_paid') ?? 'TOTAL PAID', width: 6, styles: PosStyles(bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalPaid) ?? report.totalPaid.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, bold: true, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('total_paid') ?? 'TOTAL PAID',
+          width: 6,
+          styles: PosStyles(
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalPaid) ??
+              report.totalPaid.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
       bytes += generator.row([
-        PosColumn(text: l10n?.translate('total_starting_balance') ?? 'Start Balance', width: 6, styles: PosStyles(height: _resolveTextSize(), width: _resolveTextSize())),
-        PosColumn(text: currencyFormatter?.format(report.totalStartingBalance) ?? report.totalStartingBalance.toStringAsFixed(2), width: 6, styles: PosStyles(align: PosAlign.right, height: _resolveTextSize(), width: _resolveTextSize())),
+        PosColumn(
+          text: l10n?.translate('total_starting_balance') ?? 'Start Balance',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text:
+              currencyFormatter?.format(report.totalStartingBalance) ??
+              report.totalStartingBalance.toStringAsFixed(2),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
       ]);
 
-      bytes += generator.text(doubleSeparator, styles: const PosStyles(align: PosAlign.center));
+      bytes += generator.text(
+        doubleSeparator,
+        styles: const PosStyles(align: PosAlign.center),
+      );
 
       // Footer
       bytes += generator.emptyLines(1);
       bytes += generator.text(
         '${l10n?.translate('printed_at') ?? 'Printed'}: ${_formatDateTime(DateTime.now())}',
-        styles: PosStyles(align: PosAlign.center, height: _resolveTextSize(), width: _resolveTextSize()),
+        styles: PosStyles(
+          align: PosAlign.center,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
       );
 
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
-      debugPrint('Attempting to print daily summary report. Bytes length: ${bytes.length}');
+      debugPrint(
+        'Attempting to print daily summary report. Bytes length: ${bytes.length}',
+      );
 
       await _thermalPrinter.printData(
         _connectedReceiptPrinter!,
