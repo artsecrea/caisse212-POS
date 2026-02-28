@@ -15,14 +15,14 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int _selectedNavIndex = 0;
 
-  final List<NavItem> _navItems = const [
-    NavItem(icon: Icons.palette, label: 'Appearance'),
-    NavItem(icon: Icons.display_settings, label: 'Display'),
-    NavItem(icon: Icons.shopping_cart, label: 'Order Defaults'),
-    NavItem(icon: Icons.attach_money, label: 'Currency'),
-    NavItem(icon: Icons.touch_app, label: 'Action Buttons'),
-    NavItem(icon: Icons.sync, label: 'Sync Settings'),
-    NavItem(icon: Icons.dns, label: 'Server Settings'),
+  List<NavItem> _getNavItems(AppLocalizations l10n) => [
+    NavItem(icon: Icons.palette, label: l10n.translate('appearance')),
+    NavItem(icon: Icons.display_settings, label: l10n.translate('display')),
+    NavItem(icon: Icons.shopping_cart, label: l10n.translate('order_defaults')),
+    NavItem(icon: Icons.attach_money, label: l10n.translate('currency')),
+    NavItem(icon: Icons.touch_app, label: l10n.translate('action_buttons')),
+    NavItem(icon: Icons.sync, label: l10n.translate('sync_settings')),
+    NavItem(icon: Icons.dns, label: l10n.translate('server_settings')),
   ];
 
   @override
@@ -30,6 +30,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.watch(settingsProvider);
     final settingsNotifier = ref.read(settingsProvider.notifier);
     final l10n = AppLocalizations.of(context)!;
+    final navItems = _getNavItems(l10n);
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -88,13 +89,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         Expanded(
                           child: ListView.separated(
                             padding: const EdgeInsets.symmetric(vertical: 16),
-                            itemCount: _navItems.length,
+                            itemCount: navItems.length,
                             separatorBuilder: (context, index) => const Divider(height: 1, indent: 16, endIndent: 16),
                             itemBuilder: (context, index) {
                               final isSelected = _selectedNavIndex == index;
                               return _buildNavItem(
-                                icon: _navItems[index].icon,
-                                label: _navItems[index].label,
+                                icon: navItems[index].icon,
+                                label: navItems[index].label,
                                 isSelected: isSelected,
                                 onTap: () => setState(() => _selectedNavIndex = index),
                               );
@@ -139,12 +140,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       final confirm = await showDialog<bool>(
                         context: context,
                         builder: (context) => AlertDialog(
-                          title: const Text('Reset Settings'),
-                          content: const Text('Are you sure you want to reset all settings to defaults?'),
+                          title: Text(l10n.translate('reset_settings')),
+                          content: Text(l10n.translate('reset_settings_confirm')),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(context, false),
-                              child: const Text('Cancel'),
+                              child: Text(l10n.translate('cancel')),
                             ),
                             ElevatedButton(
                               onPressed: () => Navigator.pop(context, true),
@@ -152,7 +153,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 backgroundColor: Colors.red,
                                 foregroundColor: Colors.white,
                               ),
-                              child: const Text('Reset'),
+                              child: Text(l10n.translate('reset_to_defaults')),
                             ),
                           ],
                         ),
@@ -161,8 +162,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         await settingsNotifier.resetToDefaults();
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Settings reset to defaults'),
+                            SnackBar(
+                              content: Text(l10n.translate('settings_reset')),
                               backgroundColor: Colors.green,
                             ),
                           );
@@ -170,7 +171,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       }
                     },
                     icon: const Icon(Icons.restore),
-                    label: const Text('Reset to Defaults'),
+                    label: Text(l10n.translate('reset_to_defaults')),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.red,
                       side: const BorderSide(color: Colors.red),
@@ -256,27 +257,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       SettingsNotifier notifier,
       BuildContext context,
       ) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Appearance',
-          style: TextStyle(
+        Text(
+          l10n.translate('appearance'),
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Customize the look and feel of the application',
-          style: TextStyle(color: Colors.grey),
+        Text(
+          l10n.translate('appearance_subtitle'),
+          style: const TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 24),
         _buildSwitchTile(
           context: context,
           icon: Icons.dark_mode,
-          title: 'Dark Mode',
-          subtitle: 'Use dark theme throughout the app',
+          title: l10n.translate('dark_mode'),
+          subtitle: l10n.translate('dark_mode_subtitle'),
           value: settings.isDarkMode,
           onChanged: (value) => notifier.setDarkMode(value),
         ),
@@ -295,27 +297,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       SettingsNotifier notifier,
       BuildContext context,
       ) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Display Settings',
-          style: TextStyle(
+        Text(
+          l10n.translate('display_settings'),
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Configure how content is displayed',
-          style: TextStyle(color: Colors.grey),
+        Text(
+          l10n.translate('display_subtitle'),
+          style: const TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 24),
         _buildSwitchTile(
           context: context,
           icon: Icons.image,
-          title: 'Show Product Images',
-          subtitle: 'Display product images in the grid view',
+          title: l10n.translate('show_product_images'),
+          subtitle: l10n.translate('show_product_images_subtitle'),
           value: settings.showProductImages,
           onChanged: (value) => notifier.setShowProductImages(value),
         ),
@@ -340,20 +343,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       SettingsNotifier notifier,
       BuildContext context,
       ) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Order Defaults',
-          style: TextStyle(
+        Text(
+          l10n.translate('order_defaults'),
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Set default values for new orders',
-          style: TextStyle(color: Colors.grey),
+        Text(
+          l10n.translate('order_defaults_subtitle'),
+          style: const TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 24),
         _buildOrderTypeSelector(
@@ -376,20 +380,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       SettingsNotifier notifier,
       BuildContext context,
       ) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Currency Settings',
-          style: TextStyle(
+        Text(
+          l10n.translate('currency_settings'),
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Select your preferred currency',
-          style: TextStyle(color: Colors.grey),
+        Text(
+          l10n.translate('select_currency'),
+          style: const TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 24),
         _buildCurrencySelector(
@@ -406,20 +411,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       SettingsNotifier notifier,
       BuildContext context,
       ) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Action Buttons',
-          style: TextStyle(
+        Text(
+          l10n.translate('action_buttons'),
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Toggle visibility of action buttons',
-          style: TextStyle(color: Colors.grey),
+        Text(
+          l10n.translate('action_buttons_subtitle'),
+          style: const TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 24),
         GridView.count(
@@ -433,88 +439,88 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _buildSwitchTile(
               context: context,
               icon: Icons.table_bar,
-              title: 'Table Button',
-              subtitle: 'Table selection',
+              title: l10n.translate('table_button'),
+              subtitle: l10n.translate('table_selection'),
               value: settings.showTableButton,
               onChanged: (value) => notifier.setShowTableButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.person,
-              title: 'Customer Button',
-              subtitle: 'Customer selection',
+              title: l10n.translate('customer_button'),
+              subtitle: l10n.translate('customer_selection'),
               value: settings.showCustomerButton,
               onChanged: (value) => notifier.setShowCustomerButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.badge,
-              title: 'Commercial Button',
-              subtitle: 'Commercial selection',
+              title: l10n.translate('commercial_button'),
+              subtitle: l10n.translate('commercial_selection'),
               value: settings.showCommercialButton,
               onChanged: (value) => notifier.setShowCommercialButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.discount,
-              title: 'Coupon Button',
-              subtitle: 'Apply coupons',
+              title: l10n.translate('coupon_button'),
+              subtitle: l10n.translate('apply_coupons'),
               value: settings.showCouponButton,
               onChanged: (value) => notifier.setShowCouponButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.percent,
-              title: 'Discount Button',
-              subtitle: 'Manual discount',
+              title: l10n.translate('discount_button'),
+              subtitle: l10n.translate('manual_discount'),
               value: settings.showDiscountButton,
               onChanged: (value) => notifier.setShowDiscountButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.print,
-              title: 'Print Button',
-              subtitle: 'Print orders',
+              title: l10n.translate('print_button'),
+              subtitle: l10n.translate('print_orders'),
               value: settings.showPrintButton,
               onChanged: (value) => notifier.setShowPrintButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.people,
-              title: 'Persons Button',
-              subtitle: 'Number of persons',
+              title: l10n.translate('persons_button'),
+              subtitle: l10n.translate('number_of_persons'),
               value: settings.showPersonsButton,
               onChanged: (value) => notifier.setShowPersonsButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.restaurant,
-              title: 'Order Type Button',
-              subtitle: 'Toggle order type',
+              title: l10n.translate('order_type_button'),
+              subtitle: l10n.translate('toggle_order_type'),
               value: settings.showOrderTypeButton,
               onChanged: (value) => notifier.setShowOrderTypeButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.task_alt,
-              title: 'Confirm Button',
-              subtitle: 'Confirm order',
+              title: l10n.translate('confirm_button'),
+              subtitle: l10n.translate('confirm_order'),
               value: settings.showConfirmOrderButton,
               onChanged: (value) => notifier.setShowConfirmOrderButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.payment,
-              title: 'Pay Button',
-              subtitle: 'Process payment',
+              title: l10n.translate('pay_button'),
+              subtitle: l10n.translate('process_payment'),
               value: settings.showPayButton,
               onChanged: (value) => notifier.setShowPayButton(value),
             ),
             _buildSwitchTile(
               context: context,
               icon: Icons.summarize,
-              title: 'Daily Summary',
-              subtitle: 'Daily report',
+              title: l10n.translate('daily_summary_button'),
+              subtitle: l10n.translate('daily_report'),
               value: settings.showDailySummaryButton,
               onChanged: (value) => notifier.setShowDailySummaryButton(value),
             ),
@@ -529,27 +535,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       SettingsNotifier notifier,
       BuildContext context,
       ) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Sync Settings',
-          style: TextStyle(
+        Text(
+          l10n.translate('sync_settings'),
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Configure data synchronization',
-          style: TextStyle(color: Colors.grey),
+        Text(
+          l10n.translate('sync_settings_subtitle'),
+          style: const TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 24),
         _buildSwitchTile(
           context: context,
           icon: Icons.sync,
-          title: 'Auto Sync Online',
-          subtitle: 'Automatically sync orders when online',
+          title: l10n.translate('auto_sync_online'),
+          subtitle: l10n.translate('auto_sync_subtitle'),
           value: settings.autoSyncOnline,
           onChanged: (value) => notifier.setAutoSyncOnline(value),
         ),
@@ -557,8 +564,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _buildSwitchTile(
           context: context,
           icon: Icons.auto_delete,
-          title: 'Auto Clear Synced Data',
-          subtitle: 'Clear old synced data daily',
+          title: l10n.translate('auto_clear_synced'),
+          subtitle: l10n.translate('auto_clear_subtitle'),
           value: settings.autoClearSyncedData,
           onChanged: (value) => notifier.setAutoClearSyncedData(value),
         ),
@@ -566,8 +573,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _buildNumberSelector(
           context: context,
           icon: Icons.timer,
-          title: 'Sync Interval',
-          subtitle: 'How often to sync data (minutes)',
+          title: l10n.translate('sync_interval'),
+          subtitle: l10n.translate('sync_interval_subtitle'),
           value: settings.autoSyncDurationMinutes,
           min: 1,
           max: 60,
@@ -577,8 +584,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _buildNumberSelector(
           context: context,
           icon: Icons.backup,
-          title: 'Bulk Sync Size',
-          subtitle: 'Number of records to sync at once',
+          title: l10n.translate('bulk_sync_size'),
+          subtitle: l10n.translate('bulk_sync_subtitle'),
           value: settings.bulkSyncSize,
           min: 10,
           max: 200,
@@ -588,8 +595,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _buildNumberSelector(
           context: context,
           icon: Icons.calendar_today,
-          title: 'Data Retention',
-          subtitle: 'Days to keep synced data before deletion',
+          title: l10n.translate('data_retention'),
+          subtitle: l10n.translate('data_retention_subtitle'),
           value: settings.dataRetentionDays,
           min: 1,
           max: 30,
@@ -627,6 +634,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required String currentType,
     required ValueChanged<String> onChanged,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       elevation: 0,
       color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
@@ -639,19 +647,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 const Icon(Icons.restaurant_menu),
                 const SizedBox(width: 12),
-                const Column(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Default Order Type',
-                      style: TextStyle(
+                      l10n.translate('default_order_type'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     Text(
-                      'Select default type for new orders',
-                      style: TextStyle(
+                      l10n.translate('select_default_order_type'),
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,
                       ),
@@ -667,7 +675,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: _buildOrderTypeOption(
                     context: context,
                     icon: Icons.restaurant,
-                    label: 'Dine In',
+                    label: l10n.translate('dine_in'),
                     value: 'DINE_IN',
                     currentValue: currentType,
                     onTap: () => onChanged('DINE_IN'),
@@ -678,7 +686,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: _buildOrderTypeOption(
                     context: context,
                     icon: Icons.takeout_dining,
-                    label: 'Take Away',
+                    label: l10n.translate('take_away'),
                     value: 'TAKE_AWAY',
                     currentValue: currentType,
                     onTap: () => onChanged('TAKE_AWAY'),
@@ -742,6 +750,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required String currentStatus,
     required ValueChanged<String> onChanged,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       elevation: 0,
       color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
@@ -754,19 +763,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 const Icon(Icons.pending_actions),
                 const SizedBox(width: 12),
-                const Column(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Default Order Status',
-                      style: TextStyle(
+                      l10n.translate('default_order_status'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     Text(
-                      'Initial status for new orders',
-                      style: TextStyle(
+                      l10n.translate('initial_order_status'),
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,
                       ),
@@ -783,7 +792,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 _buildOrderStatusOption(
                   context: context,
                   icon: Icons.pause_circle,
-                  label: 'On Hold',
+                  label: l10n.translate('on_hold'),
                   value: 'ONHOLD',
                   currentValue: currentStatus,
                   color: Colors.grey,
@@ -792,7 +801,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 _buildOrderStatusOption(
                   context: context,
                   icon: Icons.pending,
-                  label: 'Pending',
+                  label: l10n.translate('pending'),
                   value: 'PENDING',
                   currentValue: currentStatus,
                   color: Colors.orange,
@@ -801,7 +810,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 _buildOrderStatusOption(
                   context: context,
                   icon: Icons.restaurant,
-                  label: 'Preparing',
+                  label: l10n.translate('preparing'),
                   value: 'PREPARING',
                   currentValue: currentStatus,
                   color: Colors.blue,
@@ -810,7 +819,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 _buildOrderStatusOption(
                   context: context,
                   icon: Icons.check_circle,
-                  label: 'Completed',
+                  label: l10n.translate('completed'),
                   value: 'COMPLETED',
                   currentValue: currentStatus,
                   color: Colors.green,
@@ -875,6 +884,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required CategoryDisplayMode currentMode,
     required ValueChanged<CategoryDisplayMode> onChanged,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       elevation: 0,
       color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
@@ -887,19 +897,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 const Icon(Icons.view_module),
                 const SizedBox(width: 12),
-                const Column(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Category Display Mode',
-                      style: TextStyle(
+                      l10n.translate('category_display_mode'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     Text(
-                      'How to display categories on main screen',
-                      style: TextStyle(
+                      l10n.translate('category_display_subtitle'),
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,
                       ),
@@ -915,8 +925,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: _buildCategoryModeOption(
                     context: context,
                     icon: Icons.view_headline,
-                    label: 'Top Bar',
-                    subtitle: 'Categories in horizontal bar',
+                    label: l10n.translate('top_bar'),
+                    subtitle: l10n.translate('categories_horizontal'),
                     value: CategoryDisplayMode.topBar,
                     currentValue: currentMode,
                     onTap: () => onChanged(CategoryDisplayMode.topBar),
@@ -927,8 +937,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: _buildCategoryModeOption(
                     context: context,
                     icon: Icons.grid_view,
-                    label: 'Full Page',
-                    subtitle: 'Select category first',
+                    label: l10n.translate('full_page'),
+                    subtitle: l10n.translate('select_category_first'),
                     value: CategoryDisplayMode.fullPage,
                     currentValue: currentMode,
                     onTap: () => onChanged(CategoryDisplayMode.fullPage),
@@ -1002,15 +1012,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required String currentCurrency,
     required ValueChanged<String> onChanged,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     final currencies = [
-      {'symbol': '\$', 'name': 'US Dollar'},
-      {'symbol': '€', 'name': 'Euro'},
-      {'symbol': '£', 'name': 'British Pound'},
-      {'symbol': 'DH', 'name': 'Moroccan Dirham'},
-      {'symbol': '₹', 'name': 'Indian Rupee'},
-      {'symbol': '¥', 'name': 'Japanese Yen'},
-      {'symbol': 'CHF', 'name': 'Swiss Franc'},
-      {'symbol': 'R', 'name': 'South African Rand'},
+      {'symbol': '\$', 'name': l10n.translate('us_dollar')},
+      {'symbol': '€', 'name': l10n.translate('euro')},
+      {'symbol': '£', 'name': l10n.translate('british_pound')},
+      {'symbol': 'DH', 'name': l10n.translate('moroccan_dirham')},
+      {'symbol': '₹', 'name': l10n.translate('indian_rupee')},
+      {'symbol': '¥', 'name': l10n.translate('japanese_yen')},
+      {'symbol': 'CHF', 'name': l10n.translate('swiss_franc')},
+      {'symbol': 'R', 'name': l10n.translate('south_african_rand')},
     ];
 
     return Card(
@@ -1025,19 +1036,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 const Icon(Icons.attach_money),
                 const SizedBox(width: 12),
-                const Column(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Currency Symbol',
-                      style: TextStyle(
+                      l10n.translate('currency_symbol'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     Text(
-                      'Select currency to display in the app',
-                      style: TextStyle(
+                      l10n.translate('select_currency_display'),
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,
                       ),
@@ -1107,6 +1118,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required String currentLanguage,
     required ValueChanged<String> onChanged,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     final languages = [
       {'code': 'en', 'name': 'English', 'flag': '🇬🇧'},
       {'code': 'ar', 'name': 'العربية', 'flag': '🇸🇦'},
@@ -1125,19 +1137,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 const Icon(Icons.language),
                 const SizedBox(width: 12),
-                const Column(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Language',
-                      style: TextStyle(
+                      l10n.translate('language'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     Text(
-                      'Select app language',
-                      style: TextStyle(
+                      l10n.translate('select_app_language'),
+                      style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,
                       ),
@@ -1279,13 +1291,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required bool value,
     required ValueChanged<bool> onChanged,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       elevation: 0,
       color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: ListTile(
         leading: const Icon(Icons.swap_horiz),
-        title: const Text('Order Panel Position'),
-        subtitle: const Text('Show order panel on the right side'),
+        title: Text(l10n.translate('order_panel_position')),
+        subtitle: Text(l10n.translate('order_panel_right')),
         trailing: Switch(
           value: value,
           onChanged: onChanged,
@@ -1299,6 +1312,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     SettingsNotifier notifier,
     BuildContext context,
   ) {
+    final l10n = AppLocalizations.of(context)!;
     final TextEditingController portController = TextEditingController(
       text: (settings.serverPort ?? 8080).toString(),
     );
@@ -1309,17 +1323,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Server Settings',
-          style: TextStyle(
+        Text(
+          l10n.translate('server_settings'),
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Configure HTTP server for KDS and external communication',
-          style: TextStyle(color: Colors.grey),
+        Text(
+          l10n.translate('server_settings_subtitle'),
+          style: const TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 24),
 
@@ -1327,8 +1341,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _buildSwitchTile(
           context: context,
           icon: Icons.power_settings_new,
-          title: 'Auto-Start Server',
-          subtitle: 'Automatically start server on app launch',
+          title: l10n.translate('auto_start_server'),
+          subtitle: l10n.translate('auto_start_subtitle'),
           value: settings.autoStartServer,
           onChanged: (value) => notifier.setAutoStartServer(value),
         ),
@@ -1347,9 +1361,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     const Icon(Icons.settings_ethernet),
                     const SizedBox(width: 12),
-                    const Text(
-                      'Server Port',
-                      style: TextStyle(
+                    Text(
+                      l10n.translate('server_port'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
@@ -1357,9 +1371,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Port number for HTTP server (default: 8080)',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                Text(
+                  l10n.translate('server_port_subtitle'),
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -1396,9 +1410,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     const Icon(Icons.lock),
                     const SizedBox(width: 12),
-                    const Text(
-                      'Server Password',
-                      style: TextStyle(
+                    Text(
+                      l10n.translate('server_password'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
@@ -1406,16 +1420,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Optional password for server authentication (sent as X-Server-Password header)',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                Text(
+                  l10n.translate('server_password_subtitle'),
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: passwordController,
                   obscureText: true,
                   decoration: InputDecoration(
-                    hintText: 'Leave empty to disable',
+                    hintText: l10n.translate('leave_empty_disable'),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
@@ -1442,9 +1456,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     const Icon(Icons.info_outline),
                     const SizedBox(width: 12),
-                    const Text(
-                      'Server Information',
-                      style: TextStyle(
+                    Text(
+                      l10n.translate('server_information'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
@@ -1469,7 +1483,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              isRunning ? 'Server Running' : 'Server Stopped',
+                              isRunning ? l10n.translate('server_running') : l10n.translate('server_stopped'),
                               style: TextStyle(
                                 color: isRunning ? Colors.green : Colors.red,
                                 fontWeight: FontWeight.bold,
@@ -1480,7 +1494,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         if (isRunning) ...[
                           const SizedBox(height: 8),
                           Text(
-                            'Server URL: http://localhost:${serverService.port}',
+                            '${l10n.translate('server_url')}: http://localhost:${serverService.port}',
                             style: const TextStyle(fontFamily: 'monospace'),
                           ),
                         ],
@@ -1504,12 +1518,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               ref.read(serverRunningProvider.notifier).state = false;
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Server stopped')),
+                                  SnackBar(content: Text(l10n.translate('server_stopped'))),
                                 );
                               }
                             },
                             icon: const Icon(Icons.stop),
-                            label: const Text('Stop Server'),
+                            label: Text(l10n.translate('stop_server')),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.red,
                               foregroundColor: Colors.white,
@@ -1522,19 +1536,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 await startServerWithSettings(ref);
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Server started successfully')),
+                                    SnackBar(content: Text(l10n.translate('server_started'))),
                                   );
                                 }
                               } catch (e) {
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Failed to start server: $e')),
+                                    SnackBar(content: Text('${l10n.translate('server_start_failed')}: $e')),
                                   );
                                 }
                               }
                             },
                             icon: const Icon(Icons.play_arrow),
-                            label: const Text('Start Server'),
+                            label: Text(l10n.translate('start_server')),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.green,
                               foregroundColor: Colors.white,
@@ -1563,9 +1577,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     const Icon(Icons.api),
                     const SizedBox(width: 12),
-                    const Text(
-                      'Available Endpoints',
-                      style: TextStyle(
+                    Text(
+                      l10n.translate('available_endpoints'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
@@ -1573,12 +1587,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                _buildEndpointDoc('GET', '/health', 'Health check'),
-                _buildEndpointDoc('GET', '/orders/', 'Get orders (with filters)'),
-                _buildEndpointDoc('POST', '/orders/', 'Create new order'),
-                _buildEndpointDoc('PUT', '/orders/{code}', 'Update order'),
-                _buildEndpointDoc('PUT', '/orders/{code}?status=X', 'Update order status'),
-                _buildEndpointDoc('PUT', '/orders/products/{id}?status=X', 'Update product status'),
+                _buildEndpointDoc('GET', '/health', l10n.translate('health_check')),
+                _buildEndpointDoc('GET', '/orders/', l10n.translate('get_orders')),
+                _buildEndpointDoc('POST', '/orders/', l10n.translate('create_order')),
+                _buildEndpointDoc('PUT', '/orders/{code}', l10n.translate('update_order')),
+                _buildEndpointDoc('PUT', '/orders/{code}?status=X', l10n.translate('update_order_status')),
+                _buildEndpointDoc('PUT', '/orders/products/{id}?status=X', l10n.translate('update_product_status')),
               ],
             ),
           ),

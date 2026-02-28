@@ -552,6 +552,9 @@ class PrintingService {
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
 
+      // Set code table for Western European characters (French: é, è, à, ç, etc.)
+      bytes += generator.setGlobalCodeTable('CP1252');
+
       // Header
       if (storeName != null) {
         bytes += generator.text(
@@ -759,6 +762,7 @@ class PrintingService {
         ]);
       }
 
+
       if (order.tax > 0) {
         bytes += generator.row([
           PosColumn(
@@ -883,6 +887,9 @@ class PrintingService {
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
+
+      // Set code table for Western European characters (French: é, è, à, ç, etc.)
+      bytes += generator.setGlobalCodeTable('CP1252');
 
       // Large order number
       bytes += generator.text(
@@ -1060,6 +1067,9 @@ class PrintingService {
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
+
+      // Set code table for Western European characters (French: é, è, à, ç, etc.)
+      bytes += generator.setGlobalCodeTable('CP1252');
 
       // Header
       if (storeName != null) {
@@ -1329,6 +1339,9 @@ class PrintingService {
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
+
+      // Set code table for Western European characters (French: é, è, à, ç, etc.)
+      bytes += generator.setGlobalCodeTable('CP1252');
 
       final separator = ''.padLeft(32, '-');
       final doubleSeparator = ''.padLeft(32, '=');
