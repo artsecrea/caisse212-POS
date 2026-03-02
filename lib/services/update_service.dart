@@ -1,6 +1,4 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
@@ -48,11 +46,23 @@ class UpdateService {
   SharedPreferences? _prefs;
 
   static const String _baseUrlKey = 'api_base_url';
+  static const String _accessTokenKey = 'server_access_token';
+  static const String _posNameKey = 'pos_name';
+  static const String _tenantIdKey = 'tenant_id';
 
   /// Initialize SharedPreferences
   Future<void> _initPrefs() async {
     _prefs ??= await SharedPreferences.getInstance();
   }
+
+  /// Get access token for authentication
+  String? _getAccessToken() => _prefs?.getString(_accessTokenKey);
+
+  /// Get POS name
+  String? _getPosName() => _prefs?.getString(_posNameKey);
+
+  /// Get tenant ID
+  int? _getTenantId() => _prefs?.getInt(_tenantIdKey);
 
   /// Get current platform string for API
   String get _platform {
@@ -78,7 +88,28 @@ class UpdateService {
       final url = '$baseUrl/api/pos/update_check?platform=$_platform';
       _logger.info('Checking for updates: $url');
 
-      final response = await _dio.get(url);
+      // Prepare headers with authentication
+      final headers = <String, dynamic>{};
+
+      final token = _getAccessToken();
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
+      final posName = _getPosName();
+      if (posName != null) {
+        headers['X-POS-Name'] = posName;
+      }
+
+      final tenantId = _getTenantId();
+      if (tenantId != null) {
+        headers['X-Tenant-ID'] = tenantId.toString();
+      }
+
+      final response = await _dio.get(
+        url,
+        options: Options(headers: headers),
+      );
 
       if (response.statusCode == 200 && response.data != null) {
         final updateInfo = UpdateInfo.fromJson(response.data);
