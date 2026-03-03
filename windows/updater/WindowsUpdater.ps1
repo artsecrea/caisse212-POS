@@ -334,6 +334,38 @@ function Extract-Archive {
     Update-Status "Extracting update..." 50
 
     try {
+        # First verify the file exists and has content
+        if (-not (Test-Path $ArchivePath)) {
+            Write-Log "Archive file not found: $ArchivePath" -Level ERROR
+            return $false
+        }
+
+        $fileInfo = Get-Item $ArchivePath
+        $fileSize = $fileInfo.Length
+        Write-Log "Archive file size: $fileSize bytes"
+
+        if ($fileSize -lt 1000) {
+            Write-Log "Archive file is too small ($fileSize bytes), likely not a valid ZIP" -Level ERROR
+            # Try to read content if it's text (error message)
+            try {
+                $content = Get-Content $ArchivePath -Raw -ErrorAction SilentlyContinue
+                if ($content) {
+                    Write-Log "File content: $($content.Substring(0, [Math]::Min($content.Length, 500)))" -Level ERROR
+                }
+            } catch { }
+            return $false
+        }
+
+        # Check ZIP magic bytes (PK = 0x50 0x4B)
+        $bytes = [System.IO.File]::ReadAllBytes($ArchivePath)[0..3]
+        $header = ($bytes | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
+        Write-Log "File header bytes: $header"
+
+        if ($bytes[0] -ne 0x50 -or $bytes[1] -ne 0x4B) {
+            Write-Log "File is not a valid ZIP (expected PK header, got: $header)" -Level ERROR
+            return $false
+        }
+
         if (Test-Path $DestinationPath) {
             Remove-Item -Path $DestinationPath -Recurse -Force
         }
@@ -496,10 +528,28 @@ function Relaunch-Application {
 
     try {
         if (Test-Path $ExePath) {
-            Start-Process -FilePath $ExePath
-            Write-Log "Application launched successfully" -Level SUCCESS
-            Update-Status "Update completed successfully!" 100
-            return $true
+            $workingDir = Split-Path -Parent $ExePath
+            Write-Log "Working directory: $workingDir"
+
+            # Start the process with working directory set
+            $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $processInfo.FileName = $ExePath
+            $processInfo.WorkingDirectory = $workingDir
+            $processInfo.UseShellExecute = $true
+
+            $process = [System.Diagnostics.Process]::Start($processInfo)
+
+            if ($process -ne $null) {
+                Write-Log "Application launched successfully (PID: $($process.Id))" -Level SUCCESS
+                Update-Status "Update completed successfully!" 100
+                return $true
+            } else {
+                Write-Log "Process started but no handle returned" -Level WARNING
+                # Try alternative method
+                Start-Process -FilePath $ExePath -WorkingDirectory $workingDir
+                Write-Log "Application launched using Start-Process" -Level SUCCESS
+                return $true
+            }
         }
         else {
             Write-Log "Executable not found: $ExePath" -Level ERROR
@@ -508,7 +558,16 @@ function Relaunch-Application {
     }
     catch {
         Write-Log "Failed to launch application: $_" -Level ERROR
-        return $false
+        # Try one more time with simple Start-Process
+        try {
+            Start-Process -FilePath $ExePath
+            Write-Log "Application launched on retry" -Level SUCCESS
+            return $true
+        }
+        catch {
+            Write-Log "Retry also failed: $_" -Level ERROR
+            return $false
+        }
     }
 }
 
@@ -574,12 +633,29 @@ function Start-Update {
         Write-Log "Update completed successfully!" -Level SUCCESS
         Update-Status "Update completed successfully!" 100
 
-        # Relaunch application
+        # Small delay before relaunch
+        Write-Log "Preparing to relaunch application..."
         Start-Sleep -Seconds 2
-        Relaunch-Application -ExePath $exePath
+
+        # Relaunch application
+        $launched = Relaunch-Application -ExePath $exePath
+
+        if ($launched) {
+            Write-Log "Application relaunched successfully" -Level SUCCESS
+        } else {
+            Write-Log "Could not relaunch application automatically" -Level WARNING
+            if (-not $Silent) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Update completed successfully!`n`nPlease start the application manually.",
+                    "Update Complete",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                )
+            }
+        }
 
         # Close form after success
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 1
         if (-not $Silent -and $script:Form -ne $null) {
             try {
                 $script:Form.Close()
@@ -626,4 +702,7 @@ function Start-Update {
 
 # Run the update
 Start-Update
+
+
+
 
