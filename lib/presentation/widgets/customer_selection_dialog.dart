@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
 import '../../utils/button_styles.dart';
+import '../../utils/app_localizations.dart';
 import 'package:drift/drift.dart' show Value;
 
 class CustomerSelectionDialog extends ConsumerStatefulWidget {
@@ -26,6 +27,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
   @override
   Widget build(BuildContext context) {
     final database = ref.watch(databaseProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
@@ -38,9 +40,9 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
           children: [
             Row(
               children: [
-                const Text(
-                  'Select Customer',
-                  style: TextStyle(
+                Text(
+                  l10n.translate('select_customer'),
+                  style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
@@ -56,7 +58,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
             TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search by name, phone, or email',
+                hintText: l10n.translate('search_by_name_phone_email'),
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(4),
@@ -72,7 +74,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: _buildCustomerList(database),
+              child: _buildCustomerList(database, l10n),
             ),
             const SizedBox(height: 16),
             Row(
@@ -83,7 +85,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                       Navigator.of(context).pop({'id': null, 'name': null});
                     },
                     icon: const Icon(Icons.clear),
-                    label: const Text('Unselect Customer'),
+                    label: Text(l10n.translate('unselect_customer')),
                     style: AppButtonStyles.outlinedButtonStyle(
                       foregroundColor: Colors.red,
                       borderColor: Colors.red,
@@ -95,10 +97,10 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () {
-                      _showAddCustomerDialog(context);
+                      _showAddCustomerDialog(context, l10n);
                     },
                     icon: const Icon(Icons.add),
-                    label: const Text('Add New Customer'),
+                    label: Text(l10n.translate('add_new_customer')),
                     style: AppButtonStyles.elevatedButtonStyle(isLarge: true),
                   ),
                 ),
@@ -110,7 +112,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
     );
   }
 
-  Widget _buildCustomerList(AppDatabase database) {
+  Widget _buildCustomerList(AppDatabase database, AppLocalizations l10n) {
     if (!_hasSearched) {
       return Center(
         child: Column(
@@ -119,12 +121,12 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
             Icon(Icons.search, size: 64, color: Colors.grey[400]),
             const SizedBox(height: 16),
             Text(
-              'Start typing to search customers',
+              l10n.translate('start_typing_to_search'),
               style: TextStyle(fontSize: 16, color: Colors.grey[600]),
             ),
             const SizedBox(height: 8),
             Text(
-              'Search by name, phone, or email',
+              l10n.translate('search_by_name_phone_email'),
               style: TextStyle(fontSize: 14, color: Colors.grey[500]),
             ),
           ],
@@ -149,12 +151,12 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                 Icon(Icons.person_off, size: 64, color: Colors.grey[400]),
                 const SizedBox(height: 16),
                 Text(
-                  'No customers found',
+                  l10n.translate('no_customers_found'),
                   style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Try a different search or add new customer',
+                  l10n.translate('try_different_search_or_add'),
                   style: TextStyle(fontSize: 14, color: Colors.grey[500]),
                 ),
               ],
@@ -182,8 +184,8 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (customer.phone != null) Text('Phone: ${customer.phone}'),
-                    if (customer.email != null) Text('Email: ${customer.email}'),
+                    if (customer.phone != null) Text('${l10n.translate('phone')}: ${customer.phone}'),
+                    if (customer.email != null) Text('${l10n.translate('email')}: ${customer.email}'),
                   ],
                 ),
                 onTap: () {
@@ -220,7 +222,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
             }).toList());
   }
 
-  Future<void> _showAddCustomerDialog(BuildContext context) async {
+  Future<void> _showAddCustomerDialog(BuildContext context, AppLocalizations l10n) async {
     final firstNameController = TextEditingController();
     final lastNameController = TextEditingController();
     final phoneController = TextEditingController();
@@ -229,27 +231,27 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Add New Customer'),
+        title: Text(l10n.translate('add_new_customer')),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: firstNameController,
-                decoration: const InputDecoration(labelText: 'First Name *'),
+                decoration: InputDecoration(labelText: '${l10n.translate('first_name')} *'),
               ),
               TextField(
                 controller: lastNameController,
-                decoration: const InputDecoration(labelText: 'Last Name *'),
+                decoration: InputDecoration(labelText: '${l10n.translate('last_name')} *'),
               ),
               TextField(
                 controller: phoneController,
-                decoration: const InputDecoration(labelText: 'Phone'),
+                decoration: InputDecoration(labelText: l10n.translate('phone')),
                 keyboardType: TextInputType.phone,
               ),
               TextField(
                 controller: emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
+                decoration: InputDecoration(labelText: l10n.translate('email')),
                 keyboardType: TextInputType.emailAddress,
               ),
             ],
@@ -259,13 +261,13 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             style: AppButtonStyles.textButtonStyle(isLarge: true),
-            child: const Text('Cancel'),
+            child: Text(l10n.translate('cancel')),
           ),
           ElevatedButton(
             onPressed: () async {
               if (firstNameController.text.isEmpty || lastNameController.text.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please fill required fields')),
+                  SnackBar(content: Text(l10n.translate('please_fill_required_fields'))),
                 );
                 return;
               }
@@ -283,12 +285,12 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
               if (context.mounted) {
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Customer added successfully')),
+                  SnackBar(content: Text(l10n.translate('customer_added_successfully'))),
                 );
               }
             },
             style: AppButtonStyles.elevatedButtonStyle(isLarge: true),
-            child: const Text('Add'),
+            child: Text(l10n.translate('add')),
           ),
         ],
       ),

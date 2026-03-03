@@ -373,7 +373,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       ref.read(orderProvider.notifier).clearTable();
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text(l10n.translate('table_unselected') ?? 'Table unselected'),
+                          content: Text(l10n.translate('table_unselected')),
                           backgroundColor: Colors.orange,
                         ),
                       );
@@ -450,7 +450,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   if (settings.showCustomerButton && ref.read(permissionServiceProvider).hasPermission(Permissions.customerSet))
                     _buildActionButton(
                       icon: Icons.person,
-                      label: currentOrder.customerName ?? "Customer",
+                      label: currentOrder.customerName ?? l10n.translate('customer'),
                       color: currentOrder.customerId != null ? Colors.green : null,
                       onPressed: () async {
                       final result =
@@ -476,7 +476,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   if (settings.showCommercialButton && ref.read(permissionServiceProvider).hasPermission(Permissions.commercialSet))
                     _buildActionButton(
                       icon: Icons.badge,
-                      label: currentOrder.commercialName ?? "Commercial",
+                      label: currentOrder.commercialName ?? l10n.translate('commercial'),
                       color: currentOrder.commercialId != null ? Colors.purple : null,
                       onPressed:() async {
                       final result =
@@ -500,7 +500,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     const SizedBox(width: 8),
                   // Coupon button - conditionally shown
                   if (settings.showCouponButton)
-                    _buildActionButton(icon: Icons.discount, label: "Coupon", onPressed: (){}),
+                    _buildActionButton(icon: Icons.discount, label: l10n.translate('coupon'), onPressed: (){}),
                   if (settings.showCouponButton)
                     const SizedBox(width: 8),
                   // Manual Discount - Protected by permission and settings
@@ -508,8 +508,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     _buildActionButton(
                       icon: Icons.percent,
                       label: currentOrder.discountPercentage > 0
-                        ? "Discount ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
-                        : "Manual Discount",
+                        ? "${l10n.translate('discount')} ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
+                        : l10n.translate('manual_discount'),
                       color: currentOrder.discountPercentage > 0 ? Colors.orange : null,
                       onPressed: currentOrder.hasPaidItems
                         ? null  // Disable if any item is paid
@@ -1034,8 +1034,9 @@ class _NumberOfPersonsDialogState extends State<_NumberOfPersonsDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Number of Persons'),
+      title: Text(l10n.translate('number_of_persons')),
       content: SizedBox(
         width: 300,
         child: Column(
@@ -1106,11 +1107,11 @@ class _NumberOfPersonsDialogState extends State<_NumberOfPersonsDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(l10n.translate('cancel')),
         ),
         ElevatedButton(
           onPressed: () => Navigator.pop(context, _selectedNumber),
-          child: const Text('OK'),
+          child: Text(l10n.translate('ok')),
         ),
       ],
     );

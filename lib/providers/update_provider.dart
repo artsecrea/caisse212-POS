@@ -135,10 +135,14 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
         );
 
         if (updatePath != null) {
+          // Get the actual executable directory (not current working directory)
+          final executablePath = Platform.resolvedExecutable;
+          final appDirectory = File(executablePath).parent.path;
+
           // Launch Windows updater
           success = await _updateService.launchWindowsUpdater(
             updateArchivePath: updatePath,
-            appDirectory: Directory.current.path,
+            appDirectory: appDirectory,
             executableName: 'posecrea.exe', // Adjust based on your app name
             excludeFolders: ['logs', 'data', 'config'],
             checksum: state.availableUpdate!.checksum,

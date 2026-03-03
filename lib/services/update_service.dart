@@ -284,29 +284,42 @@ class UpdateService {
         return false;
       }
 
-      // Build PowerShell command
-      final excludeFoldersParam = excludeFolders != null && excludeFolders.isNotEmpty
-          ? '-ExcludeFolders @("${excludeFolders.join('","')}")'
-          : '';
+      // Build the inner PowerShell arguments properly
+      // Note: We need to escape paths for PowerShell and handle spaces correctly
+      final scriptArgs = [
+        '-ExecutionPolicy', 'Bypass',
+        '-File', updaterScriptPath,
+        '-DownloadUrl', 'file:///$updateArchivePath',
+        '-AppDirectory', appDirectory,
+        '-ExecutableName', executableName,
+      ];
 
-      final passwordParam = archivePassword != null && archivePassword.isNotEmpty
-          ? '-ArchivePassword "$archivePassword"'
-          : '';
-
-      final checksumParam = checksum != null && checksum.isNotEmpty
-          ? '-Checksum "$checksum"'
-          : '';
-
-      final command = '''
-        Start-Process PowerShell -ArgumentList "-ExecutionPolicy Bypass -File \\"$updaterScriptPath\\" -DownloadUrl \\"file:///$updateArchivePath\\" -AppDirectory \\"$appDirectory\\" -ExecutableName \\"$executableName\\" $excludeFoldersParam $passwordParam $checksumParam" -Verb RunAs
-      ''';
+      // Add optional parameters
+      if (excludeFolders != null && excludeFolders.isNotEmpty) {
+        scriptArgs.addAll(['-ExcludeFolders', excludeFolders.join(',')]);
+      }
+      if (archivePassword != null && archivePassword.isNotEmpty) {
+        scriptArgs.addAll(['-ArchivePassword', archivePassword]);
+      }
+      if (checksum != null && checksum.isNotEmpty) {
+        scriptArgs.addAll(['-Checksum', checksum]);
+      }
 
       _logger.info('Launching Windows updater...');
+      _logger.info('Script path: $updaterScriptPath');
+      _logger.info('Arguments: ${scriptArgs.join(' ')}');
 
-      // Execute the command
+      // Execute PowerShell with Start-Process to run elevated
       final result = await Process.run(
         'powershell.exe',
-        ['-Command', command],
+        [
+          '-ExecutionPolicy', 'Bypass',
+          '-Command',
+          'Start-Process',
+          'PowerShell',
+          '-ArgumentList', scriptArgs.map((arg) => '"$arg"').join(','),
+          '-Verb', 'RunAs',
+        ],
       );
 
       if (result.exitCode == 0) {

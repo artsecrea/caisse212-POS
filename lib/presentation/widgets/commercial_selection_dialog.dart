@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../utils/button_styles.dart';
+import '../../utils/app_localizations.dart';
 
 class CommercialSelectionDialog extends ConsumerStatefulWidget {
   const CommercialSelectionDialog({Key? key}) : super(key: key);
@@ -23,6 +24,7 @@ class _CommercialSelectionDialogState extends ConsumerState<CommercialSelectionD
   @override
   Widget build(BuildContext context) {
     final commercialsAsync = ref.watch(commercialsProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -35,9 +37,9 @@ class _CommercialSelectionDialogState extends ConsumerState<CommercialSelectionD
           children: [
             Row(
               children: [
-                const Text(
-                  'Select Commercial',
-                  style: TextStyle(
+                Text(
+                  l10n.translate('select_commercial'),
+                  style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
@@ -53,7 +55,7 @@ class _CommercialSelectionDialogState extends ConsumerState<CommercialSelectionD
             TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search by CIN or name',
+                hintText: l10n.translate('search_by_cin_or_name'),
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -80,7 +82,7 @@ class _CommercialSelectionDialogState extends ConsumerState<CommercialSelectionD
                   }
 
                   if (filteredCommercials.isEmpty) {
-                    return const Center(child: Text('No commercials found'));
+                    return Center(child: Text(l10n.translate('no_commercials_found')));
                   }
 
                   return ListView.builder(
@@ -114,7 +116,7 @@ class _CommercialSelectionDialogState extends ConsumerState<CommercialSelectionD
                   );
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
-                error: (error, stack) => Center(child: Text('Error: $error')),
+                error: (error, stack) => Center(child: Text('${l10n.translate('error')}: $error')),
               ),
             ),
             const SizedBox(height: 16),
@@ -123,7 +125,7 @@ class _CommercialSelectionDialogState extends ConsumerState<CommercialSelectionD
                 Navigator.of(context).pop({'id': null, 'name': null});
               },
               icon: const Icon(Icons.clear),
-              label: const Text('Unselect Commercial'),
+              label: Text(l10n.translate('unselect_commercial')),
               style: AppButtonStyles.outlinedButtonStyle(
                 foregroundColor: Colors.red,
                 borderColor: Colors.red,

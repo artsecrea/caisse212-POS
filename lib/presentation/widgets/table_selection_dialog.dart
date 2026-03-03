@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/button_styles.dart';
+import '../../utils/app_localizations.dart';
 import '../../data/database/app_database.dart' as db;
 
 class TableSelectionDialog extends ConsumerStatefulWidget {
@@ -40,6 +41,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
     final areasAsync = ref.watch(areasProvider);
     final currentOrder = ref.watch(orderProvider);
     final hasTable = currentOrder.tableId != null;
+    final l10n = AppLocalizations.of(context)!;
 
     return Dialog(
       backgroundColor: Theme.of(context).dialogBackgroundColor,
@@ -55,7 +57,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
             Row(
               children: [
                 Text(
-                  'Select Table',
+                  l10n.translate('select_table'),
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -74,7 +76,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
                         });
                       },
                       icon: const Icon(Icons.clear, size: 18),
-                      label: const Text('Unselect Table'),
+                      label: Text(l10n.translate('unselect_table')),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: isDark
                             ? Colors.orange[800]
@@ -101,9 +103,9 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
               labelColor: Theme.of(context).primaryColor,
               unselectedLabelColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
               indicatorColor: Theme.of(context).primaryColor,
-              tabs: const [
-                Tab(text: 'Available Tables'),
-                Tab(text: 'Active Orders'),
+              tabs: [
+                Tab(text: l10n.translate('available_tables')),
+                Tab(text: l10n.translate('active_orders')),
               ],
             ),
             const SizedBox(height: 16),
@@ -119,7 +121,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Select Area:',
+                      '${l10n.translate('select_area')}:',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
@@ -136,7 +138,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
                           Padding(
                             padding: const EdgeInsets.only(right: 8),
                             child: ChoiceChip(
-                              label: const Text('All'),
+                              label: Text(l10n.translate('all')),
                               selected: _selectedAreaId == null,
                               onSelected: (selected) {
                                 setState(() {
@@ -200,7 +202,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
                   child: TextField(
                     style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
                     decoration: InputDecoration(
-                      hintText: 'Search tables...',
+                      hintText: l10n.translate('search_tables'),
                       hintStyle: TextStyle(
                         color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                       ),
@@ -272,15 +274,15 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
                     items: [
                       DropdownMenuItem(
                         value: 'all',
-                        child: Text('All Tables'),
+                        child: Text(l10n.translate('all_tables')),
                       ),
                       DropdownMenuItem(
                         value: 'withOrder',
-                        child: Text('With Order'),
+                        child: Text(l10n.translate('with_order')),
                       ),
                       DropdownMenuItem(
                         value: 'withoutOrder',
-                        child: Text('Available'),
+                        child: Text(l10n.translate('available')),
                       ),
                     ],
                     onChanged: (value) {
@@ -301,7 +303,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
                       _isGridView = !_isGridView;
                     });
                   },
-                  tooltip: _isGridView ? 'Switch to List View' : 'Switch to Grid View',
+                  tooltip: _isGridView ? l10n.translate('switch_to_list_view') : l10n.translate('switch_to_grid_view'),
                   style: IconButton.styleFrom(
                     backgroundColor: isDark
                         ? Theme.of(context).colorScheme.surfaceContainerHighest
@@ -351,6 +353,7 @@ class _AvailableTablesTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tablesAsync = ref.watch(areaTablesProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final l10n = AppLocalizations.of(context)!;
 
     return tablesAsync.when(
       data: (tables) {
@@ -388,8 +391,8 @@ class _AvailableTablesTab extends ConsumerWidget {
                 const SizedBox(height: 16),
                 Text(
                   searchQuery.isNotEmpty
-                      ? 'No tables match your search'
-                      : 'No tables available',
+                      ? l10n.translate('no_tables_match_search')
+                      : l10n.translate('no_tables_available'),
                   style: TextStyle(
                     fontSize: 16,
                     color: isDark ? Colors.grey[400] : Colors.grey[600],
@@ -433,14 +436,17 @@ class _AvailableTablesTab extends ConsumerWidget {
         }
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, stack) => Center(
-        child: Text(
-          'Error loading tables: $error',
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.error,
+      error: (error, stack) {
+        final l10n = AppLocalizations.of(context)!;
+        return Center(
+          child: Text(
+            '${l10n.translate('error_loading_tables')}: $error',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -458,6 +464,7 @@ class _TableCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final hasOrder = table.orderId != null;
+    final l10n = AppLocalizations.of(context)!;
 
     return InkWell(
       onTap: () async {
@@ -504,7 +511,7 @@ class _TableCard extends ConsumerWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Capacity: ${table.capacity}',
+                '${l10n.translate('capacity')}: ${table.capacity}',
                 style: TextStyle(
                   fontSize: 12,
                   color: isDark ? Colors.grey[400] : Colors.grey[600],
@@ -531,6 +538,7 @@ class _TableListItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final hasOrder = table.orderId != null;
+    final l10n = AppLocalizations.of(context)!;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -575,7 +583,7 @@ class _TableListItem extends ConsumerWidget {
           ),
         ),
         subtitle: Text(
-          'Capacity: ${table.capacity} • ${hasOrder ? 'Has active order' : 'Available'}',
+          '${l10n.translate('capacity')}: ${table.capacity} • ${hasOrder ? l10n.translate('has_active_order') : l10n.translate('available')}',
           style: TextStyle(
             fontSize: 13,
             color: isDark ? Colors.grey[400] : Colors.grey[600],
@@ -590,7 +598,7 @@ class _TableListItem extends ConsumerWidget {
             borderRadius: BorderRadius.circular(16),
           ),
           child: Text(
-            hasOrder ? 'Occupied' : 'Free',
+            hasOrder ? l10n.translate('occupied') : l10n.translate('free'),
             style: const TextStyle(
               fontSize: 12,
               color: Colors.white,
@@ -619,6 +627,7 @@ Future<void> _handleTableSelection(BuildContext context, WidgetRef ref, db.AreaT
 }
 
 Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable table) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
       final order = await orderRepo.getOrderByTable(table.id);
@@ -633,14 +642,14 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
         final action = await showDialog<String>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('Clear Table'),
+            title: Text(l10n.translate('clear_table')),
             content: Text(
-              '${table.name} has unpaid items. What would you like to do?',
+              '${table.name} ${l10n.translate('has_unpaid_items')}',
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, 'cancel'),
-                child: const Text('Cancel'),
+                child: Text(l10n.translate('cancel')),
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, 'clear'),
@@ -648,7 +657,7 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
                   backgroundColor: Colors.orange,
                   foregroundColor: Colors.white,
                 ),
-                child: const Text('Just Clear'),
+                child: Text(l10n.translate('just_clear')),
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, 'pay'),
@@ -656,7 +665,7 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
                   backgroundColor: Colors.green,
                   foregroundColor: Colors.white,
                 ),
-                child: const Text('Pay First'),
+                child: Text(l10n.translate('pay_first')),
               ),
             ],
           ),
@@ -679,14 +688,14 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
         final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('Clear Table'),
+            title: Text(l10n.translate('clear_table')),
             content: Text(
-              'Are you sure you want to clear ${table.name}? The order will remain but the table will be freed.',
+              '${l10n.translate('confirm_clear_table')} ${table.name}?',
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
+                child: Text(l10n.translate('cancel')),
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, true),
@@ -694,7 +703,7 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
                   backgroundColor: Colors.orange,
                   foregroundColor: Colors.white,
                 ),
-                child: const Text('Clear'),
+                child: Text(l10n.translate('clear')),
               ),
             ],
           ),
@@ -713,7 +722,7 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('${table.name} has been cleared'),
+              content: Text('${table.name} ${l10n.translate('has_been_cleared')}'),
               backgroundColor: Colors.green,
               duration: const Duration(seconds: 2),
             ),
@@ -724,7 +733,7 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error clearing table: $e'),
+            content: Text('${l10n.translate('error_clearing_table')}: $e'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 3),
           ),
@@ -738,6 +747,7 @@ class _ActiveOrdersTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final orderRepo = ref.watch(orderRepositoryProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     return FutureBuilder(
       future: orderRepo.getTablesWithOrders(),
@@ -747,21 +757,21 @@ class _ActiveOrdersTab extends ConsumerWidget {
         }
 
         if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
+          return Center(child: Text('${l10n.translate('error')}: ${snapshot.error}'));
         }
 
         final tablesWithOrders = snapshot.data ?? [];
 
         if (tablesWithOrders.isEmpty) {
-          return const Center(
+          return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.inbox_outlined, size: 64, color: Colors.grey),
-                SizedBox(height: 16),
+                const Icon(Icons.inbox_outlined, size: 64, color: Colors.grey),
+                const SizedBox(height: 16),
                 Text(
-                  'No active orders',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                  l10n.translate('no_active_orders'),
+                  style: const TextStyle(fontSize: 16, color: Colors.grey),
                 ),
               ],
             ),
@@ -807,7 +817,7 @@ class _ActiveOrdersTab extends ConsumerWidget {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '${tableWithOrder.orderCount} order(s) • Capacity: ${table.capacity}',
+                                '${tableWithOrder.orderCount} ${l10n.translate('orders')} • ${l10n.translate('capacity')}: ${table.capacity}',
                                 style: TextStyle(
                                   fontSize: 13,
                                   color: Colors.grey[600],
@@ -858,7 +868,7 @@ class _ActiveOrdersTab extends ConsumerWidget {
                             }
                           },
                           icon: const Icon(Icons.payment, size: 22),
-                          label: const Text('Pay'),
+                          label: Text(l10n.translate('pay')),
                           style: AppButtonStyles.outlinedButtonStyle(
                             foregroundColor: Colors.green[700],
                             borderColor: Colors.green[700]!,
@@ -882,7 +892,7 @@ class _ActiveOrdersTab extends ConsumerWidget {
                             }
                           },
                           icon: const Icon(Icons.add, size: 22),
-                          label: const Text('Add Items'),
+                          label: Text(l10n.translate('add_items')),
                           style: AppButtonStyles.elevatedButtonStyle(
                             backgroundColor: Theme.of(context).primaryColor,
                             foregroundColor: Colors.white,

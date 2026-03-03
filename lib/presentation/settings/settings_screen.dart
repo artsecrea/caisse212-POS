@@ -213,13 +213,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               size: 20,
             ),
             const SizedBox(width: 12),
-            Text(
+            Flexible(child: Text(
               label,
+              maxLines: 2,
               style: TextStyle(
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? Theme.of(context).primaryColor : null,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  color: isSelected ? Theme.of(context).primaryColor : null,
+                  overflow: TextOverflow.ellipsis,
+
               ),
-            ),
+            ))
+
           ],
         ),
       ),

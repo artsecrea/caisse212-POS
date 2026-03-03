@@ -4,6 +4,7 @@ import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../utils/currency_formatter.dart';
+import '../../utils/app_localizations.dart';
 
 import 'package:data_table_2/data_table_2.dart';
 import '../../domain/models/order_models.dart';
@@ -138,37 +139,38 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   @override
   Widget build(BuildContext context) {
     final currency = ref.watch(currencySymbolProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
-      appBar: _buildAppBar(),
+      appBar: _buildAppBar(l10n),
       body: Column(
         children: [
-          _buildFiltersBar(),
-          _buildSecondaryFiltersBar(),
+          _buildFiltersBar(l10n),
+          _buildSecondaryFiltersBar(l10n),
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _errorMessage != null
-                    ? _buildErrorView(_errorMessage!)
+                    ? _buildErrorView(_errorMessage!, l10n)
                     : _paginatedOrders == null || _paginatedOrders!.orders.isEmpty
-                        ? _buildEmptyView()
+                        ? _buildEmptyView(l10n)
                         : _groupBy == 'none'
-                            ? _buildOrdersTable(currency)
-                            : _buildGroupedView(currency),
+                            ? _buildOrdersTable(currency, l10n)
+                            : _buildGroupedView(currency, l10n),
           ),
         ],
       ),
     );
   }
 
-  PreferredSizeWidget _buildAppBar() {
+  PreferredSizeWidget _buildAppBar(AppLocalizations l10n) {
     final isOnline = ref.watch(networkStateProvider);
     final syncState = ref.watch(syncManagerProvider);
 
     return AppBar(
       title: Row(
         children: [
-          const Text('Orders Management'),
+          Text(l10n.translate('orders_management')),
           if (_paginatedOrders != null) ...[
             const SizedBox(width: 12),
             Container(
@@ -178,7 +180,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                '${_paginatedOrders!.totalCount} orders',
+                '${_paginatedOrders!.totalCount} ${l10n.translate('orders')}',
                 style: TextStyle(
                   fontSize: 12,
                   color: Theme.of(context).colorScheme.onPrimaryContainer,
@@ -205,7 +207,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           child: Tooltip(
-            message: isOnline ? 'Online' : 'Offline',
+            message: isOnline ? l10n.translate('online') : l10n.translate('offline'),
             child: Icon(
               isOnline ? Icons.wifi : Icons.wifi_off,
               color: isOnline ? Colors.green : Colors.red,
@@ -217,34 +219,34 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         IconButton(
           icon: const Icon(Icons.search),
           onPressed: _showSearchByCodeDialog,
-          tooltip: 'Search Order by Code',
+          tooltip: l10n.translate('search_order_by_code'),
         ),
         // View pending operations queue
         PermissionIconButton(
           permission: Permissions.viewPendingOperations,
           onPressed: _showPendingOperationsDialog,
           icon: const Icon(Icons.pending_actions),
-          tooltip: 'View Pending Operations',
+          tooltip: l10n.translate('view_pending_operations'),
         ),
         // Sync all button
         PermissionIconButton(
           permission: Permissions.syncAll,
           onPressed: (_isSyncing || syncState.isSyncing) ? () {} : _syncAll,
           icon: const Icon(Icons.cloud_sync),
-          tooltip: 'Sync All',
+          tooltip: l10n.translate('sync_all'),
         ),
         // Refresh
         IconButton(
           icon: const Icon(Icons.refresh),
           onPressed: _loadOrders,
-          tooltip: 'Refresh',
+          tooltip: l10n.translate('refresh'),
         ),
         const SizedBox(width: 8),
       ],
     );
   }
 
-  Widget _buildFiltersBar() {
+  Widget _buildFiltersBar(AppLocalizations l10n) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -265,7 +267,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Search by code, username, customer...',
+                hintText: l10n.translate('search_by_code_username_customer'),
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(
@@ -289,19 +291,19 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           const SizedBox(width: 16),
           // Status filter
           Expanded(
-            child: _buildStatusDropdown(),
+            child: _buildStatusDropdown(l10n),
           ),
           const SizedBox(width: 16),
           // Customer filter
           Expanded(
-            child: _buildCustomerDropdown(),
+            child: _buildCustomerDropdown(l10n),
           ),
           const SizedBox(width: 16),
           // Date range picker
           OutlinedButton.icon(
             onPressed: _showDateRangePicker,
             icon: const Icon(Icons.date_range, size: 18),
-            label: Text(_getDateRangeText(), style: const TextStyle(fontSize: 12)),
+            label: Text(_getDateRangeText(l10n), style: const TextStyle(fontSize: 12)),
           ),
           if (_startDate != null || _endDate != null)
             IconButton(
@@ -311,14 +313,14 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 _endDate = null;
                 _onFilterChanged();
               },
-              tooltip: 'Clear date filter',
+              tooltip: l10n.translate('clear_date_filter'),
             ),
         ],
       ),
     );
   }
 
-  Widget _buildSecondaryFiltersBar() {
+  Widget _buildSecondaryFiltersBar(AppLocalizations l10n) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
@@ -328,13 +330,13 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       child: Row(
         children: [
           // Group by
-          const Text('Group by: ', style: TextStyle(fontWeight: FontWeight.w500)),
+          Text('${l10n.translate('group_by')}: ', style: const TextStyle(fontWeight: FontWeight.w500)),
           const SizedBox(width: 8),
           SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'none', label: Text('None', style: TextStyle(fontSize: 12))),
-              ButtonSegment(value: 'status', label: Text('Status', style: TextStyle(fontSize: 12))),
-              ButtonSegment(value: 'date', label: Text('Date', style: TextStyle(fontSize: 12))),
+            segments: [
+              ButtonSegment(value: 'none', label: Text(l10n.translate('none'), style: const TextStyle(fontSize: 12))),
+              ButtonSegment(value: 'status', label: Text(l10n.translate('status'), style: const TextStyle(fontSize: 12))),
+              ButtonSegment(value: 'date', label: Text(l10n.translate('date'), style: const TextStyle(fontSize: 12))),
             ],
             selected: {_groupBy},
             onSelectionChanged: (selected) {
@@ -342,14 +344,14 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 _groupBy = selected.first;
               });
             },
-            style: ButtonStyle(
+            style: const ButtonStyle(
               visualDensity: VisualDensity.compact,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
           ),
           const Spacer(),
           // Rows per page
-          const Text('Rows per page: ', style: TextStyle(fontSize: 12)),
+          Text('${l10n.translate('rows_per_page')}: ', style: const TextStyle(fontSize: 12)),
           DropdownButton<int>(
             value: _rowsPerPage,
             underline: const SizedBox(),
@@ -373,7 +375,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             spacing: 8,
             children: [
               FilterChip(
-                label: const Text('Today', style: TextStyle(fontSize: 11)),
+                label: Text(l10n.translate('today'), style: const TextStyle(fontSize: 11)),
                 selected: _isToday(),
                 onSelected: (selected) {
                   if (selected) {
@@ -388,7 +390,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 },
               ),
               FilterChip(
-                label: const Text('Unsynced', style: TextStyle(fontSize: 11)),
+                label: Text(l10n.translate('unsynced'), style: const TextStyle(fontSize: 11)),
                 selected: _statusFilter == 'COMPLETED',
                 onSelected: (selected) {
                   _statusFilter = selected ? 'COMPLETED' : 'ALL';
@@ -410,23 +412,23 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
            _startDate!.day == now.day;
   }
 
-  Widget _buildStatusDropdown() {
+  Widget _buildStatusDropdown(AppLocalizations l10n) {
     return DropdownButtonFormField<String>(
       decoration: InputDecoration(
-        labelText: 'Status',
+        labelText: l10n.translate('status'),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
       isExpanded: true,
-      items: const [
-        DropdownMenuItem(value: 'ALL', child: Text('All Statuses')),
-        DropdownMenuItem(value: 'ONHOLD', child: Text('On Hold')),
-        DropdownMenuItem(value: 'PENDING', child: Text('Pending')),
-        DropdownMenuItem(value: 'PREPARING', child: Text('Preparing')),
-        DropdownMenuItem(value: 'READY', child: Text('Ready')),
-        DropdownMenuItem(value: 'DELIVERED', child: Text('Delivered')),
-        DropdownMenuItem(value: 'COMPLETED', child: Text('Completed')),
-        DropdownMenuItem(value: 'CANCELED', child: Text('Canceled')),
+      items: [
+        DropdownMenuItem(value: 'ALL', child: Text(l10n.translate('all_statuses'))),
+        DropdownMenuItem(value: 'ONHOLD', child: Text(l10n.translate('on_hold'))),
+        DropdownMenuItem(value: 'PENDING', child: Text(l10n.translate('pending'))),
+        DropdownMenuItem(value: 'PREPARING', child: Text(l10n.translate('preparing'))),
+        DropdownMenuItem(value: 'READY', child: Text(l10n.translate('ready'))),
+        DropdownMenuItem(value: 'DELIVERED', child: Text(l10n.translate('delivered'))),
+        DropdownMenuItem(value: 'COMPLETED', child: Text(l10n.translate('completed'))),
+        DropdownMenuItem(value: 'CANCELED', child: Text(l10n.translate('canceled'))),
       ],
       onChanged: (value) {
         if (value != null) {
@@ -437,10 +439,10 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  Widget _buildCustomerDropdown() {
+  Widget _buildCustomerDropdown(AppLocalizations l10n) {
     return DropdownButtonFormField<int?>(
       decoration: InputDecoration(
-        labelText: 'Customer',
+        labelText: l10n.translate('customer'),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         suffixIcon: _selectedCustomerId != null
@@ -455,7 +457,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       ),
       isExpanded: true,
       items: [
-        const DropdownMenuItem(value: null, child: Text('All Customers')),
+        DropdownMenuItem(value: null, child: Text(l10n.translate('all_customers'))),
         ..._customers.map((c) => DropdownMenuItem(
               value: c.id,
               child: Text('${c.firstName} ${c.lastName}', overflow: TextOverflow.ellipsis),
@@ -468,7 +470,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  Widget _buildGroupedView(String currency) {
+  Widget _buildGroupedView(String currency, AppLocalizations l10n) {
     final orders = _paginatedOrders!.orders;
 
     Map<String, List<OrderFullDetails>> grouped = {};
@@ -499,7 +501,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 initiallyExpanded: true,
                 title: Row(
                   children: [
-                    if (_groupBy == 'status') _buildStatusChip(key),
+                    if (_groupBy == 'status') _buildStatusChip(key, l10n),
                     if (_groupBy == 'date') Text(key, style: const TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(width: 8),
                     Container(
@@ -518,17 +520,17 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                     ),
                   ],
                 ),
-                children: groupOrders.map((order) => _buildOrderListTile(order, currency)).toList(),
+                children: groupOrders.map((order) => _buildOrderListTile(order, currency, l10n)).toList(),
               );
             },
           ),
         ),
-        _buildPaginationControls(),
+        _buildPaginationControls(l10n),
       ],
     );
   }
 
-  Widget _buildOrderListTile(OrderFullDetails orderDetails, String currency) {
+  Widget _buildOrderListTile(OrderFullDetails orderDetails, String currency, AppLocalizations l10n) {
     final order = orderDetails.order;
     final needsSync = order.status == 'COMPLETED' && !order.isSynced;
 
@@ -569,15 +571,15 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildStatusChip(order.status),
+          _buildStatusChip(order.status, l10n),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) => _handleOrderAction(value, order, orderDetails),
             itemBuilder: (context) => [
-              const PopupMenuItem(value: 'view', child: Row(children: [Icon(Icons.visibility, size: 18), SizedBox(width: 8), Text('View')])),
-              const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text('Edit')])),
-              const PopupMenuItem(value: 'status', child: Row(children: [Icon(Icons.swap_horiz, size: 18), SizedBox(width: 8), Text('Change Status')])),
-              const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 18, color: Colors.red), SizedBox(width: 8), Text('Delete', style: TextStyle(color: Colors.red))])),
+              PopupMenuItem(value: 'view', child: Row(children: [const Icon(Icons.visibility, size: 18), const SizedBox(width: 8), Text(l10n.translate('view'))])),
+              PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
+              PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
+              PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
             ],
           ),
         ],
@@ -586,7 +588,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  Widget _buildOrdersTable(String currency) {
+  Widget _buildOrdersTable(String currency, AppLocalizations l10n) {
     final orders = _paginatedOrders!.orders;
 
     return Column(
@@ -608,40 +610,40 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             dataRowHeight: 56,
             columns: [
               DataColumn2(
-                label: const Text('Code'),
+                label: Text(l10n.translate('code')),
                 size: ColumnSize.M,
                 onSort: (_, __) => _onSort('code'),
               ),
-              const DataColumn2(label: Text('Customer'), size: ColumnSize.M),
+              DataColumn2(label: Text(l10n.translate('customer')), size: ColumnSize.M),
               DataColumn2(
-                label: const Text('User'),
+                label: Text(l10n.translate('user')),
                 size: ColumnSize.S,
                 onSort: (_, __) => _onSort('takenBy'),
               ),
-              const DataColumn2(label: Text('Products'), size: ColumnSize.S, numeric: true),
-              const DataColumn2(label: Text('Total'), size: ColumnSize.S, numeric: true),
-              const DataColumn2(label: Text('Paid'), size: ColumnSize.S, numeric: true),
+              DataColumn2(label: Text(l10n.translate('products')), size: ColumnSize.S, numeric: true),
+              DataColumn2(label: Text(l10n.translate('total')), size: ColumnSize.S, numeric: true),
+              DataColumn2(label: Text(l10n.translate('paid')), size: ColumnSize.S, numeric: true),
               DataColumn2(
-                label: const Text('Status'),
+                label: Text(l10n.translate('status')),
                 size: ColumnSize.M,
                 onSort: (_, __) => _onSort('status'),
               ),
               DataColumn2(
-                label: const Text('Date'),
+                label: Text(l10n.translate('date')),
                 size: ColumnSize.M,
                 onSort: (_, __) => _onSort('createdAt'),
               ),
-              const DataColumn2(label: Text('Actions'), size: ColumnSize.L),
+              DataColumn2(label: Text(l10n.translate('actions')), size: ColumnSize.L),
             ],
-            rows: orders.map((orderDetails) => _buildDataRow(orderDetails, currency)).toList(),
+            rows: orders.map((orderDetails) => _buildDataRow(orderDetails, currency, l10n)).toList(),
           ),
         ),
-        _buildPaginationControls(),
+        _buildPaginationControls(l10n),
       ],
     );
   }
 
-  DataRow _buildDataRow(OrderFullDetails orderDetails, String currency) {
+  DataRow _buildDataRow(OrderFullDetails orderDetails, String currency, AppLocalizations l10n) {
     final order = orderDetails.order;
     final isCompleted = order.status == 'COMPLETED';
     final isSynced = order.isSynced;
@@ -658,7 +660,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               const SizedBox(width: 4),
               if (isCompleted)
                 Tooltip(
-                  message: needsSync ? 'Not synced' : 'Synced',
+                  message: needsSync ? l10n.translate('not_synced') : l10n.translate('synced'),
                   child: Icon(
                     needsSync ? Icons.cloud_off : Icons.cloud_done,
                     size: 14,
@@ -703,7 +705,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             ),
           ),
         ),
-        DataCell(_buildStatusChip(order.status)),
+        DataCell(_buildStatusChip(order.status, l10n)),
         DataCell(Text(_formatDate(order.date), style: const TextStyle(fontSize: 11))),
         DataCell(
           Row(
@@ -712,7 +714,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               IconButton(
                 icon: const Icon(Icons.visibility, size: 18),
                 onPressed: () => _showOrderDetails(order),
-                tooltip: 'View',
+                tooltip: l10n.translate('view'),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
@@ -720,19 +722,19 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 permission: Permissions.ordersUpdate,
                 icon: const Icon(Icons.edit, size: 18, color: Colors.green),
                 onPressed: () => _editOrder(order),
-                tooltip: 'Edit',
+                tooltip: l10n.translate('edit'),
               ),
               PermissionIconButton(
                 permission: Permissions.ordersUpdate,
                 icon: const Icon(Icons.swap_horiz, size: 18, color: Colors.blue),
                 onPressed: () => _showChangeStatusDialog(order),
-                tooltip: 'Status',
+                tooltip: l10n.translate('status'),
               ),
               PermissionIconButton(
                 permission: Permissions.ordersDelete,
                 icon: const Icon(Icons.delete, size: 18, color: Colors.red),
                 onPressed: () => _deleteOrder(order),
-                tooltip: 'Delete',
+                tooltip: l10n.translate('delete'),
               ),
             ],
           ),
@@ -741,8 +743,34 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  Widget _buildStatusChip(String status) {
+  Widget _buildStatusChip(String status, AppLocalizations l10n) {
     final color = _getStatusColor(status);
+    String translatedStatus;
+    switch (status) {
+      case 'ONHOLD':
+        translatedStatus = l10n.translate('on_hold');
+        break;
+      case 'PENDING':
+        translatedStatus = l10n.translate('pending');
+        break;
+      case 'PREPARING':
+        translatedStatus = l10n.translate('preparing');
+        break;
+      case 'READY':
+        translatedStatus = l10n.translate('ready');
+        break;
+      case 'DELIVERED':
+        translatedStatus = l10n.translate('delivered');
+        break;
+      case 'COMPLETED':
+        translatedStatus = l10n.translate('completed');
+        break;
+      case 'CANCELED':
+        translatedStatus = l10n.translate('canceled');
+        break;
+      default:
+        translatedStatus = status;
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -751,7 +779,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         border: Border.all(color: color),
       ),
       child: Text(
-        status,
+        translatedStatus,
         style: TextStyle(
           color: color,
           fontWeight: FontWeight.w600,
@@ -782,7 +810,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     }
   }
 
-  Widget _buildPaginationControls() {
+  Widget _buildPaginationControls(AppLocalizations l10n) {
     final totalItems = _paginatedOrders?.totalCount ?? 0;
     final totalPages = _paginatedOrders?.totalPages ?? 0;
     final startItem = totalItems > 0 ? _currentPage * _rowsPerPage + 1 : 0;
@@ -799,8 +827,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         children: [
           Text(
             totalItems > 0
-                ? 'Showing $startItem-$endItem of $totalItems orders'
-                : 'No orders',
+                ? '${l10n.translate('showing')} $startItem-$endItem ${l10n.translate('of')} $totalItems ${l10n.translate('orders')}'
+                : l10n.translate('no_orders'),
             style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           Row(
@@ -820,7 +848,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  'Page ${_currentPage + 1} of ${totalPages > 0 ? totalPages : 1}',
+                  '${l10n.translate('page')} ${_currentPage + 1} ${l10n.translate('of')} ${totalPages > 0 ? totalPages : 1}',
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.onPrimaryContainer,
@@ -842,7 +870,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
   }
 
-  Widget _buildEmptyView() {
+  Widget _buildEmptyView(AppLocalizations l10n) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -850,12 +878,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           Icon(Icons.receipt_long, size: 64, color: Colors.grey[400]),
           const SizedBox(height: 16),
           Text(
-            'No orders found',
+            l10n.translate('no_orders_found'),
             style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
-            'Try adjusting your filters',
+            l10n.translate('try_adjusting_filters'),
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
           const SizedBox(height: 16),
@@ -870,14 +898,14 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               _onFilterChanged();
             },
             icon: const Icon(Icons.clear_all),
-            label: const Text('Clear Filters'),
+            label: Text(l10n.translate('clear_filters')),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildErrorView(String error) {
+  Widget _buildErrorView(String error, AppLocalizations l10n) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -885,7 +913,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           Icon(Icons.error_outline, size: 64, color: Colors.red[400]),
           const SizedBox(height: 16),
           Text(
-            'Error loading orders',
+            l10n.translate('error_loading_orders'),
             style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
@@ -898,7 +926,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           ElevatedButton.icon(
             onPressed: _loadOrders,
             icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
+            label: Text(l10n.translate('retry')),
           ),
         ],
       ),
@@ -910,9 +938,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
   }
 
-  String _getDateRangeText() {
+  String _getDateRangeText(AppLocalizations l10n) {
     if (_startDate == null && _endDate == null) {
-      return 'Date Range';
+      return l10n.translate('date_range');
     }
     final start = _startDate != null ? '${_startDate!.day}/${_startDate!.month}' : '...';
     final end = _endDate != null ? '${_endDate!.day}/${_endDate!.month}' : '...';
@@ -977,20 +1005,21 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   void _deleteOrder(Order order) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete Order'),
-        content: Text('Are you sure you want to delete order ${order.code}?'),
+        title: Text(l10n.translate('delete_order')),
+        content: Text('${l10n.translate('confirm_delete_order')} ${order.code}?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: Text(l10n.translate('cancel')),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete'),
+            child: Text(l10n.translate('delete')),
           ),
         ],
       ),
@@ -1003,13 +1032,13 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         _loadOrders();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Order deleted successfully')),
+            SnackBar(content: Text(l10n.translate('order_deleted_successfully'))),
           );
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error deleting order: $e')),
+            SnackBar(content: Text('${l10n.translate('error_deleting_order')}: $e')),
           );
         }
       }
@@ -1017,6 +1046,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   void _showChangeStatusDialog(Order order) async {
+    final l10n = AppLocalizations.of(context)!;
     final statuses = ['ONHOLD', 'PENDING', 'PREPARING', 'READY', 'DELIVERED', 'COMPLETED', 'CANCELED'];
     String? selectedStatus = order.status;
 
@@ -1025,15 +1055,15 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       builder: (dialogContext) => StatefulBuilder(
         builder: (builderContext, setDialogState) {
           return AlertDialog(
-            title: Text('Change Status - ${order.code}'),
+            title: Text('${l10n.translate('change_status')} - ${order.code}'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    const Text('Current: ', style: TextStyle(fontWeight: FontWeight.w500)),
-                    _buildStatusChip(order.status),
+                    Text('${l10n.translate('current')}: ', style: const TextStyle(fontWeight: FontWeight.w500)),
+                    _buildStatusChip(order.status, l10n),
                     const SizedBox(width: 8),
                     if (order.isSynced)
                       const Icon(Icons.cloud_done, size: 16, color: Colors.green)
@@ -1042,7 +1072,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                   ],
                 ),
                 const SizedBox(height: 16),
-                const Text('New status:', style: TextStyle(fontWeight: FontWeight.w500)),
+                Text('${l10n.translate('new_status')}:', style: const TextStyle(fontWeight: FontWeight.w500)),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
@@ -1051,7 +1081,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                     label: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(status, style: const TextStyle(fontSize: 11)),
+                        Text(_getTranslatedStatus(status, l10n), style: const TextStyle(fontSize: 11)),
                         if (status == 'COMPLETED') ...[
                           const SizedBox(width: 4),
                           const Icon(Icons.cloud_upload, size: 12),
@@ -1071,13 +1101,13 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Cancel'),
+                child: Text(l10n.translate('cancel')),
               ),
               ElevatedButton(
                 onPressed: selectedStatus != null && selectedStatus != order.status
                     ? () => Navigator.pop(dialogContext, selectedStatus)
                     : null,
-                child: const Text('Change'),
+                child: Text(l10n.translate('change')),
               ),
             ],
           );
@@ -1090,7 +1120,29 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     }
   }
 
+  String _getTranslatedStatus(String status, AppLocalizations l10n) {
+    switch (status) {
+      case 'ONHOLD':
+        return l10n.translate('on_hold');
+      case 'PENDING':
+        return l10n.translate('pending');
+      case 'PREPARING':
+        return l10n.translate('preparing');
+      case 'READY':
+        return l10n.translate('ready');
+      case 'DELIVERED':
+        return l10n.translate('delivered');
+      case 'COMPLETED':
+        return l10n.translate('completed');
+      case 'CANCELED':
+        return l10n.translate('canceled');
+      default:
+        return status;
+    }
+  }
+
   Future<void> _changeOrderStatus(Order order, String newStatus) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
       final isOnline = ref.read(networkStateProvider);
@@ -1110,9 +1162,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       _loadOrders();
 
       if (mounted) {
-        String message = 'Status changed to $newStatus';
+        String message = '${l10n.translate('status_changed_to')} ${_getTranslatedStatus(newStatus, l10n)}';
         if (newStatus == 'COMPLETED') {
-          message += synced ? ' and synced' : (isOnline ? ' (sync pending)' : ' (will sync when online)');
+          message += synced ? ' ${l10n.translate('and_synced')}' : (isOnline ? ' (${l10n.translate('sync_pending')})' : ' (${l10n.translate('will_sync_when_online')})');
         }
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1125,19 +1177,20 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error changing status: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('${l10n.translate('error_changing_status')}: $e'), backgroundColor: Colors.red),
         );
       }
     }
   }
 
   Future<void> _syncAll() async {
+    final l10n = AppLocalizations.of(context)!;
     final isOnline = ref.read(networkStateProvider);
 
     if (!isOnline) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No network connection'), backgroundColor: Colors.red),
+          SnackBar(content: Text(l10n.translate('no_network_connection')), backgroundColor: Colors.red),
         );
       }
       return;
@@ -1170,13 +1223,14 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       if (mounted) {
         setState(() => _isSyncing = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Sync error: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('${l10n.translate('sync_error')}: $e'), backgroundColor: Colors.red),
         );
       }
     }
   }
 
   Future<void> _showPendingOperationsDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final database = ref.read(databaseProvider);
       final operations = await (database.select(database.pendingSyncOperations)
@@ -1192,14 +1246,14 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             children: [
               const Icon(Icons.pending_actions),
               const SizedBox(width: 12),
-              Text('Pending Operations (${operations.length})'),
+              Text('${l10n.translate('pending_operations')} (${operations.length})'),
             ],
           ),
           content: SizedBox(
             width: 600,
             height: 400,
             child: operations.isEmpty
-                ? const Center(child: Text('No pending operations'))
+                ? Center(child: Text(l10n.translate('no_pending_operations')))
                 : ListView.builder(
                     itemCount: operations.length,
                     itemBuilder: (listContext, index) {
@@ -1216,12 +1270,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Server ID: ${op.serverId ?? "Not synced yet"}'),
-                              Text('Created: ${_formatDate(op.createdAt)}'),
+                              Text('${l10n.translate('server_id')}: ${op.serverId ?? l10n.translate('not_synced_yet')}'),
+                              Text('${l10n.translate('created')}: ${_formatDate(op.createdAt)}'),
                               if (op.retryCount > 0)
-                                Text('Retries: ${op.retryCount}', style: const TextStyle(color: Colors.orange)),
+                                Text('${l10n.translate('retries')}: ${op.retryCount}', style: const TextStyle(color: Colors.orange)),
                               if (op.lastError != null)
-                                Text('Error: ${op.lastError}', style: const TextStyle(color: Colors.red, fontSize: 11)),
+                                Text('${l10n.translate('error')}: ${op.lastError}', style: const TextStyle(color: Colors.red, fontSize: 11)),
                             ],
                           ),
                           trailing: IconButton(
@@ -1233,7 +1287,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                               Navigator.pop(dialogContext);
                               _showPendingOperationsDialog();
                             },
-                            tooltip: 'Remove from queue',
+                            tooltip: l10n.translate('remove_from_queue'),
                           ),
                         ),
                       );
@@ -1243,7 +1297,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Close'),
+              child: Text(l10n.translate('close')),
             ),
             if (operations.isNotEmpty)
               ElevatedButton.icon(
@@ -1252,7 +1306,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                   await _syncAll();
                 },
                 icon: const Icon(Icons.sync),
-                label: const Text('Sync Now'),
+                label: Text(l10n.translate('sync_now')),
               ),
           ],
         ),
@@ -1260,7 +1314,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading operations: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('${l10n.translate('error_loading_operations')}: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -1269,16 +1323,17 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   // ========== SEARCH BY CODE FUNCTIONALITY ==========
 
   void _showSearchByCodeDialog() {
+    final l10n = AppLocalizations.of(context)!;
     final TextEditingController codeController = TextEditingController();
 
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.search),
-            SizedBox(width: 12),
-            Text('Search Order by Code'),
+            const Icon(Icons.search),
+            const SizedBox(width: 12),
+            Text(l10n.translate('search_order_by_code')),
           ],
         ),
         content: SizedBox(
@@ -1287,7 +1342,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             controller: codeController,
             autofocus: true,
             decoration: InputDecoration(
-              hintText: 'Enter order code (e.g., ORD-001)',
+              hintText: l10n.translate('enter_order_code'),
               prefixIcon: const Icon(Icons.qr_code),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             ),
@@ -1302,7 +1357,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
+            child: Text(l10n.translate('cancel')),
           ),
           ElevatedButton(
             onPressed: () {
@@ -1312,7 +1367,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 _searchOrderByCode(code);
               }
             },
-            child: const Text('Search'),
+            child: Text(l10n.translate('search')),
           ),
         ],
       ),
@@ -1320,20 +1375,21 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   Future<void> _searchOrderByCode(String orderCode) async {
+    final l10n = AppLocalizations.of(context)!;
     // Show loading dialog
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => const Center(
+      builder: (dialogContext) => Center(
         child: Card(
           child: Padding(
-            padding: EdgeInsets.all(24),
+            padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Searching for order...'),
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(l10n.translate('searching_for_order')),
               ],
             ),
           ),
@@ -1366,7 +1422,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       final isOnline = ref.read(networkStateProvider);
       if (!isOnline) {
         if (mounted) Navigator.of(context).pop(); // Close loading dialog
-        if (mounted) _showErrorSnackBar('Order not found locally and you are offline');
+        if (mounted) _showErrorSnackBar(l10n.translate('order_not_found_offline'));
         return;
       }
 
@@ -1421,6 +1477,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
     final order = fullDetails.order;
     final currency = ref.watch(currencySymbolProvider);
 
@@ -1450,7 +1507,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Order ${order.code}',
+                          '${l10n.translate('order')} ${order.code}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 20,
@@ -1458,7 +1515,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
                           ),
                         ),
                         Text(
-                          'Order Details',
+                          l10n.translate('order_details'),
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.9),
                             fontSize: 14,
@@ -1481,7 +1538,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Order Information', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(l10n.translate('order_information'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
                     Card(
                       elevation: 2,
@@ -1489,30 +1546,30 @@ class _OrderDetailsDialog extends ConsumerWidget {
                         padding: const EdgeInsets.all(16),
                         child: Column(
                           children: [
-                            _buildInfoRow('Order ID', '#${order.id}'),
-                            _buildInfoRow('Order Code', order.code),
-                            _buildInfoRow('Status', order.status),
-                            _buildInfoRow('Type', order.type.replaceAll('_', ' ')),
-                            _buildInfoRow('Number of Persons', '${order.persons}'),
+                            _buildInfoRow(l10n.translate('order_id'), '#${order.id}'),
+                            _buildInfoRow(l10n.translate('order_code'), order.code),
+                            _buildInfoRow(l10n.translate('status'), _getTranslatedStatus(order.status, l10n)),
+                            _buildInfoRow(l10n.translate('type'), order.type.replaceAll('_', ' ')),
+                            _buildInfoRow(l10n.translate('number_of_persons'), '${order.persons}'),
                             if (fullDetails.tableName != null)
-                              _buildInfoRow('Table', fullDetails.tableName!),
+                              _buildInfoRow(l10n.translate('table'), fullDetails.tableName!),
                             if (fullDetails.customerName != null)
-                              _buildInfoRow('Customer', fullDetails.customerName!),
-                            _buildInfoRow('Username', fullDetails.userName ?? 'N/A'),
-                            _buildInfoRow('Date', _formatFullDateTime(order.date)),
-                            _buildInfoRow('Synced', order.isSynced ? 'Yes' : 'No'),
+                              _buildInfoRow(l10n.translate('customer'), fullDetails.customerName!),
+                            _buildInfoRow(l10n.translate('username'), fullDetails.userName ?? 'N/A'),
+                            _buildInfoRow(l10n.translate('date'), _formatFullDateTime(order.date)),
+                            _buildInfoRow(l10n.translate('synced'), order.isSynced ? l10n.translate('yes') : l10n.translate('no')),
                           ],
                         ),
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const Text('Order Items', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(l10n.translate('order_items'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    ...fullDetails.items.map((item) => _buildOrderItem(context, item, currency)),
+                    ...fullDetails.items.map((item) => _buildOrderItem(context, item, currency, l10n)),
                     const SizedBox(height: 24),
-                    const Text('Financial Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text(l10n.translate('financial_summary'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    _buildFinancialCard(context, currency),
+                    _buildFinancialCard(context, currency, l10n),
                   ],
                 ),
               ),
@@ -1521,6 +1578,27 @@ class _OrderDetailsDialog extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  String _getTranslatedStatus(String status, AppLocalizations l10n) {
+    switch (status) {
+      case 'ONHOLD':
+        return l10n.translate('on_hold');
+      case 'PENDING':
+        return l10n.translate('pending');
+      case 'PREPARING':
+        return l10n.translate('preparing');
+      case 'READY':
+        return l10n.translate('ready');
+      case 'DELIVERED':
+        return l10n.translate('delivered');
+      case 'COMPLETED':
+        return l10n.translate('completed');
+      case 'CANCELED':
+        return l10n.translate('canceled');
+      default:
+        return status;
+    }
   }
 
   Widget _buildInfoRow(String label, String value) {
@@ -1551,7 +1629,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
     );
   }
 
-  Widget _buildOrderItem(BuildContext context, OrderItemDetails item, String currency) {
+  Widget _buildOrderItem(BuildContext context, OrderItemDetails item, String currency, AppLocalizations l10n) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -1620,7 +1698,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
                   border: Border.all(color: Colors.green),
                 ),
                 child: Text(
-                  'Paid in Ticket #${item.ticketNum ?? 'N/A'}',
+                  '${l10n.translate('paid_in_ticket')} #${item.ticketNum ?? 'N/A'}',
                   style: TextStyle(fontSize: 12, color: Colors.green[800], fontWeight: FontWeight.w600),
                 ),
               ),
@@ -1631,38 +1709,38 @@ class _OrderDetailsDialog extends ConsumerWidget {
     );
   }
 
-  Widget _buildFinancialCard(BuildContext context, String currency) {
+  Widget _buildFinancialCard(BuildContext context, String currency, AppLocalizations l10n) {
     return Card(
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            _buildFinancialRow('Product Count', fullDetails.productCount.toString(), isBold: false),
+            _buildFinancialRow(l10n.translate('product_count'), fullDetails.productCount.toString(), isBold: false),
             const Divider(height: 20),
-            _buildFinancialRow('Subtotal', CurrencyFormatter.formatWithCurrency(fullDetails.subtotal, currency)),
+            _buildFinancialRow(l10n.translate('subtotal'), CurrencyFormatter.formatWithCurrency(fullDetails.subtotal, currency)),
             if (fullDetails.itemDiscount > 0)
-              _buildFinancialRow('Item Discounts', '-${CurrencyFormatter.formatWithCurrency(fullDetails.itemDiscount, currency)}', color: Colors.orange),
+              _buildFinancialRow(l10n.translate('item_discounts'), '-${CurrencyFormatter.formatWithCurrency(fullDetails.itemDiscount, currency)}', color: Colors.orange),
             if (fullDetails.discountPercentage > 0)
               _buildFinancialRow(
-                'Manual Discount (${fullDetails.discountPercentage.toStringAsFixed(0)}%)',
+                '${l10n.translate('manual_discount')} (${fullDetails.discountPercentage.toStringAsFixed(0)}%)',
                 '-${CurrencyFormatter.formatWithCurrency(fullDetails.manualDiscountAmount, currency)}',
                 color: Colors.deepOrange,
               ),
             if (fullDetails.totalDiscount > 0)
-              _buildFinancialRow('Total Discount', '-${CurrencyFormatter.formatWithCurrency(fullDetails.totalDiscount, currency)}', color: Colors.red),
-            _buildFinancialRow('Total TVA', CurrencyFormatter.formatWithCurrency(fullDetails.totalTva, currency)),
+              _buildFinancialRow(l10n.translate('total_discount'), '-${CurrencyFormatter.formatWithCurrency(fullDetails.totalDiscount, currency)}', color: Colors.red),
+            _buildFinancialRow(l10n.translate('total_tva'), CurrencyFormatter.formatWithCurrency(fullDetails.totalTva, currency)),
             const Divider(height: 20, thickness: 2),
-            _buildFinancialRow('Total', CurrencyFormatter.formatWithCurrency(fullDetails.total, currency), fontSize: 18, isBold: true),
+            _buildFinancialRow(l10n.translate('total'), CurrencyFormatter.formatWithCurrency(fullDetails.total, currency), fontSize: 18, isBold: true),
             const Divider(height: 20),
             _buildFinancialRow(
-              'Total Paid',
+              l10n.translate('total_paid'),
               CurrencyFormatter.formatWithCurrency(fullDetails.totalPaid, currency),
               color: fullDetails.totalPaid >= fullDetails.total ? Colors.green : Colors.orange,
               isBold: true,
             ),
             _buildFinancialRow(
-              'Balance',
+              l10n.translate('balance'),
               CurrencyFormatter.formatWithCurrency(fullDetails.total - fullDetails.totalPaid, currency),
               color: fullDetails.totalPaid >= fullDetails.total ? Colors.green : Colors.red,
             ),
