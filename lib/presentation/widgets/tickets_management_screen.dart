@@ -349,7 +349,6 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
             minWidth: 1000,
             sortColumnIndex: _sortColumnIndex,
             sortAscending: _sortAscending,
-            headingRowColor: WidgetStateProperty.all(Colors.grey[200]),
             columns: [
               DataColumn2(
                 label: const Text('ID', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -491,7 +490,6 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
         border: Border(top: BorderSide(color: Colors.grey[300]!)),
       ),
       child: Row(

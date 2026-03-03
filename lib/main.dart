@@ -31,6 +31,7 @@ import 'utils/app_localizations.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final logger = Logger.instance;
+  logger.registerHandler(FileLogHandler(filePath: 'logs.txt'));
   logger.registerHandler(const ConsoleLogHandler());
 
   logger.info("app started");
@@ -59,12 +60,15 @@ class GlobalSoundWrapper extends ConsumerStatefulWidget {
 
 class _GlobalSoundWrapperState extends ConsumerState<GlobalSoundWrapper> {
   bool _soundsEnabled = true;
+  final logger = Logger.instance;
 
   @override
   void initState() {
     super.initState();
     // Initialize sound service but don't block UI
+
     _initializeSounds();
+    logger.info("Sound service initialized");
     // announce the app on the network for discovery
     _appAnnounce();
   }
