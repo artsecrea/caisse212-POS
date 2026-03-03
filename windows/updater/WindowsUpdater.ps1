@@ -527,47 +527,95 @@ function Relaunch-Application {
     Update-Status "Launching application..." 95
 
     try {
-        if (Test-Path $ExePath) {
-            $workingDir = Split-Path -Parent $ExePath
-            Write-Log "Working directory: $workingDir"
-
-            # Start the process with working directory set
-            $processInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $processInfo.FileName = $ExePath
-            $processInfo.WorkingDirectory = $workingDir
-            $processInfo.UseShellExecute = $true
-
-            $process = [System.Diagnostics.Process]::Start($processInfo)
-
-            if ($process -ne $null) {
-                Write-Log "Application launched successfully (PID: $($process.Id))" -Level SUCCESS
-                Update-Status "Update completed successfully!" 100
-                return $true
-            } else {
-                Write-Log "Process started but no handle returned" -Level WARNING
-                # Try alternative method
-                Start-Process -FilePath $ExePath -WorkingDirectory $workingDir
-                Write-Log "Application launched using Start-Process" -Level SUCCESS
-                return $true
-            }
-        }
-        else {
+        if (-not (Test-Path $ExePath)) {
             Write-Log "Executable not found: $ExePath" -Level ERROR
             return $false
         }
+
+        $workingDir = Split-Path -Parent $ExePath
+        $exeName = [System.IO.Path]::GetFileNameWithoutExtension($ExePath)
+        Write-Log "Working directory: $workingDir"
+        Write-Log "Executable name: $exeName"
+
+        # Method 1: Use explorer.exe to launch (runs as current user, not elevated)
+        try {
+            Write-Log "Trying to launch via explorer.exe..."
+            Start-Process "explorer.exe" -ArgumentList $ExePath
+            Start-Sleep -Seconds 2
+
+            # Check if process is running
+            $runningProcess = Get-Process -Name $exeName -ErrorAction SilentlyContinue
+            if ($runningProcess) {
+                Write-Log "Application launched successfully via explorer (PID: $($runningProcess.Id))" -Level SUCCESS
+                Update-Status "Update completed successfully!" 100
+                return $true
+            }
+            Write-Log "Explorer method: process not detected, trying next method..." -Level WARNING
+        }
+        catch {
+            Write-Log "Explorer method failed: $_" -Level WARNING
+        }
+
+        # Method 2: Use cmd /c start
+        try {
+            Write-Log "Trying to launch via cmd /c start..."
+            $cmdArgs = "/c start """" ""$ExePath"""
+            Start-Process "cmd.exe" -ArgumentList $cmdArgs -WindowStyle Hidden
+            Start-Sleep -Seconds 2
+
+            $runningProcess = Get-Process -Name $exeName -ErrorAction SilentlyContinue
+            if ($runningProcess) {
+                Write-Log "Application launched successfully via cmd (PID: $($runningProcess.Id))" -Level SUCCESS
+                Update-Status "Update completed successfully!" 100
+                return $true
+            }
+            Write-Log "CMD method: process not detected, trying next method..." -Level WARNING
+        }
+        catch {
+            Write-Log "CMD method failed: $_" -Level WARNING
+        }
+
+        # Method 3: Direct Start-Process with -Verb Open
+        try {
+            Write-Log "Trying direct Start-Process with -Verb Open..."
+            Start-Process -FilePath $ExePath -WorkingDirectory $workingDir -Verb Open
+            Start-Sleep -Seconds 2
+
+            $runningProcess = Get-Process -Name $exeName -ErrorAction SilentlyContinue
+            if ($runningProcess) {
+                Write-Log "Application launched successfully via Start-Process (PID: $($runningProcess.Id))" -Level SUCCESS
+                Update-Status "Update completed successfully!" 100
+                return $true
+            }
+            Write-Log "Start-Process method: process not detected, trying final method..." -Level WARNING
+        }
+        catch {
+            Write-Log "Start-Process method failed: $_" -Level WARNING
+        }
+
+        # Method 4: Simple Start-Process (last resort)
+        try {
+            Write-Log "Trying simple Start-Process..."
+            Start-Process -FilePath $ExePath
+            Start-Sleep -Seconds 3
+
+            $runningProcess = Get-Process -Name $exeName -ErrorAction SilentlyContinue
+            if ($runningProcess) {
+                Write-Log "Application launched successfully (PID: $($runningProcess.Id))" -Level SUCCESS
+                Update-Status "Update completed successfully!" 100
+                return $true
+            }
+        }
+        catch {
+            Write-Log "Simple Start-Process failed: $_" -Level ERROR
+        }
+
+        Write-Log "All launch methods failed - application may need to be started manually" -Level ERROR
+        return $false
     }
     catch {
         Write-Log "Failed to launch application: $_" -Level ERROR
-        # Try one more time with simple Start-Process
-        try {
-            Start-Process -FilePath $ExePath
-            Write-Log "Application launched on retry" -Level SUCCESS
-            return $true
-        }
-        catch {
-            Write-Log "Retry also failed: $_" -Level ERROR
-            return $false
-        }
+        return $false
     }
 }
 
@@ -702,6 +750,7 @@ function Start-Update {
 
 # Run the update
 Start-Update
+
 
 
 
