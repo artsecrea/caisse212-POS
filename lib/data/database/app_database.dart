@@ -62,9 +62,34 @@ class AppDatabase extends _$AppDatabase {
 
   static LazyDatabase _openConnection() {
     return LazyDatabase(() async {
-      final dbFolder = await getApplicationDocumentsDirectory();
-      final file = File(p.join(dbFolder.path, 'test.db'));
-      return NativeDatabase(file);
+      try {
+        final dbFolder = await getApplicationDocumentsDirectory();
+        final file = File(p.join(dbFolder.path, 'posecrea.db'));
+
+        // Ensure directory exists
+        if (!await dbFolder.exists()) {
+          await dbFolder.create(recursive: true);
+        }
+
+        return NativeDatabase.createInBackground(file);
+      } catch (e) {
+        // Fallback: try using executable directory on Windows
+        if (Platform.isWindows) {
+          try {
+            final exePath = Platform.resolvedExecutable;
+            final exeDir = File(exePath).parent.path;
+            final dataDir = Directory(p.join(exeDir, 'data'));
+            if (!await dataDir.exists()) {
+              await dataDir.create(recursive: true);
+            }
+            final file = File(p.join(dataDir.path, 'posecrea.db'));
+            return NativeDatabase.createInBackground(file);
+          } catch (e2) {
+            rethrow;
+          }
+        }
+        rethrow;
+      }
     });
   }
 }

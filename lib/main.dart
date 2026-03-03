@@ -1,8 +1,12 @@
+import 'dart:io';
+import 'dart:async';
+import 'package:caisse212/presentation/widgets/printers_management_screen.dart';
 import 'package:caisse212/providers/localization_provider.dart';
 import 'package:caisse212/services/discovery_service.dart';
 import 'package:caisse212/services/sound_service.dart';
 import 'package:cmdecrea/cmdecrea.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,7 +15,6 @@ import 'package:caisse212/presentation/tenant_login_screen/tenant_login_screen.d
 import 'package:caisse212/presentation/api_tester/api_tester_screen.dart';
 import 'package:caisse212/presentation/widgets/devices_management_screen.dart';
 import 'package:caisse212/presentation/widgets/orders_management_screen.dart';
-import 'package:caisse212/presentation/widgets/printers_management_screen.dart';
 import 'package:caisse212/presentation/widgets/sessions_management_screen.dart';
 import 'package:caisse212/presentation/widgets/users_management_screen.dart';
 import 'package:caisse212/presentation/widgets/tickets_management_screen.dart';
@@ -29,30 +32,108 @@ import 'providers/settings_provider.dart';
 import 'utils/app_localizations.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  final logger = Logger.instance;
-  logger.registerHandler(FileLogHandler(filePath: 'logs.txt'));
-  logger.registerHandler(const ConsoleLogHandler());
+  // Wrap everything in error handling for release builds
+  await runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  logger.info("app started");
+    // Set up error handling for Flutter errors
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      _logError('FlutterError', details.exception, details.stack);
+    };
 
-  final sharedPreferences = await SharedPreferences.getInstance();
+    // Handle errors that aren't caught by Flutter
+    PlatformDispatcher.instance.onError = (error, stack) {
+      _logError('PlatformError', error, stack);
+      return true;
+    };
 
-  runApp(
-    ProviderScope(
-      overrides: [
-        sharedPreferencesProvider.overrideWithValue(sharedPreferences),
-      ],
-      child: const GlobalSoundWrapper(
-        child: MyApp(),
+    final logger = Logger.instance;
+
+    // Initialize logger with safe path
+    try {
+      final logPath = await _getLogFilePath();
+      logger.registerHandler(FileLogHandler(filePath: logPath));
+    } catch (e) {
+      // If file logging fails, continue without it
+      debugPrint('Failed to initialize file logging: $e');
+    }
+    logger.registerHandler(const ConsoleLogHandler());
+
+    logger.info("App starting...");
+    logger.info("Platform: ${Platform.operatingSystem}");
+    logger.info("Release mode: ${kReleaseMode}");
+
+    SharedPreferences? sharedPreferences;
+    try {
+      sharedPreferences = await SharedPreferences.getInstance();
+      logger.info("SharedPreferences initialized");
+    } catch (e, stack) {
+      logger.error("Failed to initialize SharedPreferences: $e");
+      _logError('SharedPreferences', e, stack);
+      // Create a fallback - this might fail but we try anyway
+      rethrow;
+    }
+
+    logger.info("Starting app...");
+
+    runApp(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(sharedPreferences),
+        ],
+        child: const GlobalSoundWrapper(
+          child: MyApp(),
+        ),
       ),
-    ),
-  );
+    );
+  }, (error, stack) {
+    _logError('ZonedError', error, stack);
+  });
+}
+
+/// Get a safe log file path that works in release mode
+Future<String> _getLogFilePath() async {
+  if (Platform.isWindows) {
+    // Use the executable directory for logs on Windows
+    final exePath = Platform.resolvedExecutable;
+    final exeDir = File(exePath).parent.path;
+    return '$exeDir\\logs.txt';
+  }
+  return 'logs.txt';
+}
+
+/// Log errors to a file for debugging release builds
+void _logError(String source, Object error, StackTrace? stack) {
+  try {
+    final timestamp = DateTime.now().toIso8601String();
+    final message = '''
+=== ERROR [$source] at $timestamp ===
+Error: $error
+Stack: ${stack ?? 'No stack trace'}
+=====================================
+
+''';
+
+    debugPrint(message);
+
+    // Try to write to error log file
+    if (Platform.isWindows) {
+      try {
+        final exePath = Platform.resolvedExecutable;
+        final exeDir = File(exePath).parent.path;
+        final errorLogPath = '$exeDir\\error_log.txt';
+        File(errorLogPath).writeAsStringSync(message, mode: FileMode.append);
+      } catch (_) {}
+    }
+  } catch (_) {
+    // Ignore logging errors
+  }
 }
 
 class GlobalSoundWrapper extends ConsumerStatefulWidget {
   final Widget child;
-  const GlobalSoundWrapper({required this.child});
+  const GlobalSoundWrapper({super.key, required this.child});
 
   @override
   ConsumerState<GlobalSoundWrapper> createState() => _GlobalSoundWrapperState();
@@ -60,41 +141,62 @@ class GlobalSoundWrapper extends ConsumerStatefulWidget {
 
 class _GlobalSoundWrapperState extends ConsumerState<GlobalSoundWrapper> {
   bool _soundsEnabled = true;
+  bool _initialized = false;
   final logger = Logger.instance;
 
   @override
   void initState() {
     super.initState();
-    // Initialize sound service but don't block UI
+    // Defer initialization to after the first frame to ensure providers are ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _safeInitialize();
+    });
+  }
 
-    _initializeSounds();
-    logger.info("Sound service initialized");
-    // announce the app on the network for discovery
-    _appAnnounce();
+  Future<void> _safeInitialize() async {
+    if (_initialized) return;
+    _initialized = true;
+
+    try {
+      await _initializeSounds();
+      logger.info("Sound service initialized");
+    } catch (e) {
+      logger.warning("Sound service initialization failed: $e");
+    }
+
+    try {
+      await _appAnnounce();
+    } catch (e) {
+      logger.warning("App announce failed: $e");
+    }
   }
 
   Future<void> _initializeSounds() async {
     try {
-
       await Future.delayed(const Duration(milliseconds: 100));
     } catch (e) {
-      setState(() {
-        _soundsEnabled = false;
-      });
-      print('Sound service initialization failed: $e');
+      if (mounted) {
+        setState(() {
+          _soundsEnabled = false;
+        });
+      }
+      logger.info('Sound service initialization failed: $e');
     }
   }
 
   Future<void> _appAnnounce() async {
+    if (!mounted) return;
 
-    final discoveryService = ref.read(discoveryServiceProvider);
-    final settings = ref.read(settingsProvider);
-    final posName = ref .read(sharedPreferencesProvider).getString('pos_name') ?? 'POS-UNKNOWN';
+    try {
+      final discoveryService = ref.read(discoveryServiceProvider);
+      final settings = ref.read(settingsProvider);
+      final posName = ref.read(sharedPreferencesProvider).getString('pos_name') ?? 'POS-UNKNOWN';
 
-    final port = settings.serverPort;
-    await discoveryService.announce(posName, null, port);
-
-
+      final port = settings.serverPort;
+      await discoveryService.announce(posName, null, port);
+    } catch (e) {
+      logger.warning('App announce failed: $e');
+    }
   }
 
   @override
@@ -126,6 +228,8 @@ class MyApp extends ConsumerStatefulWidget {
 }
 
 class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
+
+  final logger = Logger.instance;
   @override
   void initState() {
     super.initState();
@@ -143,7 +247,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       final serverStartupService = ref.read(serverStartupServiceProvider);
       await serverStartupService.initializeServer();
     } catch (e) {
-      print('❌ Server initialization error: $e');
+      logger.info('❌ Server initialization error: $e');
     }
   }
 
@@ -175,11 +279,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
         if (session != null && session.status == 'active') {
           // await sessionService.pauseSession(session.id);
-          // print('Session ${session.id} auto-paused due to app lifecycle change');
+          // logger.info('Session ${session.id} auto-paused due to app lifecycle change');
         }
       }
     } catch (e) {
-      print('Auto-pause error: $e');
+      logger.info('Auto-pause error: $e');
     }
   }
 
@@ -250,7 +354,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         '/users': (context) => const UsersManagementScreen(),
         '/tickets': (context) => const TicketsManagementScreen(),
         '/sessions': (context) => const SessionsManagementScreen(),
-        '/printers': (context) => const PrintersManagementScreen(),
+        '/logger.infoers': (context) => const PrintersManagementScreen(),
         '/api-tester': (context) => const ApiTesterScreen(),
       },
     );

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:bonsoir/bonsoir.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final discoveryServiceProvider = Provider<DiscoveryService>((ref) {
@@ -10,6 +11,10 @@ final discoveryServiceProvider = Provider<DiscoveryService>((ref) {
 
 class DiscoveryService {
   static BonsoirBroadcast? _broadcast;
+  static bool _isSupported = true;
+
+  // Check if discovery is supported on this platform
+  static bool get isSupported => _isSupported && !kIsWeb;
 
   // Get local IP
   static Future<String> _getLocalIp() async {
@@ -21,72 +26,103 @@ class DiscoveryService {
           }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      debugPrint('Failed to get local IP: $e');
+    }
     return 'unknown';
   }
 
   // 1️⃣ Just announce
-   Future<void> announce(String deviceName, String? ip, int? port) async {
-    await _broadcast?.stop();
+  Future<void> announce(String deviceName, String? ip, int? port) async {
+    // Skip on unsupported platforms or if previously failed
+    if (!_isSupported) {
+      debugPrint('Discovery service not supported, skipping announce');
+      return;
+    }
 
-    final localIp = ip ?? await _getLocalIp();
+    try {
+      await _broadcast?.stop();
 
-    final service = BonsoirService(
-      type: '_caisse212._tcp',
-      name: deviceName,
-      port: 12345,
-      attributes: {
-        'name': deviceName,
-        'ip': localIp,
-        'port': port.toString(),
-      },
-    );
+      final localIp = ip ?? await _getLocalIp();
 
-    _broadcast = BonsoirBroadcast(service: service);
-    await _broadcast?.ready;
-    await _broadcast?.start();
+      final service = BonsoirService(
+        type: '_caisse212._tcp',
+        name: deviceName,
+        port: 12345,
+        attributes: {
+          'name': deviceName,
+          'ip': localIp,
+          'port': port.toString(),
+        },
+      );
 
-    print('✅ Announcing: $deviceName ($localIp) on port $port');
+      _broadcast = BonsoirBroadcast(service: service);
+      await _broadcast?.ready;
+      await _broadcast?.start();
+
+      debugPrint('✅ Announcing: $deviceName ($localIp) on port $port');
+    } catch (e) {
+      debugPrint('❌ Discovery announce failed: $e');
+      // Mark as unsupported to avoid future crashes
+      _isSupported = false;
+    }
   }
 
   // 2️⃣ Just discover - returns devices
-   Future<List<Map<String, String>>> discover(Duration duration) async {
+  Future<List<Map<String, String>>> discover(Duration duration) async {
     final devices = <Map<String, String>>[];
-    final completer = Completer<List<Map<String, String>>>();
 
-    final discovery = BonsoirDiscovery(type: '_caisse212._tcp');
+    // Skip if not supported
+    if (!_isSupported) {
+      debugPrint('Discovery service not supported, returning empty list');
+      return devices;
+    }
 
-    discovery.eventStream!.listen((event) {
-      if (event.type == BonsoirDiscoveryEventType.discoveryServiceFound) {
-        final service = event.service!;
+    try {
+      final completer = Completer<List<Map<String, String>>>();
 
-        // Get IP from attributes
-        final ip = service.attributes['ip'] ?? 'unknown';
-        final name = service.attributes['name'] ?? service.name;
-        final port = service.attributes['port'] ?? 'unknown';
+      final discovery = BonsoirDiscovery(type: '_caisse212._tcp');
 
-        devices.add({
-          'name': name,
-          'ip': ip,
-          "port": port,
-        });
+      discovery.eventStream!.listen((event) {
+        if (event.type == BonsoirDiscoveryEventType.discoveryServiceFound) {
+          final service = event.service!;
 
-        print('📱 Found: $name at $ip');
-      }
-    });
+          // Get IP from attributes
+          final ip = service.attributes['ip'] ?? 'unknown';
+          final name = service.attributes['name'] ?? service.name;
+          final port = service.attributes['port'] ?? 'unknown';
 
-    await discovery.ready;
-    await discovery.start();
+          devices.add({
+            'name': name,
+            'ip': ip,
+            "port": port,
+          });
 
-    Timer(duration, () async {
-      await discovery.stop();
-      completer.complete(devices);
-    });
+          debugPrint('📱 Found: $name at $ip');
+        }
+      });
 
-    return completer.future;
+      await discovery.ready;
+      await discovery.start();
+
+      Timer(duration, () async {
+        await discovery.stop();
+        completer.complete(devices);
+      });
+
+      return completer.future;
+    } catch (e) {
+      debugPrint('❌ Discovery failed: $e');
+      _isSupported = false;
+      return devices;
+    }
   }
 
-   Future<void> stopAnnounce() async {
-    await _broadcast?.stop();
+  Future<void> stopAnnounce() async {
+    try {
+      await _broadcast?.stop();
+    } catch (e) {
+      debugPrint('Failed to stop announce: $e');
+    }
   }
 }
