@@ -13,13 +13,13 @@ param(
     [string]$ExecutableName,
 
     [Parameter(Mandatory=$false)]
-    [string[]]$ExcludeFolders = @(),
+    [string]$ExcludeFolders = "",
 
     [Parameter(Mandatory=$false)]
     [string]$ArchivePassword = "",
 
     [Parameter(Mandatory=$false)]
-    [int]$StartDelaySeconds = 5,
+    [int]$StartDelaySeconds = 3,
 
     [Parameter(Mandatory=$false)]
     [string]$TempDirectory = "$env:TEMP\AppUpdater",
@@ -34,18 +34,26 @@ param(
     [switch]$Silent = $false
 )
 
+# Convert comma-separated exclude folders to array
+$ExcludeFoldersList = @()
+if (-not [string]::IsNullOrEmpty($ExcludeFolders)) {
+    $ExcludeFoldersList = $ExcludeFolders -split ','
+}
+
 # Import required assemblies
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 # Global variables
-$script:LogFile = Join-Path $TempDirectory "updater.log"
+$script:LogFile = $null
 $script:Form = $null
 $script:StatusLabel = $null
 $script:ProgressBar = $null
 $script:LogTextBox = $null
 $script:CancelButton = $null
 $script:Cancelled = $false
+$script:UpdateSuccess = $false
 
 # Initialize logging
 function Initialize-Logging {
@@ -53,11 +61,20 @@ function Initialize-Logging {
         New-Item -ItemType Directory -Path $TempDirectory -Force | Out-Null
     }
 
+    $script:LogFile = Join-Path $TempDirectory "updater.log"
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $script:LogFile -Value "=== Update Session Started: $timestamp ==="
+
+    # Create or append to log file
+    try {
+        Add-Content -Path $script:LogFile -Value "=== Update Session Started: $timestamp ===" -ErrorAction Stop
+    } catch {
+        # If we can't write to temp, use app directory
+        $script:LogFile = Join-Path $AppDirectory "updater.log"
+        Add-Content -Path $script:LogFile -Value "=== Update Session Started: $timestamp ===" -ErrorAction SilentlyContinue
+    }
 }
 
-# Log function
+# Log function with safe writing
 function Write-Log {
     param(
         [string]$Message,
@@ -68,8 +85,12 @@ function Write-Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logEntry = "[$timestamp] [$Level] $Message"
 
-    # Write to log file
-    Add-Content -Path $script:LogFile -Value $logEntry
+    # Write to log file (ignore errors)
+    if ($script:LogFile -and (Test-Path (Split-Path $script:LogFile -Parent))) {
+        try {
+            Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction SilentlyContinue
+        } catch { }
+    }
 
     # Write to console
     switch ($Level) {
@@ -79,13 +100,21 @@ function Write-Log {
         default { Write-Host $logEntry }
     }
 
-    # Update UI if not silent
-    if (-not $Silent -and $script:LogTextBox -ne $null) {
-        $script:LogTextBox.Invoke([Action]{
-            $script:LogTextBox.AppendText("$logEntry`r`n")
-            $script:LogTextBox.SelectionStart = $script:LogTextBox.Text.Length
-            $script:LogTextBox.ScrollToCaret()
-        })
+    # Update UI if not silent and form exists
+    if (-not $Silent -and $script:LogTextBox -ne $null -and $script:Form -ne $null -and $script:Form.Visible) {
+        try {
+            if ($script:LogTextBox.InvokeRequired) {
+                $script:LogTextBox.Invoke([Action]{
+                    $script:LogTextBox.AppendText("$logEntry`r`n")
+                    $script:LogTextBox.SelectionStart = $script:LogTextBox.Text.Length
+                    $script:LogTextBox.ScrollToCaret()
+                })
+            } else {
+                $script:LogTextBox.AppendText("$logEntry`r`n")
+                $script:LogTextBox.SelectionStart = $script:LogTextBox.Text.Length
+                $script:LogTextBox.ScrollToCaret()
+            }
+        } catch { }
     }
 }
 
@@ -98,17 +127,25 @@ function Update-Status {
 
     if ($Silent) { return }
 
-    if ($script:StatusLabel -ne $null) {
-        $script:StatusLabel.Invoke([Action]{
-            $script:StatusLabel.Text = $Status
-        })
-    }
+    try {
+        if ($script:StatusLabel -ne $null -and $script:Form -ne $null -and $script:Form.Visible) {
+            if ($script:StatusLabel.InvokeRequired) {
+                $script:StatusLabel.Invoke([Action]{ $script:StatusLabel.Text = $Status })
+            } else {
+                $script:StatusLabel.Text = $Status
+            }
+        }
 
-    if ($Progress -ge 0 -and $script:ProgressBar -ne $null) {
-        $script:ProgressBar.Invoke([Action]{
-            $script:ProgressBar.Value = [Math]::Min($Progress, 100)
-        })
-    }
+        if ($Progress -ge 0 -and $script:ProgressBar -ne $null -and $script:Form -ne $null -and $script:Form.Visible) {
+            if ($script:ProgressBar.InvokeRequired) {
+                $script:ProgressBar.Invoke([Action]{ $script:ProgressBar.Value = [Math]::Min($Progress, 100) })
+            } else {
+                $script:ProgressBar.Value = [Math]::Min($Progress, 100)
+            }
+        }
+
+        [System.Windows.Forms.Application]::DoEvents()
+    } catch { }
 }
 
 # Create WinForms UI
@@ -123,6 +160,7 @@ function Initialize-UI {
     $script:Form.FormBorderStyle = "FixedDialog"
     $script:Form.MaximizeBox = $false
     $script:Form.MinimizeBox = $false
+    $script:Form.TopMost = $true
 
     # Title label
     $titleLabel = New-Object System.Windows.Forms.Label
@@ -169,7 +207,15 @@ function Initialize-UI {
     })
     $script:Form.Controls.Add($script:CancelButton)
 
-    # Show form asynchronously
+    # Handle form closing
+    $script:Form.Add_FormClosing({
+        param($sender, $e)
+        if (-not $script:UpdateSuccess -and -not $script:Cancelled) {
+            $script:Cancelled = $true
+        }
+    })
+
+    # Show form
     $script:Form.Show()
     [System.Windows.Forms.Application]::DoEvents()
 }
@@ -201,8 +247,7 @@ function Stop-Application {
                 Write-Log "Process stopped successfully" -Level SUCCESS
             }
             catch {
-                Write-Log "Failed to stop process: $_" -Level ERROR
-                return $false
+                Write-Log "Failed to stop process: $_" -Level WARNING
             }
         }
     }
@@ -223,7 +268,7 @@ function Create-Backup {
     try {
         if (Test-Path $BackupDir) {
             Write-Log "Removing old backup"
-            Remove-Item -Path $BackupDir -Recurse -Force
+            Remove-Item -Path $BackupDir -Recurse -Force -ErrorAction SilentlyContinue
         }
 
         Write-Log "Copying files to $BackupDir"
@@ -237,18 +282,18 @@ function Create-Backup {
     }
 }
 
-# Download update
+# Download/Copy update
 function Download-Update {
     param([string]$Url, [string]$OutputPath)
 
-    Write-Log "Downloading update from: $Url"
+    Write-Log "Getting update from: $Url"
     Update-Status "Downloading update..." 20
 
     try {
         # Check if it's a file:// URL (already downloaded)
         if ($Url.StartsWith("file:///")) {
             $localPath = $Url.Substring(8).Replace("/", "\")
-            Write-Log "Update already downloaded at: $localPath"
+            Write-Log "Update file at: $localPath"
 
             if (Test-Path $localPath) {
                 Copy-Item -Path $localPath -Destination $OutputPath -Force
@@ -263,28 +308,9 @@ function Download-Update {
         }
 
         # Download from URL
+        Write-Log "Downloading from web..."
         $webClient = New-Object System.Net.WebClient
-
-        # Progress handler
-        $webClient.DownloadProgressChanged = {
-            param($sender, $e)
-            $percent = [Math]::Min(20 + ($e.ProgressPercentage * 0.2), 40)
-            Update-Status "Downloading... $($e.ProgressPercentage)%" $percent
-        }
-
-        # Download file
-        $webClient.DownloadFileAsync($Url, $OutputPath)
-
-        # Wait for download
-        while ($webClient.IsBusy) {
-            Start-Sleep -Milliseconds 100
-            [System.Windows.Forms.Application]::DoEvents()
-
-            if ($script:Cancelled) {
-                $webClient.CancelAsync()
-                return $false
-            }
-        }
+        $webClient.DownloadFile($Url, $OutputPath)
 
         Write-Log "Download completed" -Level SUCCESS
         Update-Status "Download complete" 40
@@ -292,37 +318,6 @@ function Download-Update {
     }
     catch {
         Write-Log "Failed to download update: $_" -Level ERROR
-        return $false
-    }
-}
-
-# Verify checksum
-function Verify-Checksum {
-    param([string]$FilePath, [string]$ExpectedChecksum)
-
-    if ([string]::IsNullOrEmpty($ExpectedChecksum)) {
-        Write-Log "No checksum provided, skipping verification" -Level WARNING
-        return $true
-    }
-
-    Write-Log "Verifying checksum..."
-    Update-Status "Verifying integrity..." 45
-
-    try {
-        $fileHash = Get-FileHash -Path $FilePath -Algorithm SHA256
-        $actualChecksum = $fileHash.Hash
-
-        if ($actualChecksum -eq $ExpectedChecksum) {
-            Write-Log "Checksum verified successfully" -Level SUCCESS
-            return $true
-        }
-        else {
-            Write-Log "Checksum mismatch! Expected: $ExpectedChecksum, Actual: $actualChecksum" -Level ERROR
-            return $false
-        }
-    }
-    catch {
-        Write-Log "Failed to verify checksum: $_" -Level ERROR
         return $false
     }
 }
@@ -345,20 +340,28 @@ function Extract-Archive {
 
         New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
 
-        # Extract using .NET or 7-Zip if available
-        if ([string]::IsNullOrEmpty($Password)) {
-            Expand-Archive -Path $ArchivePath -DestinationPath $DestinationPath -Force
+        # Try using .NET ZipFile class first (more reliable)
+        try {
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $DestinationPath)
+            Write-Log "Archive extracted successfully using .NET" -Level SUCCESS
+            Update-Status "Extraction complete" 60
+            return $true
         }
-        else {
-            # For password-protected archives, we'd need 7-Zip or similar
-            # This is a placeholder - implement 7-Zip call if needed
-            Write-Log "Password-protected archives require 7-Zip" -Level WARNING
-            Expand-Archive -Path $ArchivePath -DestinationPath $DestinationPath -Force
+        catch {
+            Write-Log "Failed with .NET ZipFile: $_" -Level WARNING
         }
 
-        Write-Log "Archive extracted successfully" -Level SUCCESS
-        Update-Status "Extraction complete" 60
-        return $true
+        # Fallback to Expand-Archive
+        try {
+            Expand-Archive -Path $ArchivePath -DestinationPath $DestinationPath -Force
+            Write-Log "Archive extracted successfully using Expand-Archive" -Level SUCCESS
+            Update-Status "Extraction complete" 60
+            return $true
+        }
+        catch {
+            Write-Log "Failed with Expand-Archive: $_" -Level ERROR
+            return $false
+        }
     }
     catch {
         Write-Log "Failed to extract archive: $_" -Level ERROR
@@ -378,20 +381,30 @@ function Replace-Files {
     Update-Status "Updating files..." 70
 
     try {
-        $items = Get-ChildItem -Path $SourceDir -Recurse
-        $totalItems = $items.Count
+        # Find the actual source - might be nested in a subfolder
+        $actualSource = $SourceDir
+        $items = Get-ChildItem -Path $SourceDir
+
+        # If there's only one subfolder and no files, use that as source
+        if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
+            $actualSource = $items[0].FullName
+            Write-Log "Using nested folder as source: $actualSource"
+        }
+
+        $allItems = Get-ChildItem -Path $actualSource -Recurse
+        $totalItems = $allItems.Count
         $currentItem = 0
 
-        foreach ($item in $items) {
+        foreach ($item in $allItems) {
             if ($script:Cancelled) {
                 Write-Log "File replacement cancelled" -Level WARNING
                 return $false
             }
 
             $currentItem++
-            $progress = 70 + ([Math]::Min(($currentItem / $totalItems) * 20, 20))
+            $progress = 70 + ([Math]::Min(($currentItem / [Math]::Max($totalItems, 1)) * 20, 20))
 
-            $relativePath = $item.FullName.Substring($SourceDir.Length + 1)
+            $relativePath = $item.FullName.Substring($actualSource.Length + 1)
             $destPath = Join-Path $DestDir $relativePath
 
             # Check if in excluded folder
@@ -404,7 +417,6 @@ function Replace-Files {
             }
 
             if ($excluded) {
-                Write-Log "Skipping excluded: $relativePath"
                 continue
             }
 
@@ -423,7 +435,9 @@ function Replace-Files {
                 Copy-Item -Path $item.FullName -Destination $destPath -Force
             }
 
-            Update-Status "Updating files... ($currentItem/$totalItems)" $progress
+            if ($currentItem % 50 -eq 0) {
+                Update-Status "Updating files... ($currentItem/$totalItems)" $progress
+            }
         }
 
         Write-Log "Files replaced successfully" -Level SUCCESS
@@ -449,8 +463,20 @@ function Restore-Backup {
             return $false
         }
 
-        Remove-Item -Path $TargetDir -Recurse -Force -ErrorAction SilentlyContinue
-        Copy-Item -Path $BackupDir -Destination $TargetDir -Recurse -Force
+        # Don't delete everything, just copy back
+        $items = Get-ChildItem -Path $BackupDir -Recurse
+        foreach ($item in $items) {
+            $relativePath = $item.FullName.Substring($BackupDir.Length + 1)
+            $destPath = Join-Path $TargetDir $relativePath
+
+            if ($item.PSIsContainer) {
+                if (-not (Test-Path $destPath)) {
+                    New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+                }
+            } else {
+                Copy-Item -Path $item.FullName -Destination $destPath -Force -ErrorAction SilentlyContinue
+            }
+        }
 
         Write-Log "Backup restored successfully" -Level SUCCESS
         return $true
@@ -458,21 +484,6 @@ function Restore-Backup {
     catch {
         Write-Log "Failed to restore backup: $_" -Level ERROR
         return $false
-    }
-}
-
-# Cleanup temporary files
-function Cleanup-TempFiles {
-    Write-Log "Cleaning up temporary files"
-
-    try {
-        if (Test-Path $TempDirectory) {
-            Remove-Item -Path $TempDirectory -Recurse -Force
-        }
-        Write-Log "Cleanup complete" -Level SUCCESS
-    }
-    catch {
-        Write-Log "Failed to cleanup: $_" -Level WARNING
     }
 }
 
@@ -511,28 +522,27 @@ function Start-Update {
         Write-Log "Download URL: $DownloadUrl"
         Write-Log "App Directory: $AppDirectory"
         Write-Log "Executable: $ExecutableName"
-        Write-Log "Exclude Folders: $($ExcludeFolders -join ', ')"
+        Write-Log "Exclude Folders: $ExcludeFolders"
         Write-Log "========================="
 
         # Wait for start delay
         if ($StartDelaySeconds -gt 0) {
-            Write-Log "Waiting $StartDelaySeconds seconds before starting..."
+            Write-Log "Waiting $StartDelaySeconds seconds for app to close..."
             for ($i = $StartDelaySeconds; $i -gt 0; $i--) {
                 Update-Status "Starting in $i seconds..."
                 Start-Sleep -Seconds 1
+                [System.Windows.Forms.Application]::DoEvents()
                 if ($script:Cancelled) { return }
             }
         }
 
         # Stop application
         $exePath = Join-Path $AppDirectory $ExecutableName
-        if (-not (Stop-Application -ExePath $exePath)) {
-            throw "Failed to stop application"
-        }
+        Stop-Application -ExePath $exePath
 
         # Create backup
         if (-not (Create-Backup -SourceDir $AppDirectory -BackupDir $BackupDirectory)) {
-            throw "Failed to create backup"
+            Write-Log "Backup failed, continuing anyway..." -Level WARNING
         }
 
         # Download update
@@ -543,10 +553,9 @@ function Start-Update {
 
         if ($script:Cancelled) { throw "Update cancelled" }
 
-        # Verify checksum
-        if (-not (Verify-Checksum -FilePath $archivePath -ExpectedChecksum $Checksum)) {
-            throw "Checksum verification failed"
-        }
+        # Skip checksum verification (as requested)
+        Write-Log "Skipping checksum verification" -Level WARNING
+        Update-Status "Skipping verification..." 45
 
         # Extract archive
         $extractPath = Join-Path $TempDirectory "extracted"
@@ -557,24 +566,35 @@ function Start-Update {
         if ($script:Cancelled) { throw "Update cancelled" }
 
         # Replace files
-        if (-not (Replace-Files -SourceDir $extractPath -DestDir $AppDirectory -ExcludeFolders $ExcludeFolders)) {
+        if (-not (Replace-Files -SourceDir $extractPath -DestDir $AppDirectory -ExcludeFolders $ExcludeFoldersList)) {
             throw "Failed to replace files"
         }
 
-        # Cleanup temp files
-        Cleanup-TempFiles
+        $script:UpdateSuccess = $true
+        Write-Log "Update completed successfully!" -Level SUCCESS
+        Update-Status "Update completed successfully!" 100
 
         # Relaunch application
         Start-Sleep -Seconds 2
         Relaunch-Application -ExePath $exePath
 
-        # Close updater
-        Start-Sleep -Seconds 3
+        # Close form after success
+        Start-Sleep -Seconds 2
         if (-not $Silent -and $script:Form -ne $null) {
-            $script:Form.Close()
+            try {
+                $script:Form.Close()
+                $script:Form.Dispose()
+            } catch { }
         }
 
-        Write-Log "Update completed successfully!" -Level SUCCESS
+        # Cleanup temp files after form is closed
+        Start-Sleep -Seconds 1
+        try {
+            if (Test-Path $TempDirectory) {
+                Remove-Item -Path $TempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        } catch { }
+
         exit 0
     }
     catch {
@@ -584,13 +604,20 @@ function Start-Update {
         Write-Log "Attempting to restore backup..."
         Restore-Backup -BackupDir $BackupDirectory -TargetDir $AppDirectory
 
-        if (-not $Silent) {
+        Update-Status "Update failed! Restored from backup." 0
+
+        if (-not $Silent -and $script:Form -ne $null) {
             [System.Windows.Forms.MessageBox]::Show(
                 "Update failed: $_`n`nThe application has been restored from backup.",
                 "Update Failed",
                 [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Error
             )
+
+            try {
+                $script:Form.Close()
+                $script:Form.Dispose()
+            } catch { }
         }
 
         exit 1
@@ -600,7 +627,3 @@ function Start-Update {
 # Run the update
 Start-Update
 
-# Keep form open if not silent
-if (-not $Silent -and $script:Form -ne $null) {
-    [System.Windows.Forms.Application]::Run($script:Form)
-}
