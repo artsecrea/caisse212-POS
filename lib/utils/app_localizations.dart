@@ -864,6 +864,16 @@ class AppLocalizations {
       'no_active_orders': 'No active orders',
       'add_items': 'Add Items',
       'pay': 'Pay',
+
+      // Table Transfer
+      'transfer_order': 'Transfer Order',
+      'transfer': 'Transfer',
+      'transfer_order_confirm': 'Transfer order from',
+      'to': 'to',
+      'order_transferred_to': 'Order transferred to',
+      'already_on_this_table': 'Order is already on this table',
+      'table_has_order': 'This table already has an order',
+      'current': 'Current',
     },
     'ar': {
       // Common - Arabic
@@ -1716,6 +1726,16 @@ class AppLocalizations {
       'no_active_orders': 'لا توجد طلبات نشطة',
       'add_items': 'إضافة عناصر',
       'pay': 'الدفع',
+
+      // Table Transfer - Arabic
+      'transfer_order': 'نقل الطلب',
+      'transfer': 'نقل',
+      'transfer_order_confirm': 'نقل الطلب من',
+      'to': 'إلى',
+      'order_transferred_to': 'تم نقل الطلب إلى',
+      'already_on_this_table': 'الطلب موجود بالفعل على هذه الطاولة',
+      'table_has_order': 'هذه الطاولة بها طلب بالفعل',
+      'current': 'الحالية',
     },
     'fr': {
       // Common - French
@@ -2570,6 +2590,16 @@ class AppLocalizations {
       'no_active_orders': 'Aucune commande active',
       'add_items': 'Ajouter des articles',
       'pay': 'Payer',
+
+      // Table Transfer - French
+      'transfer_order': 'Transférer la commande',
+      'transfer': 'Transférer',
+      'transfer_order_confirm': 'Transférer la commande de',
+      'to': 'vers',
+      'order_transferred_to': 'Commande transférée vers',
+      'already_on_this_table': 'La commande est déjà sur cette table',
+      'table_has_order': 'Cette table a déjà une commande',
+      'current': 'Actuelle',
     },
   };
 

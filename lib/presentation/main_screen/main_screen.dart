@@ -380,6 +380,33 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       return;
                     }
 
+                    // Handle transfer action
+                    if (action == 'transfer') {
+                      final oldTableId = result['oldTableId'] as int?;
+                      final orderId = currentOrder.orderId;
+
+                      if (oldTableId != null && orderId != null && tableId != null) {
+                        final orderRepo = ref.read(orderRepositoryProvider);
+                        await orderRepo.transferOrderToTable(orderId, oldTableId, tableId);
+
+                        // Update current order state with new table
+                        ref.read(orderProvider.notifier).updateTable(tableId, tableName);
+
+                        // Refresh tables provider
+                        ref.invalidate(areaTablesProvider);
+
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('${l10n.translate('order_transferred_to')} $tableName'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      }
+                      return;
+                    }
+
                     // Handle different actions
                     if (action == 'pay' && result['order'] != null) {
                       // Open payment screen with the order

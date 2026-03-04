@@ -92,7 +92,6 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -172,7 +171,6 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
             minWidth: 1000,
             sortColumnIndex: _sortColumnIndex,
             sortAscending: _sortAscending,
-            headingRowColor: MaterialStateProperty.all(Colors.grey[200]),
             columns: [
               DataColumn2(
                 label: Text(l10n.translate('user_id'), style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -278,7 +276,6 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
         border: Border(top: BorderSide(color: Colors.grey[300]!)),
       ),
       child: Row(

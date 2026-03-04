@@ -41,6 +41,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
     final areasAsync = ref.watch(areasProvider);
     final currentOrder = ref.watch(orderProvider);
     final hasTable = currentOrder.tableId != null;
+    final isSavedOrder = currentOrder.orderId != null;
     final l10n = AppLocalizations.of(context)!;
 
     return Dialog(
@@ -57,7 +58,10 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
             Row(
               children: [
                 Text(
-                  l10n.translate('select_table'),
+                  // Show transfer mode title when saved order with table
+                  hasTable && isSavedOrder
+                      ? l10n.translate('transfer_order')
+                      : l10n.translate('select_table'),
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -65,8 +69,42 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
                   ),
                 ),
                 const Spacer(),
-                // Unselect button - only show if a table is selected
-                if (hasTable)
+                // Show current table info when in transfer mode
+                if (hasTable && isSavedOrder)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.blue[900] : Colors.blue[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isDark ? Colors.blue[700]! : Colors.blue[200]!,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.table_restaurant,
+                            size: 16,
+                            color: isDark ? Colors.blue[300] : Colors.blue[700],
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${l10n.translate('current')}: ${currentOrder.tableName}',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: isDark ? Colors.blue[300] : Colors.blue[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                // Unselect button - only show if a table is selected AND order is NOT saved
+                if (hasTable && !isSavedOrder)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: ElevatedButton.icon(
@@ -616,6 +654,76 @@ Future<void> _handleTableSelection(BuildContext context, WidgetRef ref, db.AreaT
   // Load existing order for this table if any
   final orderRepo = ref.read(orderRepositoryProvider);
   final existingOrder = await orderRepo.getOrderByTable(table.id);
+  final currentOrder = ref.read(orderProvider);
+  final l10n = AppLocalizations.of(context)!;
+
+  // Check if we're in transfer mode (saved order with existing table)
+  final isTransferMode = currentOrder.orderId != null && currentOrder.tableId != null;
+
+  if (isTransferMode) {
+    // Don't allow transferring to the same table
+    if (table.id == currentOrder.tableId) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.translate('already_on_this_table')),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Check if target table has an existing order
+    if (existingOrder != null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.translate('table_has_order')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show confirmation dialog for transfer
+    if (context.mounted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(l10n.translate('transfer_order')),
+          content: Text(
+            '${l10n.translate('transfer_order_confirm')} ${currentOrder.tableName} ${l10n.translate('to')} ${table.name}?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(l10n.translate('cancel')),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              child: Text(l10n.translate('transfer')),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed == true && context.mounted) {
+        Navigator.of(context).pop({
+          'id': table.id,
+          'name': table.name,
+          'action': 'transfer',
+          'oldTableId': currentOrder.tableId,
+        });
+      }
+    }
+    return;
+  }
 
   if (context.mounted) {
     Navigator.of(context).pop({

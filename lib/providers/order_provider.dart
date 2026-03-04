@@ -153,6 +153,11 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = state.copyWith(tableId: tableId, tableName: tableName);
   }
 
+  // Update table for existing order (used for transfer)
+  void updateTable(int? tableId, String? tableName) {
+    state = state.copyWith(tableId: tableId, tableName: tableName);
+  }
+
   void clearTable() {
     state = state.copyWith(
       tableId: null,
@@ -836,6 +841,24 @@ class OrderRepository {
   // Clear table order assignment (set orderId to null)
   Future<void> clearTableOrder(int tableId) async {
     await setTableOrderId(tableId, null);
+  }
+
+  // Transfer order from one table to another
+  Future<void> transferOrderToTable(int orderId, int oldTableId, int newTableId) async {
+    // Clear old table's orderId
+    await clearTableOrder(oldTableId);
+
+    // Set new table's orderId
+    await setTableOrderId(newTableId, orderId);
+
+    // Update order's tableId
+    await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(OrdersCompanion(
+      tableId: Value(newTableId),
+      updatedAt: Value(DateTime.now()),
+    ));
+
+    // Log the transfer
+    await _logService.logOrderUpdated(orderId, 'Order transferred from table $oldTableId to table $newTableId');
   }
 
   // Get all orders with full details including user, products, discounts, TVA, and paid amounts
