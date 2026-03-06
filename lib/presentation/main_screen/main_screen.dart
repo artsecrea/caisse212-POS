@@ -299,469 +299,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  // Number of persons button
-                  if (settings.showPersonsButton)
-                    _buildActionButton(
-                      icon: Icons.people,
-                      label: "${currentOrder.numberOfPersons} ${currentOrder.numberOfPersons == 1 ? l10n.translate('person') : l10n.translate('persons')}",
-                      color: currentOrder.numberOfPersons > 1 ? Colors.blue : null,
-                      onPressed: () async {
-                        final result = await showDialog<int>(
-                          context: context,
-                          builder: (context) => _NumberOfPersonsDialog(
-                            currentNumber: currentOrder.numberOfPersons,
-                          ),
-                        );
-                        if (result != null) {
-                          ref.read(orderProvider.notifier).setNumberOfPersons(result);
-                        }
-                      },
-                    ),
-                  if (settings.showPersonsButton)
-                    const SizedBox(width: 8),
-                  // Order type toggle button
-                  if (settings.showOrderTypeButton)
-                    _buildActionButton(
-                      icon: currentOrder.type == 'DINE_IN' ? Icons.restaurant : Icons.takeout_dining,
-                      label: currentOrder.type == 'DINE_IN' ? l10n.translate('dine_in') : l10n.translate('take_away'),
-                      color: currentOrder.type == 'TAKE_AWAY' ? Colors.orange : Colors.green,
-                      onPressed: () {
-                        final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
-                        ref.read(orderProvider.notifier).setOrderType(newType);
-                      },
-                    ),
-                  if (settings.showOrderTypeButton)
-                    const SizedBox(width: 8),
-                  // Confirm Order button
-                  if (settings.showConfirmOrderButton)
-                    _buildActionButton(
-                      icon: Icons.task_alt,
-                      label: l10n.translate('confirm_order'),
-                      color: Colors.purple,
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const OrderConfirmationScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                  if (settings.showConfirmOrderButton)
-                    const SizedBox(width: 8),
-                  // Table button - conditionally shown
-                  if (settings.showTableButton)
-                    _buildActionButton(
-                      icon: Icons.table_bar_sharp,
-                      label: currentOrder.tableName ?? l10n.translate('table'),
-                      color: currentOrder.tableId != null ? Colors.blue : null,
-                      onPressed: () async {
-
-                  final result = await showDialog<Map<String, dynamic>>(
-                    context: context,
-                    builder: (context) => const TableSelectionDialog(),
-                  );
-
-                  if (result != null && context.mounted) {
-                    final action = result['action'];
-                    final existingOrder = result['existingOrder'];
-                    final tableId = result['id'];
-                    final tableName = result['name'];
-
-                    // Handle unselect action
-                    if (action == 'unselect') {
-                      ref.read(orderProvider.notifier).clearTable();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(l10n.translate('table_unselected')),
-                          backgroundColor: Colors.orange,
-                        ),
-                      );
-                      return;
-                    }
-
-                    // Handle transfer action
-                    if (action == 'transfer') {
-                      final oldTableId = result['oldTableId'] as int?;
-                      final orderId = currentOrder.orderId;
-
-                      if (oldTableId != null && orderId != null && tableId != null) {
-                        final orderRepo = ref.read(orderRepositoryProvider);
-                        await orderRepo.transferOrderToTable(orderId, oldTableId, tableId);
-
-                        // Update current order state with new table
-                        ref.read(orderProvider.notifier).updateTable(tableId, tableName);
-
-                        // Refresh tables provider
-                        ref.invalidate(areaTablesProvider);
-
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('${l10n.translate('order_transferred_to')} $tableName'),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                        }
-                      }
-                      return;
-                    }
-
-                    // Handle different actions
-                    if (action == 'pay' && result['order'] != null) {
-                      // Open payment screen with the order
-                      final order = result['order'];
-                      final paymentResult = await showDialog<bool>(
-                        context: context,
-                        builder: (context) => PaymentScreen(order: order),
-                      );
-
-                      if (paymentResult == true && context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(l10n.translate('payment_successful')),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      }
-                      return;
-                    }
-
-                    if (action == 'cleared') {
-                      // Table was cleared
-                      final clearedTableName = result['tableName'];
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('$clearedTableName ${l10n.translate('table_cleared')}'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                      return;
-                    }
-
-                    if (action == 'addItems') {
-                      // Add items to existing order
-                      if (existingOrder != null) {
-                        ref.read(orderProvider.notifier).loadOrder(existingOrder);
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Adding items to $tableName order'),
-                              backgroundColor: Colors.blue,
-                            ),
-                          );
-                        }
-                      }
-                      return;
-                    }
-
-                    if (existingOrder != null) {
-                      // No current items, just load existing order
-                      ref.read(orderProvider.notifier).loadOrder(existingOrder);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('${l10n.translate('order')} ${l10n.translate('for')} $tableName'),
-                            backgroundColor: Colors.blue,
-                          ),
-                        );
-                      }
-                    } else {
-                      // No existing order, just set the table
-                      ref.read(orderProvider.notifier).setTable(tableId, tableName);
-                    }
-                  }
-                },),
-                  const SizedBox(width: 8),
-                  // Customer - Protected by permission and settings
-                  if (settings.showCustomerButton && ref.read(permissionServiceProvider).hasPermission(Permissions.customerSet))
-                    _buildActionButton(
-                      icon: Icons.person,
-                      label: currentOrder.customerName ?? l10n.translate('customer'),
-                      color: currentOrder.customerId != null ? Colors.green : null,
-                      onPressed: () async {
-                      final result =
-                      await showDialog<Map<String, dynamic>>(
-                        context: context,
-                        builder: (context) =>
-                        const CustomerSelectionDialog(),
-                      );
-                      if (result != null) {
-                        if (result['id'] == null) {
-                          // Unselect customer
-                          ref.read(orderProvider.notifier).clearCustomer();
-                        } else {
-                          ref
-                              .read(orderProvider.notifier)
-                              .setCustomer(result['id'], result['name']);
-                        }
-                      }
-                    },),
-                  if (settings.showCustomerButton && ref.read(permissionServiceProvider).hasPermission(Permissions.customerSet))
-                    const SizedBox(width: 8),
-                  // Commercial - Protected by permission and settings
-                  if (settings.showCommercialButton && ref.read(permissionServiceProvider).hasPermission(Permissions.commercialSet))
-                    _buildActionButton(
-                      icon: Icons.badge,
-                      label: currentOrder.commercialName ?? l10n.translate('commercial'),
-                      color: currentOrder.commercialId != null ? Colors.purple : null,
-                      onPressed:() async {
-                      final result =
-                      await showDialog<Map<String, dynamic>>(
-                        context: context,
-                        builder: (context) =>
-                        const CommercialSelectionDialog(),
-                    );
-                    if (result != null) {
-                      if (result['id'] == null) {
-                        // Unselect commercial
-                        ref.read(orderProvider.notifier).clearCommercial();
-                      } else {
-                        ref
-                            .read(orderProvider.notifier)
-                            .setCommercial(result['id'], result['name']);
-                      }
-                    }
-                  },),
-                  if (settings.showCommercialButton && ref.read(permissionServiceProvider).hasPermission(Permissions.commercialSet))
-                    const SizedBox(width: 8),
-                  // Coupon button - conditionally shown
-                  if (settings.showCouponButton)
-                    _buildActionButton(icon: Icons.discount, label: l10n.translate('coupon'), onPressed: (){}),
-                  if (settings.showCouponButton)
-                    const SizedBox(width: 8),
-                  // Manual Discount - Protected by permission and settings
-                  if (settings.showDiscountButton && ref.read(permissionServiceProvider).hasPermission(Permissions.manualDiscount))
-                    _buildActionButton(
-                      icon: Icons.percent,
-                      label: currentOrder.discountPercentage > 0
-                        ? "${l10n.translate('discount')} ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
-                        : l10n.translate('manual_discount'),
-                      color: currentOrder.discountPercentage > 0 ? Colors.orange : null,
-                      onPressed: currentOrder.hasPaidItems
-                        ? null  // Disable if any item is paid
-                        : () async {
-                        final result = await showDialog<double>(
-                          context: context,
-                          builder: (context) => ManualDiscountDialog(
-                            currentPercentage: currentOrder.discountPercentage,
-                          ),
-                        );
-                        if (result != null) {
-                          ref.read(orderProvider.notifier).setDiscountPercentage(result);
-                        }
-                      },
-                    ),
-                  if (settings.showDiscountButton && ref.read(permissionServiceProvider).hasPermission(Permissions.manualDiscount))
-                    const SizedBox(width: 8),
-                  // Print - Protected by permission and settings
-                  if (settings.showPrintButton && ref.read(permissionServiceProvider).hasPermission(Permissions.printing))
-                    _buildActionButton(
-                      icon: Icons.print,
-                      label: l10n.translate('print'),
-                      onPressed: currentOrder.items.isEmpty
-                          ? null
-                          : () async {
-                      final currentUser = ref.read(currentUserProvider);
-                    final orderRepo = ref.read(orderRepositoryProvider);
-                    final settings = ref.read(settingsProvider);
-
-                    // Save order first if not saved
-                    int? orderId = currentOrder.orderId;
-                    if (!currentOrder.isSaved() && currentUser != null) {
-                      try {
-                        orderId = await orderRepo.saveOrder(
-                          currentOrder,
-                          currentUser.id,
-                          status: settings.defaultOrderStatus,
-                        );
-
-                        if (currentOrder.tableId != null) {
-                          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
-                        }
-
-                        // Reload the order
-                        final reloadedOrder = await orderRepo.getOrderById(orderId);
-                        if (reloadedOrder != null) {
-                          ref.read(orderProvider.notifier).loadOrder(reloadedOrder);
-                        }
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Error saving order: $e'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                        return;
-                      }
-                    }
-
-                    // Show print options dialog
-                    if (context.mounted) {
-                      final orderToPrint = currentOrder.isSaved()
-                          ? currentOrder
-                          : (orderId != null ? await orderRepo.getOrderById(orderId) : null);
-
-                      if (orderToPrint != null) {
-                        await showPrintOptionsDialog(
-                          context,
-                          order: orderToPrint,
-                          cashierName: currentUser?.firstName,
-                          storeName: "", // TODO: Get from settings
-                        );
-                      }
-                    }
-                  },
-                ),
-                if (settings.showPrintButton && ref.read(permissionServiceProvider).hasPermission(Permissions.printing))
-                    const SizedBox(width: 8),
-                // Daily Summary Report button
-                if (settings.showDailySummaryButton)
-                  _buildActionButton(
-                    icon: Icons.summarize,
-                    label: l10n.translate('daily_summary'),
-                    color: Colors.teal,
-                    onPressed: () {
-                      showDialog(
-                        context: context,
-                        builder: (context) => const DailySummaryDialog(),
-                      );
-                    },
-                  ),
-                if (settings.showDailySummaryButton)
-                  const SizedBox(width: 8),
-                // _buildActionButton(
-                //   icon: Icons.pause_circle_outline,
-                //   label: 'Hold',
-                //   onPressed: currentOrder.items.isEmpty
-                //       ? null
-                //       : () async {
-                //     final orderRepo = ref.read(orderRepositoryProvider);
-                //     final currentUser = ref.read(currentUserProvider);
-                //
-                //     if (currentUser == null) return;
-                //
-                //     try {
-                //       await orderRepo.holdOrder(currentOrder, currentUser.id);
-                //       ref.read(orderProvider.notifier).clearOrder();
-                //
-                //       if (context.mounted) {
-                //         ScaffoldMessenger.of(context).showSnackBar(
-                //           const SnackBar(
-                //             content: Text('Order held successfully'),
-                //             backgroundColor: Colors.orange,
-                //           ),
-                //         );
-                //       }
-                //     } catch (e) {
-                //       if (context.mounted) {
-                //         ScaffoldMessenger.of(context).showSnackBar(
-                //           SnackBar(
-                //             content: Text('$e'),
-                //             backgroundColor: Colors.red,
-                //           ),
-                //         );
-                //       }
-                //     }
-                //   },
-                // ),
-                // Pay button - Single click: direct payment, Long press: show payment dialog
-                if (settings.showPayButton)
-                  _buildActionButton(
-                    icon: Icons.payment,
-                    label: l10n.translate('pay'),
-                    color: Colors.green[700],
-                    onPressed: currentOrder.items.isEmpty ? null : () => _payDirectly(),
-                    onLongPress: currentOrder.items.isEmpty ? null : () => _showPaymentDialog(),
-                  ),
-                _buildActionButton(
-                  icon: Icons.check_circle,
-                  label: l10n.translate('proceed'),
-                  isPrimary: true,
-                  onPressed: currentOrder.items.isEmpty
-                      ? null
-                      : () async {
-                    final orderRepo = ref.read(orderRepositoryProvider);
-                    final currentUser = ref.read(currentUserProvider);
-                    final settings = ref.read(settingsProvider);
-                    final printingService = ref.read(printingServiceProvider);
-
-                    if (currentUser == null) return;
-
-                    try {
-                      int orderId;
-                      if (currentOrder.isSaved()) {
-                        _logger.error("order updated");
-                        await orderRepo.updateOrder(currentOrder);
-                        orderId = currentOrder.orderId!;
-                      } else {
-                        _logger.error("new order created");
-                        orderId = await orderRepo.saveOrder(
-                          currentOrder,
-                          currentUser.id,
-                          status: settings.defaultOrderStatus, // Use default status from settings
-                        );
-
-                        if (currentOrder.tableId != null) {
-                          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
-                        }
-                      }
-
-                      // Reload the order from database to show it with updated IDs and states
-                      final reloadedOrder = await orderRepo.getOrderById(orderId);
-
-                      // Print order receipt and KDS ticket
-                      if (reloadedOrder != null) {
-                        try {
-                          // Print receipt
-                          await printingService.printOrderReceipt(
-                            order: reloadedOrder,
-                            cashierName: currentUser.firstName,
-                            storeName: '#',
-                          );
-
-                          // Print KDS ticket if enabled
-                          if (printingService.config.kdsEnabled) {
-                            await printingService.printKdsTicket(
-                              order: reloadedOrder,
-                              cashierName: currentUser.firstName,
-                            );
-                          }
-                        } catch (printError) {
-                          _logger.error('Print error on proceed: $printError');
-                          // Don't fail if printing fails
-                        }
-
-                        ref.read(orderProvider.notifier).clearOrder();
-                      }
-
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Order saved successfully'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Error: $e'),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
-                    }
-                  },
-                ),
-              ],
-            ),
+                children: _buildOrderedActionButtons(context, ref, currentOrder, settings, l10n),
+              ),
             ),
           ),
-
         ],
       ),
       ),
@@ -819,6 +360,480 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         ),
       ),
     );
+  }
+
+  /// Build action buttons in the order specified by settings.buttonOrder
+  List<Widget> _buildOrderedActionButtons(
+    BuildContext context,
+    WidgetRef ref,
+    dynamic currentOrder,
+    AppSettings settings,
+    AppLocalizations l10n,
+  ) {
+    final List<Widget> buttons = [];
+    final permissionService = ref.read(permissionServiceProvider);
+
+    // Check if table is selected - if so, order type is locked to DINE_IN
+    final bool isTableSelected = currentOrder.tableId != null;
+
+    // Ensure order type is DINE_IN when table is selected
+    if (isTableSelected && currentOrder.type != 'DINE_IN') {
+      // Auto-set to DINE_IN when table is selected
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(orderProvider.notifier).setOrderType('DINE_IN');
+      });
+    }
+
+    for (final buttonKey in settings.buttonOrder) {
+      Widget? button;
+      bool shouldShow = true;
+
+      switch (buttonKey) {
+        case 'persons':
+          shouldShow = settings.showPersonsButton;
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.people,
+              label: "${currentOrder.numberOfPersons} ${currentOrder.numberOfPersons == 1 ? l10n.translate('person') : l10n.translate('persons')}",
+              color: currentOrder.numberOfPersons > 1 ? Colors.blue : null,
+              onPressed: () async {
+                final result = await showDialog<int>(
+                  context: context,
+                  builder: (context) => _NumberOfPersonsDialog(
+                    currentNumber: currentOrder.numberOfPersons,
+                  ),
+                );
+                if (result != null) {
+                  ref.read(orderProvider.notifier).setNumberOfPersons(result);
+                }
+              },
+            );
+          }
+          break;
+
+        case 'orderType':
+          shouldShow = settings.showOrderTypeButton;
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: currentOrder.type == 'DINE_IN' ? Icons.restaurant : Icons.takeout_dining,
+              label: currentOrder.type == 'DINE_IN' ? l10n.translate('dine_in') : l10n.translate('take_away'),
+              color: isTableSelected
+                  ? Colors.grey // Disabled look when table is selected
+                  : (currentOrder.type == 'TAKE_AWAY' ? Colors.orange : Colors.green),
+              onPressed: isTableSelected
+                  ? null // Disable when table is selected
+                  : () {
+                      final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
+                      ref.read(orderProvider.notifier).setOrderType(newType);
+                    },
+            );
+          }
+          break;
+
+        case 'confirmOrder':
+          shouldShow = settings.showConfirmOrderButton;
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.task_alt,
+              label: l10n.translate('confirm_order'),
+              color: Colors.purple,
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const OrderConfirmationScreen(),
+                  ),
+                );
+              },
+            );
+          }
+          break;
+
+        case 'table':
+          shouldShow = settings.showTableButton;
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.table_bar_sharp,
+              label: currentOrder.tableName ?? l10n.translate('table'),
+              color: currentOrder.tableId != null ? Colors.blue : null,
+              onPressed: () async {
+                final result = await showDialog<Map<String, dynamic>>(
+                  context: context,
+                  builder: (context) => const TableSelectionDialog(),
+                );
+
+                if (result != null && context.mounted) {
+                  final action = result['action'];
+                  final existingOrder = result['existingOrder'];
+                  final tableId = result['id'];
+                  final tableName = result['name'];
+
+                  // Handle transfer action
+                  if (action == 'transfer') {
+                    final oldTableId = result['oldTableId'] as int?;
+                    final orderId = currentOrder.orderId;
+
+                    if (oldTableId != null && orderId != null && tableId != null) {
+                      final orderRepo = ref.read(orderRepositoryProvider);
+                      await orderRepo.transferOrderToTable(orderId, oldTableId, tableId);
+
+                      // Update current order state with new table
+                      ref.read(orderProvider.notifier).updateTable(tableId, tableName);
+
+                      // Refresh tables provider
+                      ref.invalidate(areaTablesProvider);
+
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('${l10n.translate('order_transferred_to')} $tableName'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    }
+                    return;
+                  }
+
+                  // Handle different actions
+                  if (action == 'pay' && result['order'] != null) {
+                    final order = result['order'];
+                    final paymentResult = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => PaymentScreen(order: order),
+                    );
+
+                    if (paymentResult == true && context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(l10n.translate('payment_successful')),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                    return;
+                  }
+
+                  if (action == 'cleared') {
+                    final clearedTableName = result['tableName'];
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('$clearedTableName ${l10n.translate('table_cleared')}'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    return;
+                  }
+
+                  if (action == 'addItems') {
+                    if (existingOrder != null) {
+                      ref.read(orderProvider.notifier).loadOrder(existingOrder);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Adding items to $tableName order'),
+                            backgroundColor: Colors.blue,
+                          ),
+                        );
+                      }
+                    }
+                    return;
+                  }
+
+                  if (existingOrder != null) {
+                    ref.read(orderProvider.notifier).loadOrder(existingOrder);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('${l10n.translate('order')} ${l10n.translate('for')} $tableName'),
+                          backgroundColor: Colors.blue,
+                        ),
+                      );
+                    }
+                  } else {
+                    // Set the table and auto-set order type to DINE_IN
+                    ref.read(orderProvider.notifier).setTable(tableId, tableName);
+                    ref.read(orderProvider.notifier).setOrderType('DINE_IN');
+                  }
+                }
+              },
+            );
+          }
+          break;
+
+        case 'customer':
+          shouldShow = settings.showCustomerButton &&
+                       permissionService.hasPermission(Permissions.customerSet);
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.person,
+              label: currentOrder.customerName ?? l10n.translate('customer'),
+              color: currentOrder.customerId != null ? Colors.green : null,
+              onPressed: () async {
+                final result = await showDialog<Map<String, dynamic>>(
+                  context: context,
+                  builder: (context) => const CustomerSelectionDialog(),
+                );
+                if (result != null) {
+                  if (result['id'] == null) {
+                    ref.read(orderProvider.notifier).clearCustomer();
+                  } else {
+                    ref.read(orderProvider.notifier).setCustomer(result['id'], result['name']);
+                  }
+                }
+              },
+            );
+          }
+          break;
+
+        case 'commercial':
+          shouldShow = settings.showCommercialButton &&
+                       permissionService.hasPermission(Permissions.commercialSet);
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.badge,
+              label: currentOrder.commercialName ?? l10n.translate('commercial'),
+              color: currentOrder.commercialId != null ? Colors.purple : null,
+              onPressed: () async {
+                final result = await showDialog<Map<String, dynamic>>(
+                  context: context,
+                  builder: (context) => const CommercialSelectionDialog(),
+                );
+                if (result != null) {
+                  if (result['id'] == null) {
+                    ref.read(orderProvider.notifier).clearCommercial();
+                  } else {
+                    ref.read(orderProvider.notifier).setCommercial(result['id'], result['name']);
+                  }
+                }
+              },
+            );
+          }
+          break;
+
+        case 'coupon':
+          shouldShow = settings.showCouponButton;
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.discount,
+              label: l10n.translate('coupon'),
+              onPressed: () {},
+            );
+          }
+          break;
+
+        case 'discount':
+          shouldShow = settings.showDiscountButton &&
+                       permissionService.hasPermission(Permissions.manualDiscount);
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.percent,
+              label: currentOrder.discountPercentage > 0
+                  ? "${l10n.translate('discount')} ${currentOrder.discountPercentage.toStringAsFixed(0)}%"
+                  : l10n.translate('manual_discount'),
+              color: currentOrder.discountPercentage > 0 ? Colors.orange : null,
+              onPressed: currentOrder.hasPaidItems
+                  ? null
+                  : () async {
+                      final result = await showDialog<double>(
+                        context: context,
+                        builder: (context) => ManualDiscountDialog(
+                          currentPercentage: currentOrder.discountPercentage,
+                        ),
+                      );
+                      if (result != null) {
+                        ref.read(orderProvider.notifier).setDiscountPercentage(result);
+                      }
+                    },
+            );
+          }
+          break;
+
+        case 'print':
+          shouldShow = settings.showPrintButton &&
+                       permissionService.hasPermission(Permissions.printing);
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.print,
+              label: l10n.translate('print'),
+              onPressed: currentOrder.items.isEmpty
+                  ? null
+                  : () async {
+                      final currentUser = ref.read(currentUserProvider);
+                      final orderRepo = ref.read(orderRepositoryProvider);
+                      final settings = ref.read(settingsProvider);
+
+                      int? orderId = currentOrder.orderId;
+                      if (!currentOrder.isSaved() && currentUser != null) {
+                        try {
+                          orderId = await orderRepo.saveOrder(
+                            currentOrder,
+                            currentUser.id,
+                            status: settings.defaultOrderStatus,
+                          );
+
+                          if (currentOrder.tableId != null) {
+                            await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
+                          }
+
+                          final reloadedOrder = await orderRepo.getOrderById(orderId);
+                          if (reloadedOrder != null) {
+                            ref.read(orderProvider.notifier).loadOrder(reloadedOrder);
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error saving order: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                          return;
+                        }
+                      }
+
+                      if (context.mounted) {
+                        final orderToPrint = currentOrder.isSaved()
+                            ? currentOrder
+                            : (orderId != null ? await orderRepo.getOrderById(orderId) : null);
+
+                        if (orderToPrint != null) {
+                          await showPrintOptionsDialog(
+                            context,
+                            order: orderToPrint,
+                            cashierName: currentUser?.firstName,
+                            storeName: "",
+                          );
+                        }
+                      }
+                    },
+            );
+          }
+          break;
+
+        case 'dailySummary':
+          shouldShow = settings.showDailySummaryButton;
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.summarize,
+              label: l10n.translate('daily_summary'),
+              color: Colors.teal,
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (context) => const DailySummaryDialog(),
+                );
+              },
+            );
+          }
+          break;
+
+        case 'pay':
+          shouldShow = settings.showPayButton;
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.payment,
+              label: l10n.translate('pay'),
+              color: Colors.green[700],
+              onPressed: currentOrder.items.isEmpty ? null : () => _payDirectly(),
+              onLongPress: currentOrder.items.isEmpty ? null : () => _showPaymentDialog(),
+            );
+          }
+          break;
+
+        case 'proceed':
+          // Proceed button is always shown (primary button)
+          button = _buildActionButton(
+            icon: Icons.check_circle,
+            label: l10n.translate('proceed'),
+            isPrimary: true,
+            onPressed: currentOrder.items.isEmpty
+                ? null
+                : () async {
+                    final orderRepo = ref.read(orderRepositoryProvider);
+                    final currentUser = ref.read(currentUserProvider);
+                    final settings = ref.read(settingsProvider);
+                    final printingService = ref.read(printingServiceProvider);
+
+                    if (currentUser == null) return;
+
+                    try {
+                      int orderId;
+                      if (currentOrder.isSaved()) {
+                        _logger.error("order updated");
+                        await orderRepo.updateOrder(currentOrder);
+                        orderId = currentOrder.orderId!;
+                      } else {
+                        _logger.error("new order created");
+                        orderId = await orderRepo.saveOrder(
+                          currentOrder,
+                          currentUser.id,
+                          status: settings.defaultOrderStatus,
+                        );
+
+                        if (currentOrder.tableId != null) {
+                          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
+                        }
+                      }
+
+                      final reloadedOrder = await orderRepo.getOrderById(orderId);
+
+                      if (reloadedOrder != null) {
+                        try {
+                          await printingService.printOrderReceipt(
+                            order: reloadedOrder,
+                            cashierName: currentUser.firstName,
+                            storeName: '#',
+                          );
+
+                          if (printingService.config.kdsEnabled) {
+                            await printingService.printKdsTicket(
+                              order: reloadedOrder,
+                              cashierName: currentUser.firstName,
+                            );
+                          }
+                        } catch (printError) {
+                          _logger.error('Print error on proceed: $printError');
+                        }
+
+                        ref.read(orderProvider.notifier).clearOrder();
+                      }
+
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Order saved successfully'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error: $e'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    }
+                  },
+          );
+          break;
+      }
+
+      if (button != null && shouldShow) {
+        buttons.add(button);
+        buttons.add(const SizedBox(width: 8));
+      }
+    }
+
+    // Remove trailing SizedBox if exists
+    if (buttons.isNotEmpty && buttons.last is SizedBox) {
+      buttons.removeLast();
+    }
+
+    return buttons;
   }
 
   /// Pay directly with a single ticket (no dialog)
@@ -904,7 +919,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
         final itemsForPrint = reloadedOrder.items.map((item) {
           return {
-            'name': item.productName,
+            'name': item.displayName,
             'quantity': item.quantity,
             'price': item.totalPrice,
             'components': item.components.map((c) => {'name': c.name, 'quantity': c.quantity}).toList(),

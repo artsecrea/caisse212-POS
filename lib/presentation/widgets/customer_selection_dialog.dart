@@ -223,76 +223,374 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
   }
 
   Future<void> _showAddCustomerDialog(BuildContext context, AppLocalizations l10n) async {
-    final firstNameController = TextEditingController();
-    final lastNameController = TextEditingController();
-    final phoneController = TextEditingController();
-    final emailController = TextEditingController();
-
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.translate('add_new_customer')),
-        content: SingleChildScrollView(
+      builder: (context) => _AddCustomerDialog(database: ref.read(databaseProvider)),
+    );
+  }
+}
+
+// Enhanced Add Customer Dialog with better validation and UX
+class _AddCustomerDialog extends StatefulWidget {
+  final AppDatabase database;
+
+  const _AddCustomerDialog({required this.database});
+
+  @override
+  State<_AddCustomerDialog> createState() => _AddCustomerDialogState();
+}
+
+class _AddCustomerDialogState extends State<_AddCustomerDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _firstNameFocus = FocusNode();
+  bool _isLoading = false;
+  bool _autoValidate = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-focus on first field when dialog opens
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _firstNameFocus.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _phoneController.dispose();
+    _emailController.dispose();
+    _firstNameFocus.dispose();
+    super.dispose();
+  }
+
+  String? _validateEmail(String? value) {
+    if (value == null || value.isEmpty) return null; // Email is optional
+
+    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+    if (!emailRegex.hasMatch(value)) {
+      final l10n = AppLocalizations.of(context)!;
+      return l10n.translate('invalid_email_format');
+    }
+    return null;
+  }
+
+  String? _validatePhone(String? value) {
+    if (value == null || value.isEmpty) return null; // Phone is optional
+
+    // Remove spaces and dashes for validation
+    final cleanPhone = value.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+    if (cleanPhone.length < 8) {
+      final l10n = AppLocalizations.of(context)!;
+      return l10n.translate('phone_too_short');
+    }
+    return null;
+  }
+
+  Future<void> _handleSubmit() async {
+    setState(() => _autoValidate = true);
+
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final customerId = await widget.database.into(widget.database.customers).insert(
+        CustomersCompanion.insert(
+          firstName: _firstNameController.text.trim(),
+          lastName: _lastNameController.text.trim(),
+          phone: Value(_phoneController.text.trim().isEmpty ? null : _phoneController.text.trim()),
+          email: Value(_emailController.text.trim().isEmpty ? null : _emailController.text.trim()),
+          isSynced: const Value(false),
+        ),
+      );
+
+      if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        Navigator.of(context).pop();
+
+        // Show success message with customer name
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${l10n.translate('customer_added_successfully')}: ${_firstNameController.text} ${_lastNameController.text}',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+
+      if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${l10n.translate('error')}: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Container(
+        width: 500,
+        constraints: const BoxConstraints(maxHeight: 650),
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _formKey,
+          autovalidateMode: _autoValidate ? AutovalidateMode.onUserInteraction : AutovalidateMode.disabled,
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextField(
-                controller: firstNameController,
-                decoration: InputDecoration(labelText: '${l10n.translate('first_name')} *'),
+              // Header
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.person_add,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      l10n.translate('add_new_customer'),
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
               ),
-              TextField(
-                controller: lastNameController,
-                decoration: InputDecoration(labelText: '${l10n.translate('last_name')} *'),
+              const SizedBox(height: 24),
+
+              // Form fields
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Personal Information Section
+                      Text(
+                        l10n.translate('personal_information'),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // First Name
+                      TextFormField(
+                        controller: _firstNameController,
+                        focusNode: _firstNameFocus,
+                        enabled: !_isLoading,
+                        decoration: InputDecoration(
+                          labelText: '${l10n.translate('first_name')} *',
+                          hintText: l10n.translate('enter_first_name'),
+                          prefixIcon: const Icon(Icons.person_outline),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          filled: true,
+                          fillColor: Theme.of(context).colorScheme.surface,
+                        ),
+                        textCapitalization: TextCapitalization.words,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return l10n.translate('first_name_required');
+                          }
+                          if (value.trim().length < 2) {
+                            return l10n.translate('name_too_short');
+                          }
+                          return null;
+                        },
+                        onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Last Name
+                      TextFormField(
+                        controller: _lastNameController,
+                        enabled: !_isLoading,
+                        decoration: InputDecoration(
+                          labelText: '${l10n.translate('last_name')} *',
+                          hintText: l10n.translate('enter_last_name'),
+                          prefixIcon: const Icon(Icons.person_outline),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          filled: true,
+                          fillColor: Theme.of(context).colorScheme.surface,
+                        ),
+                        textCapitalization: TextCapitalization.words,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return l10n.translate('last_name_required');
+                          }
+                          if (value.trim().length < 2) {
+                            return l10n.translate('name_too_short');
+                          }
+                          return null;
+                        },
+                        onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Contact Information Section
+                      Text(
+                        l10n.translate('contact_information'),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Phone
+                      TextFormField(
+                        controller: _phoneController,
+                        enabled: !_isLoading,
+                        decoration: InputDecoration(
+                          labelText: l10n.translate('phone'),
+                          hintText: l10n.translate('enter_phone_number'),
+                          helperText: l10n.translate('optional_field'),
+                          prefixIcon: const Icon(Icons.phone_outlined),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          filled: true,
+                          fillColor: Theme.of(context).colorScheme.surface,
+                        ),
+                        keyboardType: TextInputType.phone,
+                        validator: _validatePhone,
+                        onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Email
+                      TextFormField(
+                        controller: _emailController,
+                        enabled: !_isLoading,
+                        decoration: InputDecoration(
+                          labelText: l10n.translate('email'),
+                          hintText: l10n.translate('enter_email_address'),
+                          helperText: l10n.translate('optional_field'),
+                          prefixIcon: const Icon(Icons.email_outlined),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          filled: true,
+                          fillColor: Theme.of(context).colorScheme.surface,
+                        ),
+                        keyboardType: TextInputType.emailAddress,
+                        validator: _validateEmail,
+                        onFieldSubmitted: (_) => _handleSubmit(),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Required fields note
+                      Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 16, color: Colors.grey[600]),
+                          const SizedBox(width: 4),
+                          Text(
+                            '* ${l10n.translate('required_fields')}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              TextField(
-                controller: phoneController,
-                decoration: InputDecoration(labelText: l10n.translate('phone')),
-                keyboardType: TextInputType.phone,
-              ),
-              TextField(
-                controller: emailController,
-                decoration: InputDecoration(labelText: l10n.translate('email')),
-                keyboardType: TextInputType.emailAddress,
+              const SizedBox(height: 24),
+
+              // Action buttons
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                      label: Text(l10n.translate('cancel')),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton.icon(
+                      onPressed: _isLoading ? null : _handleSubmit,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Icon(Icons.person_add),
+                      label: Text(
+                        _isLoading ? l10n.translate('adding') : l10n.translate('add_customer'),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            style: AppButtonStyles.textButtonStyle(isLarge: true),
-            child: Text(l10n.translate('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (firstNameController.text.isEmpty || lastNameController.text.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(l10n.translate('please_fill_required_fields'))),
-                );
-                return;
-              }
-
-              final database = ref.read(databaseProvider);
-              await database.into(database.customers).insert(
-                    CustomersCompanion.insert(
-                      firstName: firstNameController.text,
-                      lastName: lastNameController.text,
-                      phone: Value(phoneController.text.isEmpty ? null : phoneController.text),
-                      email: Value(emailController.text.isEmpty ? null : emailController.text),
-                      isSynced: const Value(false), // New local customer, needs to be synced
-                  ));
-
-              if (context.mounted) {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(l10n.translate('customer_added_successfully'))),
-                );
-              }
-            },
-            style: AppButtonStyles.elevatedButtonStyle(isLarge: true),
-            child: Text(l10n.translate('add')),
-          ),
-        ],
       ),
     );
   }

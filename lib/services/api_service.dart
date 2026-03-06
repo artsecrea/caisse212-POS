@@ -363,6 +363,36 @@ class ApiService {
     }
   }
 
+  /// Fetch all product variants from server
+  Future<List<Map<String, dynamic>>> fetchVariants() async {
+    try {
+      final response = await _dio.get('/pos/variants');
+      if (response.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(response.data);
+      }
+      throw Exception('Failed to fetch variants');
+    } on DioException catch (e) {
+      throw Exception('Network error: ${e.message ?? 'Failed to fetch variants. Check connection.'}');
+    } catch (e) {
+      throw Exception('Error fetching variants: ${e.toString()}');
+    }
+  }
+
+  /// Fetch variants for a specific product
+  Future<List<Map<String, dynamic>>> fetchProductVariants(int productId) async {
+    try {
+      final response = await _dio.get('/pos/products/$productId/variants');
+      if (response.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(response.data);
+      }
+      throw Exception('Failed to fetch product variants');
+    } on DioException catch (e) {
+      throw Exception('Network error: ${e.message ?? 'Failed to fetch product variants. Check connection.'}');
+    } catch (e) {
+      throw Exception('Error fetching product variants: ${e.toString()}');
+    }
+  }
+
   /// Fetch areas from server
   Future<List<Map<String, dynamic>>> fetchAreas() async {
     try {

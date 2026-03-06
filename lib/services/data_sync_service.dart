@@ -22,15 +22,18 @@ class DataSyncService {
   /// Clear only master data (not transactional data like orders, tickets, sessions)
   Future<void> clearMasterData() async {
     // Only clear reference/master data, preserve transactional data
+    // Delete in reverse order of dependencies to avoid foreign key issues
     await _database.delete(_database.kDSs).go();
     await _database.delete(_database.kiosks).go();
-    await _database.delete(_database.productComponents).go();
-    await _database.delete(_database.componentGroups).go();
-    await _database.delete(_database.components).go();
     await _database.delete(_database.areaTables).go();
     await _database.delete(_database.areas).go();
-    await _database.delete(_database.stations).go();
+    await _database.delete(_database.productComponents).go();
+    await _database.delete(_database.variantAttributeValues).go();
+    await _database.delete(_database.productVariants).go();
     await _database.delete(_database.products).go();
+    await _database.delete(_database.components).go();
+    await _database.delete(_database.componentGroups).go();
+    await _database.delete(_database.stations).go();
     await _database.delete(_database.categories).go();
     await _database.delete(_database.users).go();
   }
@@ -78,52 +81,59 @@ class DataSyncService {
   /// Sync all data from the server
   Future<void> syncAllData({int? dataRetentionDays}) async {
     try {
-      // Clear only master data (keep transactional data like orders, tickets)
-      onProgress?.call('Clearing master data...', 0.0);
-      await clearMasterData();
+      // Wrap entire sync in a transaction so it's atomic - all or nothing
+      await _database.transaction(() async {
+        // Clear only master data (keep transactional data like orders, tickets)
+        onProgress?.call('Clearing master data...', 0.0);
+        await clearMasterData();
 
-      // Optionally clear old synced data based on retention period
-      if (dataRetentionDays != null && dataRetentionDays > 0) {
-        onProgress?.call('Clearing old synced data...', 0.05);
-        await clearOldSyncedData(dataRetentionDays);
-      }
+        // Optionally clear old synced data based on retention period
+        if (dataRetentionDays != null && dataRetentionDays > 0) {
+          onProgress?.call('Clearing old synced data...', 0.05);
+          await clearOldSyncedData(dataRetentionDays);
+        }
 
-      // Sync in order to respect foreign key constraints
-      onProgress?.call('Fetching users...', 0.1);
-      await _syncUsers();
+        // Sync in order to respect foreign key constraints
+        onProgress?.call('Fetching users...', 0.1);
+        await _syncUsers();
 
-      onProgress?.call('Fetching categories...', 0.2);
-      await _syncCategories();
+        onProgress?.call('Fetching categories...', 0.2);
+        await _syncCategories();
 
-      onProgress?.call('Fetching stations...', 0.25);
-      await _syncStations();
+        onProgress?.call('Fetching stations...', 0.25);
+        await _syncStations();
 
-      onProgress?.call('Fetching products...', 0.3);
-      await _syncProducts();
+        onProgress?.call('Fetching products...', 0.3);
+        await _syncProducts();
 
-      onProgress?.call('Fetching component groups...', 0.4);
-      await _syncComponentGroups();
+        onProgress?.call('Fetching product variants...', 0.35);
+        await _syncVariants();
 
-      onProgress?.call('Fetching components...', 0.5);
-      await _syncComponents();
+        onProgress?.call('Fetching component groups...', 0.4);
+        await _syncComponentGroups();
 
-      onProgress?.call('Fetching product components...', 0.6);
-      await _syncProductComponents();
+        onProgress?.call('Fetching components...', 0.5);
+        await _syncComponents();
 
-      onProgress?.call('Fetching areas...', 0.7);
-      await _syncAreas();
+        onProgress?.call('Fetching product components...', 0.6);
+        await _syncProductComponents();
 
-      onProgress?.call('Fetching tables...', 0.75);
-      await _syncTables();
+        onProgress?.call('Fetching areas...', 0.7);
+        await _syncAreas();
 
-      onProgress?.call('Fetching commercials...', 0.8);
-      await _syncCommercials();
+        onProgress?.call('Fetching tables...', 0.75);
+        await _syncTables();
 
-      onProgress?.call('Fetching customers...', 0.9);
-      await _syncCustomers();
+        onProgress?.call('Fetching commercials...', 0.8);
+        await _syncCommercials();
+
+        onProgress?.call('Fetching customers...', 0.9);
+        await _syncCustomers();
+      });
 
       onProgress?.call('Sync complete!', 1.0);
     } catch (e) {
+      _logger.error('Sync failed: $e');
       throw Exception('Sync failed: $e');
     }
   }
@@ -196,9 +206,50 @@ class DataSyncService {
           discountAmount: Value((product['discountAmount'] as num?)?.toDouble() ?? 0.0),
           finalPrice: (product['finalPrice'] as num).toDouble(),
           isActive: Value(product['isActive'] ?? true),
+          isVariant: Value(product['isVariant'] ?? false),
         ),
         mode: InsertMode.insertOrReplace,
       );
+    }
+  }
+
+  Future<void> _syncVariants() async {
+    final variants = await _apiService.fetchVariants();
+    for (final variant in variants) {
+      // Insert variant
+      await _database.into(_database.productVariants).insert(
+        ProductVariantsCompanion.insert(
+          id: Value(variant['id']),
+          productId: variant['productId'],
+          name: variant['name'],
+          barcode: Value(variant['barcode']),
+          sku: Value(variant['sku']),
+          description: Value(variant['description']),
+          imageUrl: Value(variant['imageUrl']),
+          color: Value(variant['color']),
+          tags: Value(variant['tags']),
+          price: (variant['price'] as num).toDouble(),
+          cost: Value((variant['cost'] as num?)?.toDouble()),
+          tvaAmount: Value((variant['tvaAmount'] as num?)?.toDouble() ?? 0.0),
+          isActive: Value(variant['isActive'] ?? true),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+
+      // Insert attribute values for this variant
+      final attributeValues = variant['attributeValues'] as List<dynamic>? ?? [];
+      for (final av in attributeValues) {
+        await _database.into(_database.variantAttributeValues).insert(
+          VariantAttributeValuesCompanion.insert(
+            variantId: variant['id'],
+            attributeId: av['attributeId'],
+            attributeName: Value(av['attributeName']),
+            valueId: av['valueId'],
+            value: Value(av['value']),
+          ),
+          mode: InsertMode.insertOrReplace,
+        );
+      }
     }
   }
 
@@ -347,6 +398,7 @@ class DataSyncService {
         // Build product map
         productsList.add({
           'productId': product.productId,
+          'variantId': product.variantId,
           'quantity': product.quantity,
           'unitaryPrice': product.unitaryPrice,
           'unitaryDiscount': product.unitaryDiscount,
@@ -605,6 +657,7 @@ class DataSyncService {
 
         productsList.add({
           'productId': product.productId,
+          'variantId': product.variantId,
           'quantity': product.quantity,
           'unitaryPrice': product.unitaryPrice,
           'unitaryDiscount': product.unitaryDiscount,

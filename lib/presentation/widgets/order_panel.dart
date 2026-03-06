@@ -73,7 +73,7 @@ class OrderPanel extends ConsumerWidget {
           ),
           content: Text(
             'Are you sure you want to delete this paid item?\n\n'
-            '${item.productName}\n'
+            '${item.displayName}\n'
             'Ticket #${item.ticketId}\n\n'
             'This action will update the ticket total.',
             style: const TextStyle(fontSize: 14),
@@ -496,7 +496,7 @@ class OrderPanel extends ConsumerWidget {
                                                   ],
                                                   Expanded(
                                                     child: Text(
-                                                      item.productName,
+                                                      item.displayName,
                                                       style: TextStyle(
                                                         fontWeight: FontWeight.w600,
                                                         fontSize: 15,

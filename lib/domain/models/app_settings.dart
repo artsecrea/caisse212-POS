@@ -27,6 +27,9 @@ class AppSettings {
   final bool showPayButton;
   final bool showDailySummaryButton;
 
+  // Button order - list of button keys defining the order
+  final List<String> buttonOrder;
+
   // Sync settings
   final bool autoSyncOnline; // Auto-sync orders when online
   final int bulkSyncSize; // Number of orders to sync at once when offline
@@ -59,6 +62,20 @@ class AppSettings {
     this.showConfirmOrderButton = true,
     this.showPayButton = true,
     this.showDailySummaryButton = true,
+    this.buttonOrder = const [
+      'persons',
+      'orderType',
+      'confirmOrder',
+      'table',
+      'customer',
+      'commercial',
+      'coupon',
+      'discount',
+      'print',
+      'dailySummary',
+      'pay',
+      'proceed',
+    ],
     this.autoSyncOnline = true,
     this.bulkSyncSize = 50,
     this.dataRetentionDays = 7,
@@ -89,6 +106,7 @@ class AppSettings {
     bool? showConfirmOrderButton,
     bool? showPayButton,
     bool? showDailySummaryButton,
+    List<String>? buttonOrder,
     bool? autoSyncOnline,
     int? bulkSyncSize,
     int? dataRetentionDays,
@@ -118,6 +136,7 @@ class AppSettings {
       showConfirmOrderButton: showConfirmOrderButton ?? this.showConfirmOrderButton,
       showPayButton: showPayButton ?? this.showPayButton,
       showDailySummaryButton: showDailySummaryButton ?? this.showDailySummaryButton,
+      buttonOrder: buttonOrder ?? this.buttonOrder,
       autoSyncOnline: autoSyncOnline ?? this.autoSyncOnline,
       bulkSyncSize: bulkSyncSize ?? this.bulkSyncSize,
       dataRetentionDays: dataRetentionDays ?? this.dataRetentionDays,
@@ -150,6 +169,7 @@ class AppSettings {
       'showConfirmOrderButton': showConfirmOrderButton,
       'showPayButton': showPayButton,
       'showDailySummaryButton': showDailySummaryButton,
+      'buttonOrder': buttonOrder,
       'autoSyncOnline': autoSyncOnline,
       'bulkSyncSize': bulkSyncSize,
       'dataRetentionDays': dataRetentionDays,
@@ -184,6 +204,20 @@ class AppSettings {
       showConfirmOrderButton: json['showConfirmOrderButton'] as bool? ?? true,
       showPayButton: json['showPayButton'] as bool? ?? true,
       showDailySummaryButton: json['showDailySummaryButton'] as bool? ?? true,
+      buttonOrder: (json['buttonOrder'] as List<dynamic>?)?.cast<String>() ?? const [
+        'persons',
+        'orderType',
+        'confirmOrder',
+        'table',
+        'customer',
+        'commercial',
+        'coupon',
+        'discount',
+        'print',
+        'dailySummary',
+        'pay',
+        'proceed',
+      ],
       autoSyncOnline: json['autoSyncOnline'] as bool? ?? true,
       bulkSyncSize: json['bulkSyncSize'] as int? ?? 50,
       dataRetentionDays: json['dataRetentionDays'] as int? ?? 7,

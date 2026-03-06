@@ -334,6 +334,7 @@ class OrderRepository {
         OrderProductsCompanion.insert(
           orderId: orderId,
           productId: item.productId,
+          variantId: Value(item.variantId),
           quantity: Value(item.quantity),
           unitaryPrice: item.finalPrice,
           unitaryDiscount: Value(item.discount),
@@ -483,6 +484,7 @@ class OrderRepository {
         OrderProductsCompanion.insert(
           orderId: orderId,
           productId: item.productId,
+          variantId: Value(item.variantId),
           quantity: Value(item.quantity),
           unitaryPrice: item.finalPrice,
           unitaryDiscount: Value(item.discount),
@@ -613,6 +615,17 @@ class OrderRepository {
 
       if (product == null) continue;
 
+      // Get variant details if variantId exists
+      String? variantName;
+      String? variantImageUrl;
+      if (orderProduct.variantId != null) {
+        final variant = await (_database.select(_database.productVariants)..where((tbl) => tbl.id.equals(orderProduct.variantId!))).getSingleOrNull();
+        if (variant != null) {
+          variantName = variant.name;
+          variantImageUrl = variant.imageUrl;
+        }
+      }
+
       // Get order product components
       final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(orderProduct.id))).get();
 
@@ -635,7 +648,9 @@ class OrderRepository {
         id: orderProduct.id,
         productId: product.id,
         productName: product.name,
-        imageUrl: product.imageUrl,
+        variantId: orderProduct.variantId,
+        variantName: variantName,
+        imageUrl: variantImageUrl ?? product.imageUrl,
         finalPrice: orderProduct.unitaryPrice,
         quantity: orderProduct.quantity,
         components: components,
@@ -1096,6 +1111,13 @@ class OrderRepository {
         ..where((tbl) => tbl.id.equals(product.productId)))
           .getSingleOrNull();
 
+      // Get variant details if variantId exists
+      String? variantName;
+      if (product.variantId != null) {
+        final variant = await (_database.select(_database.productVariants)..where((tbl) => tbl.id.equals(product.variantId!))).getSingleOrNull();
+        variantName = variant?.name;
+      }
+
       // Get components
       final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
 
@@ -1138,6 +1160,8 @@ class OrderRepository {
 
       itemDetails.add(OrderItemDetails(
         productName: productDetail?.name ?? 'Unknown Product',
+        variantId: product.variantId,
+        variantName: variantName,
         quantity: product.quantity,
         totalPrice: itemSubtotal - productDiscount,
         isPaid: isPaid,

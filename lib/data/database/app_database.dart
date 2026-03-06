@@ -26,12 +26,15 @@ import 'tables/cash_session_table.dart';
 import 'tables/ticket_table.dart';
 import 'tables/pending_sync_operation_table.dart';
 import 'tables/logs_table.dart';
+import 'tables/product_variant_table.dart';
 
 part 'app_database.g.dart';
 
 @DriftDatabase(tables: [
   Categories,
   Products,
+  ProductVariants,
+  VariantAttributeValues,
   Users,
   Components,
   ComponentGroups,
@@ -55,6 +58,7 @@ part 'app_database.g.dart';
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
+  static String dbName = 'posecrea.db';
 
   @override
   //never change the db version , just delete the db file to reset
@@ -64,7 +68,7 @@ class AppDatabase extends _$AppDatabase {
     return LazyDatabase(() async {
       try {
         final dbFolder = await getApplicationDocumentsDirectory();
-        final file = File(p.join(dbFolder.path, 'posecrea.db'));
+        final file = File(p.join(dbFolder.path, dbName));
 
         // Ensure directory exists
         if (!await dbFolder.exists()) {
@@ -82,7 +86,7 @@ class AppDatabase extends _$AppDatabase {
             if (!await dataDir.exists()) {
               await dataDir.create(recursive: true);
             }
-            final file = File(p.join(dataDir.path, 'posecrea.db'));
+            final file = File(p.join(dataDir.path, dbName));
             return NativeDatabase.createInBackground(file);
           } catch (e2) {
             rethrow;

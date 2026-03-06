@@ -41,6 +41,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   int _quantity = 1;
   String? _discountError;
 
+  // Variant selection state
+  Map<int, int> _selectedAttributeValues = {}; // attributeId -> valueId
+  Map<String, dynamic>? _selectedVariant; // The currently selected variant
+  double? _variantPrice; // Override price from variant
+  double? _variantTva; // Override TVA from variant
+  String? _variantImageUrl; // Override image from variant
+  String? _variantName; // Variant display name
+
   @override
   void initState() {
     super.initState();
@@ -72,6 +80,15 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       if (item.note != null) {
         _noteController.text = item.note!;
       }
+
+      // Populate variant data if editing an item with a variant
+      if (item.variantId != null) {
+        _variantName = item.variantName;
+        // Load variant details after build
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _loadExistingVariant(item.variantId!);
+        });
+      }
     } else {
       // New product - get discount from product table
       _productDiscount = widget.product.discountAmount ?? 0.0;
@@ -82,6 +99,81 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         _initializeRequiredComponents();
       });
     }
+  }
+
+  void _loadExistingVariant(int variantId) async {
+    final productId = widget.product is OrderItem
+        ? (widget.product as OrderItem).productId
+        : widget.product.id;
+
+    final variantsData = await ref.read(productVariantsProvider(productId).future);
+
+    for (final vData in variantsData) {
+      final variant = vData['variant'];
+      if (variant.id == variantId) {
+        final attributeValues = vData['attributeValues'] as List;
+
+        // Populate selected attribute values
+        for (final av in attributeValues) {
+          _selectedAttributeValues[av.attributeId] = av.valueId;
+        }
+
+        setState(() {
+          _selectedVariant = vData;
+          _variantPrice = variant.price;
+          _variantTva = variant.tvaAmount;
+          _variantImageUrl = variant.imageUrl;
+          _variantName = variant.name;
+        });
+        break;
+      }
+    }
+  }
+
+  void _updateSelectedVariant(AsyncValue<List<Map<String, dynamic>>> variantsAsync) {
+    variantsAsync.whenData((variantsData) {
+      // Find the variant that matches all selected attribute values
+      for (final vData in variantsData) {
+        final attributeValues = vData['attributeValues'] as List;
+
+        // Check if all selected attributes match this variant
+        bool allMatch = true;
+        for (final entry in _selectedAttributeValues.entries) {
+          final attributeId = entry.key;
+          final valueId = entry.value;
+
+          final matchingAttr = attributeValues.where(
+            (av) => av.attributeId == attributeId && av.valueId == valueId
+          );
+
+          if (matchingAttr.isEmpty) {
+            allMatch = false;
+            break;
+          }
+        }
+
+        if (allMatch && _selectedAttributeValues.length == attributeValues.length) {
+          final variant = vData['variant'];
+          setState(() {
+            _selectedVariant = vData;
+            _variantPrice = variant.price;
+            _variantTva = variant.tvaAmount;
+            _variantImageUrl = variant.imageUrl;
+            _variantName = variant.name;
+          });
+          return;
+        }
+      }
+
+      // No exact match found - clear variant selection
+      setState(() {
+        _selectedVariant = null;
+        _variantPrice = null;
+        _variantTva = null;
+        _variantImageUrl = null;
+        _variantName = null;
+      });
+    });
   }
 
   void _initializeRequiredComponents() {
@@ -130,12 +222,29 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     final productName = widget.product is OrderItem
         ? (widget.product as OrderItem).productName
         : widget.product.name;
-    final productPrice = widget.product is OrderItem
+    final baseProductPrice = widget.product is OrderItem
         ? (widget.product as OrderItem).subtotalPerItem
         : widget.product.finalPrice;
-    final productImageUrl = widget.product is OrderItem
+    final baseProductImageUrl = widget.product is OrderItem
         ? (widget.product as OrderItem).imageUrl
         : widget.product.imageUrl;
+
+    // Check if product has variants
+    final isVariantProduct = widget.product is OrderItem
+        ? false // If editing, variant is already set
+        : (widget.product.isVariant ?? false);
+
+    // Use variant values if selected, otherwise base product values
+    final productPrice = _variantPrice ?? baseProductPrice;
+    final productImageUrl = _variantImageUrl ?? baseProductImageUrl;
+
+    // Watch variant providers if this is a variant product
+    final variantsAsync = isVariantProduct
+        ? ref.watch(productVariantsProvider(productId))
+        : null;
+    final attributesAsync = isVariantProduct
+        ? ref.watch(productAttributesProvider(productId))
+        : null;
 
     // Get components available for this product
     final componentsAsync = ref.watch(productComponentsProvider(productId));
@@ -146,8 +255,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: 600,
-        constraints: const BoxConstraints(maxHeight: 700),
+        width: 750,
+        constraints: const BoxConstraints(maxHeight: 850),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -166,24 +275,30 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 children: [
                   Row(
                     children: [
-                      if (productImageUrl != null)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            productImageUrl!,
-                            width: 60,
-                            height: 60,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stack) {
-                              return Container(
-                                width: 60,
-                                height: 60,
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: productImageUrl != null
+                            ? Image.network(
+                                productImageUrl,
+                                width: 80,
+                                height: 80,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stack) {
+                                  return Container(
+                                    width: 80,
+                                    height: 80,
+                                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                    child: const Icon(Icons.fastfood, size: 40),
+                                  );
+                                },
+                              )
+                            : Container(
+                                width: 80,
+                                height: 80,
                                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                child: const Icon(Icons.fastfood),
-                              );
-                            },
-                          ),
-                        ),
+                                child: const Icon(Icons.fastfood, size: 40),
+                              ),
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: componentsAsync.when(
@@ -196,12 +311,20 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  productName,
+                                  _variantName ?? productName,
                                   style: const TextStyle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
+                                if (_variantName != null)
+                                  Text(
+                                    productName,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                                    ),
+                                  ),
                                 const SizedBox(height: 4),
                                 // Base price
                                 Text(
@@ -533,6 +656,122 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 ],
               ),
             ),
+
+            // Variant Selection Section - only show for variant products
+            if (isVariantProduct && attributesAsync != null)
+              attributesAsync.when(
+                data: (attributes) {
+                  if (attributes.isEmpty) return const SizedBox.shrink();
+
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: Theme.of(context).dividerColor,
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.style, size: 18, color: Theme.of(context).primaryColor),
+                            const SizedBox(width: 8),
+                            Text(
+                              l10n.translate('select_variant'),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).primaryColor,
+                              ),
+                            ),
+                            if (_selectedVariant == null) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  l10n.translate('required'),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.orange[800],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 16,
+                          runSpacing: 12,
+                          children: attributes.map<Widget>((attr) {
+                            final attributeId = attr['attributeId'] as int;
+                            final attributeName = attr['attributeName'] as String;
+                            final values = attr['values'] as List<Map<String, dynamic>>;
+
+                            return SizedBox(
+                              width: 200,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    attributeName,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  DropdownButtonFormField<int>(
+                                    value: _selectedAttributeValues[attributeId],
+                                    decoration: InputDecoration(
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      isDense: true,
+                                    ),
+                                    hint: Text(l10n.translate('select')),
+                                    items: values.map((v) {
+                                      return DropdownMenuItem<int>(
+                                        value: v['valueId'] as int,
+                                        child: Text(v['value'] as String),
+                                      );
+                                    }).toList(),
+                                    onChanged: (valueId) {
+                                      if (valueId != null) {
+                                        setState(() {
+                                          _selectedAttributeValues[attributeId] = valueId;
+                                        });
+                                        _updateSelectedVariant(variantsAsync!);
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+                loading: () => const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (_, __) => const SizedBox.shrink(),
+              ),
 
             // TabBar
             TabBar(
@@ -1291,6 +1530,22 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   void _handleSave(BuildContext context) {
     print('DEBUG: _handleSave called');
+    final l10n = AppLocalizations.of(context)!;
+
+    // Check if this is a variant product and variant is required
+    final isVariantProduct = widget.product is OrderItem
+        ? false
+        : (widget.product.isVariant ?? false);
+
+    if (isVariantProduct && _selectedVariant == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translate('please_select_variant')),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     // Validate quantity
     final quantity = int.tryParse(_quantityController.text) ?? 1;
@@ -1400,11 +1655,26 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         // 3. Quantity is greater than minimum (user increased it)
         if (componentQuantity > 0 && (isRequired || componentQuantity != minQuantity)) {
           print('DEBUG: Adding component: ${component.name} x$componentQuantity (required: $isRequired)');
+
+          // Price calculation logic:
+          // - Only charge for quantity beyond the minimum (default) quantity
+          // - If quantity <= minQuantity, it's included in base price (price = 0)
+          // - If quantity > minQuantity, we store full quantity but adjust the unit price
+          //   so that (price * quantity) only charges for the extra items
+          final componentPrice = component.price ?? 0.0;
+          final chargeableQuantity = componentQuantity > minQuantity ? (componentQuantity - minQuantity) : 0;
+
+          // Calculate effective price per unit: total chargeable amount / total quantity
+          // This way when multiplied by quantity in componentTotal, we get the right charge
+          final effectivePricePerUnit = componentQuantity > 0
+              ? (componentPrice * chargeableQuantity) / componentQuantity
+              : 0.0;
+
           selectedComponents.add(OrderItemComponent(
             componentId: component.id,
             name: component.name ?? 'Unknown',
             quantity: componentQuantity,
-            price: component.price ?? 0.0,
+            price: effectivePricePerUnit,
             isSpecial: _componentSpecial[component.id] ?? false,
           ));
         } else {
@@ -1434,6 +1704,22 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     print('DEBUG: Manual discount: $manualDiscount');
     print('DEBUG: Returning result and closing dialog');
 
+    // Get variant data if selected
+    int? variantId;
+    String? variantName;
+    double? variantPrice;
+    double? variantTva;
+    String? variantImageUrl;
+
+    if (_selectedVariant != null) {
+      final variant = _selectedVariant!['variant'];
+      variantId = variant.id;
+      variantName = variant.name;
+      variantPrice = variant.price;
+      variantTva = variant.tvaAmount;
+      variantImageUrl = variant.imageUrl;
+    }
+
     // Successfully validated, return the result
     Navigator.of(context).pop({
       'components': selectedComponents,
@@ -1441,6 +1727,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       'manualDiscount': manualDiscount, // Manual additional discount
       'note': _noteController.text.isEmpty ? null : _noteController.text,
       'quantity': quantity, // Added quantity
+      // Variant data
+      'variantId': variantId,
+      'variantName': variantName,
+      'variantPrice': variantPrice,
+      'variantTva': variantTva,
+      'variantImageUrl': variantImageUrl,
     });
   }
 
@@ -1503,8 +1795,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           );
 
           final component = componentData['component'];
+          final minQuantity = (componentData['minQuantity'] as int?) ?? 0;
+
           if (component != null && component.price != null) {
-            total += component.price * quantity;
+            // Only charge for quantity beyond the minimum (default) quantity
+            // If quantity <= minQuantity, it's included in the base price (no extra charge)
+            // If quantity > minQuantity, charge only for the extra quantity
+            final chargeableQuantity = quantity > minQuantity ? (quantity - minQuantity) : 0;
+            total += component.price * chargeableQuantity;
           }
         } catch (e) {
           // Component not found, skip

@@ -619,7 +619,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                item.productName,
+                item.displayName,
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
@@ -1304,7 +1304,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
         final itemsForPrint = ticket.items.map((item) {
           return {
-            'name': item.productName,
+            'name': item.displayName,
             'quantity': item.quantity,
             'price': item.totalPrice,
             'components': item.components.map((c) => {'name': c.name, 'quantity': c.quantity}).toList(),
@@ -1387,7 +1387,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              item.productName,
+              item.displayName,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             const SizedBox(height: 8),
@@ -1467,7 +1467,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${item.productName} ${AppLocalizations.of(context)!.translate('divided_into')} $quantity1 + $quantity2'),
+          content: Text('${item.displayName} ${AppLocalizations.of(context)!.translate('divided_into')} $quantity1 + $quantity2'),
           duration: const Duration(seconds: 2),
         ),
       );

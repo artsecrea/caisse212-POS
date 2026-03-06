@@ -273,3 +273,80 @@ final productComponentsProvider = StreamProvider.autoDispose.family<List<Map<Str
   yield result;
 });
 
+// Product Variants Provider - fetches all variants for a product with their attribute values
+final productVariantsProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, int>((ref, productId) async {
+  final database = ref.watch(databaseProvider);
+
+  // Get all variants for this product
+  final variants = await (database.select(database.productVariants)
+    ..where((tbl) => tbl.productId.equals(productId))
+    ..where((tbl) => tbl.isActive.equals(true))).get();
+
+  if (variants.isEmpty) {
+    return [];
+  }
+
+  // Get all attribute values for these variants
+  final variantIds = variants.map((v) => v.id).toList();
+  final attributeValues = await (database.select(database.variantAttributeValues)
+    ..where((tbl) => tbl.variantId.isIn(variantIds))).get();
+
+  // Group attribute values by variant
+  final result = variants.map((variant) {
+    final variantAttrs = attributeValues
+        .where((av) => av.variantId == variant.id)
+        .toList();
+
+    return {
+      'variant': variant,
+      'attributeValues': variantAttrs,
+    };
+  }).toList();
+
+  return result;
+});
+
+// Get unique attributes for a product (for dropdown labels)
+final productAttributesProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, int>((ref, productId) async {
+  final database = ref.watch(databaseProvider);
+
+  // Get all variants for this product
+  final variants = await (database.select(database.productVariants)
+    ..where((tbl) => tbl.productId.equals(productId))
+    ..where((tbl) => tbl.isActive.equals(true))).get();
+
+  if (variants.isEmpty) {
+    return [];
+  }
+
+  // Get all attribute values for these variants
+  final variantIds = variants.map((v) => v.id).toList();
+  final attributeValues = await (database.select(database.variantAttributeValues)
+    ..where((tbl) => tbl.variantId.isIn(variantIds))).get();
+
+  // Group by attributeId to get unique attributes with their possible values
+  final attributesMap = <int, Map<String, dynamic>>{};
+
+  for (final av in attributeValues) {
+    if (!attributesMap.containsKey(av.attributeId)) {
+      attributesMap[av.attributeId] = {
+        'attributeId': av.attributeId,
+        'attributeName': av.attributeName ?? 'Attribute ${av.attributeId}',
+        'values': <Map<String, dynamic>>[],
+      };
+    }
+
+    // Add value if not already present
+    final values = attributesMap[av.attributeId]!['values'] as List<Map<String, dynamic>>;
+    final exists = values.any((v) => v['valueId'] == av.valueId);
+    if (!exists) {
+      values.add({
+        'valueId': av.valueId,
+        'value': av.value ?? 'Value ${av.valueId}',
+      });
+    }
+  }
+
+  return attributesMap.values.toList();
+});
+

@@ -17,6 +17,7 @@ class Products extends Table {
   RealColumn get discountAmount => real().withDefault(const Constant(0.0))();
   RealColumn get finalPrice => real()();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
+  BoolColumn get isVariant => boolean().withDefault(const Constant(false))();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

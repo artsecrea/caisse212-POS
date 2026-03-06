@@ -4,6 +4,7 @@ class OrderProducts extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get orderId => integer()();
   IntColumn get productId => integer()();
+  IntColumn get variantId => integer().nullable()();
   IntColumn get ticketId => integer().nullable()();
   IntColumn get quantity => integer().withDefault(const Constant(1))();
   RealColumn get unitaryPrice => real()();

@@ -416,6 +416,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       BuildContext context,
       ) {
     final l10n = AppLocalizations.of(context)!;
+
+    // Button configuration data
+    final buttonConfigs = {
+      'persons': (icon: Icons.people, titleKey: 'persons_button', subtitleKey: 'number_of_persons', visible: settings.showPersonsButton, setVisible: notifier.setShowPersonsButton),
+      'orderType': (icon: Icons.restaurant, titleKey: 'order_type_button', subtitleKey: 'toggle_order_type', visible: settings.showOrderTypeButton, setVisible: notifier.setShowOrderTypeButton),
+      'confirmOrder': (icon: Icons.task_alt, titleKey: 'confirm_button', subtitleKey: 'confirm_order', visible: settings.showConfirmOrderButton, setVisible: notifier.setShowConfirmOrderButton),
+      'table': (icon: Icons.table_bar, titleKey: 'table_button', subtitleKey: 'table_selection', visible: settings.showTableButton, setVisible: notifier.setShowTableButton),
+      'customer': (icon: Icons.person, titleKey: 'customer_button', subtitleKey: 'customer_selection', visible: settings.showCustomerButton, setVisible: notifier.setShowCustomerButton),
+      'commercial': (icon: Icons.badge, titleKey: 'commercial_button', subtitleKey: 'commercial_selection', visible: settings.showCommercialButton, setVisible: notifier.setShowCommercialButton),
+      'coupon': (icon: Icons.discount, titleKey: 'coupon_button', subtitleKey: 'apply_coupons', visible: settings.showCouponButton, setVisible: notifier.setShowCouponButton),
+      'discount': (icon: Icons.percent, titleKey: 'discount_button', subtitleKey: 'manual_discount', visible: settings.showDiscountButton, setVisible: notifier.setShowDiscountButton),
+      'print': (icon: Icons.print, titleKey: 'print_button', subtitleKey: 'print_orders', visible: settings.showPrintButton, setVisible: notifier.setShowPrintButton),
+      'dailySummary': (icon: Icons.summarize, titleKey: 'daily_summary_button', subtitleKey: 'daily_report', visible: settings.showDailySummaryButton, setVisible: notifier.setShowDailySummaryButton),
+      'pay': (icon: Icons.payment, titleKey: 'pay_button', subtitleKey: 'process_payment', visible: settings.showPayButton, setVisible: notifier.setShowPayButton),
+      'proceed': (icon: Icons.check_circle, titleKey: 'proceed_button', subtitleKey: 'save_order', visible: true, setVisible: (_) async {}), // Always visible
+    };
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -431,104 +448,80 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           l10n.translate('action_buttons_subtitle'),
           style: const TextStyle(color: Colors.grey),
         ),
-        const SizedBox(height: 24),
-        GridView.count(
-          crossAxisCount: 2,
+        const SizedBox(height: 16),
+        Text(
+          l10n.translate('button_arrangement'),
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          l10n.translate('drag_to_reorder'),
+          style: const TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        // Reorderable list for button arrangement
+        ReorderableListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: 2.8,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 8,
-          children: [
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.table_bar,
-              title: l10n.translate('table_button'),
-              subtitle: l10n.translate('table_selection'),
-              value: settings.showTableButton,
-              onChanged: (value) => notifier.setShowTableButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.person,
-              title: l10n.translate('customer_button'),
-              subtitle: l10n.translate('customer_selection'),
-              value: settings.showCustomerButton,
-              onChanged: (value) => notifier.setShowCustomerButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.badge,
-              title: l10n.translate('commercial_button'),
-              subtitle: l10n.translate('commercial_selection'),
-              value: settings.showCommercialButton,
-              onChanged: (value) => notifier.setShowCommercialButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.discount,
-              title: l10n.translate('coupon_button'),
-              subtitle: l10n.translate('apply_coupons'),
-              value: settings.showCouponButton,
-              onChanged: (value) => notifier.setShowCouponButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.percent,
-              title: l10n.translate('discount_button'),
-              subtitle: l10n.translate('manual_discount'),
-              value: settings.showDiscountButton,
-              onChanged: (value) => notifier.setShowDiscountButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.print,
-              title: l10n.translate('print_button'),
-              subtitle: l10n.translate('print_orders'),
-              value: settings.showPrintButton,
-              onChanged: (value) => notifier.setShowPrintButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.people,
-              title: l10n.translate('persons_button'),
-              subtitle: l10n.translate('number_of_persons'),
-              value: settings.showPersonsButton,
-              onChanged: (value) => notifier.setShowPersonsButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.restaurant,
-              title: l10n.translate('order_type_button'),
-              subtitle: l10n.translate('toggle_order_type'),
-              value: settings.showOrderTypeButton,
-              onChanged: (value) => notifier.setShowOrderTypeButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.task_alt,
-              title: l10n.translate('confirm_button'),
-              subtitle: l10n.translate('confirm_order'),
-              value: settings.showConfirmOrderButton,
-              onChanged: (value) => notifier.setShowConfirmOrderButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.payment,
-              title: l10n.translate('pay_button'),
-              subtitle: l10n.translate('process_payment'),
-              value: settings.showPayButton,
-              onChanged: (value) => notifier.setShowPayButton(value),
-            ),
-            _buildSwitchTile(
-              context: context,
-              icon: Icons.summarize,
-              title: l10n.translate('daily_summary_button'),
-              subtitle: l10n.translate('daily_report'),
-              value: settings.showDailySummaryButton,
-              onChanged: (value) => notifier.setShowDailySummaryButton(value),
-            ),
-          ],
+          itemCount: settings.buttonOrder.length,
+          onReorder: (oldIndex, newIndex) {
+            final newOrder = List<String>.from(settings.buttonOrder);
+            if (newIndex > oldIndex) newIndex--;
+            final item = newOrder.removeAt(oldIndex);
+            newOrder.insert(newIndex, item);
+            notifier.setButtonOrder(newOrder);
+          },
+          itemBuilder: (context, index) {
+            final buttonKey = settings.buttonOrder[index];
+            final config = buttonConfigs[buttonKey];
+            if (config == null) return const SizedBox.shrink(key: ValueKey('unknown'));
+
+            final isProceeed = buttonKey == 'proceed';
+
+            return Card(
+              key: ValueKey(buttonKey),
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              child: ListTile(
+                leading: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ReorderableDragStartListener(
+                      index: index,
+                      child: const Icon(Icons.drag_handle, color: Colors.grey),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(config.icon, color: config.visible ? Theme.of(context).colorScheme.primary : Colors.grey),
+                  ],
+                ),
+                title: Text(
+                  l10n.translate(config.titleKey),
+                  style: TextStyle(
+                    color: config.visible ? null : Colors.grey,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                subtitle: Text(
+                  l10n.translate(config.subtitleKey),
+                  style: TextStyle(
+                    color: config.visible ? Colors.grey : Colors.grey.shade400,
+                    fontSize: 12,
+                  ),
+                ),
+                trailing: isProceeed
+                    ? Chip(
+                        label: Text(l10n.translate('always_visible'), style: const TextStyle(fontSize: 10)),
+                        backgroundColor: Colors.green.withValues(alpha: 0.2),
+                      )
+                    : Switch(
+                        value: config.visible,
+                        onChanged: (value) => config.setVisible(value),
+                      ),
+              ),
+            );
+          },
         ),
       ],
     );

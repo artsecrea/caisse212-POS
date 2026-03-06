@@ -663,7 +663,7 @@ class PrintingService {
       for (final item in order.items) {
         bytes += generator.row([
           PosColumn(
-            text: '${item.quantity}x ${item.productName}',
+            text: '${item.quantity}x ${item.displayName}',
             width: 8,
             styles: PosStyles(
               align: PosAlign.left,
@@ -961,7 +961,7 @@ class PrintingService {
       // Items - large and clear for kitchen
       for (final item in order.items) {
         bytes += generator.text(
-          '${item.quantity}x ${item.productName}',
+          '${item.quantity}x ${item.displayName}',
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,

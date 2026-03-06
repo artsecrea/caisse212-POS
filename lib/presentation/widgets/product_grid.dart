@@ -93,6 +93,15 @@ class _ProductCard extends ConsumerWidget {
 
     return GestureDetector(
       onTap: () {
+        // Check if product is a variant product - must show dialog to select variant
+        final isVariantProduct = product.isVariant;
+
+        if (isVariantProduct) {
+          // Variant products MUST go through dialog to select variant
+          _showModificationDialog(context, ref);
+          return;
+        }
+
         // Check if product has required components
         componentsDataAsync.whenData((componentsData) {
           final hasRequiredComponents = componentsData.any(
@@ -234,14 +243,23 @@ class _ProductCard extends ConsumerWidget {
     final note = modifications['note'] as String?;
     final quantity = modifications['quantity'] as int? ?? 1;
 
+    // Variant data
+    final variantId = modifications['variantId'] as int?;
+    final variantName = modifications['variantName'] as String?;
+    final variantPrice = modifications['variantPrice'] as double?;
+    final variantTva = modifications['variantTva'] as double?;
+    final variantImageUrl = modifications['variantImageUrl'] as String?;
+
     final orderItem = OrderItem(
       productId: product.id,
       productName: product.name,
-      imageUrl: product.imageUrl,
-      finalPrice: product.finalPrice,
+      variantId: variantId,
+      variantName: variantName,
+      imageUrl: variantImageUrl ?? product.imageUrl,
+      finalPrice: variantPrice ?? product.finalPrice,
       quantity: quantity,
       components: components,
-      tva: product.tvaAmount,
+      tva: variantTva ?? product.tvaAmount,
       discount: discount,
       manualDiscount: manualDiscount,
       note: note,
@@ -251,7 +269,7 @@ class _ProductCard extends ConsumerWidget {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('${product.name} added to order'),
+        content: Text('${variantName ?? product.name} added to order'),
         duration: const Duration(seconds: 1),
         behavior: SnackBarBehavior.floating,
       ),

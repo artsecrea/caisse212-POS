@@ -6,6 +6,8 @@ class OrderItem {
   final int? id;
   final int productId;
   final String productName;
+  final int? variantId;
+  final String? variantName;
   final String? imageUrl;
   final double finalPrice; // final price per unit without components
   final int quantity;
@@ -21,6 +23,8 @@ class OrderItem {
     this.id,
     required this.productId,
     required this.productName,
+    this.variantId,
+    this.variantName,
     this.imageUrl,
     required this.finalPrice, // final price per unit without components
     this.quantity = 1,
@@ -32,6 +36,9 @@ class OrderItem {
     this.tva = 0.0,
     this.state = 'PENDING',
   });
+
+  /// Returns the display name - variant name if available, otherwise product name
+  String get displayName => variantName ?? productName;
 
   double get componentTotal {
     return components.fold(0.0, (sum, comp) => sum + (comp.price * comp.quantity));
@@ -67,6 +74,8 @@ class OrderItem {
     int? id,
     int? productId,
     String? productName,
+    int? variantId,
+    String? variantName,
     String? imageUrl,
     double? unitPrice,
     int? quantity,
@@ -82,6 +91,8 @@ class OrderItem {
       id: id ?? this.id,
       productId: productId ?? this.productId,
       productName: productName ?? this.productName,
+      variantId: variantId ?? this.variantId,
+      variantName: variantName ?? this.variantName,
       imageUrl: imageUrl ?? this.imageUrl,
       finalPrice: unitPrice ?? this.finalPrice,
       quantity: quantity ?? this.quantity,
@@ -101,6 +112,8 @@ class OrderItem {
       'id': id,
       'productId': productId,
       'productName': productName,
+      'variantId': variantId,
+      'variantName': variantName,
       'imageUrl': imageUrl,
       'unitPrice': finalPrice,
       'quantity': quantity,
@@ -322,6 +335,8 @@ class ComponentDetails {
 // Model for order item with all details for management screen
 class OrderItemDetails {
   final String productName;
+  final int? variantId;
+  final String? variantName;
   final int quantity;
   final double totalPrice;
   final bool isPaid;
@@ -330,12 +345,17 @@ class OrderItemDetails {
 
   OrderItemDetails({
     required this.productName,
+    this.variantId,
+    this.variantName,
     required this.quantity,
     required this.totalPrice,
     required this.isPaid,
     this.ticketNum,
     this.components = const [],
   });
+
+  /// Returns the display name - variant name if available, otherwise product name
+  String get displayName => variantName ?? productName;
 }
 
 // Model for order with full details including all calculations

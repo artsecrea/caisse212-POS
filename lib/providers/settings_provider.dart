@@ -27,6 +27,7 @@ class SettingsKeys {
   static const String showConfirmOrderButton = 'show_confirm_order_button';
   static const String showPayButton = 'show_pay_button';
   static const String showDailySummaryButton = 'show_daily_summary_button';
+  static const String buttonOrder = 'button_order';
   static const String autoClearSyncedData = 'auto_clear_synced_data';
   static const String lastDataClearDate = 'last_data_clear_date';
 
@@ -76,6 +77,20 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showConfirmOrderButton: _prefs.getBool(SettingsKeys.showConfirmOrderButton) ?? true,
       showPayButton: _prefs.getBool(SettingsKeys.showPayButton) ?? true,
       showDailySummaryButton: _prefs.getBool(SettingsKeys.showDailySummaryButton) ?? true,
+      buttonOrder: _prefs.getStringList(SettingsKeys.buttonOrder) ?? const [
+        'persons',
+        'orderType',
+        'confirmOrder',
+        'table',
+        'customer',
+        'commercial',
+        'coupon',
+        'discount',
+        'print',
+        'dailySummary',
+        'pay',
+        'proceed',
+      ],
       autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
       orderPanelOnRight: _prefs.getBool(SettingsKeys.orderPanelOnRight) ?? false,
       serverPort: _prefs.getInt(SettingsKeys.serverPort) ?? 8080,
@@ -205,6 +220,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setShowDailySummaryButton(bool value) async {
     await _prefs.setBool(SettingsKeys.showDailySummaryButton, value);
     state = state.copyWith(showDailySummaryButton: value);
+  }
+
+  Future<void> setButtonOrder(List<String> order) async {
+    await _prefs.setStringList(SettingsKeys.buttonOrder, order);
+    state = state.copyWith(buttonOrder: order);
   }
 
   Future<void> setAutoClearSyncedData(bool value) async {

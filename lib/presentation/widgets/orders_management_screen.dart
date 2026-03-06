@@ -1652,7 +1652,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
                           ],
                           Flexible(
                             child: Text(
-                              item.productName,
+                              item.displayName,
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                             ),
                           ),
