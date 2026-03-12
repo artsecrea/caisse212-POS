@@ -8315,6 +8315,17 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _waiterIdMeta = const VerificationMeta(
+    'waiterId',
+  );
+  @override
+  late final GeneratedColumn<int> waiterId = GeneratedColumn<int>(
+    'waiter_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _clientIdMeta = const VerificationMeta(
     'clientId',
   );
@@ -8402,6 +8413,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     discountPercentage,
     createdBy,
     takenBy,
+    waiterId,
     clientId,
     commercialId,
     note,
@@ -8513,6 +8525,12 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         takenBy.isAcceptableOrUnknown(data['taken_by']!, _takenByMeta),
       );
     }
+    if (data.containsKey('waiter_id')) {
+      context.handle(
+        _waiterIdMeta,
+        waiterId.isAcceptableOrUnknown(data['waiter_id']!, _waiterIdMeta),
+      );
+    }
     if (data.containsKey('client_id')) {
       context.handle(
         _clientIdMeta,
@@ -8621,6 +8639,10 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         DriftSqlType.int,
         data['${effectivePrefix}taken_by'],
       ),
+      waiterId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}waiter_id'],
+      ),
       clientId: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}client_id'],
@@ -8670,6 +8692,7 @@ class Order extends DataClass implements Insertable<Order> {
   final double discountPercentage;
   final int? createdBy;
   final int? takenBy;
+  final int? waiterId;
   final int? clientId;
   final int? commercialId;
   final String? note;
@@ -8692,6 +8715,7 @@ class Order extends DataClass implements Insertable<Order> {
     required this.discountPercentage,
     this.createdBy,
     this.takenBy,
+    this.waiterId,
     this.clientId,
     this.commercialId,
     this.note,
@@ -8730,6 +8754,9 @@ class Order extends DataClass implements Insertable<Order> {
     }
     if (!nullToAbsent || takenBy != null) {
       map['taken_by'] = Variable<int>(takenBy);
+    }
+    if (!nullToAbsent || waiterId != null) {
+      map['waiter_id'] = Variable<int>(waiterId);
     }
     if (!nullToAbsent || clientId != null) {
       map['client_id'] = Variable<int>(clientId);
@@ -8777,6 +8804,9 @@ class Order extends DataClass implements Insertable<Order> {
       takenBy: takenBy == null && nullToAbsent
           ? const Value.absent()
           : Value(takenBy),
+      waiterId: waiterId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(waiterId),
       clientId: clientId == null && nullToAbsent
           ? const Value.absent()
           : Value(clientId),
@@ -8813,6 +8843,7 @@ class Order extends DataClass implements Insertable<Order> {
       ),
       createdBy: serializer.fromJson<int?>(json['createdBy']),
       takenBy: serializer.fromJson<int?>(json['takenBy']),
+      waiterId: serializer.fromJson<int?>(json['waiterId']),
       clientId: serializer.fromJson<int?>(json['clientId']),
       commercialId: serializer.fromJson<int?>(json['commercialId']),
       note: serializer.fromJson<String?>(json['note']),
@@ -8840,6 +8871,7 @@ class Order extends DataClass implements Insertable<Order> {
       'discountPercentage': serializer.toJson<double>(discountPercentage),
       'createdBy': serializer.toJson<int?>(createdBy),
       'takenBy': serializer.toJson<int?>(takenBy),
+      'waiterId': serializer.toJson<int?>(waiterId),
       'clientId': serializer.toJson<int?>(clientId),
       'commercialId': serializer.toJson<int?>(commercialId),
       'note': serializer.toJson<String?>(note),
@@ -8865,6 +8897,7 @@ class Order extends DataClass implements Insertable<Order> {
     double? discountPercentage,
     Value<int?> createdBy = const Value.absent(),
     Value<int?> takenBy = const Value.absent(),
+    Value<int?> waiterId = const Value.absent(),
     Value<int?> clientId = const Value.absent(),
     Value<int?> commercialId = const Value.absent(),
     Value<String?> note = const Value.absent(),
@@ -8887,6 +8920,7 @@ class Order extends DataClass implements Insertable<Order> {
     discountPercentage: discountPercentage ?? this.discountPercentage,
     createdBy: createdBy.present ? createdBy.value : this.createdBy,
     takenBy: takenBy.present ? takenBy.value : this.takenBy,
+    waiterId: waiterId.present ? waiterId.value : this.waiterId,
     clientId: clientId.present ? clientId.value : this.clientId,
     commercialId: commercialId.present ? commercialId.value : this.commercialId,
     note: note.present ? note.value : this.note,
@@ -8913,6 +8947,7 @@ class Order extends DataClass implements Insertable<Order> {
           : this.discountPercentage,
       createdBy: data.createdBy.present ? data.createdBy.value : this.createdBy,
       takenBy: data.takenBy.present ? data.takenBy.value : this.takenBy,
+      waiterId: data.waiterId.present ? data.waiterId.value : this.waiterId,
       clientId: data.clientId.present ? data.clientId.value : this.clientId,
       commercialId: data.commercialId.present
           ? data.commercialId.value
@@ -8942,6 +8977,7 @@ class Order extends DataClass implements Insertable<Order> {
           ..write('discountPercentage: $discountPercentage, ')
           ..write('createdBy: $createdBy, ')
           ..write('takenBy: $takenBy, ')
+          ..write('waiterId: $waiterId, ')
           ..write('clientId: $clientId, ')
           ..write('commercialId: $commercialId, ')
           ..write('note: $note, ')
@@ -8969,6 +9005,7 @@ class Order extends DataClass implements Insertable<Order> {
     discountPercentage,
     createdBy,
     takenBy,
+    waiterId,
     clientId,
     commercialId,
     note,
@@ -8995,6 +9032,7 @@ class Order extends DataClass implements Insertable<Order> {
           other.discountPercentage == this.discountPercentage &&
           other.createdBy == this.createdBy &&
           other.takenBy == this.takenBy &&
+          other.waiterId == this.waiterId &&
           other.clientId == this.clientId &&
           other.commercialId == this.commercialId &&
           other.note == this.note &&
@@ -9019,6 +9057,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
   final Value<double> discountPercentage;
   final Value<int?> createdBy;
   final Value<int?> takenBy;
+  final Value<int?> waiterId;
   final Value<int?> clientId;
   final Value<int?> commercialId;
   final Value<String?> note;
@@ -9041,6 +9080,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.discountPercentage = const Value.absent(),
     this.createdBy = const Value.absent(),
     this.takenBy = const Value.absent(),
+    this.waiterId = const Value.absent(),
     this.clientId = const Value.absent(),
     this.commercialId = const Value.absent(),
     this.note = const Value.absent(),
@@ -9064,6 +9104,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.discountPercentage = const Value.absent(),
     this.createdBy = const Value.absent(),
     this.takenBy = const Value.absent(),
+    this.waiterId = const Value.absent(),
     this.clientId = const Value.absent(),
     this.commercialId = const Value.absent(),
     this.note = const Value.absent(),
@@ -9087,6 +9128,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Expression<double>? discountPercentage,
     Expression<int>? createdBy,
     Expression<int>? takenBy,
+    Expression<int>? waiterId,
     Expression<int>? clientId,
     Expression<int>? commercialId,
     Expression<String>? note,
@@ -9110,6 +9152,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       if (discountPercentage != null) 'discount_percentage': discountPercentage,
       if (createdBy != null) 'created_by': createdBy,
       if (takenBy != null) 'taken_by': takenBy,
+      if (waiterId != null) 'waiter_id': waiterId,
       if (clientId != null) 'client_id': clientId,
       if (commercialId != null) 'commercial_id': commercialId,
       if (note != null) 'note': note,
@@ -9135,6 +9178,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Value<double>? discountPercentage,
     Value<int?>? createdBy,
     Value<int?>? takenBy,
+    Value<int?>? waiterId,
     Value<int?>? clientId,
     Value<int?>? commercialId,
     Value<String?>? note,
@@ -9158,6 +9202,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       discountPercentage: discountPercentage ?? this.discountPercentage,
       createdBy: createdBy ?? this.createdBy,
       takenBy: takenBy ?? this.takenBy,
+      waiterId: waiterId ?? this.waiterId,
       clientId: clientId ?? this.clientId,
       commercialId: commercialId ?? this.commercialId,
       note: note ?? this.note,
@@ -9215,6 +9260,9 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     if (takenBy.present) {
       map['taken_by'] = Variable<int>(takenBy.value);
     }
+    if (waiterId.present) {
+      map['waiter_id'] = Variable<int>(waiterId.value);
+    }
     if (clientId.present) {
       map['client_id'] = Variable<int>(clientId.value);
     }
@@ -9254,6 +9302,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
           ..write('discountPercentage: $discountPercentage, ')
           ..write('createdBy: $createdBy, ')
           ..write('takenBy: $takenBy, ')
+          ..write('waiterId: $waiterId, ')
           ..write('clientId: $clientId, ')
           ..write('commercialId: $commercialId, ')
           ..write('note: $note, ')
@@ -13849,6 +13898,669 @@ class OrderLogsCompanion extends UpdateCompanion<OrderLog> {
   }
 }
 
+class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $WaitersTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _firstNameMeta = const VerificationMeta(
+    'firstName',
+  );
+  @override
+  late final GeneratedColumn<String> firstName = GeneratedColumn<String>(
+    'first_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _lastNameMeta = const VerificationMeta(
+    'lastName',
+  );
+  @override
+  late final GeneratedColumn<String> lastName = GeneratedColumn<String>(
+    'last_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _imageUrlMeta = const VerificationMeta(
+    'imageUrl',
+  );
+  @override
+  late final GeneratedColumn<String> imageUrl = GeneratedColumn<String>(
+    'image_url',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _isActiveMeta = const VerificationMeta(
+    'isActive',
+  );
+  @override
+  late final GeneratedColumn<bool> isActive = GeneratedColumn<bool>(
+    'is_active',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_active" IN (0, 1))',
+    ),
+    defaultValue: const Constant(true),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    defaultValue: currentDateAndTime,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    defaultValue: currentDateAndTime,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    firstName,
+    lastName,
+    imageUrl,
+    isActive,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'waiters';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<Waiter> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('first_name')) {
+      context.handle(
+        _firstNameMeta,
+        firstName.isAcceptableOrUnknown(data['first_name']!, _firstNameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_firstNameMeta);
+    }
+    if (data.containsKey('last_name')) {
+      context.handle(
+        _lastNameMeta,
+        lastName.isAcceptableOrUnknown(data['last_name']!, _lastNameMeta),
+      );
+    }
+    if (data.containsKey('image_url')) {
+      context.handle(
+        _imageUrlMeta,
+        imageUrl.isAcceptableOrUnknown(data['image_url']!, _imageUrlMeta),
+      );
+    }
+    if (data.containsKey('is_active')) {
+      context.handle(
+        _isActiveMeta,
+        isActive.isAcceptableOrUnknown(data['is_active']!, _isActiveMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  Waiter map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return Waiter(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      firstName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}first_name'],
+      )!,
+      lastName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_name'],
+      ),
+      imageUrl: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}image_url'],
+      ),
+      isActive: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_active'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $WaitersTable createAlias(String alias) {
+    return $WaitersTable(attachedDatabase, alias);
+  }
+}
+
+class Waiter extends DataClass implements Insertable<Waiter> {
+  final int id;
+  final String firstName;
+  final String? lastName;
+  final String? imageUrl;
+  final bool isActive;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const Waiter({
+    required this.id,
+    required this.firstName,
+    this.lastName,
+    this.imageUrl,
+    required this.isActive,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['first_name'] = Variable<String>(firstName);
+    if (!nullToAbsent || lastName != null) {
+      map['last_name'] = Variable<String>(lastName);
+    }
+    if (!nullToAbsent || imageUrl != null) {
+      map['image_url'] = Variable<String>(imageUrl);
+    }
+    map['is_active'] = Variable<bool>(isActive);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  WaitersCompanion toCompanion(bool nullToAbsent) {
+    return WaitersCompanion(
+      id: Value(id),
+      firstName: Value(firstName),
+      lastName: lastName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastName),
+      imageUrl: imageUrl == null && nullToAbsent
+          ? const Value.absent()
+          : Value(imageUrl),
+      isActive: Value(isActive),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory Waiter.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return Waiter(
+      id: serializer.fromJson<int>(json['id']),
+      firstName: serializer.fromJson<String>(json['firstName']),
+      lastName: serializer.fromJson<String?>(json['lastName']),
+      imageUrl: serializer.fromJson<String?>(json['imageUrl']),
+      isActive: serializer.fromJson<bool>(json['isActive']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'firstName': serializer.toJson<String>(firstName),
+      'lastName': serializer.toJson<String?>(lastName),
+      'imageUrl': serializer.toJson<String?>(imageUrl),
+      'isActive': serializer.toJson<bool>(isActive),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  Waiter copyWith({
+    int? id,
+    String? firstName,
+    Value<String?> lastName = const Value.absent(),
+    Value<String?> imageUrl = const Value.absent(),
+    bool? isActive,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => Waiter(
+    id: id ?? this.id,
+    firstName: firstName ?? this.firstName,
+    lastName: lastName.present ? lastName.value : this.lastName,
+    imageUrl: imageUrl.present ? imageUrl.value : this.imageUrl,
+    isActive: isActive ?? this.isActive,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  Waiter copyWithCompanion(WaitersCompanion data) {
+    return Waiter(
+      id: data.id.present ? data.id.value : this.id,
+      firstName: data.firstName.present ? data.firstName.value : this.firstName,
+      lastName: data.lastName.present ? data.lastName.value : this.lastName,
+      imageUrl: data.imageUrl.present ? data.imageUrl.value : this.imageUrl,
+      isActive: data.isActive.present ? data.isActive.value : this.isActive,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('Waiter(')
+          ..write('id: $id, ')
+          ..write('firstName: $firstName, ')
+          ..write('lastName: $lastName, ')
+          ..write('imageUrl: $imageUrl, ')
+          ..write('isActive: $isActive, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    firstName,
+    lastName,
+    imageUrl,
+    isActive,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Waiter &&
+          other.id == this.id &&
+          other.firstName == this.firstName &&
+          other.lastName == this.lastName &&
+          other.imageUrl == this.imageUrl &&
+          other.isActive == this.isActive &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class WaitersCompanion extends UpdateCompanion<Waiter> {
+  final Value<int> id;
+  final Value<String> firstName;
+  final Value<String?> lastName;
+  final Value<String?> imageUrl;
+  final Value<bool> isActive;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  const WaitersCompanion({
+    this.id = const Value.absent(),
+    this.firstName = const Value.absent(),
+    this.lastName = const Value.absent(),
+    this.imageUrl = const Value.absent(),
+    this.isActive = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  WaitersCompanion.insert({
+    this.id = const Value.absent(),
+    required String firstName,
+    this.lastName = const Value.absent(),
+    this.imageUrl = const Value.absent(),
+    this.isActive = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  }) : firstName = Value(firstName);
+  static Insertable<Waiter> custom({
+    Expression<int>? id,
+    Expression<String>? firstName,
+    Expression<String>? lastName,
+    Expression<String>? imageUrl,
+    Expression<bool>? isActive,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (firstName != null) 'first_name': firstName,
+      if (lastName != null) 'last_name': lastName,
+      if (imageUrl != null) 'image_url': imageUrl,
+      if (isActive != null) 'is_active': isActive,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  WaitersCompanion copyWith({
+    Value<int>? id,
+    Value<String>? firstName,
+    Value<String?>? lastName,
+    Value<String?>? imageUrl,
+    Value<bool>? isActive,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+  }) {
+    return WaitersCompanion(
+      id: id ?? this.id,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      imageUrl: imageUrl ?? this.imageUrl,
+      isActive: isActive ?? this.isActive,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (firstName.present) {
+      map['first_name'] = Variable<String>(firstName.value);
+    }
+    if (lastName.present) {
+      map['last_name'] = Variable<String>(lastName.value);
+    }
+    if (imageUrl.present) {
+      map['image_url'] = Variable<String>(imageUrl.value);
+    }
+    if (isActive.present) {
+      map['is_active'] = Variable<bool>(isActive.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WaitersCompanion(')
+          ..write('id: $id, ')
+          ..write('firstName: $firstName, ')
+          ..write('lastName: $lastName, ')
+          ..write('imageUrl: $imageUrl, ')
+          ..write('isActive: $isActive, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $WaiterAreasTable extends WaiterAreas
+    with TableInfo<$WaiterAreasTable, WaiterArea> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $WaiterAreasTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _waiterIdMeta = const VerificationMeta(
+    'waiterId',
+  );
+  @override
+  late final GeneratedColumn<int> waiterId = GeneratedColumn<int>(
+    'waiter_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _areaIdMeta = const VerificationMeta('areaId');
+  @override
+  late final GeneratedColumn<int> areaId = GeneratedColumn<int>(
+    'area_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [waiterId, areaId];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'waiter_areas';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<WaiterArea> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('waiter_id')) {
+      context.handle(
+        _waiterIdMeta,
+        waiterId.isAcceptableOrUnknown(data['waiter_id']!, _waiterIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_waiterIdMeta);
+    }
+    if (data.containsKey('area_id')) {
+      context.handle(
+        _areaIdMeta,
+        areaId.isAcceptableOrUnknown(data['area_id']!, _areaIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_areaIdMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {waiterId, areaId};
+  @override
+  WaiterArea map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return WaiterArea(
+      waiterId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}waiter_id'],
+      )!,
+      areaId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}area_id'],
+      )!,
+    );
+  }
+
+  @override
+  $WaiterAreasTable createAlias(String alias) {
+    return $WaiterAreasTable(attachedDatabase, alias);
+  }
+}
+
+class WaiterArea extends DataClass implements Insertable<WaiterArea> {
+  final int waiterId;
+  final int areaId;
+  const WaiterArea({required this.waiterId, required this.areaId});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['waiter_id'] = Variable<int>(waiterId);
+    map['area_id'] = Variable<int>(areaId);
+    return map;
+  }
+
+  WaiterAreasCompanion toCompanion(bool nullToAbsent) {
+    return WaiterAreasCompanion(
+      waiterId: Value(waiterId),
+      areaId: Value(areaId),
+    );
+  }
+
+  factory WaiterArea.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return WaiterArea(
+      waiterId: serializer.fromJson<int>(json['waiterId']),
+      areaId: serializer.fromJson<int>(json['areaId']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'waiterId': serializer.toJson<int>(waiterId),
+      'areaId': serializer.toJson<int>(areaId),
+    };
+  }
+
+  WaiterArea copyWith({int? waiterId, int? areaId}) => WaiterArea(
+    waiterId: waiterId ?? this.waiterId,
+    areaId: areaId ?? this.areaId,
+  );
+  WaiterArea copyWithCompanion(WaiterAreasCompanion data) {
+    return WaiterArea(
+      waiterId: data.waiterId.present ? data.waiterId.value : this.waiterId,
+      areaId: data.areaId.present ? data.areaId.value : this.areaId,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WaiterArea(')
+          ..write('waiterId: $waiterId, ')
+          ..write('areaId: $areaId')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(waiterId, areaId);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is WaiterArea &&
+          other.waiterId == this.waiterId &&
+          other.areaId == this.areaId);
+}
+
+class WaiterAreasCompanion extends UpdateCompanion<WaiterArea> {
+  final Value<int> waiterId;
+  final Value<int> areaId;
+  final Value<int> rowid;
+  const WaiterAreasCompanion({
+    this.waiterId = const Value.absent(),
+    this.areaId = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  WaiterAreasCompanion.insert({
+    required int waiterId,
+    required int areaId,
+    this.rowid = const Value.absent(),
+  }) : waiterId = Value(waiterId),
+       areaId = Value(areaId);
+  static Insertable<WaiterArea> custom({
+    Expression<int>? waiterId,
+    Expression<int>? areaId,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (waiterId != null) 'waiter_id': waiterId,
+      if (areaId != null) 'area_id': areaId,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  WaiterAreasCompanion copyWith({
+    Value<int>? waiterId,
+    Value<int>? areaId,
+    Value<int>? rowid,
+  }) {
+    return WaiterAreasCompanion(
+      waiterId: waiterId ?? this.waiterId,
+      areaId: areaId ?? this.areaId,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (waiterId.present) {
+      map['waiter_id'] = Variable<int>(waiterId.value);
+    }
+    if (areaId.present) {
+      map['area_id'] = Variable<int>(areaId.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WaiterAreasCompanion(')
+          ..write('waiterId: $waiterId, ')
+          ..write('areaId: $areaId, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -13884,6 +14596,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $PendingSyncOperationsTable pendingSyncOperations =
       $PendingSyncOperationsTable(this);
   late final $OrderLogsTable orderLogs = $OrderLogsTable(this);
+  late final $WaitersTable waiters = $WaitersTable(this);
+  late final $WaiterAreasTable waiterAreas = $WaiterAreasTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -13913,6 +14627,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     tickets,
     pendingSyncOperations,
     orderLogs,
+    waiters,
+    waiterAreas,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -18017,6 +18733,7 @@ typedef $$OrdersTableCreateCompanionBuilder =
       Value<double> discountPercentage,
       Value<int?> createdBy,
       Value<int?> takenBy,
+      Value<int?> waiterId,
       Value<int?> clientId,
       Value<int?> commercialId,
       Value<String?> note,
@@ -18041,6 +18758,7 @@ typedef $$OrdersTableUpdateCompanionBuilder =
       Value<double> discountPercentage,
       Value<int?> createdBy,
       Value<int?> takenBy,
+      Value<int?> waiterId,
       Value<int?> clientId,
       Value<int?> commercialId,
       Value<String?> note,
@@ -18172,6 +18890,11 @@ class $$OrdersTableFilterComposer
 
   ColumnFilters<int> get takenBy => $composableBuilder(
     column: $table.takenBy,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get waiterId => $composableBuilder(
+    column: $table.waiterId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -18340,6 +19063,11 @@ class $$OrdersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get waiterId => $composableBuilder(
+    column: $table.waiterId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get clientId => $composableBuilder(
     column: $table.clientId,
     builder: (column) => ColumnOrderings(column),
@@ -18426,6 +19154,9 @@ class $$OrdersTableAnnotationComposer
 
   GeneratedColumn<int> get takenBy =>
       $composableBuilder(column: $table.takenBy, builder: (column) => column);
+
+  GeneratedColumn<int> get waiterId =>
+      $composableBuilder(column: $table.waiterId, builder: (column) => column);
 
   GeneratedColumn<int> get clientId =>
       $composableBuilder(column: $table.clientId, builder: (column) => column);
@@ -18541,6 +19272,7 @@ class $$OrdersTableTableManager
                 Value<double> discountPercentage = const Value.absent(),
                 Value<int?> createdBy = const Value.absent(),
                 Value<int?> takenBy = const Value.absent(),
+                Value<int?> waiterId = const Value.absent(),
                 Value<int?> clientId = const Value.absent(),
                 Value<int?> commercialId = const Value.absent(),
                 Value<String?> note = const Value.absent(),
@@ -18563,6 +19295,7 @@ class $$OrdersTableTableManager
                 discountPercentage: discountPercentage,
                 createdBy: createdBy,
                 takenBy: takenBy,
+                waiterId: waiterId,
                 clientId: clientId,
                 commercialId: commercialId,
                 note: note,
@@ -18587,6 +19320,7 @@ class $$OrdersTableTableManager
                 Value<double> discountPercentage = const Value.absent(),
                 Value<int?> createdBy = const Value.absent(),
                 Value<int?> takenBy = const Value.absent(),
+                Value<int?> waiterId = const Value.absent(),
                 Value<int?> clientId = const Value.absent(),
                 Value<int?> commercialId = const Value.absent(),
                 Value<String?> note = const Value.absent(),
@@ -18609,6 +19343,7 @@ class $$OrdersTableTableManager
                 discountPercentage: discountPercentage,
                 createdBy: createdBy,
                 takenBy: takenBy,
+                waiterId: waiterId,
                 clientId: clientId,
                 commercialId: commercialId,
                 note: note,
@@ -21212,6 +21947,375 @@ typedef $$OrderLogsTableProcessedTableManager =
       OrderLog,
       PrefetchHooks Function({bool orderId})
     >;
+typedef $$WaitersTableCreateCompanionBuilder =
+    WaitersCompanion Function({
+      Value<int> id,
+      required String firstName,
+      Value<String?> lastName,
+      Value<String?> imageUrl,
+      Value<bool> isActive,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+    });
+typedef $$WaitersTableUpdateCompanionBuilder =
+    WaitersCompanion Function({
+      Value<int> id,
+      Value<String> firstName,
+      Value<String?> lastName,
+      Value<String?> imageUrl,
+      Value<bool> isActive,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+    });
+
+class $$WaitersTableFilterComposer
+    extends Composer<_$AppDatabase, $WaitersTable> {
+  $$WaitersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get firstName => $composableBuilder(
+    column: $table.firstName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastName => $composableBuilder(
+    column: $table.lastName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get imageUrl => $composableBuilder(
+    column: $table.imageUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isActive => $composableBuilder(
+    column: $table.isActive,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$WaitersTableOrderingComposer
+    extends Composer<_$AppDatabase, $WaitersTable> {
+  $$WaitersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get firstName => $composableBuilder(
+    column: $table.firstName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastName => $composableBuilder(
+    column: $table.lastName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get imageUrl => $composableBuilder(
+    column: $table.imageUrl,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isActive => $composableBuilder(
+    column: $table.isActive,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$WaitersTableAnnotationComposer
+    extends Composer<_$AppDatabase, $WaitersTable> {
+  $$WaitersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get firstName =>
+      $composableBuilder(column: $table.firstName, builder: (column) => column);
+
+  GeneratedColumn<String> get lastName =>
+      $composableBuilder(column: $table.lastName, builder: (column) => column);
+
+  GeneratedColumn<String> get imageUrl =>
+      $composableBuilder(column: $table.imageUrl, builder: (column) => column);
+
+  GeneratedColumn<bool> get isActive =>
+      $composableBuilder(column: $table.isActive, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$WaitersTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $WaitersTable,
+          Waiter,
+          $$WaitersTableFilterComposer,
+          $$WaitersTableOrderingComposer,
+          $$WaitersTableAnnotationComposer,
+          $$WaitersTableCreateCompanionBuilder,
+          $$WaitersTableUpdateCompanionBuilder,
+          (Waiter, BaseReferences<_$AppDatabase, $WaitersTable, Waiter>),
+          Waiter,
+          PrefetchHooks Function()
+        > {
+  $$WaitersTableTableManager(_$AppDatabase db, $WaitersTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$WaitersTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$WaitersTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$WaitersTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> firstName = const Value.absent(),
+                Value<String?> lastName = const Value.absent(),
+                Value<String?> imageUrl = const Value.absent(),
+                Value<bool> isActive = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+              }) => WaitersCompanion(
+                id: id,
+                firstName: firstName,
+                lastName: lastName,
+                imageUrl: imageUrl,
+                isActive: isActive,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required String firstName,
+                Value<String?> lastName = const Value.absent(),
+                Value<String?> imageUrl = const Value.absent(),
+                Value<bool> isActive = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+              }) => WaitersCompanion.insert(
+                id: id,
+                firstName: firstName,
+                lastName: lastName,
+                imageUrl: imageUrl,
+                isActive: isActive,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$WaitersTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $WaitersTable,
+      Waiter,
+      $$WaitersTableFilterComposer,
+      $$WaitersTableOrderingComposer,
+      $$WaitersTableAnnotationComposer,
+      $$WaitersTableCreateCompanionBuilder,
+      $$WaitersTableUpdateCompanionBuilder,
+      (Waiter, BaseReferences<_$AppDatabase, $WaitersTable, Waiter>),
+      Waiter,
+      PrefetchHooks Function()
+    >;
+typedef $$WaiterAreasTableCreateCompanionBuilder =
+    WaiterAreasCompanion Function({
+      required int waiterId,
+      required int areaId,
+      Value<int> rowid,
+    });
+typedef $$WaiterAreasTableUpdateCompanionBuilder =
+    WaiterAreasCompanion Function({
+      Value<int> waiterId,
+      Value<int> areaId,
+      Value<int> rowid,
+    });
+
+class $$WaiterAreasTableFilterComposer
+    extends Composer<_$AppDatabase, $WaiterAreasTable> {
+  $$WaiterAreasTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get waiterId => $composableBuilder(
+    column: $table.waiterId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get areaId => $composableBuilder(
+    column: $table.areaId,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$WaiterAreasTableOrderingComposer
+    extends Composer<_$AppDatabase, $WaiterAreasTable> {
+  $$WaiterAreasTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get waiterId => $composableBuilder(
+    column: $table.waiterId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get areaId => $composableBuilder(
+    column: $table.areaId,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$WaiterAreasTableAnnotationComposer
+    extends Composer<_$AppDatabase, $WaiterAreasTable> {
+  $$WaiterAreasTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get waiterId =>
+      $composableBuilder(column: $table.waiterId, builder: (column) => column);
+
+  GeneratedColumn<int> get areaId =>
+      $composableBuilder(column: $table.areaId, builder: (column) => column);
+}
+
+class $$WaiterAreasTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $WaiterAreasTable,
+          WaiterArea,
+          $$WaiterAreasTableFilterComposer,
+          $$WaiterAreasTableOrderingComposer,
+          $$WaiterAreasTableAnnotationComposer,
+          $$WaiterAreasTableCreateCompanionBuilder,
+          $$WaiterAreasTableUpdateCompanionBuilder,
+          (
+            WaiterArea,
+            BaseReferences<_$AppDatabase, $WaiterAreasTable, WaiterArea>,
+          ),
+          WaiterArea,
+          PrefetchHooks Function()
+        > {
+  $$WaiterAreasTableTableManager(_$AppDatabase db, $WaiterAreasTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$WaiterAreasTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$WaiterAreasTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$WaiterAreasTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> waiterId = const Value.absent(),
+                Value<int> areaId = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => WaiterAreasCompanion(
+                waiterId: waiterId,
+                areaId: areaId,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required int waiterId,
+                required int areaId,
+                Value<int> rowid = const Value.absent(),
+              }) => WaiterAreasCompanion.insert(
+                waiterId: waiterId,
+                areaId: areaId,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$WaiterAreasTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $WaiterAreasTable,
+      WaiterArea,
+      $$WaiterAreasTableFilterComposer,
+      $$WaiterAreasTableOrderingComposer,
+      $$WaiterAreasTableAnnotationComposer,
+      $$WaiterAreasTableCreateCompanionBuilder,
+      $$WaiterAreasTableUpdateCompanionBuilder,
+      (
+        WaiterArea,
+        BaseReferences<_$AppDatabase, $WaiterAreasTable, WaiterArea>,
+      ),
+      WaiterArea,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -21269,4 +22373,8 @@ class $AppDatabaseManager {
       $$PendingSyncOperationsTableTableManager(_db, _db.pendingSyncOperations);
   $$OrderLogsTableTableManager get orderLogs =>
       $$OrderLogsTableTableManager(_db, _db.orderLogs);
+  $$WaitersTableTableManager get waiters =>
+      $$WaitersTableTableManager(_db, _db.waiters);
+  $$WaiterAreasTableTableManager get waiterAreas =>
+      $$WaiterAreasTableTableManager(_db, _db.waiterAreas);
 }

@@ -350,3 +350,127 @@ final productAttributesProvider = FutureProvider.autoDispose.family<List<Map<Str
   return attributesMap.values.toList();
 });
 
+// Waiter Providers
+
+/// Get all waiters
+final waitersProvider = StreamProvider<List<Waiter>>((ref) {
+  final database = ref.watch(databaseProvider);
+  return (database.select(database.waiters)
+    ..where((tbl) => tbl.isActive.equals(true))
+    ..orderBy([(tbl) => OrderingTerm.asc(tbl.firstName)]))
+    .watch();
+});
+
+/// Get waiter by ID
+final waiterByIdProvider = FutureProvider.autoDispose.family<Waiter?, int>((ref, waiterId) async {
+  final database = ref.watch(databaseProvider);
+  return await (database.select(database.waiters)
+    ..where((tbl) => tbl.id.equals(waiterId)))
+    .getSingleOrNull();
+});
+
+/// Get area IDs assigned to a waiter
+final waiterAreasProvider = FutureProvider.autoDispose.family<List<int>, int>((ref, waiterId) async {
+  final database = ref.watch(databaseProvider);
+  final waiterAreas = await (database.select(database.waiterAreas)
+    ..where((tbl) => tbl.waiterId.equals(waiterId)))
+    .get();
+  return waiterAreas.map((wa) => wa.areaId).toList();
+});
+
+/// Get waiters by area (includes waiters with no area assignments - they serve all areas)
+final waitersByAreaProvider = FutureProvider.autoDispose.family<List<Waiter>, int?>((ref, areaId) async {
+  final database = ref.watch(databaseProvider);
+
+  // Get all active waiters
+  final allWaiters = await (database.select(database.waiters)
+    ..where((tbl) => tbl.isActive.equals(true)))
+    .get();
+
+  if (areaId == null) {
+    // No area selected, return all waiters
+    return allWaiters;
+  }
+
+  // Get all waiter-area assignments
+  final allAssignments = await database.select(database.waiterAreas).get();
+
+  // Group assignments by waiter ID
+  final waiterAreaMap = <int, List<int>>{};
+  for (final assignment in allAssignments) {
+    waiterAreaMap.putIfAbsent(assignment.waiterId, () => []).add(assignment.areaId);
+  }
+
+  // Filter waiters: include those assigned to this area OR those with no assignments (serve all)
+  final result = <Waiter>[];
+  for (final waiter in allWaiters) {
+    final assignedAreas = waiterAreaMap[waiter.id] ?? [];
+    if (assignedAreas.isEmpty || assignedAreas.contains(areaId)) {
+      result.add(waiter);
+    }
+  }
+
+  return result;
+});
+
+/// Get waiter statistics: active orders count and total unpaid amount
+final waiterStatsProvider = FutureProvider.autoDispose.family<Map<String, dynamic>, int>((ref, waiterId) async {
+  final database = ref.watch(databaseProvider);
+
+  // Get all orders assigned to this waiter (not completed/cancelled)
+  final ordersQuery = database.select(database.orders)
+    ..where((tbl) => tbl.waiterId.equals(waiterId))
+    ..where((tbl) => tbl.status.isNotIn(['COMPLETED', 'CANCELLED']));
+  
+  final orders = await ordersQuery.get();
+  int totalOrders = orders.length;
+  double unpaidTotal = 0.0;
+
+  for (final order in orders) {
+    // Get all order products for this order
+    final products = await (database.select(database.orderProducts)
+      ..where((tbl) => tbl.orderId.equals(order.id)))
+      .get();
+
+    for (final product in products) {
+      // Only count unpaid items (no ticketId)
+      if (product.ticketId == null) {
+        // Get component prices for this product
+        final components = await (database.select(database.orderProductComponents)
+          ..where((tbl) => tbl.orderProductId.equals(product.id)))
+          .get();
+        
+        double componentTotal = 0.0;
+        for (final comp in components) {
+          componentTotal += comp.price * comp.quantity;
+        }
+        
+        final itemTotal = (product.unitaryPrice + componentTotal) * product.quantity;
+        unpaidTotal += itemTotal;
+      }
+    }
+  }
+
+  return {
+    'totalOrders': totalOrders,
+    'unpaidTotal': unpaidTotal,
+  };
+});
+
+/// Check if a waiter can serve an area
+final canWaiterServeAreaProvider = FutureProvider.autoDispose.family<bool, ({int waiterId, int areaId})>((ref, params) async {
+  final database = ref.watch(databaseProvider);
+
+  // Get waiter's assigned areas
+  final waiterAreas = await (database.select(database.waiterAreas)
+    ..where((tbl) => tbl.waiterId.equals(params.waiterId)))
+    .get();
+
+  // If no areas assigned, waiter can serve all areas
+  if (waiterAreas.isEmpty) {
+    return true;
+  }
+
+  // Check if the area is in the waiter's assigned areas
+  return waiterAreas.any((wa) => wa.areaId == params.areaId);
+});

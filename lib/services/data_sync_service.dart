@@ -127,8 +127,11 @@ class DataSyncService {
         onProgress?.call('Fetching commercials...', 0.8);
         await _syncCommercials();
 
-        onProgress?.call('Fetching customers...', 0.9);
+        onProgress?.call('Fetching customers...', 0.85);
         await _syncCustomers();
+
+        onProgress?.call('Fetching waiters...', 0.95);
+        await _syncWaiters();
       });
 
       onProgress?.call('Sync complete!', 1.0);
@@ -358,6 +361,39 @@ class DataSyncService {
         ),
         mode: InsertMode.insertOrReplace,
       );
+    }
+  }
+
+  Future<void> _syncWaiters() async {
+    final waiters = await _apiService.fetchWaiters();
+
+    // Clear existing waiter-area assignments
+    await _database.delete(_database.waiterAreas).go();
+
+    for (final waiter in waiters) {
+      // Insert or update waiter
+      await _database.into(_database.waiters).insert(
+        WaitersCompanion.insert(
+          id: Value(waiter['id']),
+          firstName: waiter['firstName'] ?? '',
+          lastName: Value(waiter['lastName']),
+          imageUrl: Value(waiter['imageUrl']),
+          isActive: const Value(true),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+
+      // Insert waiter-area assignments
+      final areaIds = waiter['areaIds'] as List<dynamic>? ?? [];
+      for (final areaId in areaIds) {
+        await _database.into(_database.waiterAreas).insert(
+          WaiterAreasCompanion.insert(
+            waiterId: waiter['id'],
+            areaId: areaId as int,
+          ),
+          mode: InsertMode.insertOrIgnore,
+        );
+      }
     }
   }
 

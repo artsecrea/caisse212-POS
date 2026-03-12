@@ -115,6 +115,16 @@ class AppLocalizations {
       'clear_table': 'Clear Table',
       'table_cleared': 'Table cleared',
 
+      // Waiters
+      'waiter': 'Waiter',
+      'waiters': 'Waiters',
+      'select_waiter': 'Select Waiter',
+      'search_waiter': 'Search waiter...',
+      'no_waiters_found': 'No waiters found',
+      'filter_by_area': 'Filter by area',
+      'serves_all_areas': 'Serves all areas',
+      'unselect': 'Unselect',
+
       // Orders
       'orders': 'Orders',
       'order': 'Order',
@@ -199,6 +209,8 @@ class AppLocalizations {
       'appearance_subtitle': 'Customize the look and feel of the application',
       'dark_mode': 'Dark Mode',
       'dark_mode_subtitle': 'Use dark theme throughout the app',
+      'enable_snack_bars': 'Enable Notifications',
+      'enable_snack_bars_subtitle': 'Show snack bar notifications for actions and errors',
       'language': 'Language',
       'select_app_language': 'Select app language',
       'currency': 'Currency',
@@ -236,6 +248,8 @@ class AppLocalizations {
       'customer_selection': 'Customer selection',
       'commercial_button': 'Commercial Button',
       'commercial_selection': 'Commercial selection',
+      'waiter_button': 'Waiter Button',
+      'waiter_selection': 'Waiter selection',
       'coupon_button': 'Coupon Button',
       'apply_coupons': 'Apply coupons',
       'discount_button': 'Discount Button',
@@ -1004,6 +1018,16 @@ class AppLocalizations {
       'clear_table': 'مسح الطاولة',
       'table_cleared': 'تم مسح الطاولة',
 
+      // Waiters
+      'waiter': 'نادل',
+      'waiters': 'النوادل',
+      'select_waiter': 'اختر نادل',
+      'search_waiter': 'ابحث عن نادل...',
+      'no_waiters_found': 'لم يتم العثور على نوادل',
+      'filter_by_area': 'تصفية حسب المنطقة',
+      'serves_all_areas': 'يخدم جميع المناطق',
+      'unselect': 'إلغاء التحديد',
+
       // Orders
       'orders': 'الطلبات',
       'order': 'طلب',
@@ -1088,6 +1112,8 @@ class AppLocalizations {
       'appearance_subtitle': 'تخصيص مظهر التطبيق',
       'dark_mode': 'الوضع الليلي',
       'dark_mode_subtitle': 'استخدام السمة الداكنة في جميع أنحاء التطبيق',
+      'enable_snack_bars': 'تفعيل الإشعارات',
+      'enable_snack_bars_subtitle': 'عرض إشعارات شريط الوجبات الخفيفة للإجراءات والأخطاء',
       'language': 'اللغة',
       'select_app_language': 'اختر لغة التطبيق',
       'currency': 'العملة',
@@ -1125,6 +1151,8 @@ class AppLocalizations {
       'customer_selection': 'اختيار العميل',
       'commercial_button': 'زر التجاري',
       'commercial_selection': 'اختيار التجاري',
+      'waiter_button': 'زر النادل',
+      'waiter_selection': 'اختيار النادل',
       'coupon_button': 'زر القسيمة',
       'apply_coupons': 'تطبيق القسائم',
       'discount_button': 'زر الخصم',
@@ -1878,6 +1906,16 @@ class AppLocalizations {
       'clear_table': 'Vider la table',
       'table_cleared': 'Table vidée',
 
+      // Waiters
+      'waiter': 'Serveur',
+      'waiters': 'Serveurs',
+      'select_waiter': 'Sélectionner un serveur',
+      'search_waiter': 'Rechercher un serveur...',
+      'no_waiters_found': 'Aucun serveur trouvé',
+      'filter_by_area': 'Filtrer par zone',
+      'serves_all_areas': 'Sert toutes les zones',
+      'unselect': 'Désélectionner',
+
       // Orders
       'orders': 'Commandes',
       'order': 'Commande',
@@ -1962,6 +2000,8 @@ class AppLocalizations {
       'appearance_subtitle': 'Personnaliser l\'apparence de l\'application',
       'dark_mode': 'Mode sombre',
       'dark_mode_subtitle': 'Utiliser le thème sombre dans toute l\'application',
+      'enable_snack_bars': 'Activer les notifications',
+      'enable_snack_bars_subtitle': 'Afficher les notifications pour les actions et les erreurs',
       'language': 'Langue',
       'select_app_language': 'Sélectionner la langue de l\'application',
       'currency': 'Devise',
@@ -1999,6 +2039,8 @@ class AppLocalizations {
       'customer_selection': 'Sélection de client',
       'commercial_button': 'Bouton Commercial',
       'commercial_selection': 'Sélection de commercial',
+      'waiter_button': 'Bouton Serveur',
+      'waiter_selection': 'Sélection de serveur',
       'coupon_button': 'Bouton Coupon',
       'apply_coupons': 'Appliquer les coupons',
       'discount_button': 'Bouton Réduction',

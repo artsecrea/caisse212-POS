@@ -74,9 +74,9 @@ class AppTheme {
       scaffoldBackgroundColor: Colors.grey[50],
       dividerColor: Colors.grey[300],
       snackBarTheme: SnackBarThemeData(
-        behavior: SnackBarBehavior.fixed,
         dismissDirection: DismissDirection.endToStart,
         showCloseIcon: true,
+
 
       )
     );

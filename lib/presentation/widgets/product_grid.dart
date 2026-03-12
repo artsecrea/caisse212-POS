@@ -8,6 +8,7 @@ import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
+import '../../utils/snackbar_helper.dart';
 import 'product_modification_dialog.dart' as dialog;
 
 class ProductGrid extends ConsumerWidget {
@@ -267,12 +268,11 @@ class _ProductCard extends ConsumerWidget {
 
     ref.read(orderProvider.notifier).addItem(orderItem);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${variantName ?? product.name} added to order'),
-        duration: const Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-      ),
+    SnackBarHelper.showSuccessSnackBar(
+      context,
+      ref,
+      '${variantName ?? product.name} added to order',
+      duration: const Duration(seconds: 1),
     );
   }
 

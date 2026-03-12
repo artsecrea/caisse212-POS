@@ -511,6 +511,21 @@ class ApiService {
     }
   }
 
+  /// Fetch waiters from server
+  Future<List<Map<String, dynamic>>> fetchWaiters() async {
+    try {
+      final response = await _dio.get('/pos/waiters');
+      if (response.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(response.data);
+      }
+      throw Exception('Failed to fetch waiters');
+    } on DioException catch (e) {
+      throw Exception('Network error: ${e.message ?? 'Failed to fetch waiters. Check connection.'}');
+    } catch (e) {
+      throw Exception('Error fetching waiters: ${e.toString()}');
+    }
+  }
+
   /// Fetch a single order by code from server
   Future<Map<String, dynamic>> fetchOrderByCode(String orderCode) async {
     try {

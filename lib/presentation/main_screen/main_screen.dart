@@ -25,7 +25,9 @@ import '../widgets/print_options_dialog.dart';
 import '../widgets/product_grid.dart';
 import '../widgets/order_panel.dart';
 import '../widgets/table_selection_dialog.dart';
+import '../widgets/waiter_selection_dialog.dart';
 import '../widgets/top_bar.dart';
+import '../../utils/snackbar_helper.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({Key? key}) : super(key: key);
@@ -143,34 +145,31 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         ref.read(orderProvider.notifier).loadOrder(order);
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Order $barcode loaded'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 2),
-            ),
+          SnackBarHelper.showSuccessSnackBar(
+            context,
+            ref,
+            'Order $barcode loaded',
+            duration: const Duration(seconds: 2),
           );
         }
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Order $barcode not found'),
-              backgroundColor: Colors.orange,
-              duration: const Duration(seconds: 2),
-            ),
+          SnackBarHelper.showWarningSnackBar(
+            context,
+            ref,
+            'Order $barcode not found',
+            duration: const Duration(seconds: 2),
           );
         }
       }
     } catch (e) {
       _logger.error('Error loading order from barcode: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 2),
-          ),
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          'Error: $e',
+          duration: const Duration(seconds: 2),
         );
       }
     }
@@ -194,34 +193,31 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         );
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${product.name} added to order'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 1),
-            ),
+          SnackBarHelper.showSuccessSnackBar(
+            context,
+            ref,
+            '${product.name} added to order',
+            duration: const Duration(seconds: 1),
           );
         }
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Product with barcode $barcode not found'),
-              backgroundColor: Colors.orange,
-              duration: const Duration(seconds: 2),
-            ),
+          SnackBarHelper.showWarningSnackBar(
+            context,
+            ref,
+            'Product with barcode $barcode not found',
+            duration: const Duration(seconds: 2),
           );
         }
       }
     } catch (e) {
       _logger.error('Error loading product from barcode: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 2),
-          ),
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          'Error: $e',
+          duration: const Duration(seconds: 2),
         );
       }
     }
@@ -483,11 +479,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       ref.invalidate(areaTablesProvider);
 
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('${l10n.translate('order_transferred_to')} $tableName'),
-                            backgroundColor: Colors.green,
-                          ),
+                        SnackBarHelper.showSuccessSnackBar(
+                          context,
+                          ref,
+                          '${l10n.translate('order_transferred_to')} $tableName',
                         );
                       }
                     }
@@ -503,11 +498,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     );
 
                     if (paymentResult == true && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(l10n.translate('payment_successful')),
-                          backgroundColor: Colors.green,
-                        ),
+                      SnackBarHelper.showSuccessSnackBar(
+                        context,
+                        ref,
+                        l10n.translate('payment_successful'),
                       );
                     }
                     return;
@@ -515,11 +509,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                   if (action == 'cleared') {
                     final clearedTableName = result['tableName'];
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('$clearedTableName ${l10n.translate('table_cleared')}'),
-                        backgroundColor: Colors.green,
-                      ),
+                    SnackBarHelper.showSuccessSnackBar(
+                      context,
+                      ref,
+                      '$clearedTableName ${l10n.translate('table_cleared')}',
                     );
                     return;
                   }
@@ -528,11 +521,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     if (existingOrder != null) {
                       ref.read(orderProvider.notifier).loadOrder(existingOrder);
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Adding items to $tableName order'),
-                            backgroundColor: Colors.blue,
-                          ),
+                        SnackBarHelper.showInfoSnackBar(
+                          context,
+                          ref,
+                          'Adding items to $tableName order',
                         );
                       }
                     }
@@ -542,11 +534,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   if (existingOrder != null) {
                     ref.read(orderProvider.notifier).loadOrder(existingOrder);
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('${l10n.translate('order')} ${l10n.translate('for')} $tableName'),
-                          backgroundColor: Colors.blue,
-                        ),
+                      SnackBarHelper.showInfoSnackBar(
+                        context,
+                        ref,
+                        '${l10n.translate('order')} ${l10n.translate('for')} $tableName',
                       );
                     }
                   } else {
@@ -603,6 +594,48 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     ref.read(orderProvider.notifier).clearCommercial();
                   } else {
                     ref.read(orderProvider.notifier).setCommercial(result['id'], result['name']);
+                  }
+                }
+              },
+            );
+          }
+          break;
+
+        case 'waiter':
+          shouldShow = settings.showWaiterButton &&
+                       permissionService.hasPermission(Permissions.waiterSet);
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.person_pin,
+              label: currentOrder.waiterName ?? l10n.translate('waiter'),
+              color: currentOrder.waiterId != null ? Colors.teal : null,
+              onPressed: () async {
+                final result = await showDialog<Map<String, dynamic>>(
+                  context: context,
+                  builder: (context) => WaiterSelectionDialog(
+                    currentTableId: currentOrder.tableId,
+                    currentWaiterId: currentOrder.waiterId,
+                  ),
+                );
+                if (result != null) {
+                  final action = result['action'];
+                  if (action == 'unselect') {
+                    ref.read(orderProvider.notifier).clearWaiter();
+                    // Update database if order is saved
+                    if (currentOrder.orderId != null) {
+                      final updatedOrder = ref.read(orderProvider);
+                      await ref.read(orderRepositoryProvider).updateOrder(updatedOrder);
+                    }
+                  } else if (action == 'select') {
+                    ref.read(orderProvider.notifier).setWaiter(
+                      result['waiterId'],
+                      result['waiterName'],
+                    );
+                    // Update database if order is saved
+                    if (currentOrder.orderId != null) {
+                      final updatedOrder = ref.read(orderProvider);
+                      await ref.read(orderRepositoryProvider).updateOrder(updatedOrder);
+                    }
                   }
                 }
               },
@@ -681,11 +714,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           }
                         } catch (e) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Error saving order: $e'),
-                                backgroundColor: Colors.red,
-                              ),
+                            SnackBarHelper.showErrorSnackBar(
+                              context,
+                              ref,
+                              'Error saving order: $e',
                             );
                           }
                           return;
@@ -800,20 +832,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       }
 
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Order saved successfully'),
-                            backgroundColor: Colors.green,
-                          ),
+                        SnackBarHelper.showSuccessSnackBar(
+                          context,
+                          ref,
+                          'Order saved successfully',
                         );
                       }
                     } catch (e) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Error: $e'),
-                            backgroundColor: Colors.red,
-                          ),
+                        SnackBarHelper.showErrorSnackBar(
+                          context,
+                          ref,
+                          'Error: $e',
                         );
                       }
                     }
@@ -964,21 +994,19 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         // Clear order
         ref.read(orderProvider.notifier).clearOrder();
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Payment completed! Ticket #$ticketNumStr'),
-            backgroundColor: Colors.green.shade700,
-          ),
+        SnackBarHelper.showSuccessSnackBar(
+          context,
+          ref,
+          'Payment completed! Ticket #$ticketNumStr',
         );
       }
     } catch (e) {
       _logger.error('Direct payment failed: $e');
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Payment failed: $e'),
-            backgroundColor: Colors.red,
-          ),
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          'Payment failed: $e',
         );
       }
     }
@@ -1026,11 +1054,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         if (result == true && context.mounted) {
           // Payment completed, clear order
           ref.read(orderProvider.notifier).clearOrder();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Payment completed successfully'),
-              backgroundColor: Colors.green,
-            ),
+          SnackBarHelper.showSuccessSnackBar(
+            context,
+            ref,
+            'Payment completed successfully',
           );
         } else if (context.mounted) {
           // Dialog closed without completion, reload order state
@@ -1043,11 +1070,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     } catch (e) {
       _logger.error('Error opening payment dialog: $e');
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          'Error: $e',
         );
       }
     }

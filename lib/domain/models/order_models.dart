@@ -179,6 +179,8 @@ class CurrentOrder {
   final String? customerName;
   final int? commercialId;
   final String? commercialName;
+  final int? waiterId;
+  final String? waiterName;
   final String? coupon;
   final double discountPercentage; // Manual discount percentage (0-100)
   final String? note;
@@ -196,6 +198,8 @@ class CurrentOrder {
     this.customerName,
     this.commercialId,
     this.commercialName,
+    this.waiterId,
+    this.waiterName,
     this.coupon,
     this.discountPercentage = 0.0,
     this.note,
@@ -257,6 +261,8 @@ class CurrentOrder {
     String? customerName,
     int? commercialId,
     String? commercialName,
+    int? waiterId,
+    String? waiterName,
     String? coupon,
     double? discountPercentage,
     String? note,
@@ -272,6 +278,8 @@ class CurrentOrder {
       customerName: customerName ?? this.customerName,
       commercialId: commercialId ?? this.commercialId,
       commercialName: commercialName ?? this.commercialName,
+      waiterId: waiterId ?? this.waiterId,
+      waiterName: waiterName ?? this.waiterName,
       coupon: coupon ?? this.coupon,
       discountPercentage: discountPercentage ?? this.discountPercentage,
       note: note ?? this.note,

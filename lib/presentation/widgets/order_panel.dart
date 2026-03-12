@@ -7,6 +7,7 @@ import '../../providers/order_provider.dart';
 import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/snackbar_helper.dart';
 import '../../services/permission_service.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
@@ -49,11 +50,10 @@ class OrderPanel extends ConsumerWidget {
 
     if (!hasPermission) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('no_permission')),
-            backgroundColor: Colors.red,
-          ),
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          l10n.translate('no_permission'),
         );
       }
       return;
@@ -264,21 +264,19 @@ class OrderPanel extends ConsumerWidget {
               final message = ticketProducts.length == 1
                   ? 'Paid item and ticket deleted successfully'
                   : 'Paid item deleted successfully';
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(message),
-                  backgroundColor: Colors.green,
-                ),
+              SnackBarHelper.showSuccessSnackBar(
+                context,
+                ref,
+                message,
               );
             }
           }
         } catch (e) {
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Error deleting item: $e'),
-                backgroundColor: Colors.red,
-              ),
+            SnackBarHelper.showErrorSnackBar(
+              context,
+              ref,
+              'Error deleting item: $e',
             );
           }
         }

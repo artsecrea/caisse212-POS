@@ -7,6 +7,7 @@ import 'package:caisse212/providers/order_provider.dart';
 import 'package:caisse212/presentation/paymen_screen/payment_screen.dart';
 import 'package:caisse212/utils/app_localizations.dart';
 import 'package:caisse212/utils/currency_formatter.dart';
+import 'package:caisse212/utils/snackbar_helper.dart';
 
 class OrderConfirmationScreen extends ConsumerStatefulWidget {
   const OrderConfirmationScreen({super.key});
@@ -51,21 +52,19 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
       await orderRepo.updateOrderStatus(order.id, 'PENDING');
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Order ${order.code} confirmed and sent to KDS'),
-            backgroundColor: Colors.green[700],
-          ),
+        SnackBarHelper.showSuccessSnackBar(
+          context,
+          ref,
+          'Order ${order.code} confirmed and sent to KDS',
         );
         Navigator.of(context).pop();
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error confirming order: $e'),
-            backgroundColor: Colors.red,
-          ),
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          'Error confirming order: $e',
         );
       }
     }
@@ -94,11 +93,10 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          'Error: $e',
         );
       }
     }

@@ -18,6 +18,7 @@ class AppSettings {
   final bool showTableButton;
   final bool showCustomerButton;
   final bool showCommercialButton;
+  final bool showWaiterButton;
   final bool showCouponButton;
   final bool showDiscountButton;
   final bool showPrintButton;
@@ -43,6 +44,9 @@ class AppSettings {
   final String? serverPassword; // Optional password for server authentication
   final bool autoStartServer; // Auto-start server on app startup
 
+  // UI settings
+  final bool enableSnackBars; // Enable/disable snack bar notifications globally
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -50,10 +54,11 @@ class AppSettings {
     this.showProductImages = true,
     this.defaultOrderStatus = 'PENDING',
     this.categoryDisplayMode = CategoryDisplayMode.topBar,
-    this.currency = '\$',
+    this.currency = 'DH',
     this.showTableButton = true,
     this.showCustomerButton = true,
     this.showCommercialButton = true,
+    this.showWaiterButton = true,
     this.showCouponButton = true,
     this.showDiscountButton = true,
     this.showPrintButton = true,
@@ -67,6 +72,7 @@ class AppSettings {
       'orderType',
       'confirmOrder',
       'table',
+      'waiter',
       'customer',
       'commercial',
       'coupon',
@@ -82,9 +88,10 @@ class AppSettings {
     this.autoSyncDurationMinutes = 5,
     this.autoClearSyncedData = true,
     this.orderPanelOnRight = false,
-    this.serverPort = 8080,
+    this.serverPort = 2004,
     this.serverPassword,
     this.autoStartServer = true,
+    this.enableSnackBars = false,
   });
 
   AppSettings copyWith({
@@ -98,6 +105,7 @@ class AppSettings {
     bool? showTableButton,
     bool? showCustomerButton,
     bool? showCommercialButton,
+    bool? showWaiterButton,
     bool? showCouponButton,
     bool? showDiscountButton,
     bool? showPrintButton,
@@ -116,6 +124,7 @@ class AppSettings {
     int? serverPort,
     String? serverPassword,
     bool? autoStartServer,
+    bool? enableSnackBars,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -128,6 +137,7 @@ class AppSettings {
       showTableButton: showTableButton ?? this.showTableButton,
       showCustomerButton: showCustomerButton ?? this.showCustomerButton,
       showCommercialButton: showCommercialButton ?? this.showCommercialButton,
+      showWaiterButton: showWaiterButton ?? this.showWaiterButton,
       showCouponButton: showCouponButton ?? this.showCouponButton,
       showDiscountButton: showDiscountButton ?? this.showDiscountButton,
       showPrintButton: showPrintButton ?? this.showPrintButton,
@@ -146,6 +156,7 @@ class AppSettings {
       serverPort: serverPort ?? this.serverPort,
       serverPassword: serverPassword ?? this.serverPassword,
       autoStartServer: autoStartServer ?? this.autoStartServer,
+      enableSnackBars: enableSnackBars ?? this.enableSnackBars,
     );
   }
 
@@ -161,6 +172,7 @@ class AppSettings {
       'showTableButton': showTableButton,
       'showCustomerButton': showCustomerButton,
       'showCommercialButton': showCommercialButton,
+      'showWaiterButton': showWaiterButton,
       'showCouponButton': showCouponButton,
       'showDiscountButton': showDiscountButton,
       'showPrintButton': showPrintButton,
@@ -179,6 +191,7 @@ class AppSettings {
       'serverPort': serverPort,
       'serverPassword': serverPassword,
       'autoStartServer': autoStartServer,
+      'enableSnackBars': enableSnackBars,
     };
   }
 
@@ -196,6 +209,7 @@ class AppSettings {
       showTableButton: json['showTableButton'] as bool? ?? true,
       showCustomerButton: json['showCustomerButton'] as bool? ?? true,
       showCommercialButton: json['showCommercialButton'] as bool? ?? true,
+      showWaiterButton: json['showWaiterButton'] as bool? ?? true,
       showCouponButton: json['showCouponButton'] as bool? ?? true,
       showDiscountButton: json['showDiscountButton'] as bool? ?? true,
       showPrintButton: json['showPrintButton'] as bool? ?? true,
@@ -209,6 +223,7 @@ class AppSettings {
         'orderType',
         'confirmOrder',
         'table',
+        'waiter',
         'customer',
         'commercial',
         'coupon',
@@ -227,6 +242,7 @@ class AppSettings {
       serverPort: json['serverPort'] as int?,
       serverPassword: json['serverPassword'] as String?,
       autoStartServer: json['autoStartServer'] as bool? ?? true,
+      enableSnackBars: json['enableSnackBars'] as bool? ?? true,
     );
   }
 

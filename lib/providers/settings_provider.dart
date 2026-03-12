@@ -19,6 +19,7 @@ class SettingsKeys {
   static const String showTableButton = 'show_table_button';
   static const String showCustomerButton = 'show_customer_button';
   static const String showCommercialButton = 'show_commercial_button';
+  static const String showWaiterButton = 'show_waiter_button';
   static const String showCouponButton = 'show_coupon_button';
   static const String showDiscountButton = 'show_discount_button';
   static const String showPrintButton = 'show_print_button';
@@ -37,6 +38,9 @@ class SettingsKeys {
   static const String serverPort = 'server_port';
   static const String serverPassword = 'server_password';
   static const String autoStartServer = 'auto_start_server';
+
+  // UI settings
+  static const String enableSnackBars = 'enable_snack_bars';
 }
 
 // Settings Notifier
@@ -54,6 +58,38 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       orElse: () => CategoryDisplayMode.topBar,
     );
 
+    // Get buttonOrder and ensure it includes all buttons (migration for new buttons)
+    var buttonOrder = _prefs.getStringList(SettingsKeys.buttonOrder) ?? const [
+      'persons',
+      'orderType',
+      'confirmOrder',
+      'table',
+      'waiter',
+      'customer',
+      'commercial',
+      'coupon',
+      'discount',
+      'print',
+      'dailySummary',
+      'pay',
+      'proceed',
+    ];
+
+    // Migration: Add 'waiter' button if missing (for existing installations)
+    if (!buttonOrder.contains('waiter')) {
+      final mutableList = List<String>.from(buttonOrder);
+      // Insert waiter after 'table' if table exists, otherwise add at index 4
+      final tableIndex = mutableList.indexOf('table');
+      if (tableIndex >= 0) {
+        mutableList.insert(tableIndex + 1, 'waiter');
+      } else {
+        mutableList.insert(4, 'waiter');
+      }
+      buttonOrder = mutableList;
+      // Save the updated buttonOrder
+      _prefs.setStringList(SettingsKeys.buttonOrder, buttonOrder);
+    }
+
     state = AppSettings(
       isDarkMode: _prefs.getBool(SettingsKeys.isDarkMode) ?? false,
       language: _prefs.getString(SettingsKeys.language) ?? 'en',
@@ -69,6 +105,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showTableButton: _prefs.getBool(SettingsKeys.showTableButton) ?? true,
       showCustomerButton: _prefs.getBool(SettingsKeys.showCustomerButton) ?? true,
       showCommercialButton: _prefs.getBool(SettingsKeys.showCommercialButton) ?? true,
+      showWaiterButton: _prefs.getBool(SettingsKeys.showWaiterButton) ?? true,
       showCouponButton: _prefs.getBool(SettingsKeys.showCouponButton) ?? true,
       showDiscountButton: _prefs.getBool(SettingsKeys.showDiscountButton) ?? true,
       showPrintButton: _prefs.getBool(SettingsKeys.showPrintButton) ?? true,
@@ -77,25 +114,13 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showConfirmOrderButton: _prefs.getBool(SettingsKeys.showConfirmOrderButton) ?? true,
       showPayButton: _prefs.getBool(SettingsKeys.showPayButton) ?? true,
       showDailySummaryButton: _prefs.getBool(SettingsKeys.showDailySummaryButton) ?? true,
-      buttonOrder: _prefs.getStringList(SettingsKeys.buttonOrder) ?? const [
-        'persons',
-        'orderType',
-        'confirmOrder',
-        'table',
-        'customer',
-        'commercial',
-        'coupon',
-        'discount',
-        'print',
-        'dailySummary',
-        'pay',
-        'proceed',
-      ],
+      buttonOrder: buttonOrder,
       autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
       orderPanelOnRight: _prefs.getBool(SettingsKeys.orderPanelOnRight) ?? false,
       serverPort: _prefs.getInt(SettingsKeys.serverPort) ?? 8080,
       serverPassword: _prefs.getString(SettingsKeys.serverPassword),
       autoStartServer: _prefs.getBool(SettingsKeys.autoStartServer) ?? false,
+      enableSnackBars: _prefs.getBool(SettingsKeys.enableSnackBars) ?? false,
     );
   }
 
@@ -182,6 +207,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(showCommercialButton: value);
   }
 
+  Future<void> setShowWaiterButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showWaiterButton, value);
+    state = state.copyWith(showWaiterButton: value);
+  }
+
   Future<void> setShowCouponButton(bool value) async {
     await _prefs.setBool(SettingsKeys.showCouponButton, value);
     state = state.copyWith(showCouponButton: value);
@@ -250,6 +280,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setAutoStartServer(bool value) async {
     await _prefs.setBool(SettingsKeys.autoStartServer, value);
     state = state.copyWith(autoStartServer: value);
+  }
+
+  Future<void> setEnableSnackBars(bool value) async {
+    await _prefs.setBool(SettingsKeys.enableSnackBars, value);
+    state = state.copyWith(enableSnackBars: value);
   }
 
   /// Get the last data clear date

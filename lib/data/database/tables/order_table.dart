@@ -16,6 +16,7 @@ class Orders extends Table {
   RealColumn get discountPercentage => real().withDefault(const Constant(0.0))(); // Manual discount percentage (0-100)
   IntColumn get createdBy => integer().nullable()(); // User who created the order
   IntColumn get takenBy => integer().nullable()(); // User who took the order
+  IntColumn get waiterId => integer().nullable()(); // Waiter/server assigned to the order
   IntColumn get clientId => integer().nullable()();
   IntColumn get commercialId => integer().nullable()();
   TextColumn get note => text().nullable()();

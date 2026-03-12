@@ -27,6 +27,7 @@ import 'tables/ticket_table.dart';
 import 'tables/pending_sync_operation_table.dart';
 import 'tables/logs_table.dart';
 import 'tables/product_variant_table.dart';
+import 'tables/waiter_table.dart';
 
 part 'app_database.g.dart';
 
@@ -55,10 +56,12 @@ part 'app_database.g.dart';
   Tickets,
   PendingSyncOperations,
   OrderLogs,
+  Waiters,
+  WaiterAreas,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
-  static String dbName = 'posecrea.db';
+  static String dbName = 'qsdqsdqsd.db';
 
   @override
   //never change the db version , just delete the db file to reset

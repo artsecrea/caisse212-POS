@@ -10,6 +10,7 @@ import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/currency_formatter.dart';
+import '../../utils/snackbar_helper.dart';
 import 'permission_guard.dart';
 
 class ProductModificationDialog extends ConsumerStatefulWidget {
@@ -1538,11 +1539,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         : (widget.product.isVariant ?? false);
 
     if (isVariantProduct && _selectedVariant == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translate('please_select_variant')),
-          backgroundColor: Colors.red,
-        ),
+      SnackBarHelper.showErrorSnackBar(
+        context,
+        ref,
+        l10n.translate('please_select_variant'),
       );
       return;
     }
@@ -1551,11 +1551,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     final quantity = int.tryParse(_quantityController.text) ?? 1;
     if (quantity < 1) {
       print('DEBUG: Quantity validation failed: $quantity');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Quantity must be at least 1'),
-          backgroundColor: Colors.red,
-        ),
+      SnackBarHelper.showErrorSnackBar(
+        context,
+        ref,
+        'Quantity must be at least 1',
       );
       return;
     }
@@ -1573,11 +1572,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     // Check if data is available
     if (!componentsAsync.hasValue) {
       print('DEBUG: Components not loaded yet');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Components not loaded yet, please try again'),
-          backgroundColor: Colors.orange,
-        ),
+      SnackBarHelper.showWarningSnackBar(
+        context,
+        ref,
+        'Components not loaded yet, please try again',
       );
       return;
     }
@@ -1597,11 +1595,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         print('DEBUG: Required component ${component.name}: current=$currentQuantity, min=$minQuantity');
         if (currentQuantity < minQuantity) {
           print('DEBUG: Required component validation failed: ${component.name}');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${component.name ?? 'Component'} is required (minimum: $minQuantity)'),
-              backgroundColor: Colors.red,
-            ),
+          SnackBarHelper.showErrorSnackBar(
+            context,
+            ref,
+            '${component.name ?? 'Component'} is required (minimum: $minQuantity)',
           );
           hasValidationError = true;
           break;
@@ -1684,11 +1681,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     } catch (e, stackTrace) {
       print('DEBUG: ERROR in component building: $e');
       print('DEBUG: Stack trace: $stackTrace');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error building components: $e'),
-          backgroundColor: Colors.red,
-        ),
+      SnackBarHelper.showErrorSnackBar(
+        context,
+        ref,
+        'Error building components: $e',
       );
       return;
     }

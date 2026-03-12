@@ -180,6 +180,8 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       customerName: null,
       commercialId: state.commercialId,
       commercialName: state.commercialName,
+      waiterId: state.waiterId,
+      waiterName: state.waiterName,
       coupon: state.coupon,
       discountPercentage: state.discountPercentage,
       note: state.note,
@@ -203,6 +205,33 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       customerName: state.customerName,
       commercialId: null,
       commercialName: null,
+      waiterId: state.waiterId,
+      waiterName: state.waiterName,
+      coupon: state.coupon,
+      discountPercentage: state.discountPercentage,
+      note: state.note,
+      type: state.type,
+      numberOfPersons: state.numberOfPersons,
+    );
+  }
+
+  void setWaiter(int? waiterId, String? waiterName) {
+    state = state.copyWith(waiterId: waiterId, waiterName: waiterName);
+  }
+
+  void clearWaiter() {
+    state = CurrentOrder(
+      orderId: state.orderId,
+      orderCode: state.orderCode,
+      items: state.items,
+      tableId: state.tableId,
+      tableName: state.tableName,
+      customerId: state.customerId,
+      customerName: state.customerName,
+      commercialId: state.commercialId,
+      commercialName: state.commercialName,
+      waiterId: null,
+      waiterName: null,
       coupon: state.coupon,
       discountPercentage: state.discountPercentage,
       note: state.note,
@@ -318,6 +347,7 @@ class OrderRepository {
         discountPercentage: Value(order.discountPercentage),
         createdBy: Value(userId),
         takenBy: Value(userId),
+        waiterId: Value(order.waiterId),
         persons: Value(order.numberOfPersons),
 
         clientId: Value(order.customerId),
@@ -460,6 +490,7 @@ class OrderRepository {
       tableId: Value(order.tableId),
       clientId: Value(order.customerId),
       commercialId: Value(order.commercialId),
+      waiterId: Value(order.waiterId),
       discountPercentage: Value(order.discountPercentage),
       persons: Value(order.numberOfPersons),
 
@@ -683,6 +714,13 @@ class OrderRepository {
       commercialName = commercial != null ? '${commercial.firstName} ${commercial.lastName}' : null;
     }
 
+    // Get waiter name
+    String? waiterName;
+    if (order.waiterId != null) {
+      final waiter = await (_database.select(_database.waiters)..where((tbl) => tbl.id.equals(order.waiterId!))).getSingleOrNull();
+      waiterName = waiter != null ? '${waiter.firstName} ${waiter.lastName ?? ''}'.trim() : null;
+    }
+
     int numberOfPersons = order.persons ?? 1;
 
     return CurrentOrder(
@@ -698,6 +736,8 @@ class OrderRepository {
       customerName: customerName,
       commercialId: order.commercialId,
       commercialName: commercialName,
+      waiterId: order.waiterId,
+      waiterName: waiterName,
       discountPercentage: order.discountPercentage,
       note: order.note,
       type: order.type,

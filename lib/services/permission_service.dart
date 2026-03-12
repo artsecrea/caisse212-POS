@@ -91,6 +91,10 @@ class Permissions {
   static const String tablesSet = 'pos:tables:set';
   static const String tablesClear = 'pos:tables:clear';
 
+  // Waiters
+  static const String waiterSet = 'pos:waiter:set';
+  static const String waiterView = 'pos:waiter:view';
+
   // Products
   static const String productsView = 'pos:products:view';
   static const String productsModify = 'pos:products:modify';

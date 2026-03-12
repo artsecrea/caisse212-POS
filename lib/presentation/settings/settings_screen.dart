@@ -287,6 +287,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           onChanged: (value) => notifier.setDarkMode(value),
         ),
         const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.notifications,
+          title: l10n.translate('enable_snack_bars'),
+          subtitle: l10n.translate('enable_snack_bars_subtitle'),
+          value: settings.enableSnackBars,
+          onChanged: (value) => notifier.setEnableSnackBars(value),
+        ),
+        const SizedBox(height: 12),
         _buildLanguageSelector(
           context: context,
           currentLanguage: settings.language,
@@ -423,6 +432,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       'orderType': (icon: Icons.restaurant, titleKey: 'order_type_button', subtitleKey: 'toggle_order_type', visible: settings.showOrderTypeButton, setVisible: notifier.setShowOrderTypeButton),
       'confirmOrder': (icon: Icons.task_alt, titleKey: 'confirm_button', subtitleKey: 'confirm_order', visible: settings.showConfirmOrderButton, setVisible: notifier.setShowConfirmOrderButton),
       'table': (icon: Icons.table_bar, titleKey: 'table_button', subtitleKey: 'table_selection', visible: settings.showTableButton, setVisible: notifier.setShowTableButton),
+      'waiter': (icon: Icons.person_pin, titleKey: 'waiter_button', subtitleKey: 'waiter_selection', visible: settings.showWaiterButton, setVisible: notifier.setShowWaiterButton),
       'customer': (icon: Icons.person, titleKey: 'customer_button', subtitleKey: 'customer_selection', visible: settings.showCustomerButton, setVisible: notifier.setShowCustomerButton),
       'commercial': (icon: Icons.badge, titleKey: 'commercial_button', subtitleKey: 'commercial_selection', visible: settings.showCommercialButton, setVisible: notifier.setShowCommercialButton),
       'coupon': (icon: Icons.discount, titleKey: 'coupon_button', subtitleKey: 'apply_coupons', visible: settings.showCouponButton, setVisible: notifier.setShowCouponButton),

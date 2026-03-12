@@ -14,6 +14,7 @@ class SampleDataGenerator {
 
     await _generateUsers();
     await _generateAreas();
+    await _generateWaiters();
     await _generateCategories();
     await _generateComponentGroups();
     await _generateStations();
@@ -85,6 +86,38 @@ class SampleDataGenerator {
           description: Value(area['description'] as String?),
         ),
       );
+    }
+  }
+
+  Future<void> _generateWaiters() async {
+    print('Creating waiters...');
+    final waiters = [
+      {'id': 1, 'firstName': 'Ahmed', 'lastName': 'Hassan', 'areaIds': [1, 2]},
+      {'id': 2, 'firstName': 'Fatima', 'lastName': 'Zahra', 'areaIds': [3]},
+      {'id': 3, 'firstName': 'Mohammed', 'lastName': 'Ali', 'areaIds': []}, // Serves all areas
+      {'id': 4, 'firstName': 'Sara', 'lastName': 'Benali', 'areaIds': [1]},
+    ];
+
+    for (var waiter in waiters) {
+      await database.into(database.waiters).insert(
+        WaitersCompanion.insert(
+          id: Value(waiter['id'] as int),
+          firstName: waiter['firstName'] as String,
+          lastName: Value(waiter['lastName'] as String?),
+          isActive: const Value(true),
+        ),
+      );
+
+      // Insert waiter-area assignments
+      final areaIds = waiter['areaIds'] as List<int>;
+      for (final areaId in areaIds) {
+        await database.into(database.waiterAreas).insert(
+          WaiterAreasCompanion.insert(
+            waiterId: waiter['id'] as int,
+            areaId: areaId,
+          ),
+        );
+      }
     }
   }
 
