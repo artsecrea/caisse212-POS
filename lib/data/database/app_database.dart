@@ -61,7 +61,7 @@ part 'app_database.g.dart';
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
-  static String dbName = 'qsdqsdqsd.db';
+  static String dbName = 'qsdsfsdfdqsdqsd.db';
 
   @override
   //never change the db version , just delete the db file to reset

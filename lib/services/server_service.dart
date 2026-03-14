@@ -13,7 +13,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/socket_models.dart';
 import '../providers/database_providers.dart';
-import '../providers/settings_provider.dart';
 import 'order_log_service.dart';
 import 'package:drift/drift.dart' as drift;
 
@@ -70,14 +69,26 @@ class ServerService {
     // Health check
     router.get('/health', _healthCheck);
 
-    // router.post('/login', _login)
-
     // Order endpoints
     router.get('/orders', _getOrders);
     router.post('/orders', _createOrder);
     router.put('/orders/<orderId>', _updateOrder);
     router.put('/orders/products/<id>', _updateOrderProduct);
     router.get('/stations', _getStations);
+
+    // Waiter-specific endpoints
+    router.post('/waiters/login', _waiterLogin);
+    router.get('/waiters/dashboard', _waiterDashboard);
+    router.get('/waiters/products', _waiterProducts);
+    router.get('/waiters/categories', _waiterCategories);
+    router.get('/waiters/components', _waiterComponents);
+    router.get('/waiters/component-groups', _waiterComponentGroups);
+    router.get('/waiters/product-components', _waiterProductComponents);
+    router.get('/waiters/product-variants', _waiterProductVariants);
+    router.get('/waiters/tables', _waiterTables);
+    router.get('/waiters/orders', _waiterOrders);
+    router.post('/waiters/orders', _waiterCreateOrder);
+    router.put('/waiters/orders/<code>/add-product', _waiterAddProductToOrder);
 
     // Catch-all for 404
     router.all('/<ignored|.*>', _notFound);
@@ -535,6 +546,993 @@ class ServerService {
       jsonEncode({'error': 'Endpoint not found'}),
       headers: {'Content-Type': 'application/json'},
     );
+  }
+
+  // ==================== WAITER ENDPOINTS ====================
+
+  /// POST /waiters/login - Waiter authentication
+  /// Body: { "waiterId": 1, "password": "optional" }
+  Future<Response> _waiterLogin(Request request) async {
+
+
+    return Response.ok(
+      jsonEncode({
+        'waiter': {
+          'id': 1,
+          'firstName': "d",
+          'lastName': "d",
+        },
+      }),
+      headers: {'Content-Type': 'application/json'},
+    );
+
+
+
+
+
+
+    try {
+      final database = _ref.read(databaseProvider);
+      final body = await request.readAsString();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+
+      final waiterId = json['waiterId'] as int?;
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get waiter
+      final waiter = await (database.select(database.waiters)
+        ..where((w) => w.id.equals(waiterId)))
+        .getSingleOrNull();
+
+      if (waiter == null || !waiter.isActive) {
+        return Response(
+          401,
+          body: jsonEncode({'error': 'Invalid waiter or inactive'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get waiter areas
+      final waiterAreas = await (database.select(database.waiterAreas)
+        ..where((wa) => wa.waiterId.equals(waiterId)))
+        .get();
+      final areaIds = waiterAreas.map((wa) => wa.areaId).toList();
+
+      // Return waiter info
+      return Response.ok(
+        jsonEncode({
+          'waiter': {
+            'id': waiter.id,
+            'firstName': waiter.firstName,
+            'lastName': waiter.lastName,
+            'imageUrl': waiter.imageUrl,
+            'areaIds': areaIds,
+          },
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterLogin: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Login failed', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/dashboard?waiterId=1
+  /// Returns: total orders, active orders, expected cash, total cash
+  Future<Response> _waiterDashboard(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final queryParams = request.url.queryParameters;
+      final waiterIdStr = queryParams['waiterId'];
+
+      if (waiterIdStr == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final waiterId = int.tryParse(waiterIdStr);
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'Invalid waiterId'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get today's date range
+      final now = DateTime.now();
+      final startOfDay = DateTime(now.year, now.month, now.day);
+
+      // Get all orders for this waiter today
+      final waiterOrders = await (database.select(database.orders)
+        ..where((o) => o.waiterId.equals(waiterId) & o.createdAt.isBiggerOrEqualValue(startOfDay)))
+        .get();
+
+      final totalOrders = waiterOrders.length;
+      final activeOrders = waiterOrders.where((o) => o.status != 'COMPLETED' && o.status != 'CANCELLED').length;
+
+      // Calculate totals
+      double expectedCash = 0.0;
+      double totalCash = 0.0;
+
+      for (final order in waiterOrders) {
+        final orderProducts = await (database.select(database.orderProducts)
+          ..where((op) => op.orderId.equals(order.id)))
+          .get();
+
+        for (final product in orderProducts) {
+          // Base product price (already includes TVA)
+          double itemTotal = product.unitaryPrice * product.quantity;
+
+          // Add component prices
+          final components = await (database.select(database.orderProductComponents)
+            ..where((c) => c.orderProductId.equals(product.id)))
+            .get();
+
+          for (final component in components) {
+            itemTotal += component.price * component.quantity;
+          }
+
+          // Subtract discounts (item-level discount + manual discount)
+          itemTotal -= (product.unitaryDiscount * product.quantity);
+          itemTotal -= (product.manualDiscount * product.quantity);
+
+          expectedCash += itemTotal;
+
+          // Check if product is paid
+          if (product.ticketId != null) {
+            totalCash += itemTotal;
+          }
+        }
+      }
+
+      return Response.ok(
+        jsonEncode({
+          'totalOrders': totalOrders,
+          'activeOrders': activeOrders,
+          'expectedCash': expectedCash,
+          'totalCash': totalCash,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterDashboard: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to get dashboard', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/products
+  Future<Response> _waiterProducts(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final products = await (database.select(database.products)
+        ..where((p) => p.isActive.equals(true)))
+        .get();
+
+      final productList = products.map((p) => {
+        'id': p.id,
+        'name': p.name,
+        'barcode': p.barcode,
+        'imageUrl': p.imageUrl,
+        'description': p.description,
+        'price': p.price,
+        'finalPrice': p.finalPrice,
+        'categoryId': p.categoryId,
+        'stationId': p.stationId,
+        'isVariant': p.isVariant,
+      }).toList();
+
+      return Response.ok(
+        jsonEncode({'products': productList}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterProducts: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch products', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/categories
+  Future<Response> _waiterCategories(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final categories = await (database.select(database.categories)
+        ..where((c) => c.isActive.equals(true))
+        ..orderBy([(c) => drift.OrderingTerm(expression: c.displayOrder)]))
+        .get();
+
+      final categoryList = categories.map((c) => {
+        'id': c.id,
+        'name': c.name,
+        'imageUrl': c.imageUrl,
+        'description': c.description,
+        'displayOrder': c.displayOrder,
+      }).toList();
+
+      return Response.ok(
+        jsonEncode({'categories': categoryList}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterCategories: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch categories', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/components
+  Future<Response> _waiterComponents(Request request) async {
+
+
+    try {
+      final database = _ref.read(databaseProvider);
+      final components = await database.select(database.components).get();
+
+      final componentList = components.map((c) => {
+        'id': c.id,
+        'name': c.name,
+        'price': c.price,
+        'componentGroupId': c.componentGroupId,
+      }).toList();
+
+      print(componentList);
+      return Response.ok(
+        jsonEncode({'components': componentList}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterComponents: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch components', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/component-groups
+  Future<Response> _waiterComponentGroups(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final groups = await (database.select(database.componentGroups)
+        ..orderBy([(g) => drift.OrderingTerm(expression: g.displayOrder)]))
+        .get();
+
+      final groupList = groups.map((g) => {
+        'id': g.id,
+        'name': g.name,
+        'description': g.description,
+        'displayOrder': g.displayOrder,
+      }).toList();
+
+      return Response.ok(
+        jsonEncode({'componentGroups': groupList}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterComponentGroups: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch component groups', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/product-components
+  Future<Response> _waiterProductComponents(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final productComponents = await database.select(database.productComponents).get();
+
+      final pcList = productComponents.map((pc) => {
+        'productId': pc.productId,
+        'componentId': pc.componentId,
+        'defaultPrice': pc.defaultPrice,
+        'defaultQuantity': pc.defaultQuantity, // ✅ Added: Default quantity from ProductComponents relation table
+        'isRequired': pc.isRequired,
+        'minQuantity': pc.minQuantity,
+        'maxQuantity': pc.maxQuantity,
+      }).toList();
+
+      return Response.ok(
+        jsonEncode({'productComponents': pcList}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterProductComponents: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch product components', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/product-variants?productId=123
+  /// Returns all variant groups and their variants with attributes for proper selection
+  Future<Response> _waiterProductVariants(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final queryParams = request.url.queryParameters;
+      final productIdStr = queryParams['productId'];
+
+      if (productIdStr == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'productId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final productId = int.tryParse(productIdStr);
+      if (productId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'Invalid productId'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Check if product exists
+      final product = await (database.select(database.products)
+        ..where((p) => p.id.equals(productId)))
+        .getSingleOrNull();
+
+      if (product == null) {
+        return Response(
+          404,
+          body: jsonEncode({
+            'error': 'Product not found',
+            'message': 'Product with ID $productId does not exist'
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get all variants for this product
+      final variants = await (database.select(database.productVariants)
+        ..where((v) => v.productId.equals(productId))
+        ..where((v) => v.isActive.equals(true)))
+        .get();
+
+      if (variants.isEmpty) {
+        return Response.ok(
+          jsonEncode({
+            'hasVariants': false,
+            'variants': [],
+            'attributeGroups': []
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get all variant attribute values for these variants
+      final variantIds = variants.map((v) => v.id).toList();
+      final attributeValues = await (database.select(database.variantAttributeValues)
+        ..where((av) => av.variantId.isIn(variantIds)))
+        .get();
+
+      // Build variants list with their attributes
+      final variantsList = variants.map((variant) {
+        final variantAttrs = attributeValues
+            .where((av) => av.variantId == variant.id)
+            .toList();
+
+        return {
+          'id': variant.id,
+          'productId': variant.productId,
+          'name': variant.name,
+          'barcode': variant.barcode,
+          'sku': variant.sku,
+          'description': variant.description,
+          'imageUrl': variant.imageUrl,
+          'color': variant.color,
+          'price': variant.price,
+          'additionalPrice': variant.price - product.price,
+          'finalPrice': variant.price,
+          'tvaAmount': variant.tvaAmount,
+          'isActive': variant.isActive,
+          'attributes': variantAttrs.map((attr) => {
+            'attributeId': attr.attributeId,
+            'attributeName': attr.attributeName,
+            'valueId': attr.valueId,
+            'value': attr.value,
+          }).toList(),
+        };
+      }).toList();
+
+      // Build attribute groups for UI selection
+      final Map<String, Map<String, dynamic>> attributeGroupsMap = {};
+
+      for (final attrValue in attributeValues) {
+        final attrName = attrValue.attributeName ?? 'Options';
+        final attrId = attrValue.attributeId;
+
+        if (!attributeGroupsMap.containsKey(attrName)) {
+          attributeGroupsMap[attrName] = {
+            'id': attrId,
+            'name': attrName,
+            'values': <Map<String, dynamic>>[],
+          };
+        }
+
+        // Add unique values only
+        final values = attributeGroupsMap[attrName]!['values'] as List;
+        final existingValue = values.any((v) => v['id'] == attrValue.valueId);
+
+        if (!existingValue) {
+          values.add({
+            'id': attrValue.valueId,
+            'value': attrValue.value,
+            'attributeId': attrId,
+          });
+        }
+      }
+
+      // Convert to list and sort
+      final attributeGroups = attributeGroupsMap.values.toList();
+
+      return Response.ok(
+        jsonEncode({
+          'hasVariants': true,
+          'baseProduct': {
+            'id': product.id,
+            'name': product.name,
+            'price': product.price,
+            'imageUrl': product.imageUrl,
+          },
+          'variants': variantsList,
+          'attributeGroups': attributeGroups,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterProductVariants: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({
+          'error': 'Failed to fetch product variants',
+          'details': e.toString()
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/tables?waiterId=1
+  /// Returns tables for the waiter's assigned areas
+  Future<Response> _waiterTables(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final queryParams = request.url.queryParameters;
+      final waiterIdStr = queryParams['waiterId'];
+
+      if (waiterIdStr == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final waiterId = int.tryParse(waiterIdStr);
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'Invalid waiterId'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get waiter areas
+      final waiterAreas = await (database.select(database.waiterAreas)
+        ..where((wa) => wa.waiterId.equals(waiterId)))
+        .get();
+      final areaIds = waiterAreas.map((wa) => wa.areaId).toList();
+
+      if (areaIds.isEmpty) {
+        final tables = await (database.select(database.areaTables))
+            .get();
+
+        final tableList = <Map<String, dynamic>>[];
+        for (final table in tables) {
+          // Get area name
+          final area = await (database.select(database.areas)
+            ..where((a) => a.id.equals(table.areaId!)))
+              .getSingleOrNull();
+
+          // Get order for this table if exists
+          final order = await (database.select(database.orders)
+            ..where((o) => o.id.equals(table.orderId ?? 0)))
+              .getSingleOrNull();
+
+          double totalAmount = 0.0;
+          if (order != null) {
+            final orderProducts = await (database.select(database.orderProducts)
+              ..where((op) => op.orderId.equals(order.id)))
+                .get();
+
+            for (final product in orderProducts) {
+              // Check if not paid
+              if (product.ticketId == null) {
+                // Base product price (already includes TVA)
+                double itemTotal = product.unitaryPrice * product.quantity;
+
+                // Add component prices
+                final components = await (database.select(database.orderProductComponents)
+                  ..where((c) => c.orderProductId.equals(product.id)))
+                  .get();
+
+                for (final component in components) {
+                  itemTotal += component.price * component.quantity;
+                }
+
+                // Subtract discounts
+                itemTotal -= (product.unitaryDiscount * product.quantity);
+                itemTotal -= (product.manualDiscount * product.quantity);
+
+                totalAmount += itemTotal;
+              }
+            }
+          }
+
+          tableList.add({
+            'id': table.id,
+            'name': table.name,
+            'capacity': table.capacity,
+            'areaId': table.areaId,
+            'areaName': area?.name,
+            'orderId': order?.id,
+            'orderCode': order?.code,
+            'totalAmount': totalAmount,
+          });
+        }
+        return Response.ok(
+          jsonEncode({'tables': tableList}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get tables for those areas
+      final tables = await (database.select(database.areaTables)
+        ..where((t) => t.areaId.isIn(areaIds)))
+        .get();
+
+      final tableList = <Map<String, dynamic>>[];
+      for (final table in tables) {
+        // Get area name
+        final area = await (database.select(database.areas)
+          ..where((a) => a.id.equals(table.areaId!)))
+          .getSingleOrNull();
+
+        // Get active order for this table if exists (only non-completed orders)
+        final order = await (database.select(database.orders)
+          ..where((o) => o.tableId.equals(table.id) & o.status.isNotIn(['completed', 'cancelled']))
+          ..orderBy([(t) => drift.OrderingTerm.desc(t.createdAt)])
+          ..limit(1))
+          .getSingleOrNull();
+
+        double totalAmount = 0.0;
+        if (order != null) {
+          final orderProducts = await (database.select(database.orderProducts)
+            ..where((op) => op.orderId.equals(order.id)))
+            .get();
+
+          for (final product in orderProducts) {
+            // Check if not paid
+            if (product.ticketId == null) {
+              // Base product price (already includes TVA)
+              double itemTotal = product.unitaryPrice * product.quantity;
+
+              // Add component prices
+              final components = await (database.select(database.orderProductComponents)
+                ..where((c) => c.orderProductId.equals(product.id)))
+                .get();
+
+              for (final component in components) {
+                itemTotal += component.price * component.quantity;
+              }
+
+              // Subtract discounts
+              itemTotal -= (product.unitaryDiscount * product.quantity);
+              itemTotal -= (product.manualDiscount * product.quantity);
+
+              totalAmount += itemTotal;
+            }
+          }
+        }
+
+        tableList.add({
+          'id': table.id,
+          'name': table.name,
+          'capacity': table.capacity,
+          'areaId': table.areaId,
+          'areaName': area?.name,
+          'orderId': order?.id,
+          'orderCode': order?.code,
+          'totalAmount': totalAmount,
+        });
+      }
+
+      return Response.ok(
+        jsonEncode({'tables': tableList}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterTables: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch tables', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/orders?waiterId=1&status=PENDING,ONHOLD&page=0&limit=20
+  Future<Response> _waiterOrders(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final queryParams = request.url.queryParameters;
+      final waiterIdStr = queryParams['waiterId'];
+      final statusStr = queryParams['status'];
+      final pageStr = queryParams['page'] ?? '0';
+      final limitStr = queryParams['limit'] ?? '20';
+
+      if (waiterIdStr == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final waiterId = int.tryParse(waiterIdStr);
+      final page = int.tryParse(pageStr) ?? 0;
+      final limit = int.tryParse(limitStr) ?? 20;
+
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'Invalid waiterId'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Build query
+      var query = database.select(database.orders)..where((o) => o.waiterId.equals(waiterId));
+
+      // Filter by status if provided
+      if (statusStr != null && statusStr.isNotEmpty) {
+        final statuses = statusStr.split(',').map((s) => s.trim().toUpperCase()).toList();
+        query = query..where((o) => o.status.isIn(statuses));
+      }
+
+      // Order by creation date descending
+      query = query..orderBy([(o) => drift.OrderingTerm(expression: o.createdAt, mode: drift.OrderingMode.desc)]);
+
+      // Pagination
+      query = query..limit(limit, offset: page * limit);
+
+      final orders = await query.get();
+
+      // Build response with full order details
+      final orderList = <Map<String, dynamic>>[];
+      for (final order in orders) {
+        // Get table name
+        String? tableName;
+        if (order.tableId != null) {
+          final table = await (database.select(database.areaTables)
+            ..where((t) => t.id.equals(order.tableId!)))
+            .getSingleOrNull();
+          tableName = table?.name;
+        }
+
+        // Get products
+        final orderProducts = await (database.select(database.orderProducts)
+          ..where((op) => op.orderId.equals(order.id)))
+          .get();
+
+        double totalAmount = 0.0;
+        bool allPaid = true;
+        for (final product in orderProducts) {
+          // Base product price (already includes TVA)
+          double itemTotal = product.unitaryPrice * product.quantity;
+
+          // Add component prices
+          final components = await (database.select(database.orderProductComponents)
+            ..where((c) => c.orderProductId.equals(product.id)))
+            .get();
+
+          for (final component in components) {
+            itemTotal += component.price * component.quantity;
+          }
+
+          // Subtract discounts (item-level discount + manual discount)
+          itemTotal -= (product.unitaryDiscount * product.quantity);
+          itemTotal -= (product.manualDiscount * product.quantity);
+
+          totalAmount += itemTotal;
+
+          if (product.ticketId == null) {
+            allPaid = false;
+          }
+        }
+
+        orderList.add({
+          'id': order.id,
+          'code': order.code,
+          'status': order.status,
+          'type': order.type,
+          'persons': order.persons,
+          'tableId': order.tableId,
+          'tableName': tableName,
+          'totalAmount': totalAmount,
+          'allPaid': allPaid,
+          'productCount': orderProducts.length,
+          'createdAt': order.createdAt.toIso8601String(),
+          'updatedAt': order.updatedAt.toIso8601String(),
+        });
+      }
+
+      return Response.ok(
+        jsonEncode({
+          'orders': orderList,
+          'page': page,
+          'limit': limit,
+          'count': orderList.length,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterOrders: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch orders', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// POST /waiters/orders - Create new order
+  /// Body: { "waiterId": 1, "tableId": 5, "type": "DINE_IN", "persons": 2, "products": [...] }
+  Future<Response> _waiterCreateOrder(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
+      final body = await request.readAsString();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+
+      final waiterId = json['waiterId'] as int?;
+      final tableId = json['tableId'] as int?;
+      final type = json['type'] as String? ?? 'DINE_IN';
+      final persons = json['persons'] as int? ?? 1;
+      final products = json['products'] as List<dynamic>? ?? [];
+
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Validate table for DINE_IN
+      if (type == 'DINE_IN' && tableId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'tableId is required for DINE_IN orders'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Generate order code
+      final now = DateTime.now();
+      final orderCode = 'W${waiterId}_${now.millisecondsSinceEpoch}';
+
+      // Create order
+      final orderId = await database.into(database.orders).insert(
+        OrdersCompanion.insert(
+          code: orderCode,
+          status: const drift.Value('PENDING'),
+          type: drift.Value(type),
+          persons: drift.Value(persons),
+          tableId: drift.Value(tableId),
+          waiterId: drift.Value(waiterId),
+          createdAt: drift.Value(now),
+          updatedAt: drift.Value(now),
+        ),
+      );
+
+      // Insert products
+      for (final productJson in products) {
+        final productId = productJson['productId'] as int;
+        final quantity = productJson['quantity'] as int? ?? 1;
+        final components = productJson['components'] as List<dynamic>? ?? [];
+
+        // Get product details
+        final product = await (database.select(database.products)
+          ..where((p) => p.id.equals(productId)))
+          .getSingleOrNull();
+
+        if (product == null) continue;
+
+        final orderProductId = await database.into(database.orderProducts).insert(
+          OrderProductsCompanion.insert(
+            orderId: orderId,
+            productId: productId,
+            quantity: drift.Value(quantity),
+            unitaryPrice: product.finalPrice,
+            unitaryDiscount: drift.Value(product.discountAmount),
+            unitaryTva: drift.Value(product.tvaAmount),
+            state: const drift.Value('PENDING'),
+          ),
+        );
+
+        // Insert components
+        for (final compJson in components) {
+          final componentId = compJson['componentId'] as int;
+          final compQuantity = compJson['quantity'] as int? ?? 1;
+          final price = (compJson['price'] as num?)?.toDouble() ?? 0.0;
+
+          await database.into(database.orderProductComponents).insert(
+            OrderProductComponentsCompanion.insert(
+              orderProductId: orderProductId,
+              componentId: componentId,
+              quantity: drift.Value(compQuantity),
+              price: drift.Value(price),
+              isSpecial: const drift.Value(false),
+            ),
+          );
+        }
+      }
+
+
+      // update the tabele order_id
+
+      if (tableId != null) {
+        await (database.update(database.areaTables)..where((t) => t.id.equals(tableId)))
+          .write(AreaTablesCompanion(orderId: drift.Value(orderId)));
+      }
+
+      // Log order creation
+      await logService.logOrderCreated(orderId, 'Order created by waiter #$waiterId');
+
+      return Response(
+        201,
+        body: jsonEncode({
+          'id': orderId,
+          'code': orderCode,
+          'message': 'Order created successfully',
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterCreateOrder: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to create order', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// PUT /waiters/orders/<code>/add-product - Add product to existing order
+  /// Body: { "waiterId": 1, "productId": 5, "quantity": 2, "components": [...] }
+  Future<Response> _waiterAddProductToOrder(Request request, String code) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
+      final body = await request.readAsString();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+
+      final waiterId = json['waiterId'] as int?;
+      final productId = json['productId'] as int?;
+      final quantity = json['quantity'] as int? ?? 1;
+      final components = json['components'] as List<dynamic>? ?? [];
+
+      if (waiterId == null || productId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId and productId are required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get order
+      final order = await (database.select(database.orders)
+        ..where((o) => o.code.equals(code)))
+        .getSingleOrNull();
+
+      if (order == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Order not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Verify waiter owns this order
+      if (order.waiterId != waiterId) {
+        return Response(
+          403,
+          body: jsonEncode({'error': 'Not authorized to modify this order'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Get product details
+      final product = await (database.select(database.products)
+        ..where((p) => p.id.equals(productId)))
+        .getSingleOrNull();
+
+      if (product == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'Product not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Insert product
+      final orderProductId = await database.into(database.orderProducts).insert(
+        OrderProductsCompanion.insert(
+          orderId: order.id,
+          productId: productId,
+          quantity: drift.Value(quantity),
+          unitaryPrice: product.finalPrice,
+          unitaryDiscount: drift.Value(product.discountAmount),
+          unitaryTva: drift.Value(product.tvaAmount),
+          state: const drift.Value('PENDING'),
+        ),
+      );
+
+      // Insert components
+      for (final compJson in components) {
+        final componentId = compJson['componentId'] as int;
+        final compQuantity = compJson['quantity'] as int? ?? 1;
+        final price = (compJson['price'] as num?)?.toDouble() ?? 0.0;
+
+        await database.into(database.orderProductComponents).insert(
+          OrderProductComponentsCompanion.insert(
+            orderProductId: orderProductId,
+            componentId: componentId,
+            quantity: drift.Value(compQuantity),
+            price: drift.Value(price),
+            isSpecial: const drift.Value(false),
+          ),
+        );
+      }
+
+      // Update order timestamp
+      await (database.update(database.orders)..where((o) => o.id.equals(order.id)))
+        .write(OrdersCompanion(updatedAt: drift.Value(DateTime.now())));
+
+      // Log update
+      await logService.logOrderUpdated(order.id, 'Product added by waiter #$waiterId');
+
+      return Response.ok(
+        jsonEncode({'message': 'Product added to order successfully'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error in _waiterAddProductToOrder: $e');
+      print(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to add product', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
   }
 
   // ==================== HELPER METHODS ====================

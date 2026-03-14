@@ -7,6 +7,7 @@ class ProductComponents extends Table {
   IntColumn get productId => integer()();
   IntColumn get componentId => integer()();
   RealColumn get defaultPrice => real().withDefault(const Constant(0.0))(); // Default price for this component on this product
+  IntColumn get defaultQuantity => integer().withDefault(const Constant(0))(); // Default quantity for this component on this product
   BoolColumn get isRequired => boolean().withDefault(const Constant(false))(); // If component is required for this product
   IntColumn get minQuantity => integer().withDefault(const Constant(0))(); // Minimum quantity required
   IntColumn get maxQuantity => integer().withDefault(const Constant(10))(); // Maximum quantity allowed
@@ -14,3 +15,4 @@ class ProductComponents extends Table {
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }
 
+// run flutter pub run build_runner build --delete-conflicting-outputs to generate the code for this table

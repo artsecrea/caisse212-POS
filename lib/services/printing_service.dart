@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:caisse212/providers/localization_provider.dart';
+import 'package:caisse212/providers/settings_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
@@ -530,6 +531,30 @@ class PrintingService {
     return _translate(key, fallback: fallback);
   }
 
+  /// Get appropriate code table for thermal printer based on current language
+  /// Returns the code table name for ESC/POS printers
+  String _getCodeTableForLanguage() {
+    try {
+      final language = _ref?.read(languageProvider) ?? 'en';
+
+      switch (language) {
+        case 'ar':
+          // Arabic - use CP864 (Arabic code page)
+          return 'CP864';
+        case 'fr':
+          // French - use CP1252 (Western European)
+          return 'CP1252';
+        case 'en':
+        default:
+          // English and default - use CP437 (standard) or CP1252
+          return 'CP1252';
+      }
+    } catch (e) {
+      debugPrint('Error determining code table, using default CP1252: $e');
+      return 'CP1252'; // Fallback to safe default
+    }
+  }
+
   /// Print order receipt
   Future<bool> printOrderReceipt({
     required CurrentOrder order,
@@ -552,8 +577,8 @@ class PrintingService {
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
 
-      // Set code table for Western European characters (French: é, è, à, ç, etc.)
-      bytes += generator.setGlobalCodeTable('CP1252');
+      // Set code table based on current language (supports Arabic, French, English)
+      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
 
       // Header
       if (storeName != null) {
@@ -888,8 +913,8 @@ class PrintingService {
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
 
-      // Set code table for Western European characters (French: é, è, à, ç, etc.)
-      bytes += generator.setGlobalCodeTable('CP1252');
+      // Set code table based on current language (supports Arabic, French, English)
+      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
 
       // Large order number
       bytes += generator.text(
@@ -1068,8 +1093,8 @@ class PrintingService {
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
 
-      // Set code table for Western European characters (French: é, è, à, ç, etc.)
-      bytes += generator.setGlobalCodeTable('CP1252');
+      // Set code table based on current language (supports Arabic, French, English)
+      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
 
       // Header
       if (storeName != null) {
@@ -1340,8 +1365,8 @@ class PrintingService {
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
 
-      // Set code table for Western European characters (French: é, è, à, ç, etc.)
-      bytes += generator.setGlobalCodeTable('CP1252');
+      // Set code table based on current language (supports Arabic, French, English)
+      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
 
       final separator = ''.padLeft(32, '-');
       final doubleSeparator = ''.padLeft(32, '=');

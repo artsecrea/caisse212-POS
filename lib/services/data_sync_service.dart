@@ -294,6 +294,8 @@ class DataSyncService {
           productId: pc['productId'],
           componentId: pc['componentId'],
           defaultPrice: Value((pc['defaultPrice'] as num?)?.toDouble() ?? 0.0),
+          defaultQuantity: Value(pc['defaultQuantity'] ?? 0),
+
           isRequired: Value(pc['isRequired'] ?? false),
           minQuantity: Value(pc['minQuantity'] ?? 0),
           maxQuantity: Value(pc['maxQuantity'] ?? 10),
@@ -371,13 +373,15 @@ class DataSyncService {
     await _database.delete(_database.waiterAreas).go();
 
     for (final waiter in waiters) {
-      // Insert or update waiter
+      // Insert or update waiter (username and passwordHash may be null)
       await _database.into(_database.waiters).insert(
         WaitersCompanion.insert(
           id: Value(waiter['id']),
           firstName: waiter['firstName'] ?? '',
           lastName: Value(waiter['lastName']),
           imageUrl: Value(waiter['imageUrl']),
+          username: Value(waiter['username']), // Can be null - for future authentication
+          passwordHash: Value(waiter['passwordHash']), // Can be null - for future authentication
           isActive: const Value(true),
         ),
         mode: InsertMode.insertOrReplace,

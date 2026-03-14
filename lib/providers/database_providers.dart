@@ -244,6 +244,9 @@ final productComponentsProvider = StreamProvider.autoDispose.family<List<Map<Str
   // Get product-component relationships with constraints
   final productComponents = await (database.select(database.productComponents)
     ..where((tbl) => tbl.productId.equals(productId))).get();
+  
+  print(productComponents.toString());
+
 
   if (productComponents.isEmpty) {
     yield [];
@@ -267,6 +270,7 @@ final productComponentsProvider = StreamProvider.autoDispose.family<List<Map<Str
       'minQuantity': productComponent.minQuantity,
       'maxQuantity': productComponent.maxQuantity,
       'defaultPrice': productComponent.defaultPrice,
+      'defaultQuantity': productComponent.defaultQuantity,
     };
   }).toList();
 

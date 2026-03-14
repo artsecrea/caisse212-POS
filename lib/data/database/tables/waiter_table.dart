@@ -6,6 +6,8 @@ class Waiters extends Table {
   TextColumn get firstName => text()();
   TextColumn get lastName => text().nullable()();
   TextColumn get imageUrl => text().nullable()();
+  TextColumn get username => text().nullable()(); // For future authentication feature
+  TextColumn get passwordHash => text().nullable()(); // For future authentication feature
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();

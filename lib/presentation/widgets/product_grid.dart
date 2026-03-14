@@ -113,9 +113,30 @@ class _ProductCard extends ConsumerWidget {
             // Show dialog for required components
             _showModificationDialog(context, ref);
           } else {
-            // Quick add - add product to order without modifications
+            // Quick add - build default components
+            final defaultComponents = <OrderItemComponent>[];
+
+            for (var componentData in componentsData) {
+              final component = componentData['component'];
+              final defaultQuantity = componentData['defaultQuantity'] as int? ?? 0;
+              final defaultPrice = componentData['defaultPrice'] as double? ?? 0.0;
+
+              // Add components with defaultQuantity > 0
+              if (defaultQuantity > 0 && component != null) {
+                // For default components, we charge the full price
+                // Total charge = defaultPrice × defaultQuantity
+                defaultComponents.add(OrderItemComponent(
+                  componentId: component.id,
+                  name: component.name ?? 'Unknown',
+                  quantity: defaultQuantity,
+                  price: defaultPrice, // Full price per unit
+                  isSpecial: false,
+                ));
+              }
+            }
+
             _addToOrder(context, ref, {
-              'components': <OrderItemComponent>[],
+              'components': defaultComponents,
               'discount': product.discountAmount,
               'manualDiscount': 0.0,
               'note': null,
@@ -133,21 +154,31 @@ class _ProductCard extends ConsumerWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(4),
         ),
-        child: showImages ? _buildWithImage(context,ref) : _buildCompact(context),
+        child: showImages ? _buildWithImage(context,ref) : _buildCompact(context, ref),
       ),
     );
   }
 
   Widget _buildWithImage(BuildContext context, WidgetRef ref) {
-
     final currencyFormatter = ref.watch(currencyFormatterProvider);
+    final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          flex: 3,
-          child: ClipRRect(
+    return componentsDataAsync.when(
+      data: (componentsData) {
+        // Calculate display price: base price + (default component prices × default quantities)
+        double displayPrice = product.finalPrice;
+        for (var componentData in componentsData) {
+          final defaultQuantity = componentData['defaultQuantity'] as int? ?? 0;
+          final defaultPrice = componentData['defaultPrice'] as double? ?? 0.0;
+          displayPrice += (defaultPrice * defaultQuantity);
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: 3,
+              child: ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
             child: product.imageUrl != null
                 ? CachedNetworkImage(
@@ -192,7 +223,7 @@ class _ProductCard extends ConsumerWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  currencyFormatter.format(product.finalPrice),
+                  currencyFormatter.format(displayPrice),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.bold,
@@ -205,34 +236,126 @@ class _ProductCard extends ConsumerWidget {
         ),
       ],
     );
-  }
-
-  Widget _buildCompact(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
+      },
+      loading: () => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            child: Text(
-              product.name,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            flex: 3,
+            child: Container(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              child: const Center(child: CircularProgressIndicator()),
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            '${product.finalPrice.toStringAsFixed(2)} \$',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(product.name),
             ),
           ),
         ],
+      ),
+      error: (_, __) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            flex: 3,
+            child: Container(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              child: Icon(Icons.fastfood, size: 48),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(product.name),
+                  Text(currencyFormatter.format(product.finalPrice)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompact(BuildContext context, WidgetRef ref) {
+    final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
+
+    return componentsDataAsync.when(
+      data: (componentsData) {
+        // Calculate display price: base price + (default component prices × default quantities)
+        double displayPrice = product.finalPrice;
+        for (var componentData in componentsData) {
+          final defaultQuantity = componentData['defaultQuantity'] as int? ?? 0;
+          final defaultPrice = componentData['defaultPrice'] as double? ?? 0.0;
+          displayPrice += (defaultPrice * defaultQuantity);
+        }
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  product.name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${displayPrice.toStringAsFixed(2)} \$',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+      loading: () => const Padding(
+        padding: EdgeInsets.all(12),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, __) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                product.name,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${product.finalPrice.toStringAsFixed(2)} \$',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -184,17 +184,27 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
     final componentsAsync = ref.read(productComponentsProvider(productId));
 
+    print("kk");
     componentsAsync.whenData((componentsData) {
       bool hasChanges = false;
       for (var componentData in componentsData) {
+        
+        print("component data : $componentData");
         final component = componentData['component'];
         final isRequired = componentData['isRequired'] as bool;
-        final minQuantity = componentData['minQuantity'] as int;
+        final defaultQuantity = componentData['defaultQuantity'] as int? ?? 0;
+        print("default quantity : $defaultQuantity");
+        // Auto-add components with their default quantity if not already added
+        // For required components, always use at least the defaultQuantity
+        // For optional components with defaultQuantity > 0, also initialize them
 
-        // Auto-add required components with minimum quantity if not already added
-        if (isRequired && !_componentQuantities.containsKey(component.id)) {
-          _componentQuantities[component.id] = minQuantity;
-          hasChanges = true;
+        if (!_componentQuantities.containsKey(component.id)) {
+          print("mm");
+          if (isRequired || defaultQuantity > 0) {
+            print("default quantity : $defaultQuantity");
+            _componentQuantities[component.id] = defaultQuantity;
+            hasChanges = true;
+          }
         }
       }
 
@@ -904,13 +914,17 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                         final isRequired = componentData['isRequired'] as bool;
                         final minQuantity = componentData['minQuantity'] as int;
                         final maxQuantity = componentData['maxQuantity'] as int;
+                        final defaultQuantity = componentData['defaultQuantity'] as int? ?? 0;
+                        final defaultPrice = componentData['defaultPrice'] as double? ?? 0.0;
 
                         // Get current quantity for this component
-                        // If not in map and is required, initialize it with minQuantity
-                        if (isRequired && !_componentQuantities.containsKey(component.id)) {
-                          _componentQuantities[component.id] = minQuantity;
+                        // If not in map, initialize with defaultQuantity
+                        if (!_componentQuantities.containsKey(component.id)) {
+                          if (isRequired || defaultQuantity > 0) {
+                            _componentQuantities[component.id] = defaultQuantity;
+                          }
                         }
-                        final quantity = _componentQuantities[component.id] ?? 0;
+                        final quantity = _componentQuantities[component.id] ?? defaultQuantity;
 
                         return LayoutBuilder(
                           builder: (context, constraints) {
@@ -1010,9 +1024,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                                             const SizedBox(height: 6),
                                             Row(
                                               children: [
-                                                if (component.price > 0)
+                                                if (defaultPrice > 0)
                                                   Text(
-                                                    '+${currencyFormatter.format(component.price)}',
+                                                    '+${currencyFormatter.format(defaultPrice)}',
                                                     style: TextStyle(
                                                       fontSize: 14,
                                                       fontWeight: FontWeight.w600,
@@ -1642,40 +1656,23 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
         final isRequired = componentData['isRequired'] as bool;
         final minQuantity = (componentData['minQuantity'] as int?) ?? 0;
+        final defaultQuantity = (componentData['defaultQuantity'] as int?) ?? 0;
+        final defaultPrice = (componentData['defaultPrice'] as double?) ?? 0.0;
         final componentQuantity = entry.value;
 
-        print('DEBUG: Component ${component.name}: qty=$componentQuantity, min=$minQuantity, required=$isRequired');
 
-        // Add component if:
-        // 1. It's required (always include required components)
-        // 2. Quantity is greater than 0 (user explicitly selected it)
-        // 3. Quantity is greater than minimum (user increased it)
-        if (componentQuantity > 0 && (isRequired || componentQuantity != minQuantity)) {
-          print('DEBUG: Adding component: ${component.name} x$componentQuantity (required: $isRequired)');
+        // Add component if quantity > 0
+        if (componentQuantity > 0) {
 
-          // Price calculation logic:
-          // - Only charge for quantity beyond the minimum (default) quantity
-          // - If quantity <= minQuantity, it's included in base price (price = 0)
-          // - If quantity > minQuantity, we store full quantity but adjust the unit price
-          //   so that (price * quantity) only charges for the extra items
-          final componentPrice = component.price ?? 0.0;
-          final chargeableQuantity = componentQuantity > minQuantity ? (componentQuantity - minQuantity) : 0;
-
-          // Calculate effective price per unit: total chargeable amount / total quantity
-          // This way when multiplied by quantity in componentTotal, we get the right charge
-          final effectivePricePerUnit = componentQuantity > 0
-              ? (componentPrice * chargeableQuantity) / componentQuantity
-              : 0.0;
-
+          // Simple pricing: charge full price for the quantity ordered
+          // No "difference from default" - components always cost their price × quantity
           selectedComponents.add(OrderItemComponent(
             componentId: component.id,
             name: component.name ?? 'Unknown',
             quantity: componentQuantity,
-            price: effectivePricePerUnit,
+            price: defaultPrice, // Full price per unit
             isSpecial: _componentSpecial[component.id] ?? false,
           ));
-        } else {
-          print('DEBUG: Skipping component ${component.name}: condition not met (qty>0: ${componentQuantity > 0}, required: $isRequired, qty!=min: ${componentQuantity != minQuantity})');
         }
       }
     } catch (e, stackTrace) {
@@ -1688,17 +1685,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       );
       return;
     }
-
-    print('DEBUG: Total selected components: ${selectedComponents.length}');
+    
 
     // Calculate manual discount
     final productPrice = widget.product is OrderItem
         ? (widget.product as OrderItem).finalPrice
         : widget.product.price;
     final manualDiscount = _calculateManualDiscount(productPrice);
-
-    print('DEBUG: Manual discount: $manualDiscount');
-    print('DEBUG: Returning result and closing dialog');
+    
 
     // Get variant data if selected
     int? variantId;
@@ -1778,32 +1772,25 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
     for (final entry in _componentQuantities.entries) {
       final componentId = entry.key;
-      final quantity = entry.value;
+      final selectedQuantity = entry.value;
 
-      if (quantity > 0) {
-        // Find the component data
-        try {
-          final componentData = componentsData.firstWhere(
-            (cd) {
-              final comp = cd['component'];
-              return comp != null && comp.id == componentId;
-            },
-          );
+      // Find the component data
+      try {
+        final componentData = componentsData.firstWhere(
+          (cd) {
+            final comp = cd['component'];
+            return comp != null && comp.id == componentId;
+          },
+        );
 
-          final component = componentData['component'];
-          final minQuantity = (componentData['minQuantity'] as int?) ?? 0;
+        final defaultPrice = (componentData['defaultPrice'] as double?) ?? 0.0;
 
-          if (component != null && component.price != null) {
-            // Only charge for quantity beyond the minimum (default) quantity
-            // If quantity <= minQuantity, it's included in the base price (no extra charge)
-            // If quantity > minQuantity, charge only for the extra quantity
-            final chargeableQuantity = quantity > minQuantity ? (quantity - minQuantity) : 0;
-            total += component.price * chargeableQuantity;
-          }
-        } catch (e) {
-          // Component not found, skip
-          continue;
-        }
+        // Simple calculation: price × quantity
+        // Components always cost their price × quantity selected
+        total += defaultPrice * selectedQuantity;
+      } catch (e) {
+        // Component not found, skip
+        continue;
       }
     }
 

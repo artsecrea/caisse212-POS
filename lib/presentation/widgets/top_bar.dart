@@ -169,21 +169,6 @@ class _TopBarState extends ConsumerState<TopBar> {
     }
 
     return PopupMenuButton<BarcodeScanMode>(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: color ?? Colors.white, size: 20),
-            const SizedBox(width: 6),
-            Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
-          ],
-        ),
-      ),
       tooltip: tooltip,
       onSelected: (mode) {
         ref.read(barcodeScanModeProvider.notifier).state = mode;
@@ -244,6 +229,21 @@ class _TopBarState extends ConsumerState<TopBar> {
           ),
         ),
       ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color ?? Colors.white, size: 20),
+            const SizedBox(width: 6),
+            Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
+          ],
+        ),
+      ),
     );
   }
 
@@ -612,7 +612,7 @@ class _TopBarState extends ConsumerState<TopBar> {
   Future<void> _handleSync() async {
     final l10n = AppLocalizations.of(context);
     final prefs = ref.read(sharedPreferencesProvider);
-    final apiService = ApiService(prefs);
+    final apiService = ref.read(apiServiceProvider);
     final settings = ref.read(settingsProvider);
 
     // Check if in demo mode

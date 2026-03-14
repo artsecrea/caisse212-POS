@@ -4390,6 +4390,18 @@ class $ProductComponentsTable extends ProductComponents
     requiredDuringInsert: false,
     defaultValue: const Constant(0.0),
   );
+  static const VerificationMeta _defaultQuantityMeta = const VerificationMeta(
+    'defaultQuantity',
+  );
+  @override
+  late final GeneratedColumn<int> defaultQuantity = GeneratedColumn<int>(
+    'default_quantity',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _isRequiredMeta = const VerificationMeta(
     'isRequired',
   );
@@ -4459,6 +4471,7 @@ class $ProductComponentsTable extends ProductComponents
     productId,
     componentId,
     defaultPrice,
+    defaultQuantity,
     isRequired,
     minQuantity,
     maxQuantity,
@@ -4505,6 +4518,15 @@ class $ProductComponentsTable extends ProductComponents
         defaultPrice.isAcceptableOrUnknown(
           data['default_price']!,
           _defaultPriceMeta,
+        ),
+      );
+    }
+    if (data.containsKey('default_quantity')) {
+      context.handle(
+        _defaultQuantityMeta,
+        defaultQuantity.isAcceptableOrUnknown(
+          data['default_quantity']!,
+          _defaultQuantityMeta,
         ),
       );
     }
@@ -4569,6 +4591,10 @@ class $ProductComponentsTable extends ProductComponents
         DriftSqlType.double,
         data['${effectivePrefix}default_price'],
       )!,
+      defaultQuantity: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}default_quantity'],
+      )!,
       isRequired: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_required'],
@@ -4604,6 +4630,7 @@ class ProductComponent extends DataClass
   final int productId;
   final int componentId;
   final double defaultPrice;
+  final int defaultQuantity;
   final bool isRequired;
   final int minQuantity;
   final int maxQuantity;
@@ -4614,6 +4641,7 @@ class ProductComponent extends DataClass
     required this.productId,
     required this.componentId,
     required this.defaultPrice,
+    required this.defaultQuantity,
     required this.isRequired,
     required this.minQuantity,
     required this.maxQuantity,
@@ -4627,6 +4655,7 @@ class ProductComponent extends DataClass
     map['product_id'] = Variable<int>(productId);
     map['component_id'] = Variable<int>(componentId);
     map['default_price'] = Variable<double>(defaultPrice);
+    map['default_quantity'] = Variable<int>(defaultQuantity);
     map['is_required'] = Variable<bool>(isRequired);
     map['min_quantity'] = Variable<int>(minQuantity);
     map['max_quantity'] = Variable<int>(maxQuantity);
@@ -4641,6 +4670,7 @@ class ProductComponent extends DataClass
       productId: Value(productId),
       componentId: Value(componentId),
       defaultPrice: Value(defaultPrice),
+      defaultQuantity: Value(defaultQuantity),
       isRequired: Value(isRequired),
       minQuantity: Value(minQuantity),
       maxQuantity: Value(maxQuantity),
@@ -4659,6 +4689,7 @@ class ProductComponent extends DataClass
       productId: serializer.fromJson<int>(json['productId']),
       componentId: serializer.fromJson<int>(json['componentId']),
       defaultPrice: serializer.fromJson<double>(json['defaultPrice']),
+      defaultQuantity: serializer.fromJson<int>(json['defaultQuantity']),
       isRequired: serializer.fromJson<bool>(json['isRequired']),
       minQuantity: serializer.fromJson<int>(json['minQuantity']),
       maxQuantity: serializer.fromJson<int>(json['maxQuantity']),
@@ -4674,6 +4705,7 @@ class ProductComponent extends DataClass
       'productId': serializer.toJson<int>(productId),
       'componentId': serializer.toJson<int>(componentId),
       'defaultPrice': serializer.toJson<double>(defaultPrice),
+      'defaultQuantity': serializer.toJson<int>(defaultQuantity),
       'isRequired': serializer.toJson<bool>(isRequired),
       'minQuantity': serializer.toJson<int>(minQuantity),
       'maxQuantity': serializer.toJson<int>(maxQuantity),
@@ -4687,6 +4719,7 @@ class ProductComponent extends DataClass
     int? productId,
     int? componentId,
     double? defaultPrice,
+    int? defaultQuantity,
     bool? isRequired,
     int? minQuantity,
     int? maxQuantity,
@@ -4697,6 +4730,7 @@ class ProductComponent extends DataClass
     productId: productId ?? this.productId,
     componentId: componentId ?? this.componentId,
     defaultPrice: defaultPrice ?? this.defaultPrice,
+    defaultQuantity: defaultQuantity ?? this.defaultQuantity,
     isRequired: isRequired ?? this.isRequired,
     minQuantity: minQuantity ?? this.minQuantity,
     maxQuantity: maxQuantity ?? this.maxQuantity,
@@ -4713,6 +4747,9 @@ class ProductComponent extends DataClass
       defaultPrice: data.defaultPrice.present
           ? data.defaultPrice.value
           : this.defaultPrice,
+      defaultQuantity: data.defaultQuantity.present
+          ? data.defaultQuantity.value
+          : this.defaultQuantity,
       isRequired: data.isRequired.present
           ? data.isRequired.value
           : this.isRequired,
@@ -4734,6 +4771,7 @@ class ProductComponent extends DataClass
           ..write('productId: $productId, ')
           ..write('componentId: $componentId, ')
           ..write('defaultPrice: $defaultPrice, ')
+          ..write('defaultQuantity: $defaultQuantity, ')
           ..write('isRequired: $isRequired, ')
           ..write('minQuantity: $minQuantity, ')
           ..write('maxQuantity: $maxQuantity, ')
@@ -4749,6 +4787,7 @@ class ProductComponent extends DataClass
     productId,
     componentId,
     defaultPrice,
+    defaultQuantity,
     isRequired,
     minQuantity,
     maxQuantity,
@@ -4763,6 +4802,7 @@ class ProductComponent extends DataClass
           other.productId == this.productId &&
           other.componentId == this.componentId &&
           other.defaultPrice == this.defaultPrice &&
+          other.defaultQuantity == this.defaultQuantity &&
           other.isRequired == this.isRequired &&
           other.minQuantity == this.minQuantity &&
           other.maxQuantity == this.maxQuantity &&
@@ -4775,6 +4815,7 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
   final Value<int> productId;
   final Value<int> componentId;
   final Value<double> defaultPrice;
+  final Value<int> defaultQuantity;
   final Value<bool> isRequired;
   final Value<int> minQuantity;
   final Value<int> maxQuantity;
@@ -4785,6 +4826,7 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
     this.productId = const Value.absent(),
     this.componentId = const Value.absent(),
     this.defaultPrice = const Value.absent(),
+    this.defaultQuantity = const Value.absent(),
     this.isRequired = const Value.absent(),
     this.minQuantity = const Value.absent(),
     this.maxQuantity = const Value.absent(),
@@ -4796,6 +4838,7 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
     required int productId,
     required int componentId,
     this.defaultPrice = const Value.absent(),
+    this.defaultQuantity = const Value.absent(),
     this.isRequired = const Value.absent(),
     this.minQuantity = const Value.absent(),
     this.maxQuantity = const Value.absent(),
@@ -4808,6 +4851,7 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
     Expression<int>? productId,
     Expression<int>? componentId,
     Expression<double>? defaultPrice,
+    Expression<int>? defaultQuantity,
     Expression<bool>? isRequired,
     Expression<int>? minQuantity,
     Expression<int>? maxQuantity,
@@ -4819,6 +4863,7 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
       if (productId != null) 'product_id': productId,
       if (componentId != null) 'component_id': componentId,
       if (defaultPrice != null) 'default_price': defaultPrice,
+      if (defaultQuantity != null) 'default_quantity': defaultQuantity,
       if (isRequired != null) 'is_required': isRequired,
       if (minQuantity != null) 'min_quantity': minQuantity,
       if (maxQuantity != null) 'max_quantity': maxQuantity,
@@ -4832,6 +4877,7 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
     Value<int>? productId,
     Value<int>? componentId,
     Value<double>? defaultPrice,
+    Value<int>? defaultQuantity,
     Value<bool>? isRequired,
     Value<int>? minQuantity,
     Value<int>? maxQuantity,
@@ -4843,6 +4889,7 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
       productId: productId ?? this.productId,
       componentId: componentId ?? this.componentId,
       defaultPrice: defaultPrice ?? this.defaultPrice,
+      defaultQuantity: defaultQuantity ?? this.defaultQuantity,
       isRequired: isRequired ?? this.isRequired,
       minQuantity: minQuantity ?? this.minQuantity,
       maxQuantity: maxQuantity ?? this.maxQuantity,
@@ -4865,6 +4912,9 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
     }
     if (defaultPrice.present) {
       map['default_price'] = Variable<double>(defaultPrice.value);
+    }
+    if (defaultQuantity.present) {
+      map['default_quantity'] = Variable<int>(defaultQuantity.value);
     }
     if (isRequired.present) {
       map['is_required'] = Variable<bool>(isRequired.value);
@@ -4891,6 +4941,7 @@ class ProductComponentsCompanion extends UpdateCompanion<ProductComponent> {
           ..write('productId: $productId, ')
           ..write('componentId: $componentId, ')
           ..write('defaultPrice: $defaultPrice, ')
+          ..write('defaultQuantity: $defaultQuantity, ')
           ..write('isRequired: $isRequired, ')
           ..write('minQuantity: $minQuantity, ')
           ..write('maxQuantity: $maxQuantity, ')
@@ -13945,6 +13996,28 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _usernameMeta = const VerificationMeta(
+    'username',
+  );
+  @override
+  late final GeneratedColumn<String> username = GeneratedColumn<String>(
+    'username',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _passwordHashMeta = const VerificationMeta(
+    'passwordHash',
+  );
+  @override
+  late final GeneratedColumn<String> passwordHash = GeneratedColumn<String>(
+    'password_hash',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _isActiveMeta = const VerificationMeta(
     'isActive',
   );
@@ -13990,6 +14063,8 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
     firstName,
     lastName,
     imageUrl,
+    username,
+    passwordHash,
     isActive,
     createdAt,
     updatedAt,
@@ -14027,6 +14102,21 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
       context.handle(
         _imageUrlMeta,
         imageUrl.isAcceptableOrUnknown(data['image_url']!, _imageUrlMeta),
+      );
+    }
+    if (data.containsKey('username')) {
+      context.handle(
+        _usernameMeta,
+        username.isAcceptableOrUnknown(data['username']!, _usernameMeta),
+      );
+    }
+    if (data.containsKey('password_hash')) {
+      context.handle(
+        _passwordHashMeta,
+        passwordHash.isAcceptableOrUnknown(
+          data['password_hash']!,
+          _passwordHashMeta,
+        ),
       );
     }
     if (data.containsKey('is_active')) {
@@ -14072,6 +14162,14 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
         DriftSqlType.string,
         data['${effectivePrefix}image_url'],
       ),
+      username: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}username'],
+      ),
+      passwordHash: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}password_hash'],
+      ),
       isActive: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_active'],
@@ -14098,6 +14196,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
   final String firstName;
   final String? lastName;
   final String? imageUrl;
+  final String? username;
+  final String? passwordHash;
   final bool isActive;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -14106,6 +14206,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     required this.firstName,
     this.lastName,
     this.imageUrl,
+    this.username,
+    this.passwordHash,
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
@@ -14120,6 +14222,12 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     }
     if (!nullToAbsent || imageUrl != null) {
       map['image_url'] = Variable<String>(imageUrl);
+    }
+    if (!nullToAbsent || username != null) {
+      map['username'] = Variable<String>(username);
+    }
+    if (!nullToAbsent || passwordHash != null) {
+      map['password_hash'] = Variable<String>(passwordHash);
     }
     map['is_active'] = Variable<bool>(isActive);
     map['created_at'] = Variable<DateTime>(createdAt);
@@ -14137,6 +14245,12 @@ class Waiter extends DataClass implements Insertable<Waiter> {
       imageUrl: imageUrl == null && nullToAbsent
           ? const Value.absent()
           : Value(imageUrl),
+      username: username == null && nullToAbsent
+          ? const Value.absent()
+          : Value(username),
+      passwordHash: passwordHash == null && nullToAbsent
+          ? const Value.absent()
+          : Value(passwordHash),
       isActive: Value(isActive),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -14153,6 +14267,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
       firstName: serializer.fromJson<String>(json['firstName']),
       lastName: serializer.fromJson<String?>(json['lastName']),
       imageUrl: serializer.fromJson<String?>(json['imageUrl']),
+      username: serializer.fromJson<String?>(json['username']),
+      passwordHash: serializer.fromJson<String?>(json['passwordHash']),
       isActive: serializer.fromJson<bool>(json['isActive']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -14166,6 +14282,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
       'firstName': serializer.toJson<String>(firstName),
       'lastName': serializer.toJson<String?>(lastName),
       'imageUrl': serializer.toJson<String?>(imageUrl),
+      'username': serializer.toJson<String?>(username),
+      'passwordHash': serializer.toJson<String?>(passwordHash),
       'isActive': serializer.toJson<bool>(isActive),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -14177,6 +14295,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     String? firstName,
     Value<String?> lastName = const Value.absent(),
     Value<String?> imageUrl = const Value.absent(),
+    Value<String?> username = const Value.absent(),
+    Value<String?> passwordHash = const Value.absent(),
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -14185,6 +14305,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     firstName: firstName ?? this.firstName,
     lastName: lastName.present ? lastName.value : this.lastName,
     imageUrl: imageUrl.present ? imageUrl.value : this.imageUrl,
+    username: username.present ? username.value : this.username,
+    passwordHash: passwordHash.present ? passwordHash.value : this.passwordHash,
     isActive: isActive ?? this.isActive,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -14195,6 +14317,10 @@ class Waiter extends DataClass implements Insertable<Waiter> {
       firstName: data.firstName.present ? data.firstName.value : this.firstName,
       lastName: data.lastName.present ? data.lastName.value : this.lastName,
       imageUrl: data.imageUrl.present ? data.imageUrl.value : this.imageUrl,
+      username: data.username.present ? data.username.value : this.username,
+      passwordHash: data.passwordHash.present
+          ? data.passwordHash.value
+          : this.passwordHash,
       isActive: data.isActive.present ? data.isActive.value : this.isActive,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -14208,6 +14334,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
           ..write('firstName: $firstName, ')
           ..write('lastName: $lastName, ')
           ..write('imageUrl: $imageUrl, ')
+          ..write('username: $username, ')
+          ..write('passwordHash: $passwordHash, ')
           ..write('isActive: $isActive, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -14221,6 +14349,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     firstName,
     lastName,
     imageUrl,
+    username,
+    passwordHash,
     isActive,
     createdAt,
     updatedAt,
@@ -14233,6 +14363,8 @@ class Waiter extends DataClass implements Insertable<Waiter> {
           other.firstName == this.firstName &&
           other.lastName == this.lastName &&
           other.imageUrl == this.imageUrl &&
+          other.username == this.username &&
+          other.passwordHash == this.passwordHash &&
           other.isActive == this.isActive &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -14243,6 +14375,8 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
   final Value<String> firstName;
   final Value<String?> lastName;
   final Value<String?> imageUrl;
+  final Value<String?> username;
+  final Value<String?> passwordHash;
   final Value<bool> isActive;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
@@ -14251,6 +14385,8 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     this.firstName = const Value.absent(),
     this.lastName = const Value.absent(),
     this.imageUrl = const Value.absent(),
+    this.username = const Value.absent(),
+    this.passwordHash = const Value.absent(),
     this.isActive = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -14260,6 +14396,8 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     required String firstName,
     this.lastName = const Value.absent(),
     this.imageUrl = const Value.absent(),
+    this.username = const Value.absent(),
+    this.passwordHash = const Value.absent(),
     this.isActive = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -14269,6 +14407,8 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     Expression<String>? firstName,
     Expression<String>? lastName,
     Expression<String>? imageUrl,
+    Expression<String>? username,
+    Expression<String>? passwordHash,
     Expression<bool>? isActive,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
@@ -14278,6 +14418,8 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
       if (firstName != null) 'first_name': firstName,
       if (lastName != null) 'last_name': lastName,
       if (imageUrl != null) 'image_url': imageUrl,
+      if (username != null) 'username': username,
+      if (passwordHash != null) 'password_hash': passwordHash,
       if (isActive != null) 'is_active': isActive,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -14289,6 +14431,8 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     Value<String>? firstName,
     Value<String?>? lastName,
     Value<String?>? imageUrl,
+    Value<String?>? username,
+    Value<String?>? passwordHash,
     Value<bool>? isActive,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
@@ -14298,6 +14442,8 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
       firstName: firstName ?? this.firstName,
       lastName: lastName ?? this.lastName,
       imageUrl: imageUrl ?? this.imageUrl,
+      username: username ?? this.username,
+      passwordHash: passwordHash ?? this.passwordHash,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -14319,6 +14465,12 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     if (imageUrl.present) {
       map['image_url'] = Variable<String>(imageUrl.value);
     }
+    if (username.present) {
+      map['username'] = Variable<String>(username.value);
+    }
+    if (passwordHash.present) {
+      map['password_hash'] = Variable<String>(passwordHash.value);
+    }
     if (isActive.present) {
       map['is_active'] = Variable<bool>(isActive.value);
     }
@@ -14338,6 +14490,8 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
           ..write('firstName: $firstName, ')
           ..write('lastName: $lastName, ')
           ..write('imageUrl: $imageUrl, ')
+          ..write('username: $username, ')
+          ..write('passwordHash: $passwordHash, ')
           ..write('isActive: $isActive, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -16772,6 +16926,7 @@ typedef $$ProductComponentsTableCreateCompanionBuilder =
       required int productId,
       required int componentId,
       Value<double> defaultPrice,
+      Value<int> defaultQuantity,
       Value<bool> isRequired,
       Value<int> minQuantity,
       Value<int> maxQuantity,
@@ -16784,6 +16939,7 @@ typedef $$ProductComponentsTableUpdateCompanionBuilder =
       Value<int> productId,
       Value<int> componentId,
       Value<double> defaultPrice,
+      Value<int> defaultQuantity,
       Value<bool> isRequired,
       Value<int> minQuantity,
       Value<int> maxQuantity,
@@ -16817,6 +16973,11 @@ class $$ProductComponentsTableFilterComposer
 
   ColumnFilters<double> get defaultPrice => $composableBuilder(
     column: $table.defaultPrice,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get defaultQuantity => $composableBuilder(
+    column: $table.defaultQuantity,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -16875,6 +17036,11 @@ class $$ProductComponentsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get defaultQuantity => $composableBuilder(
+    column: $table.defaultQuantity,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isRequired => $composableBuilder(
     column: $table.isRequired,
     builder: (column) => ColumnOrderings(column),
@@ -16923,6 +17089,11 @@ class $$ProductComponentsTableAnnotationComposer
 
   GeneratedColumn<double> get defaultPrice => $composableBuilder(
     column: $table.defaultPrice,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get defaultQuantity => $composableBuilder(
+    column: $table.defaultQuantity,
     builder: (column) => column,
   );
 
@@ -16992,6 +17163,7 @@ class $$ProductComponentsTableTableManager
                 Value<int> productId = const Value.absent(),
                 Value<int> componentId = const Value.absent(),
                 Value<double> defaultPrice = const Value.absent(),
+                Value<int> defaultQuantity = const Value.absent(),
                 Value<bool> isRequired = const Value.absent(),
                 Value<int> minQuantity = const Value.absent(),
                 Value<int> maxQuantity = const Value.absent(),
@@ -17002,6 +17174,7 @@ class $$ProductComponentsTableTableManager
                 productId: productId,
                 componentId: componentId,
                 defaultPrice: defaultPrice,
+                defaultQuantity: defaultQuantity,
                 isRequired: isRequired,
                 minQuantity: minQuantity,
                 maxQuantity: maxQuantity,
@@ -17014,6 +17187,7 @@ class $$ProductComponentsTableTableManager
                 required int productId,
                 required int componentId,
                 Value<double> defaultPrice = const Value.absent(),
+                Value<int> defaultQuantity = const Value.absent(),
                 Value<bool> isRequired = const Value.absent(),
                 Value<int> minQuantity = const Value.absent(),
                 Value<int> maxQuantity = const Value.absent(),
@@ -17024,6 +17198,7 @@ class $$ProductComponentsTableTableManager
                 productId: productId,
                 componentId: componentId,
                 defaultPrice: defaultPrice,
+                defaultQuantity: defaultQuantity,
                 isRequired: isRequired,
                 minQuantity: minQuantity,
                 maxQuantity: maxQuantity,
@@ -21953,6 +22128,8 @@ typedef $$WaitersTableCreateCompanionBuilder =
       required String firstName,
       Value<String?> lastName,
       Value<String?> imageUrl,
+      Value<String?> username,
+      Value<String?> passwordHash,
       Value<bool> isActive,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -21963,6 +22140,8 @@ typedef $$WaitersTableUpdateCompanionBuilder =
       Value<String> firstName,
       Value<String?> lastName,
       Value<String?> imageUrl,
+      Value<String?> username,
+      Value<String?> passwordHash,
       Value<bool> isActive,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -21994,6 +22173,16 @@ class $$WaitersTableFilterComposer
 
   ColumnFilters<String> get imageUrl => $composableBuilder(
     column: $table.imageUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get username => $composableBuilder(
+    column: $table.username,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get passwordHash => $composableBuilder(
+    column: $table.passwordHash,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -22042,6 +22231,16 @@ class $$WaitersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get username => $composableBuilder(
+    column: $table.username,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get passwordHash => $composableBuilder(
+    column: $table.passwordHash,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isActive => $composableBuilder(
     column: $table.isActive,
     builder: (column) => ColumnOrderings(column),
@@ -22078,6 +22277,14 @@ class $$WaitersTableAnnotationComposer
 
   GeneratedColumn<String> get imageUrl =>
       $composableBuilder(column: $table.imageUrl, builder: (column) => column);
+
+  GeneratedColumn<String> get username =>
+      $composableBuilder(column: $table.username, builder: (column) => column);
+
+  GeneratedColumn<String> get passwordHash => $composableBuilder(
+    column: $table.passwordHash,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<bool> get isActive =>
       $composableBuilder(column: $table.isActive, builder: (column) => column);
@@ -22121,6 +22328,8 @@ class $$WaitersTableTableManager
                 Value<String> firstName = const Value.absent(),
                 Value<String?> lastName = const Value.absent(),
                 Value<String?> imageUrl = const Value.absent(),
+                Value<String?> username = const Value.absent(),
+                Value<String?> passwordHash = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -22129,6 +22338,8 @@ class $$WaitersTableTableManager
                 firstName: firstName,
                 lastName: lastName,
                 imageUrl: imageUrl,
+                username: username,
+                passwordHash: passwordHash,
                 isActive: isActive,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -22139,6 +22350,8 @@ class $$WaitersTableTableManager
                 required String firstName,
                 Value<String?> lastName = const Value.absent(),
                 Value<String?> imageUrl = const Value.absent(),
+                Value<String?> username = const Value.absent(),
+                Value<String?> passwordHash = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -22147,6 +22360,8 @@ class $$WaitersTableTableManager
                 firstName: firstName,
                 lastName: lastName,
                 imageUrl: imageUrl,
+                username: username,
+                passwordHash: passwordHash,
                 isActive: isActive,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
