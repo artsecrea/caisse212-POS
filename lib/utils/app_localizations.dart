@@ -116,7 +116,6 @@ class AppLocalizations {
       'table_cleared': 'Table cleared',
 
       // Waiters
-      'waiter': 'Waiter',
       'waiters': 'Waiters',
       'select_waiter': 'Select Waiter',
       'search_waiter': 'Search waiter...',
@@ -916,9 +915,13 @@ class AppLocalizations {
       'select': 'Select',
       'variant': 'Variant',
       'variants': 'Variants',
+
+      "additional_discount": "Additional Discount",
     },
     'ar': {
       // Common - Arabic
+      "additional_discount": "خصم إضافي",
+
       'app_title': 'نظام نقاط البيع',
       'ok': 'موافق',
       'cancel': 'إلغاء',
@@ -2326,6 +2329,8 @@ class AppLocalizations {
       'resume_order': 'Reprendre la commande',
       'order_held': 'Commande mise en attente avec succès',
       'order_resumed': 'Commande reprise avec succès',
+
+      "additional_discounts": "Remises supplémentaires",
 
       // Product Modifications
       'product_details': 'Détails du produit',
