@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/server_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../utils/app_localizations.dart';
+import '../../services/discovery_service.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -1500,9 +1502,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         if (isRunning) ...[
                           const SizedBox(height: 8),
-                          Text(
-                            '${l10n.translate('server_url')}: http://localhost:${serverService.port}',
-                            style: const TextStyle(fontFamily: 'monospace'),
+                          FutureBuilder<String>(
+                            future: DiscoveryService.getLocalIp(),
+                            builder: (context, snapshot) {
+                              final ip = snapshot.data ?? 'loading...';
+                              final url = 'http://$ip:${serverService.port}';
+                              return Row(
+                                children: [
+                                  Expanded(
+                                    child: SelectableText(
+                                      '${l10n.translate('server_url')}: $url',
+                                      style: const TextStyle(fontFamily: 'monospace'),
+                                    ),
+                                  ),
+                                  if (snapshot.hasData)
+                                    IconButton(
+                                      icon: const Icon(Icons.copy, size: 18),
+                                      tooltip: 'Copy URL',
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                      onPressed: () {
+                                        Clipboard.setData(ClipboardData(text: url));
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('URL copied to clipboard'),
+                                            duration: Duration(seconds: 1),
+                                            behavior: SnackBarBehavior.floating,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                ],
+                              );
+                            },
                           ),
                         ],
                       ],
@@ -1569,100 +1601,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
         ),
-        const SizedBox(height: 16),
 
-        // API Endpoints Documentation
-        Card(
-          elevation: 0,
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.api),
-                    const SizedBox(width: 12),
-                    Text(
-                      l10n.translate('available_endpoints'),
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _buildEndpointDoc('GET', '/health', l10n.translate('health_check')),
-                _buildEndpointDoc('GET', '/orders/', l10n.translate('get_orders')),
-                _buildEndpointDoc('POST', '/orders/', l10n.translate('create_order')),
-                _buildEndpointDoc('PUT', '/orders/{code}', l10n.translate('update_order')),
-                _buildEndpointDoc('PUT', '/orders/{code}?status=X', l10n.translate('update_order_status')),
-                _buildEndpointDoc('PUT', '/orders/products/{id}?status=X', l10n.translate('update_product_status')),
-              ],
-            ),
-          ),
-        ),
       ],
     );
   }
 
-  Widget _buildEndpointDoc(String method, String path, String description) {
-    Color methodColor;
-    switch (method) {
-      case 'GET':
-        methodColor = Colors.blue;
-        break;
-      case 'POST':
-        methodColor = Colors.green;
-        break;
-      case 'PUT':
-        methodColor = Colors.orange;
-        break;
-      case 'DELETE':
-        methodColor = Colors.red;
-        break;
-      default:
-        methodColor = Colors.grey;
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: methodColor.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              method,
-              style: TextStyle(
-                color: methodColor,
-                fontWeight: FontWeight.bold,
-                fontSize: 11,
-                fontFamily: 'monospace',
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              path,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            description,
-            style: const TextStyle(color: Colors.grey, fontSize: 11),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class NavItem {

@@ -175,6 +175,13 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
       final success = await syncService.syncSingleOrder(orderId);
 
       if (success) {
+        // Also sync tickets for this order
+        try {
+          await syncService.syncTicketsForOrder(orderId);
+        } catch (e) {
+          print('Auto-sync tickets failed for order #$orderId: $e');
+        }
+
         state = state.copyWith(
           lastSyncTime: DateTime.now(),
           syncedOrdersCount: state.syncedOrdersCount + 1,

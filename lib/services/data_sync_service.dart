@@ -741,6 +741,59 @@ class DataSyncService {
     }
   }
 
+  /// Sync tickets for a single order (used by auto-sync when online)
+  Future<bool> syncTicketsForOrder(int orderId) async {
+    try {
+      final order = await (_database.select(_database.orders)
+        ..where((o) => o.id.equals(orderId)))
+          .getSingleOrNull();
+
+      if (order == null) {
+        _logger.warning('Order #$orderId not found when syncing tickets');
+        return false;
+      }
+
+      final tickets = await (_database.select(_database.tickets)
+        ..where((t) => t.orderId.equals(orderId) & t.isSynced.equals(false)))
+          .get();
+
+      if (tickets.isEmpty) {
+        _logger.info('No tickets to sync for order code=${order.code}');
+        return true;
+      }
+
+      final sessions = await (_database.select(_database.cashSessions)).get();
+      final sessionCodeById = {for (final s in sessions) s.id: s.code};
+
+      final payload = <Map<String, dynamic>>[];
+      for (final t in tickets) {
+        payload.add({
+          'id': t.id,
+          'num': t.num,
+          'orderCode': order.code,
+          'orderId': t.orderId,
+          'sessionId': t.sessionId,
+          'sessionCode': t.sessionId != null ? sessionCodeById[t.sessionId] : null,
+          'paymentMethod': t.paymentMethod,
+          'amount': t.amount,
+          'isPaid': t.isPaid,
+          'printCount': t.printCount,
+          'date': t.date.toIso8601String(),
+          'createdAt': t.date.toIso8601String(),
+        });
+      }
+
+      await _apiService.syncTickets(payload);
+      await markTicketsAsSynced(tickets.map((t) => t.id).toList());
+
+      _logger.info('Synced ${tickets.length} tickets for order code=${order.code}');
+      return true;
+    } catch (e) {
+      _logger.error('Error syncing tickets for order #$orderId: $e');
+      return false;
+    }
+  }
+
   /// Sync orders in bulk with limited batch size
   /// Only sends bulk request if more than one order, otherwise uses single sync
   Future<int> syncOrdersBulk({int batchSize = 50}) async {

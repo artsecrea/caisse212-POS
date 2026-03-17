@@ -16,8 +16,8 @@ class DiscoveryService {
   // Check if discovery is supported on this platform
   static bool get isSupported => _isSupported && !kIsWeb;
 
-  // Get local IP
-  static Future<String> _getLocalIp() async {
+  // Get local IP (public)
+  static Future<String> getLocalIp() async {
     try {
       for (var interface in await NetworkInterface.list()) {
         for (var addr in interface.addresses) {
@@ -43,7 +43,7 @@ class DiscoveryService {
     try {
       await _broadcast?.stop();
 
-      final localIp = ip ?? await _getLocalIp();
+      final localIp = ip ?? await getLocalIp();
 
       final service = BonsoirService(
         type: '_caisse212._tcp',

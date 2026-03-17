@@ -399,15 +399,15 @@ class OrderRepository {
     await _logService.logOrderCreated(orderId, 'Order created with code $orderCode, status $status');
 
     // Auto-sync if order is COMPLETED and network is available
-    print("-----------------------------------------------");
     if (status == 'COMPLETED' && _syncService != null && _isOnlineCallback != null) {
-      print("-----------------------------------------------2");
       final isOnline = _isOnlineCallback!();
+      _logger.debug('Auto-sync on create: online=$isOnline orderCode=$orderCode');
       if (isOnline) {
         try {
-          await _syncService!.syncSingleOrder(orderId);
-          print("-----------------------------------------------3");
-
+          final orderSynced = await _syncService!.syncSingleOrder(orderId);
+          if (orderSynced) {
+            await _syncService!.syncTicketsForOrder(orderId);
+          }
           _logger.info('Auto-synced new COMPLETED order code=$orderCode');
         } catch (e) {
           _logger.error('Failed to auto-sync new order: $e');
@@ -545,9 +545,13 @@ class OrderRepository {
       if (_syncService != null && _isOnlineCallback != null) {
         final isOnline = _isOnlineCallback!();
         if (isOnline) {
+          _logger.debug('Auto-sync on update: online=$isOnline orderCode=$orderCode');
           try {
             // Re-sync the entire order with updated products
-            await _syncService!.syncSingleOrder(orderId);
+            final orderSynced = await _syncService!.syncSingleOrder(orderId);
+            if (orderSynced) {
+              await _syncService!.syncTicketsForOrder(orderId);
+            }
             _logger.info('Re-synced updated order code=$orderCode');
           } catch (e) {
             _logger.error('Failed to re-sync updated order, queuing update: $e');
@@ -850,8 +854,12 @@ class OrderRepository {
       if (status == 'COMPLETED' && _syncService != null && _isOnlineCallback != null) {
         final isOnline = _isOnlineCallback!();
         if (isOnline) {
+          _logger.debug('Auto-sync on status change: online=$isOnline orderCode=$orderCode newStatus=$status');
           try {
-            await _syncService!.syncSingleOrder(orderId);
+            final orderSynced = await _syncService!.syncSingleOrder(orderId);
+            if (orderSynced) {
+              await _syncService!.syncTicketsForOrder(orderId);
+            }
             _logger.info('Synced COMPLETED order code=$orderCode');
           } catch (e) {
             _logger.error('Failed to sync COMPLETED order: $e');
@@ -1333,6 +1341,10 @@ final orderRepositoryProvider = Provider<OrderRepository>((ref) {
 
   return repository;
 });
+
+
+
+
 
 
 

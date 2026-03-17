@@ -9,7 +9,9 @@ import 'package:caisse212/utils/app_localizations.dart';
 import 'package:caisse212/utils/currency_formatter.dart';
 import '../../domain/models/order_models.dart';
 import '../../core/enums.dart';
-import '../../utils/app_localizations.dart';
+import '../../providers/order_provider.dart';
+import '../../providers/sync_manager_provider.dart';
+import '../../providers/network_provider.dart';
 
 /// Calculator mode enum
 enum CalculatorMode {
@@ -557,31 +559,89 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       return _buildTicketItem(item);
     }
 
-    return Draggable<Map<String, dynamic>>(
-      data: {
-        'ticketIndex': ticketIndex,
-        'itemIndex': itemIndex,
-        'item': item,
+    final theme = Theme.of(context);
+
+    return DragTarget<Map<String, dynamic>>(
+      onWillAcceptWithDetails: (details) {
+        final draggedItem = details.data['item'] as OrderItem;
+        // Accept if same product (for merging) - even from same ticket
+        return draggedItem.productId == item.productId &&
+            draggedItem.variantId == item.variantId &&
+            !(details.data['ticketIndex'] == ticketIndex && details.data['itemIndex'] == itemIndex);
       },
-      feedback: Material(
-        elevation: 6,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          width: 300,
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
+      onAcceptWithDetails: (details) {
+        _mergeItems(details.data, ticketIndex, itemIndex);
+      },
+      builder: (context, candidateData, rejectedData) {
+        final isMergeTarget = candidateData.isNotEmpty;
+
+        return Draggable<Map<String, dynamic>>(
+          data: {
+            'ticketIndex': ticketIndex,
+            'itemIndex': itemIndex,
+            'item': item,
+          },
+          feedback: Material(
+            elevation: 6,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
+            child: Container(
+              width: 300,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: theme.cardColor,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: theme.colorScheme.primary, width: 2),
+              ),
+              child: _buildTicketItemContent(item),
+            ),
           ),
-          child: _buildTicketItemContent(item),
-        ),
-      ),
-      childWhenDragging: Opacity(
-        opacity: 0.3,
-        child: _buildTicketItem(item),
-      ),
-      child: _buildTicketItem(item),
+          childWhenDragging: Opacity(
+            opacity: 0.3,
+            child: _buildTicketItem(item),
+          ),
+          child: GestureDetector(
+            onTap: item.quantity > 1 ? () => _quickSplitOne(ticketIndex, itemIndex, item) : null,
+            onLongPress: item.quantity > 1 ? () => _showCustomDivideDialog(item, ticketIndex, itemIndex) : null,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isMergeTarget
+                    ? theme.colorScheme.primaryContainer
+                    : theme.colorScheme.surface,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: isMergeTarget
+                      ? theme.colorScheme.primary
+                      : theme.dividerColor,
+                  width: isMergeTarget ? 2 : 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  // Merge indicator overlay when dragging over
+                  if (isMergeTarget) ...[
+                    Icon(Icons.merge_rounded, size: 18, color: theme.colorScheme.primary),
+                    const SizedBox(width: 4),
+                  ],
+                  Expanded(child: _buildTicketItemContent(item)),
+                  // Split hint for items with qty > 1
+                  if (item.quantity > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Icon(
+                        Icons.call_split_rounded,
+                        size: 16,
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -591,25 +651,21 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     return Row(
       children: [
-        InkWell(
-          onTap: item.quantity > 1 ? () => _showDivideQuantityDialog(item) : null,
-          borderRadius: BorderRadius.circular(6),
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(6),
-              border: item.quantity > 1
-                  ? Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.5), width: 1.5)
-                  : null,
-            ),
-            child: Text(
-              '${item.quantity}x',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: theme.colorScheme.onPrimaryContainer,
-              ),
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(6),
+            border: item.quantity > 1
+                ? Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.5), width: 1.5)
+                : null,
+          ),
+          child: Text(
+            '${item.quantity}x',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.onPrimaryContainer,
             ),
           ),
         ),
@@ -642,7 +698,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         ),
         const SizedBox(width: 8),
         Text(
-          currencyFormatter.format(item.totalPrice * item.quantity),
+          currencyFormatter.format(item.totalPrice),
           style: const TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.bold,
@@ -1138,23 +1194,50 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     });
   }
 
-  void _moveItemToTicket(Map<String, dynamic> data, int targetTicketIndex) {
+  Future<void> _moveItemToTicket(Map<String, dynamic> data, int targetTicketIndex) async {
+    final sourceTicketIndex = data['ticketIndex'] as int;
+    final itemIndex = data['itemIndex'] as int;
+
+    if (sourceTicketIndex == targetTicketIndex) return;
+
+    final tickets = ref.read(ticketsProvider);
+    final item = tickets[sourceTicketIndex].items[itemIndex];
+
+    // Check if same product (same db id) already exists in target ticket → merge in DB
+    final existingIndex = tickets[targetTicketIndex].items.indexWhere(
+      (existing) => existing.id == item.id && existing.id != null,
+    );
+
+    if (existingIndex != -1) {
+      final existing = tickets[targetTicketIndex].items[existingIndex];
+      final merged = await _mergeInDatabase(existing, item);
+      if (!merged) return;
+    }
+
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-
-      final sourceTicketIndex = data['ticketIndex'] as int;
-      final itemIndex = data['itemIndex'] as int;
-
-      if (sourceTicketIndex == targetTicketIndex) return;
 
       final tickets = ref.read(ticketsProvider);
       final updatedTickets = List<TicketData>.from(
         tickets.map((ticket) => ticket.copyWith(items: List<OrderItem>.from(ticket.items))),
       );
 
-      final item = updatedTickets[sourceTicketIndex].items[itemIndex];
+      final movedItem = updatedTickets[sourceTicketIndex].items[itemIndex];
       updatedTickets[sourceTicketIndex].items.removeAt(itemIndex);
-      updatedTickets[targetTicketIndex].items.add(item);
+
+      // Check if same product (same db id) exists in target ticket → merge UI
+      final mergeIndex = updatedTickets[targetTicketIndex].items.indexWhere(
+        (existing) => existing.id == movedItem.id && existing.id != null,
+      );
+
+      if (mergeIndex != -1) {
+        final existing = updatedTickets[targetTicketIndex].items[mergeIndex];
+        updatedTickets[targetTicketIndex].items[mergeIndex] = existing.copyWith(
+          quantity: existing.quantity + movedItem.quantity,
+        );
+      } else {
+        updatedTickets[targetTicketIndex].items.add(movedItem);
+      }
 
       ref.read(ticketsProvider.notifier).state = updatedTickets;
     });
@@ -1330,6 +1413,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       } catch (e) {
         _logger.error('Print failed: $e');
       }
+
+      // Check if all order products are now paid -> mark order as COMPLETED and sync
+      if (orderId != null) {
+        await _checkAndCompleteOrder(orderId);
+      }
     } catch (e) {
       _logger.error('Payment failed: $e');
       if (mounted) {
@@ -1374,83 +1462,446 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
   }
 
-  void _showDivideQuantityDialog(OrderItem item) {
+  /// Check if all order products are paid, mark order as COMPLETED and sync
+  Future<void> _checkAndCompleteOrder(int orderId) async {
+    try {
+      final database = ref.read(databaseProvider);
+
+      // Check if all products in the order are paid
+      final allProducts = await (database.select(database.orderProducts)
+        ..where((p) => p.orderId.equals(orderId)))
+        .get();
+
+      final allPaid = allProducts.isNotEmpty &&
+          allProducts.every((p) => p.state == 'PAID');
+
+      if (allPaid) {
+        // Update order status to COMPLETED (skip internal sync, we handle it below)
+        final orderRepo = ref.read(orderRepositoryProvider);
+        await orderRepo.updateOrderStatus(orderId, 'COMPLETED', queueSyncOperation: false);
+        _logger.info('Order #$orderId marked as COMPLETED (all products paid)');
+
+        // Auto-sync if online
+        final isOnline = ref.read(lastKnownOnlineStatusProvider);
+        if (isOnline) {
+          try {
+            final syncManager = ref.read(syncManagerProvider.notifier);
+            await syncManager.autoSyncOrder(orderId);
+            _logger.info('Auto-synced completed order #$orderId');
+          } catch (e) {
+            _logger.error('Auto-sync failed for order #$orderId: $e');
+          }
+        }
+
+        // Close payment dialog with success
+        if (mounted) {
+          Navigator.of(context).pop(true);
+        }
+      }
+    } catch (e) {
+      _logger.error('Error checking/completing order #$orderId: $e');
+    }
+  }
+
+  /// Tap: Quick split – peel off 1 unit from the item
+  Future<void> _quickSplitOne(int ticketIndex, int itemIndex, OrderItem item) async {
+    if (item.quantity <= 1) return;
+
+    final newId = await _splitInDatabase(item, item.quantity - 1, 1);
+    if (newId == null) return;
+
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final tickets = ref.read(ticketsProvider);
+      final updatedTickets = List<TicketData>.from(
+        tickets.map((ticket) => ticket.copyWith(items: List<OrderItem>.from(ticket.items))),
+      );
+
+      // Reduce original by 1
+      updatedTickets[ticketIndex].items[itemIndex] = item.copyWith(quantity: item.quantity - 1);
+
+      // Insert a qty-1 copy right after with the NEW database id
+      updatedTickets[ticketIndex].items.insert(itemIndex + 1, item.copyWith(id: newId, quantity: 1));
+
+      ref.read(ticketsProvider.notifier).state = updatedTickets;
+    });
+  }
+
+  /// Merge two same-product items when one is dropped onto another
+  Future<void> _mergeItems(Map<String, dynamic> data, int targetTicketIndex, int targetItemIndex) async {
+    final sourceTicketIndex = data['ticketIndex'] as int;
+    final sourceItemIndex = data['itemIndex'] as int;
+    final draggedItem = data['item'] as OrderItem;
+
+    final tickets = ref.read(ticketsProvider);
+    final targetItem = tickets[targetTicketIndex].items[targetItemIndex];
+
+    // Persist merge in database
+    final merged = await _mergeInDatabase(targetItem, draggedItem);
+    if (!merged) return;
+
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final tickets = ref.read(ticketsProvider);
+      final updatedTickets = List<TicketData>.from(
+        tickets.map((ticket) => ticket.copyWith(items: List<OrderItem>.from(ticket.items))),
+      );
+
+      final currentTarget = updatedTickets[targetTicketIndex].items[targetItemIndex];
+
+      // Merge: add dragged quantity into target
+      updatedTickets[targetTicketIndex].items[targetItemIndex] = currentTarget.copyWith(
+        quantity: currentTarget.quantity + draggedItem.quantity,
+      );
+
+      // Remove the source item
+      if (sourceTicketIndex == targetTicketIndex) {
+        // Same ticket – adjust index for removal
+        final removeIdx = sourceItemIndex > targetItemIndex ? sourceItemIndex : sourceItemIndex;
+        updatedTickets[sourceTicketIndex].items.removeAt(removeIdx);
+      } else {
+        updatedTickets[sourceTicketIndex].items.removeAt(sourceItemIndex);
+      }
+
+      ref.read(ticketsProvider.notifier).state = updatedTickets;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.merge_rounded, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Text('${draggedItem.displayName} → ${currentTarget.quantity + draggedItem.quantity}x'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade700,
+          duration: const Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+        ),
+      );
+    });
+  }
+
+  /// Persist a split in the database:
+  /// - Updates the original order_product row to [keepQty]
+  /// - Inserts a new order_product row with [splitQty] (including duplicating components)
+  /// Returns the new row's id, or null on failure.
+  Future<int?> _splitInDatabase(OrderItem item, int keepQty, int splitQty) async {
+    if (item.id == null) return null;
+    final database = ref.read(databaseProvider);
+
+    try {
+      // 1. Update original row quantity
+      await (database.update(database.orderProducts)
+        ..where((tbl) => tbl.id.equals(item.id!)))
+        .write(OrderProductsCompanion(
+          quantity: Value(keepQty),
+          updatedAt: Value(DateTime.now()),
+        ));
+
+      // 2. Insert new row for the split portion
+      final newId = await database.into(database.orderProducts).insert(
+        OrderProductsCompanion.insert(
+          orderId: widget.order.orderId ?? 0,
+          productId: item.productId,
+          variantId: Value(item.variantId),
+          quantity: Value(splitQty),
+          unitaryPrice: item.finalPrice,
+          unitaryDiscount: Value(item.discount),
+          unitaryTva: Value(item.tva),
+          manualDiscount: Value(item.manualDiscount),
+          state: Value(item.state),
+        ),
+      );
+
+      // 3. Duplicate components for the new row
+      final existingComponents = await (database.select(database.orderProductComponents)
+        ..where((c) => c.orderProductId.equals(item.id!)))
+        .get();
+
+      for (final comp in existingComponents) {
+        await database.into(database.orderProductComponents).insert(
+          OrderProductComponentsCompanion.insert(
+            componentId: comp.componentId,
+            orderProductId: newId,
+            quantity: Value(comp.quantity),
+            price: Value(comp.price),
+            isSpecial: Value(comp.isSpecial),
+          ),
+        );
+      }
+
+      _logger.info('Split order_product #${item.id}: $keepQty + $splitQty → new id #$newId');
+      return newId;
+    } catch (e) {
+      _logger.error('Failed to split in database: $e');
+      return null;
+    }
+  }
+
+  /// Persist a merge in the database:
+  /// - Adds [source] quantity into [target] row
+  /// - Deletes the [source] row (and its components)
+  Future<bool> _mergeInDatabase(OrderItem target, OrderItem source) async {
+    if (target.id == null || source.id == null) return false;
+    // Don't merge a row with itself
+    if (target.id == source.id) return false;
+    final database = ref.read(databaseProvider);
+
+    try {
+      final newQty = target.quantity + source.quantity;
+
+      // 1. Update target row quantity
+      await (database.update(database.orderProducts)
+        ..where((tbl) => tbl.id.equals(target.id!)))
+        .write(OrderProductsCompanion(
+          quantity: Value(newQty),
+          updatedAt: Value(DateTime.now()),
+        ));
+
+      // 2. Delete source row's components first
+      await (database.delete(database.orderProductComponents)
+        ..where((c) => c.orderProductId.equals(source.id!)))
+        .go();
+
+      // 3. Delete source row
+      await (database.delete(database.orderProducts)
+        ..where((tbl) => tbl.id.equals(source.id!)))
+        .go();
+
+      _logger.info('Merged order_product #${source.id} into #${target.id} → $newQty');
+      return true;
+    } catch (e) {
+      _logger.error('Failed to merge in database: $e');
+      return false;
+    }
+  }
+
+  /// Long press: Custom divide dialog with slider and constraints
+  void _showCustomDivideDialog(OrderItem item, int ticketIndex, int itemIndex) {
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
+    final currencyFormatter = ref.read(currencyFormatterProvider);
+    int splitQty = 1;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.translate('divide_quantity')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              item.displayName,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${l10n.translate('current_quantity')}: ${item.quantity}',
-              style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              l10n.translate('split_into_quantities'),
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: List.generate(item.quantity - 1, (index) {
-                final split1 = index + 1;
-                final split2 = item.quantity - split1;
-                return ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _divideItemQuantity(item, split1, split2);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final qty1 = splitQty;
+            final qty2 = item.quantity - splitQty;
+            final price1 = item.totalPrice / item.quantity * qty1;
+            final price2 = item.totalPrice / item.quantity * qty2;
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Row(
+                children: [
+                  Icon(Icons.call_split_rounded, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      l10n.translate('divide_quantity'),
+                      style: const TextStyle(fontSize: 18),
+                    ),
                   ),
-                  child: Text('$split1 + $split2', style: const TextStyle(fontSize: 16)),
-                );
-              }),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(l10n.translate('cancel')),
+                ],
+              ),
+              content: SizedBox(
+                width: 360,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Product name
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '${item.quantity}x',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              item.displayName,
+                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                            ),
+                          ),
+                          Text(
+                            currencyFormatter.format(item.totalPrice),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Slider
+                    Row(
+                      children: [
+                        _buildSplitPreview(theme, currencyFormatter, qty1, price1, theme.colorScheme.primary),
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderThemeData(
+                              activeTrackColor: theme.colorScheme.primary,
+                              inactiveTrackColor: theme.colorScheme.secondary.withValues(alpha: 0.3),
+                              thumbColor: theme.colorScheme.primary,
+                              overlayColor: theme.colorScheme.primary.withValues(alpha: 0.2),
+                              trackHeight: 6,
+                              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 12),
+                            ),
+                            child: Slider(
+                              value: splitQty.toDouble(),
+                              min: 1,
+                              max: (item.quantity - 1).toDouble(),
+                              divisions: item.quantity - 2 > 0 ? item.quantity - 2 : 1,
+                              onChanged: (val) {
+                                setDialogState(() => splitQty = val.round());
+                              },
+                            ),
+                          ),
+                        ),
+                        _buildSplitPreview(theme, currencyFormatter, qty2, price2, theme.colorScheme.secondary),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Quick presets for common splits
+                    if (item.quantity > 2)
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.center,
+                        children: _buildQuickSplitChips(item, setDialogState, (val) => splitQty = val, splitQty),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(l10n.translate('cancel')),
+                ),
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                    _divideItemQuantity(item, qty1, qty2, ticketIndex, itemIndex);
+                  },
+                  icon: const Icon(Icons.call_split_rounded, size: 18),
+                  label: Text('${l10n.translate('split_into_quantities')}: $qty1 + $qty2'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSplitPreview(ThemeData theme, CurrencyFormatter formatter, int qty, double price, Color color) {
+    return Container(
+      width: 64,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            '${qty}x',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            formatter.format(price),
+            style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.8)),
           ),
         ],
       ),
     );
   }
 
-  void _divideItemQuantity(OrderItem item, int quantity1, int quantity2) {
+  List<Widget> _buildQuickSplitChips(OrderItem item, StateSetter setDialogState, Function(int) onSplitChanged, int currentSplit) {
+    final chips = <Widget>[];
+    final qty = item.quantity;
+
+    // Half split
+    if (qty % 2 == 0) {
+      final half = qty ~/ 2;
+      chips.add(_buildSplitChip('½ + ½', half, currentSplit, setDialogState, onSplitChanged));
+    }
+
+    // Thirds
+    if (qty % 3 == 0) {
+      final third = qty ~/ 3;
+      chips.add(_buildSplitChip('⅓ + ⅔', third, currentSplit, setDialogState, onSplitChanged));
+    }
+
+    // 1 + rest
+    if (qty > 2) {
+      chips.add(_buildSplitChip('1 + ${qty - 1}', 1, currentSplit, setDialogState, onSplitChanged));
+    }
+
+    // rest + 1
+    if (qty > 3) {
+      chips.add(_buildSplitChip('${qty - 1} + 1', qty - 1, currentSplit, setDialogState, onSplitChanged));
+    }
+
+    return chips;
+  }
+
+  Widget _buildSplitChip(String label, int splitVal, int currentSplit, StateSetter setDialogState, Function(int) onSplitChanged) {
+    final theme = Theme.of(context);
+    final isSelected = currentSplit == splitVal;
+
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (_) {
+        setDialogState(() => onSplitChanged(splitVal));
+      },
+      selectedColor: theme.colorScheme.primaryContainer,
+      labelStyle: TextStyle(
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        color: isSelected ? theme.colorScheme.onPrimaryContainer : null,
+      ),
+    );
+  }
+
+  Future<void> _divideItemQuantity(OrderItem item, int quantity1, int quantity2, int ticketIndex, int itemIndex) async {
+    final newId = await _splitInDatabase(item, quantity1, quantity2);
+    if (newId == null) return;
+
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
 
       final tickets = ref.read(ticketsProvider);
-
-      // Find which ticket contains this item
-      int ticketIndex = -1;
-      int itemIndex = -1;
-
-      for (int i = 0; i < tickets.length; i++) {
-        final index = tickets[i].items.indexWhere((it) => it.id == item.id);
-        if (index != -1) {
-          ticketIndex = i;
-          itemIndex = index;
-          break;
-        }
-      }
-
-      if (ticketIndex == -1) return;
 
       final updatedTickets = List<TicketData>.from(
         tickets.map((ticket) => ticket.copyWith(items: List<OrderItem>.from(ticket.items))),
@@ -1459,16 +1910,25 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       // Update existing item with first quantity
       updatedTickets[ticketIndex].items[itemIndex] = item.copyWith(quantity: quantity1);
 
-      // Add new item with second quantity
-      final newItem = item.copyWith(quantity: quantity2);
+      // Add new item with second quantity and NEW database id
+      final newItem = item.copyWith(id: newId, quantity: quantity2);
       updatedTickets[ticketIndex].items.insert(itemIndex + 1, newItem);
 
       ref.read(ticketsProvider.notifier).state = updatedTickets;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${item.displayName} ${AppLocalizations.of(context)!.translate('divided_into')} $quantity1 + $quantity2'),
-          duration: const Duration(seconds: 2),
+          content: Row(
+            children: [
+              const Icon(Icons.call_split_rounded, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Text('${item.displayName}: $quantity1 + $quantity2'),
+            ],
+          ),
+          backgroundColor: Colors.blue.shade700,
+          duration: const Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
         ),
       );
     });

@@ -28,6 +28,8 @@ import '../widgets/table_selection_dialog.dart';
 import '../widgets/waiter_selection_dialog.dart';
 import '../widgets/top_bar.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../providers/sync_manager_provider.dart';
+import '../../providers/network_provider.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({Key? key}) : super(key: key);
@@ -831,6 +833,20 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         ref.read(orderProvider.notifier).clearOrder();
                       }
 
+                      // Auto-sync if status is COMPLETED and online
+                      if (settings.defaultOrderStatus == 'COMPLETED') {
+                        final isOnline = ref.read(lastKnownOnlineStatusProvider);
+                        if (isOnline) {
+                          try {
+                            final syncManager = ref.read(syncManagerProvider.notifier);
+                            await syncManager.autoSyncOrder(orderId);
+                            _logger.info('Auto-synced COMPLETED order #$orderId on proceed');
+                          } catch (e) {
+                            _logger.error('Auto-sync failed on proceed: $e');
+                          }
+                        }
+                      }
+
                       if (context.mounted) {
                         SnackBarHelper.showSuccessSnackBar(
                           context,
@@ -902,6 +918,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         throw Exception('Failed to reload order after saving');
       }
 
+      // Only pay unpaid items (items not already assigned to a ticket)
+      final unpaidItems = reloadedOrder.unpaidItems;
+      if (unpaidItems.isEmpty) {
+        throw Exception('No unpaid items to pay');
+      }
+
       // Get next ticket number
       final existingTickets = await (database.select(database.tickets)
         ..where((t) => t.orderId.equals(orderId))).get();
@@ -913,8 +935,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       final newTicketNum = maxTicketNum + 1;
       final ticketNumStr = newTicketNum.toString().padLeft(4, '0');
 
-      // Calculate total from reloaded order
-      final total = reloadedOrder.total;
+      // Calculate total only from unpaid items (apply order-level discount proportionally)
+      final unpaidTotal = unpaidItems.fold(0.0, (sum, item) => sum + item.totalPrice);
+      final total = reloadedOrder.discountPercentage > 0
+          ? unpaidTotal * (1 - reloadedOrder.discountPercentage / 100)
+          : unpaidTotal;
 
       // Insert ticket with default payment method (cash)
       final ticketId = await database.into(database.tickets).insert(
@@ -929,8 +954,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         ),
       );
 
-      // ✅ Update ALL order items using the RELOADED order (which has database IDs)
-      for (final item in reloadedOrder.items) {
+      // ✅ Update only UNPAID order items (don't touch already-paid items)
+      for (final item in unpaidItems) {
         if (item.id != null) {
           await (database.update(database.orderProducts)
             ..where((tbl) => tbl.id.equals(item.id!))).write(
@@ -943,11 +968,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         }
       }
 
-      // Print receipt using reloaded order items
+      // Print receipt using only the unpaid items being paid now
       try {
         final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
 
-        final itemsForPrint = reloadedOrder.items.map((item) {
+        final itemsForPrint = unpaidItems.map((item) {
           return {
             'name': item.displayName,
             'quantity': item.quantity,
@@ -988,6 +1013,27 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         );
       } catch (e) {
         _logger.error('Print failed: $e');
+      }
+
+      // Check if ALL order items are now paid
+      final updatedOrder = await orderRepo.getOrderById(orderId);
+      final allItemsPaid = updatedOrder != null && updatedOrder.unpaidItems.isEmpty;
+
+      if (allItemsPaid) {
+        // Update order status to COMPLETED (skip internal sync, we handle it below)
+        await orderRepo.updateOrderStatus(orderId, 'COMPLETED', queueSyncOperation: false);
+
+        // Auto-sync if online
+        final isOnline = ref.read(lastKnownOnlineStatusProvider);
+        if (isOnline) {
+          try {
+            final syncManager = ref.read(syncManagerProvider.notifier);
+            await syncManager.autoSyncOrder(orderId);
+            _logger.info('Auto-synced completed order #$orderId after direct payment');
+          } catch (e) {
+            _logger.error('Auto-sync failed after direct payment: $e');
+          }
+        }
       }
 
       if (context.mounted) {
@@ -1052,7 +1098,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         );
 
         if (result == true && context.mounted) {
-          // Payment completed, clear order
+          // Payment completed - order already marked COMPLETED and synced by PaymentScreen
+          // Clear order
           ref.read(orderProvider.notifier).clearOrder();
           SnackBarHelper.showSuccessSnackBar(
             context,

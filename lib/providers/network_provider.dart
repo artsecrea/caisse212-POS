@@ -30,8 +30,14 @@ class OnlineStatusNotifier extends StateNotifier<bool> {
   final Ref ref;
 
   void _init() {
+    // Set initial state based on current connectivity
+    Connectivity().checkConnectivity().then((result) {
+      state = result != ConnectivityResult.none;
+    });
+
     ref.listen(isOnlineProvider, (previous, next) {
       next.whenData((isOnline) {
+        print('is online $isOnline');
         state = isOnline;
 
         // Trigger sync when network comes back online
