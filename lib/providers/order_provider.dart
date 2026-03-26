@@ -369,6 +369,7 @@ class OrderRepository {
           unitaryPrice: item.finalPrice,
           unitaryDiscount: Value(item.discount),
           manualDiscount: Value(item.manualDiscount),
+          note: Value(item.note),
           unitaryTva: Value(item.tva),
           state: Value(itemState),
         ),
@@ -520,6 +521,7 @@ class OrderRepository {
           unitaryPrice: item.finalPrice,
           unitaryDiscount: Value(item.discount),
           manualDiscount: Value(item.manualDiscount),
+          note: Value(item.note),
           unitaryTva: Value(item.tva),
           state: Value('PENDING'),
         ),
@@ -689,6 +691,7 @@ class OrderRepository {
         finalPrice: orderProduct.unitaryPrice,
         quantity: orderProduct.quantity,
         components: components,
+        note: orderProduct.note,
         discount: orderProduct.unitaryDiscount,
         manualDiscount: orderProduct.manualDiscount,
         tva: orderProduct.unitaryTva,
@@ -1334,10 +1337,11 @@ final orderRepositoryProvider = Provider<OrderRepository>((ref) {
   final database = ref.watch(databaseProvider);
   final repository = OrderRepository(database);
 
-  // Set up sync service and network status callback
+  // Set up sync service and network status callback.
+  // Use ref.read inside the callback so it always returns the CURRENT online state,
+  // rather than capturing a stale value at provider creation time.
   final syncService = ref.watch(dataSyncServiceProvider);
-  final isOnline = ref.watch(lastKnownOnlineStatusProvider);
-  repository.setSyncService(syncService, () => isOnline);
+  repository.setSyncService(syncService, () => ref.read(lastKnownOnlineStatusProvider));
 
   return repository;
 });

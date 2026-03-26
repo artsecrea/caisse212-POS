@@ -335,6 +335,19 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
         ),
 
+        // UX hint bar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          child: Row(
+            children: [
+              Icon(Icons.touch_app_rounded, size: 13, color: Colors.grey.shade500),
+              const SizedBox(width: 4),
+              Text('Tap qty>1 to split · Long-press for custom split · Drag to merge / move',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+            ],
+          ),
+        ),
+
         // Tickets grid
         Expanded(
           child: tickets.isEmpty
@@ -691,6 +704,17 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                     color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                   ),
                   maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              if (item.note != null && item.note!.isNotEmpty)
+                Text(
+                  '📝 ${item.note}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: Colors.amber.shade800,
+                  ),
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
             ],
@@ -1314,7 +1338,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final currentUser = ref.read(currentUserProvider);
 
     try {
-      // Get next ticket number
+      // Get next ticket number — query fresh from DB to avoid collisions in batch pay
       final orderId = widget.order.orderId;
       final existingTickets = orderId != null
           ? await (database.select(database.tickets)..where((t) => t.orderId.equals(orderId))).get()
@@ -1340,7 +1364,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         ),
       );
 
-      // Update order items
+      // Update order items in DB
       for (final item in ticket.items) {
         if (item.id != null) {
           await (database.update(database.orderProducts)..where((tbl) => tbl.id.equals(item.id!))).write(
@@ -1353,32 +1377,33 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         }
       }
 
-      // Update UI
-      final updatedItems = ticket.items.map((item) => item.copyWith(ticketId: ticketId, state: 'PAID')).toList();
-
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-
-        final tickets = ref.read(ticketsProvider);
-        final updatedTickets = List<TicketData>.from(tickets);
-        updatedTickets[ticketIndex] = ticket.copyWith(
-          isPaid: true,
-          ticketId: ticketId,
-          ticketNum: ticketNumStr,
-          items: updatedItems,
-        );
-
+      // Update UI state immediately (synchronous, no frame callback)
+      // This is critical for _payAllTickets to see the correct state on next iteration.
+      if (mounted) {
+        final updatedItems = ticket.items.map((item) => item.copyWith(ticketId: ticketId, state: 'PAID')).toList();
+        final currentTickets = ref.read(ticketsProvider);
+        final updatedTickets = List<TicketData>.from(currentTickets);
+        if (ticketIndex < updatedTickets.length) {
+          updatedTickets[ticketIndex] = ticket.copyWith(
+            isPaid: true,
+            ticketId: ticketId,
+            ticketNum: ticketNumStr,
+            items: updatedItems,
+          );
+        }
         ref.read(ticketsProvider.notifier).state = updatedTickets;
         ref.read(calculatorProvider.notifier).state = CalculatorState();
 
-        final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('ticket_paid_successfully').replaceAll('{0}', ticketNumStr)),
-            backgroundColor: Colors.green.shade700,
-          ),
-        );
-      });
+        if (mounted) {
+          final l10n = AppLocalizations.of(context)!;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(l10n.translate('ticket_paid_successfully').replaceAll('{0}', ticketNumStr)),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
+        }
+      }
 
       // Print ticket
       try {
@@ -1437,17 +1462,18 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     await _processPayment(ticketIndex, ticket);
   }
 
-  /// Pay all unpaid tickets
+  /// Pay all unpaid tickets — reads fresh state before each payment to avoid stale-state bugs
   Future<void> _payAllTickets() async {
-    final tickets = ref.read(ticketsProvider);
+    // Snapshot the count once; iterate by re-reading state each time so we always
+    // operate on the up-to-date ticket list (state is now updated synchronously in _processPayment).
+    final initialCount = ref.read(ticketsProvider).length;
 
-    for (int i = 0; i < tickets.length; i++) {
-      if (!tickets[i].isPaid && tickets[i].items.isNotEmpty) {
-        // Re-read tickets state as it might have changed
-        final currentTickets = ref.read(ticketsProvider);
-        if (i < currentTickets.length && !currentTickets[i].isPaid) {
-          await _processPayment(i, currentTickets[i]);
-        }
+    for (int i = 0; i < initialCount; i++) {
+      final currentTickets = ref.read(ticketsProvider);
+      if (i >= currentTickets.length) break;
+      final ticket = currentTickets[i];
+      if (!ticket.isPaid && ticket.items.isNotEmpty) {
+        await _processPayment(i, ticket);
       }
     }
 
@@ -1503,7 +1529,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
   }
 
-  /// Tap: Quick split – peel off 1 unit from the item
+  /// Tap: Quick split – peel off 1 unit from the item into a NEW ticket
   Future<void> _quickSplitOne(int ticketIndex, int itemIndex, OrderItem item) async {
     if (item.quantity <= 1) return;
 
@@ -1518,11 +1544,15 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         tickets.map((ticket) => ticket.copyWith(items: List<OrderItem>.from(ticket.items))),
       );
 
-      // Reduce original by 1
+      // Reduce original by 1 in same ticket
       updatedTickets[ticketIndex].items[itemIndex] = item.copyWith(quantity: item.quantity - 1);
 
-      // Insert a qty-1 copy right after with the NEW database id
-      updatedTickets[ticketIndex].items.insert(itemIndex + 1, item.copyWith(id: newId, quantity: 1));
+      // The split-off qty-1 goes into a brand-new ticket
+      final newItem = item.copyWith(id: newId, quantity: 1);
+      updatedTickets.add(TicketData(
+        items: [newItem],
+        discountPercentage: widget.order.discountPercentage,
+      ));
 
       ref.read(ticketsProvider.notifier).state = updatedTickets;
     });
@@ -1613,6 +1643,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           unitaryDiscount: Value(item.discount),
           unitaryTva: Value(item.tva),
           manualDiscount: Value(item.manualDiscount),
+          note: Value(item.note),
           state: Value(item.state),
         ),
       );
@@ -1902,17 +1933,19 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       if (!mounted) return;
 
       final tickets = ref.read(ticketsProvider);
-
       final updatedTickets = List<TicketData>.from(
         tickets.map((ticket) => ticket.copyWith(items: List<OrderItem>.from(ticket.items))),
       );
 
-      // Update existing item with first quantity
+      // Keep first portion in the same ticket
       updatedTickets[ticketIndex].items[itemIndex] = item.copyWith(quantity: quantity1);
 
-      // Add new item with second quantity and NEW database id
+      // Second portion goes into a brand-new ticket
       final newItem = item.copyWith(id: newId, quantity: quantity2);
-      updatedTickets[ticketIndex].items.insert(itemIndex + 1, newItem);
+      updatedTickets.add(TicketData(
+        items: [newItem],
+        discountPercentage: widget.order.discountPercentage,
+      ));
 
       ref.read(ticketsProvider.notifier).state = updatedTickets;
 
@@ -1922,11 +1955,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             children: [
               const Icon(Icons.call_split_rounded, color: Colors.white, size: 18),
               const SizedBox(width: 8),
-              Text('${item.displayName}: $quantity1 + $quantity2'),
+              Text('${item.displayName}: $quantity1 + $quantity2 → 2 tickets'),
             ],
           ),
           backgroundColor: Colors.blue.shade700,
-          duration: const Duration(seconds: 1),
+          duration: const Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
         ),

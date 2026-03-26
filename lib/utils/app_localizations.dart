@@ -917,6 +917,7 @@ class AppLocalizations {
       'variants': 'Variants',
 
       "additional_discount": "Additional Discount",
+      "no_components": "No components available for this product",
     },
     'ar': {
       // Common - Arabic
@@ -1807,6 +1808,8 @@ class AppLocalizations {
       'select': 'اختر',
       'variant': 'نوع',
       'variants': 'أنواع',
+
+      'no_components': 'لا توجد مكونات لهذا المنتج',
     },
     'fr': {
       // Common - French
@@ -2715,6 +2718,8 @@ class AppLocalizations {
       'select': 'Sélectionner',
       'variant': 'Variante',
       'variants': 'Variantes',
+
+      'no_components': 'Aucun composant',
     },
   };
 

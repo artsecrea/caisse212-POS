@@ -9487,17 +9487,15 @@ class $OrderProductsTable extends OrderProducts
     requiredDuringInsert: false,
     defaultValue: const Constant(0.0),
   );
-  static const VerificationMeta _manualDiscountReasonMeta =
-      const VerificationMeta('manualDiscountReason');
+  static const VerificationMeta _noteMeta = const VerificationMeta('note');
   @override
-  late final GeneratedColumn<String> manualDiscountReason =
-      GeneratedColumn<String>(
-        'manual_discount_reason',
-        aliasedName,
-        true,
-        type: DriftSqlType.string,
-        requiredDuringInsert: false,
-      );
+  late final GeneratedColumn<String> note = GeneratedColumn<String>(
+    'note',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _stateMeta = const VerificationMeta('state');
   @override
   late final GeneratedColumn<String> state = GeneratedColumn<String>(
@@ -9532,7 +9530,7 @@ class $OrderProductsTable extends OrderProducts
     unitaryDiscount,
     unitaryTva,
     manualDiscount,
-    manualDiscountReason,
+    note,
     state,
     updatedAt,
   ];
@@ -9620,13 +9618,10 @@ class $OrderProductsTable extends OrderProducts
         ),
       );
     }
-    if (data.containsKey('manual_discount_reason')) {
+    if (data.containsKey('note')) {
       context.handle(
-        _manualDiscountReasonMeta,
-        manualDiscountReason.isAcceptableOrUnknown(
-          data['manual_discount_reason']!,
-          _manualDiscountReasonMeta,
-        ),
+        _noteMeta,
+        note.isAcceptableOrUnknown(data['note']!, _noteMeta),
       );
     }
     if (data.containsKey('state')) {
@@ -9690,9 +9685,9 @@ class $OrderProductsTable extends OrderProducts
         DriftSqlType.double,
         data['${effectivePrefix}manual_discount'],
       )!,
-      manualDiscountReason: attachedDatabase.typeMapping.read(
+      note: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
-        data['${effectivePrefix}manual_discount_reason'],
+        data['${effectivePrefix}note'],
       ),
       state: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -9722,7 +9717,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
   final double unitaryDiscount;
   final double unitaryTva;
   final double manualDiscount;
-  final String? manualDiscountReason;
+  final String? note;
   final String state;
   final DateTime updatedAt;
   const OrderProduct({
@@ -9736,7 +9731,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     required this.unitaryDiscount,
     required this.unitaryTva,
     required this.manualDiscount,
-    this.manualDiscountReason,
+    this.note,
     required this.state,
     required this.updatedAt,
   });
@@ -9757,8 +9752,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     map['unitary_discount'] = Variable<double>(unitaryDiscount);
     map['unitary_tva'] = Variable<double>(unitaryTva);
     map['manual_discount'] = Variable<double>(manualDiscount);
-    if (!nullToAbsent || manualDiscountReason != null) {
-      map['manual_discount_reason'] = Variable<String>(manualDiscountReason);
+    if (!nullToAbsent || note != null) {
+      map['note'] = Variable<String>(note);
     }
     map['state'] = Variable<String>(state);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -9781,9 +9776,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       unitaryDiscount: Value(unitaryDiscount),
       unitaryTva: Value(unitaryTva),
       manualDiscount: Value(manualDiscount),
-      manualDiscountReason: manualDiscountReason == null && nullToAbsent
-          ? const Value.absent()
-          : Value(manualDiscountReason),
+      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
       state: Value(state),
       updatedAt: Value(updatedAt),
     );
@@ -9805,9 +9798,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       unitaryDiscount: serializer.fromJson<double>(json['unitaryDiscount']),
       unitaryTva: serializer.fromJson<double>(json['unitaryTva']),
       manualDiscount: serializer.fromJson<double>(json['manualDiscount']),
-      manualDiscountReason: serializer.fromJson<String?>(
-        json['manualDiscountReason'],
-      ),
+      note: serializer.fromJson<String?>(json['note']),
       state: serializer.fromJson<String>(json['state']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -9826,7 +9817,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       'unitaryDiscount': serializer.toJson<double>(unitaryDiscount),
       'unitaryTva': serializer.toJson<double>(unitaryTva),
       'manualDiscount': serializer.toJson<double>(manualDiscount),
-      'manualDiscountReason': serializer.toJson<String?>(manualDiscountReason),
+      'note': serializer.toJson<String?>(note),
       'state': serializer.toJson<String>(state),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -9843,7 +9834,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     double? unitaryDiscount,
     double? unitaryTva,
     double? manualDiscount,
-    Value<String?> manualDiscountReason = const Value.absent(),
+    Value<String?> note = const Value.absent(),
     String? state,
     DateTime? updatedAt,
   }) => OrderProduct(
@@ -9857,9 +9848,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     unitaryDiscount: unitaryDiscount ?? this.unitaryDiscount,
     unitaryTva: unitaryTva ?? this.unitaryTva,
     manualDiscount: manualDiscount ?? this.manualDiscount,
-    manualDiscountReason: manualDiscountReason.present
-        ? manualDiscountReason.value
-        : this.manualDiscountReason,
+    note: note.present ? note.value : this.note,
     state: state ?? this.state,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -9883,9 +9872,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       manualDiscount: data.manualDiscount.present
           ? data.manualDiscount.value
           : this.manualDiscount,
-      manualDiscountReason: data.manualDiscountReason.present
-          ? data.manualDiscountReason.value
-          : this.manualDiscountReason,
+      note: data.note.present ? data.note.value : this.note,
       state: data.state.present ? data.state.value : this.state,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -9904,7 +9891,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           ..write('unitaryDiscount: $unitaryDiscount, ')
           ..write('unitaryTva: $unitaryTva, ')
           ..write('manualDiscount: $manualDiscount, ')
-          ..write('manualDiscountReason: $manualDiscountReason, ')
+          ..write('note: $note, ')
           ..write('state: $state, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -9923,7 +9910,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     unitaryDiscount,
     unitaryTva,
     manualDiscount,
-    manualDiscountReason,
+    note,
     state,
     updatedAt,
   );
@@ -9941,7 +9928,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           other.unitaryDiscount == this.unitaryDiscount &&
           other.unitaryTva == this.unitaryTva &&
           other.manualDiscount == this.manualDiscount &&
-          other.manualDiscountReason == this.manualDiscountReason &&
+          other.note == this.note &&
           other.state == this.state &&
           other.updatedAt == this.updatedAt);
 }
@@ -9957,7 +9944,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
   final Value<double> unitaryDiscount;
   final Value<double> unitaryTva;
   final Value<double> manualDiscount;
-  final Value<String?> manualDiscountReason;
+  final Value<String?> note;
   final Value<String> state;
   final Value<DateTime> updatedAt;
   const OrderProductsCompanion({
@@ -9971,7 +9958,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     this.unitaryDiscount = const Value.absent(),
     this.unitaryTva = const Value.absent(),
     this.manualDiscount = const Value.absent(),
-    this.manualDiscountReason = const Value.absent(),
+    this.note = const Value.absent(),
     this.state = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -9986,7 +9973,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     this.unitaryDiscount = const Value.absent(),
     this.unitaryTva = const Value.absent(),
     this.manualDiscount = const Value.absent(),
-    this.manualDiscountReason = const Value.absent(),
+    this.note = const Value.absent(),
     this.state = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : orderId = Value(orderId),
@@ -10003,7 +9990,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Expression<double>? unitaryDiscount,
     Expression<double>? unitaryTva,
     Expression<double>? manualDiscount,
-    Expression<String>? manualDiscountReason,
+    Expression<String>? note,
     Expression<String>? state,
     Expression<DateTime>? updatedAt,
   }) {
@@ -10018,8 +10005,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       if (unitaryDiscount != null) 'unitary_discount': unitaryDiscount,
       if (unitaryTva != null) 'unitary_tva': unitaryTva,
       if (manualDiscount != null) 'manual_discount': manualDiscount,
-      if (manualDiscountReason != null)
-        'manual_discount_reason': manualDiscountReason,
+      if (note != null) 'note': note,
       if (state != null) 'state': state,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -10036,7 +10022,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Value<double>? unitaryDiscount,
     Value<double>? unitaryTva,
     Value<double>? manualDiscount,
-    Value<String?>? manualDiscountReason,
+    Value<String?>? note,
     Value<String>? state,
     Value<DateTime>? updatedAt,
   }) {
@@ -10051,7 +10037,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       unitaryDiscount: unitaryDiscount ?? this.unitaryDiscount,
       unitaryTva: unitaryTva ?? this.unitaryTva,
       manualDiscount: manualDiscount ?? this.manualDiscount,
-      manualDiscountReason: manualDiscountReason ?? this.manualDiscountReason,
+      note: note ?? this.note,
       state: state ?? this.state,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -10090,10 +10076,8 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     if (manualDiscount.present) {
       map['manual_discount'] = Variable<double>(manualDiscount.value);
     }
-    if (manualDiscountReason.present) {
-      map['manual_discount_reason'] = Variable<String>(
-        manualDiscountReason.value,
-      );
+    if (note.present) {
+      map['note'] = Variable<String>(note.value);
     }
     if (state.present) {
       map['state'] = Variable<String>(state.value);
@@ -10117,7 +10101,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
           ..write('unitaryDiscount: $unitaryDiscount, ')
           ..write('unitaryTva: $unitaryTva, ')
           ..write('manualDiscount: $manualDiscount, ')
-          ..write('manualDiscountReason: $manualDiscountReason, ')
+          ..write('note: $note, ')
           ..write('state: $state, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -19615,7 +19599,7 @@ typedef $$OrderProductsTableCreateCompanionBuilder =
       Value<double> unitaryDiscount,
       Value<double> unitaryTva,
       Value<double> manualDiscount,
-      Value<String?> manualDiscountReason,
+      Value<String?> note,
       Value<String> state,
       Value<DateTime> updatedAt,
     });
@@ -19631,7 +19615,7 @@ typedef $$OrderProductsTableUpdateCompanionBuilder =
       Value<double> unitaryDiscount,
       Value<double> unitaryTva,
       Value<double> manualDiscount,
-      Value<String?> manualDiscountReason,
+      Value<String?> note,
       Value<String> state,
       Value<DateTime> updatedAt,
     });
@@ -19695,8 +19679,8 @@ class $$OrderProductsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get manualDiscountReason => $composableBuilder(
-    column: $table.manualDiscountReason,
+  ColumnFilters<String> get note => $composableBuilder(
+    column: $table.note,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -19770,8 +19754,8 @@ class $$OrderProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<String> get manualDiscountReason => $composableBuilder(
-    column: $table.manualDiscountReason,
+  ColumnOrderings<String> get note => $composableBuilder(
+    column: $table.note,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -19833,10 +19817,8 @@ class $$OrderProductsTableAnnotationComposer
     builder: (column) => column,
   );
 
-  GeneratedColumn<String> get manualDiscountReason => $composableBuilder(
-    column: $table.manualDiscountReason,
-    builder: (column) => column,
-  );
+  GeneratedColumn<String> get note =>
+      $composableBuilder(column: $table.note, builder: (column) => column);
 
   GeneratedColumn<String> get state =>
       $composableBuilder(column: $table.state, builder: (column) => column);
@@ -19886,7 +19868,7 @@ class $$OrderProductsTableTableManager
                 Value<double> unitaryDiscount = const Value.absent(),
                 Value<double> unitaryTva = const Value.absent(),
                 Value<double> manualDiscount = const Value.absent(),
-                Value<String?> manualDiscountReason = const Value.absent(),
+                Value<String?> note = const Value.absent(),
                 Value<String> state = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrderProductsCompanion(
@@ -19900,7 +19882,7 @@ class $$OrderProductsTableTableManager
                 unitaryDiscount: unitaryDiscount,
                 unitaryTva: unitaryTva,
                 manualDiscount: manualDiscount,
-                manualDiscountReason: manualDiscountReason,
+                note: note,
                 state: state,
                 updatedAt: updatedAt,
               ),
@@ -19916,7 +19898,7 @@ class $$OrderProductsTableTableManager
                 Value<double> unitaryDiscount = const Value.absent(),
                 Value<double> unitaryTva = const Value.absent(),
                 Value<double> manualDiscount = const Value.absent(),
-                Value<String?> manualDiscountReason = const Value.absent(),
+                Value<String?> note = const Value.absent(),
                 Value<String> state = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrderProductsCompanion.insert(
@@ -19930,7 +19912,7 @@ class $$OrderProductsTableTableManager
                 unitaryDiscount: unitaryDiscount,
                 unitaryTva: unitaryTva,
                 manualDiscount: manualDiscount,
-                manualDiscountReason: manualDiscountReason,
+                note: note,
                 state: state,
                 updatedAt: updatedAt,
               ),

@@ -301,6 +301,11 @@ class ServerService {
       final body = await request.readAsString();
       final json = jsonDecode(body) as Map<String, dynamic>;
 
+      print('📥 _createOrder: $json');
+
+      // Read extra fields not in SocketOrderModel
+      final waiterId = json['waiterId'] as int?;
+
       final socketOrder = SocketOrderModel.fromJson(json);
 
       // Convert to database order
@@ -313,23 +318,56 @@ class ServerService {
           persons: drift.Value(socketOrder.persons),
           tableId: drift.Value(socketOrder.tableId),
           clientId: drift.Value(socketOrder.clientId),
+          waiterId: drift.Value(waiterId),
           note: drift.Value(socketOrder.note),
           createdAt: drift.Value(socketOrder.date),
-          //todo add the neccessery fields like source and sourceId to know where the order come from
           updatedAt: drift.Value(DateTime.now()),
         ),
       );
 
+      // If DINE_IN with a table, link the order to the table
+      if (socketOrder.tableId != null) {
+        await (database.update(database.areaTables)
+          ..where((t) => t.id.equals(socketOrder.tableId!)))
+          .write(AreaTablesCompanion(orderId: drift.Value(orderId)));
+      }
+
       // Insert products
       for (final product in socketOrder.products) {
-        final productId = await database.into(database.orderProducts).insert(
+        // Resolve authoritative price from DB for the variant (prevents price manipulation)
+        double unitPrice = product.unitaryPrice;
+        double unitTva = product.tvaAmount ?? 0.0;
+        double unitDiscount = product.discountAmount ?? 0.0;
+
+        if (product.variantId != null) {
+          final variant = await (database.select(database.productVariants)
+            ..where((v) => v.id.equals(product.variantId!)))
+            .getSingleOrNull();
+          if (variant != null) {
+            unitPrice = variant.price;
+            unitTva = variant.tvaAmount;
+          }
+        } else {
+          final dbProduct = await (database.select(database.products)
+            ..where((p) => p.id.equals(product.productId)))
+            .getSingleOrNull();
+          if (dbProduct != null) {
+            unitPrice = dbProduct.finalPrice;
+            unitTva = dbProduct.tvaAmount;
+            unitDiscount = dbProduct.discountAmount;
+          }
+        }
+
+        final orderProductId = await database.into(database.orderProducts).insert(
           OrderProductsCompanion.insert(
             orderId: orderId,
             productId: product.productId,
+            variantId: drift.Value(product.variantId),
             quantity: drift.Value(product.quantity),
-            unitaryPrice: product.unitaryPrice,
-            unitaryDiscount: drift.Value(product.discountAmount ?? 0.0),
-            unitaryTva: drift.Value(product.tvaAmount ?? 0.0),
+            unitaryPrice: unitPrice,
+            unitaryDiscount: drift.Value(unitDiscount),
+            unitaryTva: drift.Value(unitTva),
+            note: drift.Value(product.note),
             state: drift.Value(product.state),
           ),
         );
@@ -338,7 +376,7 @@ class ServerService {
         for (final component in product.components) {
           await database.into(database.orderProductComponents).insert(
             OrderProductComponentsCompanion.insert(
-              orderProductId: productId,
+              orderProductId: orderProductId,
               componentId: component.componentId,
               quantity: drift.Value(component.quantity),
               price: drift.Value(component.extraPrice ?? 0.0),
@@ -350,6 +388,8 @@ class ServerService {
 
       // Log order creation
       await logService.logOrderCreated(orderId, 'Order created via API: code=${socketOrder.code}');
+
+      print('✅ _createOrder: inserted order #$orderId code=${socketOrder.code}');
 
       return Response(
         201,
@@ -554,13 +594,32 @@ class ServerService {
   /// Body: { "waiterId": 1, "password": "optional" }
   Future<Response> _waiterLogin(Request request) async {
 
+    //get the username and password from the request body
+    final body = jsonDecode(await request.readAsString()) as Map<String ,dynamic>;
+
+
+
+    final username = body['username'];
+    final password = body['password'];
+
+
+    final db = _ref.read(databaseProvider);
+    final query = db.select(db.waiters)..where((w) => w.username.equals(username!!));
+
+    final result = await query.getSingleOrNull();
+    if (result == null) {
+      return Response.forbidden(
+        jsonEncode({'error': 'Invalid username or password'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
 
     return Response.ok(
       jsonEncode({
         'waiter': {
-          'id': 1,
-          'firstName': "d",
-          'lastName': "d",
+          'id': result.id,
+          'firstName': result.firstName,
+          'lastName': result.lastName,
         },
       }),
       headers: {'Content-Type': 'application/json'},
@@ -1125,7 +1184,7 @@ class ServerService {
 
         // Get active order for this table if exists (only non-completed orders)
         final order = await (database.select(database.orders)
-          ..where((o) => o.tableId.equals(table.id) & o.status.isNotIn(['completed', 'cancelled']))
+          ..where((o) => o.id.equals(table.orderId ?? 0) & o.status.isNotIn(['completed', 'cancelled']))
           ..orderBy([(t) => drift.OrderingTerm.desc(t.createdAt)])
           ..limit(1))
           .getSingleOrNull();
@@ -1318,6 +1377,8 @@ class ServerService {
       final body = await request.readAsString();
       final json = jsonDecode(body) as Map<String, dynamic>;
 
+      print(json);
+
       final waiterId = json['waiterId'] as int?;
       final tableId = json['tableId'] as int?;
       final type = json['type'] as String? ?? 'DINE_IN';
@@ -1360,7 +1421,9 @@ class ServerService {
       // Insert products
       for (final productJson in products) {
         final productId = productJson['productId'] as int;
+        final variantId = productJson['variantId'] as int?;
         final quantity = productJson['quantity'] as int? ?? 1;
+        final productNote = productJson['note'] as String?;
         final components = productJson['components'] as List<dynamic>? ?? [];
 
         // Get product details
@@ -1370,14 +1433,32 @@ class ServerService {
 
         if (product == null) continue;
 
+        // Use variant price/TVA if a variantId is provided
+        double unitPrice = product.finalPrice;
+        double unitTva = product.tvaAmount;
+        double unitDiscount = product.discountAmount;
+
+        if (variantId != null) {
+          final variant = await (database.select(database.productVariants)
+            ..where((v) => v.id.equals(variantId)))
+            .getSingleOrNull();
+          if (variant != null) {
+            unitPrice = variant.price;
+            unitTva = variant.tvaAmount;
+            unitDiscount = 0.0; // Variants typically have no pre-discount
+          }
+        }
+
         final orderProductId = await database.into(database.orderProducts).insert(
           OrderProductsCompanion.insert(
             orderId: orderId,
             productId: productId,
+            variantId: drift.Value(variantId),
             quantity: drift.Value(quantity),
-            unitaryPrice: product.finalPrice,
-            unitaryDiscount: drift.Value(product.discountAmount),
-            unitaryTva: drift.Value(product.tvaAmount),
+            unitaryPrice: unitPrice,
+            unitaryDiscount: drift.Value(unitDiscount),
+            unitaryTva: drift.Value(unitTva),
+            note: drift.Value(productNote),
             state: const drift.Value('PENDING'),
           ),
         );
@@ -1441,7 +1522,9 @@ class ServerService {
 
       final waiterId = json['waiterId'] as int?;
       final productId = json['productId'] as int?;
+      final variantId = json['variantId'] as int?;
       final quantity = json['quantity'] as int? ?? 1;
+      final productNote = json['note'] as String?;
       final components = json['components'] as List<dynamic>? ?? [];
 
       if (waiterId == null || productId == null) {
@@ -1484,15 +1567,33 @@ class ServerService {
         );
       }
 
+      // Use variant price/TVA if a variantId is provided
+      double unitPrice = product.finalPrice;
+      double unitTva = product.tvaAmount;
+      double unitDiscount = product.discountAmount;
+
+      if (variantId != null) {
+        final variant = await (database.select(database.productVariants)
+          ..where((v) => v.id.equals(variantId)))
+          .getSingleOrNull();
+        if (variant != null) {
+          unitPrice = variant.price;
+          unitTva = variant.tvaAmount;
+          unitDiscount = 0.0;
+        }
+      }
+
       // Insert product
       final orderProductId = await database.into(database.orderProducts).insert(
         OrderProductsCompanion.insert(
           orderId: order.id,
           productId: productId,
+          variantId: drift.Value(variantId),
           quantity: drift.Value(quantity),
-          unitaryPrice: product.finalPrice,
-          unitaryDiscount: drift.Value(product.discountAmount),
-          unitaryTva: drift.Value(product.tvaAmount),
+          unitaryPrice: unitPrice,
+          unitaryDiscount: drift.Value(unitDiscount),
+          unitaryTva: drift.Value(unitTva),
+          note: drift.Value(productNote),
           state: const drift.Value('PENDING'),
         ),
       );
@@ -1644,6 +1745,7 @@ class ServerService {
       socketProducts.add(SocketOrderProductModel(
         id: orderProduct.id,
         productId: orderProduct.productId,
+        variantId: orderProduct.variantId,
         productName: product.name,
         imageUrl: product.imageUrl,
         quantity: orderProduct.quantity,
@@ -1652,7 +1754,7 @@ class ServerService {
         stationId: product.stationId,
         stationName: stationName,
         components: socketComponents,
-        note: null,
+        note: orderProduct.note,
         tvaAmount: orderProduct.unitaryTva,
         discountAmount: orderProduct.unitaryDiscount,
       ));

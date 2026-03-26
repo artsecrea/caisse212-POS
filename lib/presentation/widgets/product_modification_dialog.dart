@@ -833,7 +833,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       child: componentsAsync.when(
         data: (componentsData) {
           if (componentsData.isEmpty) {
-            return Center(child: Text(l10n.translate('no_notifications')));
+            return Center(child: Text(l10n.translate('no_components')));
           }
 
           return componentGroupsAsync.when(

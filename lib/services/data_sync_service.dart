@@ -403,6 +403,85 @@ class DataSyncService {
 
   // ============ UPLOAD LOCAL DATA TO SERVER ============
 
+  /// Build products list for sync, merging order-level discount percentage
+  /// into each product's manualDiscount proportionally.
+  ///
+  /// Example: Product costs $10, existing manualDiscount $5, order discount 50%.
+  /// Effective price after existing discounts = $10 - $5 = $5.
+  /// Order discount on that = $5 * 50% = $2.50.
+  /// Final manualDiscount sent to server = $5 + $2.50 = $7.50.
+  Future<List<Map<String, dynamic>>> _buildProductsListForSync(
+    List<OrderProduct> orderProducts,
+    double discountPercentage,
+  ) async {
+    // First pass: build product data with component totals to calculate effective prices
+    final productDataList = <Map<String, dynamic>>[];
+    final effectivePrices = <double>[]; // effective price per product (before order discount)
+
+    for (final product in orderProducts) {
+      // Get components for this product
+      final productComponents = await (_database.select(_database.orderProductComponents)
+        ..where((opc) => opc.orderProductId.equals(product.id)))
+        .get();
+
+      // Build components list
+      final componentsList = productComponents.map((comp) => {
+        'componentId': comp.componentId,
+        'quantity': comp.quantity,
+        'price': comp.price,
+        'isSpecial': comp.isSpecial,
+      }).toList();
+
+      // Calculate component total
+      double componentTotal = 0.0;
+      for (final comp in productComponents) {
+        componentTotal += comp.price * comp.quantity;
+      }
+
+      // Effective price per item = (unitaryPrice + componentTotal - unitaryDiscount - manualDiscount)
+      // Then multiply by quantity for total effective price
+      final effectivePerItem = (product.unitaryPrice + componentTotal - product.unitaryDiscount - product.manualDiscount);
+      final effectiveTotal = effectivePerItem * product.quantity;
+      effectivePrices.add(effectiveTotal > 0 ? effectiveTotal : 0.0);
+
+      productDataList.add({
+        'productId': product.productId,
+        'variantId': product.variantId,
+        'quantity': product.quantity,
+        'unitaryPrice': product.unitaryPrice,
+        'unitaryDiscount': product.unitaryDiscount,
+        'unitaryTva': product.unitaryTva,
+        'manualDiscount': product.manualDiscount,
+        'note': product.note,
+        'state': product.state,
+        'components': componentsList,
+      });
+    }
+
+    // Second pass: if discountPercentage > 0, distribute order-level discount
+    // proportionally into each product's manualDiscount
+    if (discountPercentage > 0) {
+      final totalEffective = effectivePrices.fold(0.0, (sum, v) => sum + v);
+
+      if (totalEffective > 0) {
+        final orderDiscountAmount = totalEffective * (discountPercentage / 100.0);
+
+        for (int i = 0; i < productDataList.length; i++) {
+          final proportion = effectivePrices[i] / totalEffective;
+          final productShareOfDiscount = orderDiscountAmount * proportion;
+          // Distribute per-unit: divide by quantity
+          final qty = productDataList[i]['quantity'] as int;
+          final perUnitShare = qty > 0 ? productShareOfDiscount / qty : 0.0;
+          // Merge into existing manualDiscount
+          final existingManualDiscount = productDataList[i]['manualDiscount'] as double;
+          productDataList[i]['manualDiscount'] = existingManualDiscount + perUnitShare;
+        }
+      }
+    }
+
+    return productDataList;
+  }
+
   /// Get all completed orders that need to be synced (not yet synced)
   Future<List<Map<String, dynamic>>> getOrdersForSync() async {
     final orders = await (_database.select(_database.orders)
@@ -418,39 +497,11 @@ class DataSyncService {
         ..where((op) => op.orderId.equals(order.id)))
         .get();
 
-      // Build products list
-      final productsList = <Map<String, dynamic>>[];
+      // Build products list, merging order-level discount into manualDiscount
+      final productsList = await _buildProductsListForSync(orderProducts, order.discountPercentage);
 
-      for (final product in orderProducts) {
-        // Get components for this product
-        final productComponents = await (_database.select(_database.orderProductComponents)
-          ..where((opc) => opc.orderProductId.equals(product.id)))
-          .get();
-
-        // Build components list
-        final componentsList = productComponents.map((comp) => {
-          'componentId': comp.componentId,
-          'quantity': comp.quantity,
-          'price': comp.price,  // Include price from order time
-          'isSpecial': comp.isSpecial,
-        }).toList();
-
-        // Build product map
-        productsList.add({
-          'productId': product.productId,
-          'variantId': product.variantId,
-          'quantity': product.quantity,
-          'unitaryPrice': product.unitaryPrice,
-          'unitaryDiscount': product.unitaryDiscount,
-          'unitaryTva': product.unitaryTva,
-          'manualDiscount': product.manualDiscount,
-          'manualDiscountReason': product.manualDiscountReason,
-          'state': product.state,
-          'components': componentsList,
-        });
-      }
-
-      // Build order map with products
+      // Build order map with products - discountPercentage is set to 0
+      // because it has been merged into each product's manualDiscount
       ordersList.add({
         'id': order.id,
         'code': order.code,
@@ -462,7 +513,7 @@ class DataSyncService {
         'tableId': order.tableId,
         'clientId': order.clientId,
         'commercialId': order.commercialId,
-        'discountPercentage': order.discountPercentage,
+        'discountPercentage': 0.0,
         'note': order.note,
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),
@@ -680,36 +731,11 @@ class DataSyncService {
         ..where((op) => op.orderId.equals(order.id)))
         .get();
 
-      // Build products list with components
-      final productsList = <Map<String, dynamic>>[];
-
-      for (final product in orderProducts) {
-        final productComponents = await (_database.select(_database.orderProductComponents)
-          ..where((opc) => opc.orderProductId.equals(product.id)))
-          .get();
-
-        final componentsList = productComponents.map((comp) => {
-          'componentId': comp.componentId,
-          'quantity': comp.quantity,
-          'price': comp.price,  // Include price from order time
-          'isSpecial': comp.isSpecial,
-        }).toList();
-
-        productsList.add({
-          'productId': product.productId,
-          'variantId': product.variantId,
-          'quantity': product.quantity,
-          'unitaryPrice': product.unitaryPrice,
-          'unitaryDiscount': product.unitaryDiscount,
-          'unitaryTva': product.unitaryTva,
-          'manualDiscount': product.manualDiscount,
-          'manualDiscountReason': product.manualDiscountReason,
-          'state': product.state,
-          'components': componentsList,
-        });
-      }
+      // Build products list, merging order-level discount into manualDiscount
+      final productsList = await _buildProductsListForSync(orderProducts, order.discountPercentage);
 
       // Build order map - use code as identifier for backend
+      // discountPercentage is set to 0 because it's been merged into each product's manualDiscount
       final orderData = {
         'code': order.code,
         'status': order.status,
@@ -720,7 +746,7 @@ class DataSyncService {
         'tableId': order.tableId,
         'clientId': order.clientId,
         'commercialId': order.commercialId,
-        'discountPercentage': order.discountPercentage,
+        'discountPercentage': 0.0,
         'note': order.note,
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),

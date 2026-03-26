@@ -129,6 +129,7 @@ class SocketOrderRepository {
       socketProducts.add(SocketOrderProductModel(
         id: orderProduct.id,
         productId: product.id,
+        variantId: orderProduct.variantId,
         productName: product.name,
         imageUrl: product.imageUrl,
         quantity: orderProduct.quantity,
@@ -137,7 +138,7 @@ class SocketOrderRepository {
         stationId: product.stationId,
         stationName: stationName,
         components: socketComponents,
-        note: null,
+        note: orderProduct.note,
       ));
     }
 

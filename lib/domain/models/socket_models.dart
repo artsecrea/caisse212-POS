@@ -61,19 +61,32 @@ class SocketOrderModel {
   }
 
   factory SocketOrderModel.fromJson(Map<String, dynamic> json) {
+    // Normalize type: "takeAway" → "TAKE_AWAY", "dineIn" → "DINE_IN", etc.
+    String normalizeType(String raw) {
+      switch (raw.toLowerCase().replaceAll('_', '').replaceAll(' ', '')) {
+        case 'takeaway': return 'TAKE_AWAY';
+        case 'dinein':   return 'DINE_IN';
+        case 'delivery': return 'DELIVERY';
+        default:         return raw.toUpperCase();
+      }
+    }
+
+    // Normalize status: always uppercase
+    String normalizeStatus(String raw) => raw.toUpperCase();
+
     return SocketOrderModel(
-      id: json['id'] as int,
+      id: json['id'] as int? ?? 0,
       code: json['code'] as String,
-      status: json['status'] as String,
-      type: json['type'] as String,
-      priority: json['priority'] as int,
+      status: normalizeStatus(json['status'] as String? ?? 'ONHOLD'),
+      type: normalizeType(json['type'] as String? ?? 'DINE_IN'),
+      priority: json['priority'] as int? ?? 0,
       persons: json['persons'] as int? ?? 1,
-      date: DateTime.parse(json['date'] as String),
+      date: json['date'] != null ? DateTime.parse(json['date'] as String) : DateTime.now(),
       tableId: json['tableId'] as int?,
       tableName: json['tableName'] as String?,
       clientId: json['clientId'] as int?,
       clientName: json['clientName'] as String?,
-      products: (json['products'] as List)
+      products: (json['products'] as List? ?? [])
           .map((p) => SocketOrderProductModel.fromJson(p as Map<String, dynamic>))
           .toList(),
       note: json['note'] as String?,
@@ -85,6 +98,7 @@ class SocketOrderModel {
 class SocketOrderProductModel {
   final int id;
   final int productId;
+  final int? variantId;
   final String productName;
   final String? imageUrl;
   final int quantity;
@@ -100,6 +114,7 @@ class SocketOrderProductModel {
   SocketOrderProductModel({
     required this.id,
     required this.productId,
+    this.variantId,
     required this.productName,
     this.imageUrl,
     required this.quantity,
@@ -117,6 +132,7 @@ class SocketOrderProductModel {
     return {
       'id': id,
       'productId': productId,
+      'variantId': variantId,
       'productName': productName,
       'imageUrl': imageUrl,
       'quantity': quantity,
@@ -133,18 +149,19 @@ class SocketOrderProductModel {
 
   factory SocketOrderProductModel.fromJson(Map<String, dynamic> json) {
     return SocketOrderProductModel(
-      id: json['id'] as int,
+      id: json['id'] as int? ?? 0,
       productId: json['productId'] as int,
-      productName: json['productName'] as String,
+      variantId: json['variantId'] as int?,
+      productName: json['productName'] as String? ?? '',
       imageUrl: json['imageUrl'] as String?,
-      quantity: json['quantity'] as int,
+      quantity: json['quantity'] as int? ?? 1,
       tvaAmount: (json['tvaAmount'] as num?)?.toDouble(),
       discountAmount: (json['discountAmount'] as num?)?.toDouble(),
-      unitaryPrice: (json['unitaryPrice'] as num).toDouble(),
-      state: json['state'] as String,
+      unitaryPrice: (json['unitaryPrice'] as num? ?? json['unitPrice'] as num? ?? 0).toDouble(),
+      state: (json['state'] as String? ?? 'PENDING').toUpperCase(),
       stationId: json['stationId'] as int?,
       stationName: json['stationName'] as String?,
-      components: (json['components'] as List)
+      components: (json['components'] as List? ?? [])
           .map((c) => SocketOrderProductComponentModel
           .fromJson(c as Map<String, dynamic>))
           .toList(),
@@ -375,9 +392,11 @@ extension SocketOrderProductToCurrentOrderItem on SocketOrderProductModel {
     return OrderItem(
       productId: productId,
       productName: productName,
+      variantId: variantId,
       imageUrl: imageUrl,
       finalPrice: unitaryPrice,
       quantity: quantity,
+      note: note,
       tva: tvaAmount ?? 0,
       discount: discountAmount ?? 0,
       components: components.map((comp) {

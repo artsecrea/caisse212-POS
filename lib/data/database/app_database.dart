@@ -61,11 +61,36 @@ part 'app_database.g.dart';
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
-  static String dbName = 'qsdsfsdfdqsdqsd.db';
+  static String dbName = 'sqd.db';
 
   @override
-  //never change the db version , just delete the db file to reset
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration {
+    return MigrationStrategy(
+      onCreate: (Migrator m) async {
+        await m.createAll();
+      },
+      onUpgrade: (Migrator m, int from, int to) async {
+        if (from < 2) {
+          // Rename manual_discount_reason → note in order_products
+          // SQLite doesn't support RENAME COLUMN directly before 3.25.0,
+          // so we add the new column and migrate data.
+          try {
+            await customStatement(
+              'ALTER TABLE order_products ADD COLUMN note TEXT;',
+            );
+            await customStatement(
+              'UPDATE order_products SET note = manual_discount_reason WHERE manual_discount_reason IS NOT NULL;',
+            );
+          } catch (e) {
+            // Column may already exist if fresh install
+          }
+        }
+      },
+    );
+  }
 
   static LazyDatabase _openConnection() {
     return LazyDatabase(() async {

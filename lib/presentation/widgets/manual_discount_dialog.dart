@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 
 class ManualDiscountDialog extends StatefulWidget {
   final double currentPercentage;
+  final String? currentNote;
 
   const ManualDiscountDialog({
     Key? key,
     this.currentPercentage = 0.0,
+    this.currentNote,
   }) : super(key: key);
 
   @override
@@ -15,6 +17,7 @@ class ManualDiscountDialog extends StatefulWidget {
 
 class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
   late TextEditingController _percentageController;
+  late TextEditingController _noteController;
   final _formKey = GlobalKey<FormState>();
 
   @override
@@ -23,18 +26,21 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
     _percentageController = TextEditingController(
       text: widget.currentPercentage > 0 ? widget.currentPercentage.toStringAsFixed(1) : '',
     );
+    _noteController = TextEditingController(text: widget.currentNote ?? '');
   }
 
   @override
   void dispose() {
     _percentageController.dispose();
+    _noteController.dispose();
     super.dispose();
   }
 
   void _applyDiscount() {
     if (_formKey.currentState!.validate()) {
       final percentage = double.tryParse(_percentageController.text) ?? 0.0;
-      Navigator.of(context).pop(percentage);
+      final note = _noteController.text.trim().isEmpty ? null : _noteController.text.trim();
+      Navigator.of(context).pop({'percentage': percentage, 'note': note});
     }
   }
 
@@ -58,10 +64,7 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
                   const SizedBox(width: 12),
                   const Text(
                     'Manual Discount',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                   const Spacer(),
                   IconButton(
@@ -85,9 +88,7 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
                   labelText: 'Discount Percentage',
                   hintText: '0.0',
                   suffixText: '%',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                   prefixIcon: const Icon(Icons.percent),
                 ),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -95,16 +96,10 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
                   FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
                 ],
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return null; // Allow empty (means 0%)
-                  }
+                  if (value == null || value.isEmpty) return null;
                   final percentage = double.tryParse(value);
-                  if (percentage == null) {
-                    return 'Please enter a valid number';
-                  }
-                  if (percentage < 0 || percentage > 100) {
-                    return 'Percentage must be between 0 and 100';
-                  }
+                  if (percentage == null) return 'Please enter a valid number';
+                  if (percentage < 0 || percentage > 100) return 'Percentage must be between 0 and 100';
                   return null;
                 },
                 autofocus: true,
@@ -114,13 +109,7 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
               const SizedBox(height: 20),
 
               // Quick percentage buttons
-              const Text(
-                'Quick Select',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              const Text('Quick Select', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
@@ -138,16 +127,30 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
                       foregroundColor: isSelected ? Colors.white : Colors.black87,
                       elevation: isSelected ? 2 : 0,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                     child: Text('${percentage.toInt()}%'),
                   );
                 }).toList(),
               ),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 20),
+
+              // Note / reason field
+              TextFormField(
+                controller: _noteController,
+                decoration: InputDecoration(
+                  labelText: 'Note (reason for discount)',
+                  hintText: 'e.g. Loyalty customer, manager approval…',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  prefixIcon: const Icon(Icons.note_alt_outlined),
+                ),
+                maxLines: 2,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _applyDiscount(),
+              ),
+
+              const SizedBox(height: 16),
 
               // Info box
               Container(
@@ -164,10 +167,7 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
                     Expanded(
                       child: Text(
                         'This discount will be applied to every ticket product when calculating payments.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.orange[900],
-                        ),
+                        style: TextStyle(fontSize: 12, color: Colors.orange[900]),
                       ),
                     ),
                   ],
@@ -182,10 +182,8 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
                 children: [
                   if (widget.currentPercentage > 0)
                     TextButton(
-                      onPressed: () => Navigator.of(context).pop(0.0),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.red,
-                      ),
+                      onPressed: () => Navigator.of(context).pop({'percentage': 0.0, 'note': null}),
+                      style: TextButton.styleFrom(foregroundColor: Colors.red),
                       child: const Text('Remove Discount'),
                     ),
                   const Spacer(),

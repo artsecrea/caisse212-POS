@@ -51,30 +51,47 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   bool _isSyncing = false;
 
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _customerSearchController = TextEditingController();
+  final FocusNode _customerSearchFocusNode = FocusNode();
+  String? _selectedCustomerName;
 
-  // Customers list for filter
+  // Customers list for filter (search results)
   List<Customer> _customers = [];
 
   @override
   void initState() {
     super.initState();
-    _loadCustomers();
     _loadOrders();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _customerSearchController.dispose();
+    _customerSearchFocusNode.dispose();
     super.dispose();
   }
 
-  Future<void> _loadCustomers() async {
+  Future<void> _searchCustomersInDb(String query) async {
+    if (query.length < 3) {
+      setState(() => _customers = []);
+      return;
+    }
     try {
       final database = ref.read(databaseProvider);
-      _customers = await database.select(database.customers).get();
-      if (mounted) setState(() {});
+      final lowerQuery = query.toLowerCase();
+      final allCustomers = await database.select(database.customers).get();
+      final filtered = allCustomers.where((c) {
+        final fullName = '${c.firstName} ${c.lastName}'.toLowerCase();
+        final phone = c.phone?.toLowerCase() ?? '';
+        final email = c.email?.toLowerCase() ?? '';
+        return fullName.contains(lowerQuery) ||
+            phone.contains(lowerQuery) ||
+            email.contains(lowerQuery);
+      }).toList();
+      if (mounted) setState(() => _customers = filtered);
     } catch (e) {
-      // Ignore errors loading customers
+      // Ignore errors
     }
   }
 
@@ -440,32 +457,94 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   Widget _buildCustomerDropdown(AppLocalizations l10n) {
-    return DropdownButtonFormField<int?>(
-      decoration: InputDecoration(
-        labelText: l10n.translate('customer'),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        suffixIcon: _selectedCustomerId != null
-            ? IconButton(
-                icon: const Icon(Icons.clear, size: 18),
-                onPressed: () {
-                  _selectedCustomerId = null;
-                  _onFilterChanged();
-                },
-              )
-            : null,
-      ),
-      isExpanded: true,
-      items: [
-        DropdownMenuItem(value: null, child: Text(l10n.translate('all_customers'))),
-        ..._customers.map((c) => DropdownMenuItem(
-              value: c.id,
-              child: Text('${c.firstName} ${c.lastName}', overflow: TextOverflow.ellipsis),
-            )),
-      ],
-      onChanged: (value) {
-        _selectedCustomerId = value;
-        _onFilterChanged();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return RawAutocomplete<Customer>(
+          textEditingController: _customerSearchController,
+          focusNode: _customerSearchFocusNode,
+          optionsBuilder: (TextEditingValue textEditingValue) async {
+            final query = textEditingValue.text.trim();
+            if (query.length < 3) return [];
+            await _searchCustomersInDb(query);
+            return _customers;
+          },
+          displayStringForOption: (Customer c) => '${c.firstName} ${c.lastName}',
+          fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+            return TextFormField(
+              controller: controller,
+              focusNode: focusNode,
+              decoration: InputDecoration(
+                labelText: l10n.translate('customer'),
+                hintText: l10n.translate('search_by_name_phone_email'),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                prefixIcon: const Icon(Icons.person_search, size: 20),
+                suffixIcon: _selectedCustomerId != null || controller.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          controller.clear();
+                          _selectedCustomerId = null;
+                          _selectedCustomerName = null;
+                          setState(() => _customers = []);
+                          _onFilterChanged();
+                        },
+                      )
+                    : null,
+              ),
+              onFieldSubmitted: (_) => onFieldSubmitted(),
+            );
+          },
+          optionsViewBuilder: (context, onSelected, options) {
+            return Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(8),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: 250,
+                    maxWidth: constraints.maxWidth,
+                  ),
+                  child: ListView.builder(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    itemBuilder: (context, index) {
+                      final customer = options.elementAt(index);
+                      return ListTile(
+                        dense: true,
+                        leading: CircleAvatar(
+                          radius: 16,
+                          child: Text(
+                            customer.firstName.isNotEmpty
+                                ? customer.firstName[0].toUpperCase()
+                                : '?',
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        ),
+                        title: Text(
+                          '${customer.firstName} ${customer.lastName}',
+                          style: const TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                        subtitle: customer.phone != null
+                            ? Text(customer.phone!, style: const TextStyle(fontSize: 12))
+                            : null,
+                        onTap: () => onSelected(customer),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            );
+          },
+          onSelected: (Customer customer) {
+            _selectedCustomerId = customer.id;
+            _selectedCustomerName = '${customer.firstName} ${customer.lastName}';
+            _customerSearchController.text = _selectedCustomerName!;
+            _onFilterChanged();
+          },
+        );
       },
     );
   }

@@ -669,14 +669,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               onPressed: currentOrder.hasPaidItems
                   ? null
                   : () async {
-                      final result = await showDialog<double>(
+                      final result = await showDialog<Map<String, dynamic>>(
                         context: context,
                         builder: (context) => ManualDiscountDialog(
                           currentPercentage: currentOrder.discountPercentage,
+                          currentNote: currentOrder.note,
                         ),
                       );
                       if (result != null) {
-                        ref.read(orderProvider.notifier).setDiscountPercentage(result);
+                        final percentage = result['percentage'] as double? ?? 0.0;
+                        final note = result['note'] as String?;
+                        ref.read(orderProvider.notifier).setDiscountPercentage(percentage);
+                        ref.read(orderProvider.notifier).setNote(note);
                       }
                     },
             );

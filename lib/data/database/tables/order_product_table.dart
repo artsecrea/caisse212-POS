@@ -11,7 +11,7 @@ class OrderProducts extends Table {
   RealColumn get unitaryDiscount => real().withDefault(const Constant(0.0))();
   RealColumn get unitaryTva => real().withDefault(const Constant(0.0))();
   RealColumn get manualDiscount => real().withDefault(const Constant(0.0))();
-  TextColumn get manualDiscountReason => text().nullable()();
+  TextColumn get note => text().nullable()();
   TextColumn get state => text().withDefault(const Constant('PENDING'))(); // PENDING, PREPARING, COMPLETED, CANCELED
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

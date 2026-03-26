@@ -354,7 +354,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         '/users': (context) => const UsersManagementScreen(),
         '/tickets': (context) => const TicketsManagementScreen(),
         '/sessions': (context) => const SessionsManagementScreen(),
-        '/logger.infoers': (context) => const PrintersManagementScreen(),
+        '/printers': (context) => const PrintersManagementScreen(),
         '/api-tester': (context) => const ApiTesterScreen(),
       },
     );
