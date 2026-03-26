@@ -56,6 +56,7 @@ dependencies:
   # Printing
   flutter_thermal_printer: ^2.0.0
   esc_pos_utils_plus: ^2.0.4
+  image: ^4.7.2
 
   # Barcode Scanner
   flutter_barcode_listener: ^0.1.4

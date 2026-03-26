@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -12,6 +13,7 @@ class ApiService {
   static const String _tenantIdKey = 'tenant_id';
   static const String _isDemoModeKey = 'is_demo_mode';
   static const String _businessNameKey = 'business_name';
+  static const String _businessLogoKey = 'business_logo';
 
   // Public getter for Dio instance (for testing/debugging)
   Dio get dio => _dio;
@@ -93,6 +95,7 @@ class ApiService {
   String? getBaseUrl() => _prefs.getString(_baseUrlKey);
   bool isDemoMode() => _prefs.getBool(_isDemoModeKey) ?? false;
   String? getBusinessName() => _prefs.getString(_businessNameKey);
+  String? getBusinessLogo() => _prefs.getString(_businessLogoKey);
 
   // Setters for stored values
   Future<void> setAccessToken(String token) async {
@@ -119,6 +122,10 @@ class ApiService {
     await _prefs.setString(_businessNameKey, name);
   }
 
+  Future<void> setBusinessLogo(String base64Logo) async {
+    await _prefs.setString(_businessLogoKey, base64Logo);
+  }
+
   /// Clear all authentication data
   Future<void> clearAuthData() async {
     await _prefs.remove(_accessTokenKey);
@@ -127,6 +134,7 @@ class ApiService {
     await _prefs.remove(_baseUrlKey);
     await _prefs.remove(_isDemoModeKey);
     await _prefs.remove(_businessNameKey);
+    await _prefs.remove(_businessLogoKey);
     // NOTE: We do NOT remove 'tenant_password_hash' here - it should only be cleared on full logout
   }
 
@@ -169,6 +177,28 @@ class ApiService {
           final businessName = data['posTerminal']['businessName'] as String;
           await setBusinessName(businessName);
           print('Business name saved: $businessName');
+        }
+
+        // Save business logo from posTerminal data (byte array -> base64 string)
+        if (data['posTerminal'] != null && data['posTerminal']['businessLogo'] != null) {
+          try {
+            final logoData = data['posTerminal']['businessLogo'];
+            String base64Logo;
+            if (logoData is String) {
+              // Already a base64 string
+              base64Logo = logoData;
+            } else if (logoData is List) {
+              // Byte array from server
+              final bytes = List<int>.from(logoData);
+              base64Logo = base64Encode(bytes);
+            } else {
+              throw Exception('Unexpected logo data type: ${logoData.runtimeType}');
+            }
+            await setBusinessLogo(base64Logo);
+            print('Business logo saved (${base64Logo.length} chars)');
+          } catch (e) {
+            print('Failed to save business logo: $e');
+          }
         }
 
         return data;

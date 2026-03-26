@@ -1,12 +1,16 @@
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/services/printing_service.dart
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/providers/localization_provider.dart';
 import 'package:caisse212/providers/settings_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
+import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/models/order_models.dart';
@@ -531,6 +535,50 @@ class PrintingService {
     return _translate(key, fallback: fallback);
   }
 
+  /// Load business logo from SharedPreferences and decode it as an Image for thermal printing
+  img.Image? _loadBusinessLogo() {
+    try {
+      if (_ref == null) return null;
+      final prefs = _ref!.read(sharedPreferencesProvider);
+      final base64Logo = prefs.getString('business_logo');
+      if (base64Logo == null || base64Logo.isEmpty) return null;
+
+      final logoBytes = base64Decode(base64Logo);
+      final decoded = img.decodeImage(Uint8List.fromList(logoBytes));
+      if (decoded == null) {
+        debugPrint('Failed to decode business logo image');
+        return null;
+      }
+
+      // Resize to fit receipt width (max ~384px for 58mm, ~576px for 80mm)
+      final maxWidth = _config.paperSize == PaperSize.mm58 ? 384 : 576;
+      if (decoded.width > maxWidth) {
+        return img.copyResize(decoded, width: maxWidth);
+      }
+      return decoded;
+    } catch (e) {
+      debugPrint('Error loading business logo: $e');
+      return null;
+    }
+  }
+
+  /// Print the business logo at the top of a receipt if available.
+  /// Returns the bytes to prepend to the receipt.
+  List<int> _printLogoHeader(Generator generator) {
+    try {
+      final logo = _loadBusinessLogo();
+      if (logo == null) return [];
+
+      List<int> bytes = [];
+      bytes += generator.image(logo, align: PosAlign.center);
+      bytes += generator.emptyLines(1);
+      return bytes;
+    } catch (e) {
+      debugPrint('Error printing logo header: $e');
+      return [];
+    }
+  }
+
   /// Get appropriate code table for thermal printer based on current language
   /// Returns the code table name for ESC/POS printers
   String _getCodeTableForLanguage() {
@@ -579,6 +627,9 @@ class PrintingService {
 
       // Set code table based on current language (supports Arabic, French, English)
       bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
+
+      // Print business logo if available
+      bytes += _printLogoHeader(generator);
 
       // Header
       if (storeName != null) {
@@ -1096,6 +1147,9 @@ class PrintingService {
       // Set code table based on current language (supports Arabic, French, English)
       bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
 
+      // Print business logo if available
+      bytes += _printLogoHeader(generator);
+
       // Header
       if (storeName != null) {
         bytes += generator.text(
@@ -1367,6 +1421,9 @@ class PrintingService {
 
       // Set code table based on current language (supports Arabic, French, English)
       bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
+
+      // Print business logo if available
+      bytes += _printLogoHeader(generator);
 
       final separator = ''.padLeft(32, '-');
       final doubleSeparator = ''.padLeft(32, '=');
