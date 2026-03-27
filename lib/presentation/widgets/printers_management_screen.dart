@@ -1,4 +1,8 @@
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/printers_management_screen.dart
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
@@ -19,11 +23,90 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   List<Printer> _printers = [];
   bool _isScanning = false;
   PrinterConfig _config = const PrinterConfig();
+  final TextEditingController _businessNameController = TextEditingController();
+  Uint8List? _logoBytes;
 
   @override
   void initState() {
     super.initState();
     _initializePrinting();
+    _loadBusinessInfo();
+  }
+
+  @override
+  void dispose() {
+    _businessNameController.dispose();
+    super.dispose();
+  }
+
+  void _loadBusinessInfo() {
+    final prefs = ref.read(sharedPreferencesProvider);
+    final savedName = prefs.getString('business_name') ?? '';
+    _businessNameController.text = savedName;
+
+    final base64Logo = prefs.getString('business_logo');
+    if (base64Logo != null && base64Logo.isNotEmpty) {
+      try {
+        _logoBytes = base64Decode(base64Logo);
+      } catch (e) {
+        debugPrint('Error decoding saved logo: $e');
+      }
+    }
+  }
+
+  Future<void> _saveBusinessName(String name) async {
+    final prefs = ref.read(sharedPreferencesProvider);
+    if (name.isEmpty) {
+      await prefs.remove('business_name');
+    } else {
+      await prefs.setString('business_name', name);
+    }
+  }
+
+  Future<void> _pickLogo() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.first;
+      Uint8List? bytes;
+
+      if (file.bytes != null) {
+        bytes = file.bytes!;
+      } else if (file.path != null) {
+        bytes = await File(file.path!).readAsBytes();
+      }
+
+      if (bytes != null) {
+        final prefs = ref.read(sharedPreferencesProvider);
+        final base64Logo = base64Encode(bytes);
+        await prefs.setString('business_logo', base64Logo);
+        if (mounted) {
+          setState(() {
+            _logoBytes = bytes;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(AppLocalizations.of(context)!.translate('success')),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _clearLogo() async {
+    final prefs = ref.read(sharedPreferencesProvider);
+    await prefs.remove('business_logo');
+    if (mounted) {
+      setState(() {
+        _logoBytes = null;
+      });
+    }
   }
 
   void _initializePrinting() {
@@ -176,6 +259,127 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Business Info
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.store, size: 32),
+                        const SizedBox(width: 16),
+                        Text(
+                          l10n.translate('business_info'),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    // Business Name
+                    TextField(
+                      controller: _businessNameController,
+                      decoration: InputDecoration(
+                        labelText: l10n.translate('business_name'),
+                        hintText: l10n.translate('enter_business_name'),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.business),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.save),
+                          tooltip: l10n.translate('save'),
+                          onPressed: () {
+                            _saveBusinessName(_businessNameController.text.trim());
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(l10n.translate('success')),
+                                backgroundColor: Colors.green,
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      style: const TextStyle(fontSize: 17),
+                      onSubmitted: (value) => _saveBusinessName(value.trim()),
+                    ),
+                    const SizedBox(height: 20),
+                    // Business Logo
+                    Text(
+                      l10n.translate('business_logo'),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Logo preview
+                        Container(
+                          width: 120,
+                          height: 120,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey[300]!, width: 2),
+                          ),
+                          child: _logoBytes != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Image.memory(
+                                    _logoBytes!,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (_, __, ___) => const Icon(
+                                      Icons.broken_image,
+                                      size: 48,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                )
+                              : const Center(
+                                  child: Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
+                                ),
+                        ),
+                        const SizedBox(width: 20),
+                        // Logo actions
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: _pickLogo,
+                              icon: const Icon(Icons.upload_file),
+                              label: Text(l10n.translate('select_logo')),
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                                textStyle: const TextStyle(fontSize: 16),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            if (_logoBytes != null)
+                              OutlinedButton.icon(
+                                onPressed: _clearLogo,
+                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                label: Text(
+                                  l10n.translate('remove_logo'),
+                                  style: const TextStyle(color: Colors.red),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                                  textStyle: const TextStyle(fontSize: 16),
+                                  side: const BorderSide(color: Colors.red),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
             // Scan controls
             Card(
               elevation: 3,
