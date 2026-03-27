@@ -134,6 +134,12 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     await printingService.setTextSize(prefs, size);
   }
 
+  Future<void> _setPrintingLanguage(String language) async {
+    final printingService = ref.read(printingServiceProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+    await printingService.setPrintingLanguage(prefs, language);
+  }
+
   Future<void> _testPrint(PrinterPurpose purpose) async {
     final l10n = AppLocalizations.of(context)!;
     final printerType = purpose == PrinterPurpose.receipt
@@ -316,6 +322,31 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         ],
                         selected: {_config.textSize},
                         onSelectionChanged: (values) => _setTextSize(values.first),
+                      ),
+                    ),
+                    const Divider(height: 32),
+                    // Printing Language
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('printing_language'),
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                      subtitle: Text(
+                        l10n.translate('printing_language_subtitle'),
+                        style: const TextStyle(fontSize: 15),
+                      ),
+                      trailing: SegmentedButton<String>(
+                        style: SegmentedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
+                        segments: [
+                          ButtonSegment(value: 'en', label: Text(l10n.translate('english'))),
+                          ButtonSegment(value: 'fr', label: Text(l10n.translate('french'))),
+                        ],
+                        selected: {_config.printingLanguage},
+                        onSelectionChanged: (values) => _setPrintingLanguage(values.first),
                       ),
                     ),
                   ],

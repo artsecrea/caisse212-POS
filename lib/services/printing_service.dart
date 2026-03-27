@@ -2,10 +2,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:caisse212/providers/database_providers.dart';
-import 'package:caisse212/providers/localization_provider.dart';
-import 'package:caisse212/providers/settings_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
@@ -35,6 +34,7 @@ class PrinterConfig {
   final bool kdsEnabled;
   final PaperSize paperSize;
   final int textSize; // 1=Normal, 2=Medium, 3=Large
+  final String printingLanguage; // 'en' or 'fr'
 
   const PrinterConfig({
     this.receiptPrinterAddress,
@@ -46,6 +46,7 @@ class PrinterConfig {
     this.kdsEnabled = true,
     this.paperSize = PaperSize.mm80,
     this.textSize = 1,
+    this.printingLanguage = 'en',
   });
 
   PrinterConfig copyWith({
@@ -58,6 +59,7 @@ class PrinterConfig {
     bool? kdsEnabled,
     PaperSize? paperSize,
     int? textSize,
+    String? printingLanguage,
   }) {
     return PrinterConfig(
       receiptPrinterAddress:
@@ -71,6 +73,7 @@ class PrinterConfig {
       kdsEnabled: kdsEnabled ?? this.kdsEnabled,
       paperSize: paperSize ?? this.paperSize,
       textSize: textSize ?? this.textSize,
+      printingLanguage: printingLanguage ?? this.printingLanguage,
     );
   }
 
@@ -84,6 +87,7 @@ class PrinterConfig {
     'kdsEnabled': kdsEnabled,
     'paperSize': paperSize.value,
     'textSize': textSize,
+    'printingLanguage': printingLanguage,
   };
 
   factory PrinterConfig.fromJson(Map<String, dynamic> json) {
@@ -101,6 +105,7 @@ class PrinterConfig {
       kdsEnabled: json['kdsEnabled'] ?? true,
       paperSize: json['paperSize'] == 58 ? PaperSize.mm58 : PaperSize.mm80,
       textSize: json['textSize'] ?? 1,
+      printingLanguage: json['printingLanguage'] ?? 'en',
     );
   }
 }
@@ -169,6 +174,7 @@ class PrintingService {
     final kdsEnabled = prefs.getBool('printer_kds_enabled') ?? true;
     final paperSizeValue = prefs.getInt('printer_paper_size') ?? 80;
     final textSizeValue = prefs.getInt('printer_text_size') ?? 1;
+    final printingLanguage = prefs.getString('printer_language') ?? 'en';
 
     _config = PrinterConfig(
       receiptPrinterAddress: receiptAddress,
@@ -184,6 +190,7 @@ class PrintingService {
       kdsEnabled: kdsEnabled,
       paperSize: paperSizeValue == 58 ? PaperSize.mm58 : PaperSize.mm80,
       textSize: textSizeValue,
+      printingLanguage: printingLanguage,
     );
     _configController.add(_config);
   }
@@ -249,6 +256,7 @@ class PrintingService {
     await prefs.setBool('printer_kds_enabled', newConfig.kdsEnabled);
     await prefs.setInt('printer_paper_size', newConfig.paperSize.value);
     await prefs.setInt('printer_text_size', newConfig.textSize);
+    await prefs.setString('printer_language', newConfig.printingLanguage);
 
     _configController.add(_config);
   }
@@ -373,6 +381,7 @@ class PrintingService {
         kdsEnabled: _config.kdsEnabled,
         paperSize: _config.paperSize,
         textSize: _config.textSize,
+        printingLanguage: _config.printingLanguage,
       );
     } else {
       newConfig = PrinterConfig(
@@ -382,6 +391,7 @@ class PrintingService {
         kdsEnabled: _config.kdsEnabled,
         paperSize: _config.paperSize,
         textSize: _config.textSize,
+        printingLanguage: _config.printingLanguage,
       );
     }
 
@@ -403,6 +413,12 @@ class PrintingService {
   /// Set text size
   Future<void> setTextSize(SharedPreferences prefs, int size) async {
     final newConfig = _config.copyWith(textSize: size);
+    await saveConfig(prefs, newConfig);
+  }
+
+  /// Set printing language (independent of app language)
+  Future<void> setPrintingLanguage(SharedPreferences prefs, String language) async {
+    final newConfig = _config.copyWith(printingLanguage: language);
     await saveConfig(prefs, newConfig);
   }
 
@@ -517,22 +533,20 @@ class PrintingService {
     return false;
   }
 
-  /// Translation helper with clear key-based fallback
+  /// Translation helper using printing language (independent of app language)
   String _translate(String key, {String? fallback}) {
-    final l10n = _ref?.read(localizationProvider);
-
-    if (l10n == null) {
-      // If no localizer, return formatted key or provided fallback
-      return fallback ?? key.replaceAll('_', ' ');
-    }
-
-    return l10n.translate(key);
+    final printL10n = AppLocalizations(Locale(_config.printingLanguage));
+    return printL10n.translate(key);
   }
 
   /// Helper for static text that might not need translation but should be consistent
   String _text(String key, {String? fallback}) {
-    // Use the same pattern for all static text to maintain consistency
     return _translate(key, fallback: fallback);
+  }
+
+  /// Get AppLocalizations instance for printing language (for daily summary report)
+  AppLocalizations _getPrintingL10n() {
+    return AppLocalizations(Locale(_config.printingLanguage));
   }
 
   /// Load business logo from SharedPreferences and decode it as an Image for thermal printing
@@ -579,27 +593,19 @@ class PrintingService {
     }
   }
 
-  /// Get appropriate code table for thermal printer based on current language
+  /// Get appropriate code table for thermal printer based on printing language
   /// Returns the code table name for ESC/POS printers
   String _getCodeTableForLanguage() {
-    try {
-      final language = _ref?.read(languageProvider) ?? 'en';
+    final language = _config.printingLanguage;
 
-      switch (language) {
-        case 'ar':
-          // Arabic - use CP864 (Arabic code page)
-          return 'CP864';
-        case 'fr':
-          // French - use CP1252 (Western European)
-          return 'CP1252';
-        case 'en':
-        default:
-          // English and default - use CP437 (standard) or CP1252
-          return 'CP1252';
-      }
-    } catch (e) {
-      debugPrint('Error determining code table, using default CP1252: $e');
-      return 'CP1252'; // Fallback to safe default
+    switch (language) {
+      case 'ar':
+        return 'CP864';
+      case 'fr':
+        return 'CP1252';
+      case 'en':
+      default:
+        return 'CP1252';
     }
   }
 
@@ -1415,6 +1421,9 @@ class PrintingService {
     }
 
     try {
+      // Use printing language instead of passed-in l10n
+      final printL10n = _getPrintingL10n();
+
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
@@ -1440,7 +1449,7 @@ class PrintingService {
       );
       bytes += generator.emptyLines(1);
       bytes += generator.text(
-        l10n?.translate('daily_summary_report') ?? 'DAILY SUMMARY REPORT',
+        printL10n.translate('daily_summary_report'),
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
@@ -1456,7 +1465,7 @@ class PrintingService {
 
       // Date range
       bytes += generator.text(
-        '${l10n?.translate('date_range') ?? 'Date Range'}:',
+        '${printL10n.translate('date_range')}:',
         styles: PosStyles(
           align: PosAlign.left,
           bold: true,
@@ -1473,7 +1482,7 @@ class PrintingService {
         ),
       );
       bytes += generator.text(
-        '${l10n?.translate('number_of_sessions') ?? 'Sessions'}: ${report.totalSessions}',
+        '${printL10n.translate('number_of_sessions')}: ${report.totalSessions}',
         styles: PosStyles(
           align: PosAlign.left,
           height: _resolveTextSize(),
@@ -1489,7 +1498,7 @@ class PrintingService {
       // Sessions details
       for (final session in report.sessions) {
         bytes += generator.text(
-          '${l10n?.translate('session') ?? 'Session'} #${session.sessionCode}',
+          '${printL10n.translate('session')} #${session.sessionCode}',
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
@@ -1504,7 +1513,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('cashier') ?? 'Cashier',
+            text: printL10n.translate('cashier'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1524,7 +1533,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('starting_balance') ?? 'Start Balance',
+            text: printL10n.translate('starting_balance'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1546,7 +1555,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('total_orders') ?? 'Total Orders',
+            text: printL10n.translate('total_orders'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1566,7 +1575,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('expected_from_orders') ?? 'Expected Orders',
+            text: printL10n.translate('expected_from_orders'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1588,7 +1597,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('total_tickets') ?? 'Total Tickets',
+            text: printL10n.translate('total_tickets'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1609,7 +1618,7 @@ class PrintingService {
         bytes += generator.row([
           PosColumn(
             text:
-                l10n?.translate('expected_from_tickets') ?? 'Expected Tickets',
+                printL10n.translate('expected_from_tickets'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1633,7 +1642,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('unpaid_orders') ?? 'Unpaid Orders',
+            text: printL10n.translate('unpaid_orders'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1653,7 +1662,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('unpaid_amount') ?? 'Unpaid Amount',
+            text: printL10n.translate('unpaid_amount'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1677,7 +1686,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('paid_by_cash') ?? 'Cash',
+            text: printL10n.translate('paid_by_cash'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1699,7 +1708,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('paid_by_card') ?? 'Card',
+            text: printL10n.translate('paid_by_card'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1721,7 +1730,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('paid_by_phone') ?? 'Phone',
+            text: printL10n.translate('paid_by_phone'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1743,7 +1752,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('paid_by_other') ?? 'Other',
+            text: printL10n.translate('paid_by_other'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1767,7 +1776,7 @@ class PrintingService {
 
         bytes += generator.row([
           PosColumn(
-            text: l10n?.translate('status') ?? 'Status',
+            text: printL10n.translate('status'),
             width: 6,
             styles: PosStyles(
               height: _resolveTextSize(),
@@ -1799,7 +1808,7 @@ class PrintingService {
         styles: const PosStyles(align: PosAlign.center),
       );
       bytes += generator.text(
-        l10n?.translate('summary') ?? 'SUMMARY',
+        printL10n.translate('summary'),
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
@@ -1815,7 +1824,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('total_orders') ?? 'Total Orders',
+          text: printL10n.translate('total_orders'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -1836,7 +1845,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('expected_from_orders') ?? 'Expected Orders',
+          text: printL10n.translate('expected_from_orders'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -1858,7 +1867,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('total_tickets') ?? 'Total Tickets',
+          text: printL10n.translate('total_tickets'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -1879,7 +1888,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('expected_from_tickets') ?? 'Expected Tickets',
+          text: printL10n.translate('expected_from_tickets'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -1903,7 +1912,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('unpaid_orders') ?? 'Unpaid Orders',
+          text: printL10n.translate('unpaid_orders'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -1923,7 +1932,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('unpaid_amount') ?? 'Unpaid Amount',
+          text: printL10n.translate('unpaid_amount'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -1951,7 +1960,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('paid_by_cash') ?? 'Cash',
+          text: printL10n.translate('paid_by_cash'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -1973,7 +1982,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('paid_by_card') ?? 'Card',
+          text: printL10n.translate('paid_by_card'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -1995,7 +2004,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('paid_by_phone') ?? 'Phone',
+          text: printL10n.translate('paid_by_phone'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -2017,7 +2026,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('paid_by_other') ?? 'Other',
+          text: printL10n.translate('paid_by_other'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -2044,7 +2053,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('total_paid') ?? 'TOTAL PAID',
+          text: printL10n.translate('total_paid'),
           width: 6,
           styles: PosStyles(
             bold: true,
@@ -2068,7 +2077,7 @@ class PrintingService {
 
       bytes += generator.row([
         PosColumn(
-          text: l10n?.translate('total_starting_balance') ?? 'Start Balance',
+          text: printL10n.translate('total_starting_balance'),
           width: 6,
           styles: PosStyles(
             height: _resolveTextSize(),
@@ -2096,7 +2105,7 @@ class PrintingService {
       // Footer
       bytes += generator.emptyLines(1);
       bytes += generator.text(
-        '${l10n?.translate('printed_at') ?? 'Printed'}: ${_formatDateTime(DateTime.now())}',
+        '${printL10n.translate('printed_at')}: ${_formatDateTime(DateTime.now())}',
         styles: PosStyles(
           align: PosAlign.center,
           height: _resolveTextSize(),
