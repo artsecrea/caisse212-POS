@@ -67,6 +67,7 @@ dependencies:
   permission_handler: ^11.3.0
   http: ^1.2.0
   bonsoir: ^5.0.0
+  file_picker: ^10.3.10
 
 dev_dependencies:
   flutter_test:
