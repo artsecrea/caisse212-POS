@@ -202,31 +202,76 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             ),
           ],
         ),
-        child: Column(
+        child: Stack(
           children: [
-            _buildHeader(),
-            Expanded(
-              child: Row(
-                children: [
-                  // Tickets area - 60% width
-                  Expanded(
-                    flex: 6,
-                    child: _buildTicketsArea(tickets),
-                  ),
+            Column(
+              children: [
+                _buildHeader(),
+                Expanded(
+                  child: Row(
+                    children: [
+                      // Tickets area - 60% width
+                      Expanded(
+                        flex: 6,
+                        child: _buildTicketsArea(tickets),
+                      ),
 
-                  // Divider
-                  Container(
-                    width: 1,
-                    color: theme.dividerColor,
-                  ),
+                      // Divider
+                      Container(
+                        width: 1,
+                        color: theme.dividerColor,
+                      ),
 
-                  // Payment calculator - 40% width
-                  Expanded(
-                    flex: 4,
-                    child: _buildPaymentPanel(),
+                      // Payment calculator - 40% width
+                      Expanded(
+                        flex: 4,
+                        child: _buildPaymentPanel(),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
+            ),
+            // Printing status overlay
+            StreamBuilder<String?>(
+              stream: ref.read(printingServiceProvider).printingStatusStream,
+              builder: (context, snapshot) {
+                if (!snapshot.hasData || snapshot.data == null) {
+                  return const SizedBox.shrink();
+                }
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Center(
+                    child: Card(
+                      elevation: 8,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 48,
+                              height: 48,
+                              child: CircularProgressIndicator(strokeWidth: 4),
+                            ),
+                            const SizedBox(height: 20),
+                            Text(
+                              snapshot.data!,
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),

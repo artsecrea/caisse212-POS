@@ -131,6 +131,9 @@ class PrintingService {
   final _printersController = StreamController<List<Printer>>.broadcast();
   final _scanningController = StreamController<bool>.broadcast();
   final _configController = StreamController<PrinterConfig>.broadcast();
+  final _printingStatusController = StreamController<String?>.broadcast();
+
+  bool _isPrintingInProgress = false;
 
   // Getters
   List<Printer> get availablePrinters => _availablePrinters;
@@ -143,11 +146,16 @@ class PrintingService {
 
   bool get isScanning => _isScanning;
 
+  bool get isPrintingInProgress => _isPrintingInProgress;
+
   Stream<List<Printer>> get printersStream => _printersController.stream;
 
   Stream<bool> get scanningStream => _scanningController.stream;
 
   Stream<PrinterConfig> get configStream => _configController.stream;
+
+  /// Stream of printing status messages (null = idle, non-null = status text shown in overlay)
+  Stream<String?> get printingStatusStream => _printingStatusController.stream;
 
   /// Initialize the printing service
   Future<void> initialize(SharedPreferences prefs, Ref ref) async {
@@ -458,12 +466,8 @@ class PrintingService {
   /// Ensure printer is connected, with automatic rescan and reconnect if needed
   Future<bool> _ensurePrinterConnected(PrinterPurpose purpose) async {
     final isReceipt = purpose == PrinterPurpose.receipt;
-    final currentPrinter = isReceipt
-        ? _connectedReceiptPrinter
-        : _connectedKdsPrinter;
-    final savedAddress = isReceipt
-        ? _config.receiptPrinterAddress
-        : _config.kdsPrinterAddress;
+    final currentPrinter = isReceipt ? _connectedReceiptPrinter : _connectedKdsPrinter;
+    final savedAddress = isReceipt ? _config.receiptPrinterAddress : _config.kdsPrinterAddress;
 
     // If printer already connected, we're good
     if (currentPrinter != null) {
@@ -477,51 +481,44 @@ class PrintingService {
       return false;
     }
 
-    debugPrint(
-      '${purpose.name} printer not connected, attempting to reconnect to saved printer: $savedAddress',
-    );
+    // Emit "connecting" status so the UI can show a loading overlay
+    _isPrintingInProgress = true;
+    _printingStatusController.add(_translate('connecting_printer', fallback: 'Connecting to printer...'));
+
+    debugPrint('${purpose.name} printer not connected, attempting to reconnect: $savedAddress');
 
     // Step 1: Try to find printer in current available printers list
     Printer? printer = _findPrinterByAddress(savedAddress);
 
     if (printer != null) {
-      debugPrint(
-        'Found saved ${purpose.name} printer in available list, attempting connection',
-      );
       final connected = await connectPrinter(printer, purpose);
       if (connected) {
         debugPrint('Successfully connected to ${purpose.name} printer');
+        _isPrintingInProgress = false;
+        _printingStatusController.add(null);
         return true;
       }
-      debugPrint('Failed to connect to ${purpose.name} printer found in list');
     }
 
-    // Step 2: Printer not in list or connection failed - try rescanning
-    debugPrint(
-      'Printer not found in available list or connection failed, rescanning...',
-    );
+    // Step 2: Printer not in list or connection failed — try rescanning
+    _printingStatusController.add(_translate('scanning_for_printer', fallback: 'Scanning for printer...'));
+    debugPrint('Printer not found in available list or connection failed, rescanning...');
 
     try {
       await startScan();
-
-      // Wait a bit longer for scan to complete and populate list
       await Future.delayed(const Duration(seconds: 4));
 
-      // Try to find printer again after scan
+      _printingStatusController.add(_translate('connecting_printer', fallback: 'Connecting to printer...'));
       printer = _findPrinterByAddress(savedAddress);
 
       if (printer != null) {
-        debugPrint(
-          'Found ${purpose.name} printer after rescan, attempting connection',
-        );
         final connected = await connectPrinter(printer, purpose);
         if (connected) {
-          debugPrint(
-            'Successfully connected to ${purpose.name} printer after rescan',
-          );
+          debugPrint('Successfully connected to ${purpose.name} printer after rescan');
+          _isPrintingInProgress = false;
+          _printingStatusController.add(null);
           return true;
         }
-        debugPrint('Failed to connect to ${purpose.name} printer after rescan');
       } else {
         debugPrint('${purpose.name} printer still not found after rescan');
       }
@@ -529,6 +526,8 @@ class PrintingService {
       debugPrint('Error during rescan and reconnect: $e');
     }
 
+    _isPrintingInProgress = false;
+    _printingStatusController.add(null);
     debugPrint('Unable to establish ${purpose.name} printer connection');
     return false;
   }
@@ -549,7 +548,8 @@ class PrintingService {
     return AppLocalizations(Locale(_config.printingLanguage));
   }
 
-  /// Load business logo from SharedPreferences and decode it as an Image for thermal printing
+  /// Load business logo from SharedPreferences and decode it as an Image for thermal printing.
+  /// Composites alpha onto white background and converts to grayscale for proper thermal output.
   img.Image? _loadBusinessLogo() {
     try {
       if (_ref == null) return null;
@@ -566,10 +566,24 @@ class PrintingService {
 
       // Resize to fit receipt width (max ~384px for 58mm, ~576px for 80mm)
       final maxWidth = _config.paperSize == PaperSize.mm58 ? 384 : 576;
+      img.Image resized = decoded;
       if (decoded.width > maxWidth) {
-        return img.copyResize(decoded, width: maxWidth);
+        resized = img.copyResize(decoded, width: maxWidth);
       }
-      return decoded;
+
+      // Create a new opaque RGB image (no alpha) with white background
+      final w = resized.width;
+      final h = resized.height;
+      final result = img.Image(width: w, height: h, numChannels: 3);
+
+      // Fill with white
+      img.fill(result, color: img.ColorRgb8(255, 255, 255));
+
+      // Composite the original image onto white, handling alpha blending
+      img.compositeImage(result, resized);
+
+      // Convert to grayscale for thermal printer compatibility
+      return img.grayscale(result);
     } catch (e) {
       debugPrint('Error loading business logo: $e');
       return null;
@@ -624,6 +638,9 @@ class PrintingService {
       debugPrint('Could not establish receipt printer connection');
       return false;
     }
+
+    _isPrintingInProgress = true;
+    _printingStatusController.add(_translate('printing', fallback: 'Printing...'));
 
     try {
       final currencySymbol = _getCurrency(currency);
@@ -940,10 +957,14 @@ class PrintingService {
       );
 
       debugPrint('Receipt printed successfully');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
       return true;
     } catch (e, stackTrace) {
       debugPrint('Error printing receipt: $e');
       debugPrint('Stack trace: $stackTrace');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
       return false;
     }
   }
@@ -964,6 +985,9 @@ class PrintingService {
       debugPrint('Could not establish KDS printer connection');
       return false;
     }
+
+    _isPrintingInProgress = true;
+    _printingStatusController.add(_translate('printing_kds', fallback: 'Printing KDS ticket...'));
 
     try {
       final profile = await CapabilityProfile.load();
@@ -1116,10 +1140,14 @@ class PrintingService {
       );
 
       debugPrint('KDS ticket printed successfully');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
       return true;
     } catch (e, stackTrace) {
       debugPrint('Error printing KDS ticket: $e');
       debugPrint('Stack trace: $stackTrace');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
       return false;
     }
   }
@@ -1143,6 +1171,9 @@ class PrintingService {
       debugPrint('Could not establish receipt printer connection for ticket');
       return false;
     }
+
+    _isPrintingInProgress = true;
+    _printingStatusController.add(_translate('printing', fallback: 'Printing...'));
 
     try {
       final currencySymbol = _getCurrency(currency);
@@ -1364,10 +1395,14 @@ class PrintingService {
       );
 
       debugPrint('Ticket receipt printed successfully');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
       return true;
     } catch (e, stackTrace) {
       debugPrint('Error printing ticket receipt: $e');
       debugPrint('Stack trace: $stackTrace');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
       return false;
     }
   }
@@ -2140,5 +2175,6 @@ class PrintingService {
     _printersController.close();
     _scanningController.close();
     _configController.close();
+    _printingStatusController.close();
   }
 }

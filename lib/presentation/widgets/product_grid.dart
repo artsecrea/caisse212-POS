@@ -287,6 +287,7 @@ class _ProductCard extends ConsumerWidget {
 
   Widget _buildCompact(BuildContext context, WidgetRef ref) {
     final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
 
     return componentsDataAsync.when(
       data: (componentsData) {
@@ -315,7 +316,7 @@ class _ProductCard extends ConsumerWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                '${displayPrice.toStringAsFixed(2)} \$',
+                currencyFormatter.format(displayPrice),
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.primary,
                   fontWeight: FontWeight.bold,
@@ -347,7 +348,7 @@ class _ProductCard extends ConsumerWidget {
             ),
             const SizedBox(width: 8),
             Text(
-              '${product.finalPrice.toStringAsFixed(2)} \$',
+              currencyFormatter.format(product.finalPrice),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.bold,

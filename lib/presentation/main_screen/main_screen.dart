@@ -279,27 +279,69 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         return barcodeService.handleKeyEvent(event);
       },
       child: Scaffold(
-        body: Column(
+        body: Stack(
           children: [
-            // Top Bar with status, network state, and update button
-            const TopBar(),
-            Expanded(
-            child: Row(
-              children: orderPanelOnRight
-                  ? [mainContent, orderPanel] // Order panel on right
-                  : [orderPanel, mainContent], // Order panel on left
-            ),
-          ),
-          Container(
-            height: 150,
-            padding: const EdgeInsets.all(8),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: _buildOrderedActionButtons(context, ref, currentOrder, settings, l10n),
+            Column(
+              children: [
+                // Top Bar with status, network state, and update button
+                const TopBar(),
+                Expanded(
+                child: Row(
+                  children: orderPanelOnRight
+                      ? [mainContent, orderPanel] // Order panel on right
+                      : [orderPanel, mainContent], // Order panel on left
+                ),
               ),
-            ),
+              Container(
+                height: 150,
+                padding: const EdgeInsets.all(8),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: _buildOrderedActionButtons(context, ref, currentOrder, settings, l10n),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // Printing status overlay
+          StreamBuilder<String?>(
+            stream: ref.read(printingServiceProvider).printingStatusStream,
+            builder: (context, snapshot) {
+              if (!snapshot.hasData || snapshot.data == null) {
+                return const SizedBox.shrink();
+              }
+              return Container(
+                color: Colors.black54,
+                child: Center(
+                  child: Card(
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: CircularProgressIndicator(strokeWidth: 4),
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            snapshot.data!,
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
