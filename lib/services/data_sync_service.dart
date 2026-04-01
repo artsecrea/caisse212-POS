@@ -646,27 +646,42 @@ class DataSyncService {
   }
 
   /// Sync all local data to server
+  /// Each entity type is synced independently so a failure in one does not
+  /// block the others.  Mark-as-synced only runs when the API call succeeds.
   Future<void> uploadLocalData() async {
     // Sync customers first (may be referenced by orders)
-    final customers = await getCustomersForSync();
-    if (customers.isNotEmpty) {
-      await _apiService.syncCustomers(customers);
-      await markCustomersAsSynced(customers.map((c) => c['id'] as int).toList());
+    try {
+      final customers = await getCustomersForSync();
+      if (customers.isNotEmpty) {
+        await _apiService.syncCustomers(customers);
+        // Only mark after a confirmed successful API response
+        await markCustomersAsSynced(customers.map((c) => c['id'] as int).toList());
+      }
+    } catch (e) {
+      _logger.error('uploadLocalData: customers sync failed – will retry later: $e');
     }
 
     // Sync completed orders
-    final orders = await getOrdersForSync();
-    if (orders.isNotEmpty) {
-      await _apiService.syncOrders(orders);
-      await markOrdersAsSynced(orders.map((o) => o['id'] as int).toList());
+    try {
+      final orders = await getOrdersForSync();
+      if (orders.isNotEmpty) {
+        await _apiService.syncOrders(orders);
+        await markOrdersAsSynced(orders.map((o) => o['id'] as int).toList());
+      }
+    } catch (e) {
+      _logger.error('uploadLocalData: orders sync failed – will retry later: $e');
     }
 
     // Sync tickets for synced orders
-    final tickets = await getTicketsForSync();
-    if (tickets.isNotEmpty) {
-      _logger.debug("Syncing ${tickets.length} tickets");
-      await _apiService.syncTickets(tickets);
-      await markTicketsAsSynced(tickets.map((t) => t['id'] as int).toList());
+    try {
+      final tickets = await getTicketsForSync();
+      if (tickets.isNotEmpty) {
+        _logger.debug("Syncing ${tickets.length} tickets");
+        await _apiService.syncTickets(tickets);
+        await markTicketsAsSynced(tickets.map((t) => t['id'] as int).toList());
+      }
+    } catch (e) {
+      _logger.error('uploadLocalData: tickets sync failed – will retry later: $e');
     }
   }
 
@@ -828,7 +843,9 @@ class DataSyncService {
   }
 
   /// Sync orders in bulk with limited batch size
-  /// Only sends bulk request if more than one order, otherwise uses single sync
+  /// Only sends bulk request if more than one order, otherwise uses single sync.
+  /// If the bulk request fails, falls back to individual syncs so only
+  /// confirmed-successful orders are marked as synced.
   Future<int> syncOrdersBulk({int batchSize = 50}) async {
     try {
       // Get unsynced orders
@@ -848,14 +865,29 @@ class DataSyncService {
         return success ? 1 : 0;
       }
 
-      // Sync the batch using bulk endpoint
-      await _apiService.syncOrders(batch);
-
-      // Mark as synced
-      final syncedIds = batch.map((o) => o['id'] as int).toList();
-      await markOrdersAsSynced(syncedIds);
-
-      return batch.length;
+      // Try bulk sync first
+      try {
+        await _apiService.syncOrders(batch);
+        // Bulk succeeded – mark all as synced
+        final syncedIds = batch.map((o) => o['id'] as int).toList();
+        await markOrdersAsSynced(syncedIds);
+        return batch.length;
+      } catch (bulkError) {
+        // Bulk failed – fall back to individual sync so only confirmed
+        // orders get marked as synced (prevents phantom synced orders)
+        _logger.warning('Bulk order sync failed, falling back to individual sync: $bulkError');
+        int successCount = 0;
+        for (final orderMap in batch) {
+          try {
+            final orderId = orderMap['id'] as int;
+            final success = await syncSingleOrder(orderId);
+            if (success) successCount++;
+          } catch (e) {
+            _logger.error('Individual order sync failed for order #${orderMap['id']}: $e');
+          }
+        }
+        return successCount;
+      }
     } catch (e) {
       _logger.error('Error syncing orders bulk: $e');
       return 0;
@@ -863,6 +895,7 @@ class DataSyncService {
   }
 
   /// Sync tickets in bulk for synced orders
+  /// If the bulk call fails, falls back to per-order ticket sync.
   Future<int> syncTicketsBulk({int batchSize = 100}) async {
     try {
       // Get tickets for sync (only for synced orders)
@@ -875,21 +908,45 @@ class DataSyncService {
       // Take only the specified batch size
       final batch = tickets.take(batchSize).toList();
 
-      // Sync the batch
-      await _apiService.syncTickets(batch);
+      try {
+        // Sync the batch
+        await _apiService.syncTickets(batch);
 
-      // Mark as synced
-      final syncedIds = batch.map((t) => t['id'] as int).toList();
-      await markTicketsAsSynced(syncedIds);
+        // Mark as synced only after confirmed success
+        final syncedIds = batch.map((t) => t['id'] as int).toList();
+        await markTicketsAsSynced(syncedIds);
 
-      return batch.length;
+        return batch.length;
+      } catch (bulkError) {
+        // Bulk failed – fall back to per-order ticket sync
+        _logger.warning('Bulk ticket sync failed, falling back to per-order sync: $bulkError');
+
+        // Group tickets by orderId and sync per order
+        final ticketsByOrder = <int, List<Map<String, dynamic>>>{};
+        for (final t in batch) {
+          final orderId = t['orderId'] as int;
+          ticketsByOrder.putIfAbsent(orderId, () => []).add(t);
+        }
+
+        int successCount = 0;
+        for (final entry in ticketsByOrder.entries) {
+          try {
+            final success = await syncTicketsForOrder(entry.key);
+            if (success) successCount += entry.value.length;
+          } catch (e) {
+            _logger.error('Per-order ticket sync failed for order #${entry.key}: $e');
+          }
+        }
+        return successCount;
+      }
     } catch (e) {
-      print('Error syncing tickets bulk: $e');
+      _logger.error('Error syncing tickets bulk: $e');
       return 0;
     }
   }
 
   /// Sync customers in bulk
+  /// If the bulk call fails, falls back to individual customer sync.
   Future<int> syncCustomersBulk({int batchSize = 100}) async {
     try {
       // Get customers for sync
@@ -902,21 +959,37 @@ class DataSyncService {
       // Take only the specified batch size
       final batch = customers.take(batchSize).toList();
 
-      // Sync the batch
-      await _apiService.syncCustomers(batch);
+      try {
+        // Sync the batch
+        await _apiService.syncCustomers(batch);
 
-      // Mark as synced
-      final syncedIds = batch.map((c) => c['id'] as int).toList();
-      await markCustomersAsSynced(syncedIds);
+        // Mark as synced only after confirmed success
+        final syncedIds = batch.map((c) => c['id'] as int).toList();
+        await markCustomersAsSynced(syncedIds);
 
-      return batch.length;
+        return batch.length;
+      } catch (bulkError) {
+        _logger.warning('Bulk customer sync failed, falling back to individual sync: $bulkError');
+        int successCount = 0;
+        for (final customer in batch) {
+          try {
+            await _apiService.syncCustomers([customer]);
+            await markCustomersAsSynced([customer['id'] as int]);
+            successCount++;
+          } catch (e) {
+            _logger.error('Individual customer sync failed for #${customer['id']}: $e');
+          }
+        }
+        return successCount;
+      }
     } catch (e) {
-      print('Error syncing customers bulk: $e');
+      _logger.error('Error syncing customers bulk: $e');
       return 0;
     }
   }
 
   /// Sync ended sessions in bulk
+  /// If the bulk call fails, falls back to individual session sync.
   Future<int> syncSessionsBulk({int batchSize = 50}) async {
     try {
       // Get sessions for sync
@@ -929,16 +1002,32 @@ class DataSyncService {
       // Take only the specified batch size
       final batch = sessions.take(batchSize).toList();
 
-      // Sync the batch
-      await _apiService.syncSessions(batch);
+      try {
+        // Sync the batch
+        await _apiService.syncSessions(batch);
 
-      // Mark as synced
-      final syncedIds = batch.map((s) => s['id'] as int).toList();
-      await markSessionsAsSynced(syncedIds);
+        // Mark as synced only after confirmed success
+        final syncedIds = batch.map((s) => s['id'] as int).toList();
+        await markSessionsAsSynced(syncedIds);
 
-      return batch.length;
+        return batch.length;
+      } catch (bulkError) {
+        _logger.warning('Bulk session sync failed, falling back to individual sync: $bulkError');
+        int successCount = 0;
+        for (final session in batch) {
+          try {
+            final sessionCode = session['code'] as String;
+            await _apiService.syncSingleSession(sessionCode, session);
+            await markSessionsAsSynced([session['id'] as int]);
+            successCount++;
+          } catch (e) {
+            _logger.error('Individual session sync failed for #${session['id']}: $e');
+          }
+        }
+        return successCount;
+      }
     } catch (e) {
-      print('Error syncing sessions bulk: $e');
+      _logger.error('Error syncing sessions bulk: $e');
       return 0;
     }
   }

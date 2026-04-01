@@ -577,9 +577,13 @@ class ApiService {
   // ============ SYNC DATA TO SERVER ============
 
   /// Sync orders to server (bulk)
+  /// Throws if the server does not return a 2xx status.
   Future<void> syncOrders(List<Map<String, dynamic>> orders) async {
     try {
-      await _dio.post('/pos/orders/bulk', data: {"orders": orders});
+      final response = await _dio.post('/pos/orders/bulk', data: {"orders": orders});
+      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
+        throw Exception('Server returned status ${response.statusCode} for bulk orders sync');
+      }
     } on DioException catch (e) {
       throw Exception('Failed to sync orders: ${e.message ?? 'Check connection.'}');
     } catch (e) {
@@ -588,9 +592,13 @@ class ApiService {
   }
 
   /// Sync a single order to server using PUT (creates or updates)
+  /// Throws if the server does not return a 2xx status.
   Future<void> syncSingleOrder(String orderCode, Map<String, dynamic> orderData) async {
     try {
-      await _dio.put('/pos/orders/$orderCode', data: orderData);
+      final response = await _dio.put('/pos/orders/$orderCode', data: orderData);
+      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
+        throw Exception('Server returned status ${response.statusCode} for order $orderCode sync');
+      }
     } on DioException catch (e) {
       throw Exception('Failed to sync order: ${e.message ?? 'Check connection.'}');
     } catch (e) {
@@ -599,9 +607,13 @@ class ApiService {
   }
 
   /// Sync tickets to server
+  /// Throws if the server does not return a 2xx status.
   Future<void> syncTickets(List<Map<String, dynamic>> tickets) async {
     try {
-      await _dio.post('/pos/tickets/bulk', data: {"tickets":tickets});
+      final response = await _dio.post('/pos/tickets/bulk', data: {"tickets":tickets});
+      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
+        throw Exception('Server returned status ${response.statusCode} for bulk tickets sync');
+      }
     } on DioException catch (e) {
       throw Exception('Failed to sync tickets: ${e.message ?? 'Check connection.'}');
     } catch (e) {
@@ -610,9 +622,13 @@ class ApiService {
   }
 
   /// Sync sessions to server
+  /// Throws if the server does not return a 2xx status.
   Future<void> syncSessions(List<Map<String, dynamic>> sessions) async {
     try {
-      await _dio.post('/pos/cash-sessions/bulk', data: {"sessions" : sessions});
+      final response = await _dio.post('/pos/cash-sessions/bulk', data: {"sessions" : sessions});
+      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
+        throw Exception('Server returned status ${response.statusCode} for bulk sessions sync');
+      }
     } on DioException catch (e) {
       throw Exception('Failed to sync sessions: ${e.message ?? 'Check connection.'}');
     } catch (e) {
@@ -621,9 +637,13 @@ class ApiService {
   }
 
   /// Sync customers to server (new customers created locally)
+  /// Throws if the server does not return a 2xx status.
   Future<void> syncCustomers(List<Map<String, dynamic>> customers) async {
     try {
-      await _dio.post('/pos/customers/bulk', data: {"customers" : customers});
+      final response = await _dio.post('/pos/customers/bulk', data: {"customers" : customers});
+      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
+        throw Exception('Server returned status ${response.statusCode} for bulk customers sync');
+      }
     } on DioException catch (e) {
       throw Exception('Failed to sync customers: ${e.message ?? 'Check connection.'}');
     } catch (e) {
@@ -748,7 +768,10 @@ class ApiService {
   // ========== SESSION OPERATIONS (continued) ==========
   Future<void> syncSingleSession(String sessionCode, Map<String, dynamic> sessionData) async {
     try {
-      await _dio.put('/pos/cash-sessions/$sessionCode', data: sessionData);
+      final response = await _dio.put('/pos/cash-sessions/$sessionCode', data: sessionData);
+      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
+        throw Exception('Server returned status ${response.statusCode} for session $sessionCode sync');
+      }
     } on DioException catch (e) {
       throw Exception('Failed to sync session: ${e.message ?? 'Check connection.'}');
     } catch (e) {
