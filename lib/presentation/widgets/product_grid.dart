@@ -300,7 +300,8 @@ class _ProductCard extends ConsumerWidget {
         }
 
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12,
+              vertical: 8),
           child: Row(
             children: [
               Expanded(

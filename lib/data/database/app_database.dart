@@ -102,6 +102,7 @@ class AppDatabase extends _$AppDatabase {
         if (!await dbFolder.exists()) {
           await dbFolder.create(recursive: true);
         }
+        print(">>>>>>>>"+dbFolder.path);
 
         return NativeDatabase.createInBackground(file);
       } catch (e) {

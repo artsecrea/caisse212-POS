@@ -502,6 +502,9 @@ class DataSyncService {
 
       // Build order map with products - discountPercentage is set to 0
       // because it has been merged into each product's manualDiscount
+
+
+
       ordersList.add({
         'id': order.id,
         'code': order.code,
@@ -515,6 +518,8 @@ class DataSyncService {
         'commercialId': order.commercialId,
         'discountPercentage': 0.0,
         'note': order.note,
+        'createdBy': order.createdBy,
+        'servedBy': order.waiterId,
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),
         'updatedAt': order.updatedAt.toIso8601String(),
@@ -747,6 +752,8 @@ class DataSyncService {
         'clientId': order.clientId,
         'commercialId': order.commercialId,
         'discountPercentage': 0.0,
+        'createdBy': order.createdBy,
+        'servedBy': order.waiterId,
         'note': order.note,
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),
