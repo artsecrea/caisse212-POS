@@ -947,6 +947,7 @@ class OrderRepository {
     String? statusFilter,
     String? searchQuery,
     int? customerId,
+    int? cashierId,
     DateTime? startDate,
     DateTime? endDate,
     String sortColumn = 'createdAt',
@@ -965,6 +966,10 @@ class OrderRepository {
 
       if (customerId != null) {
         query = query..where((tbl) => tbl.clientId.equals(customerId));
+      }
+
+      if (cashierId != null) {
+        query = query..where((tbl) => tbl.takenBy.equals(cashierId));
       }
 
       if (startDate != null) {
@@ -1033,6 +1038,10 @@ class OrderRepository {
 
     if (customerId != null) {
       query = query..where((tbl) => tbl.clientId.equals(customerId));
+    }
+
+    if (cashierId != null) {
+      query = query..where((tbl) => tbl.takenBy.equals(cashierId));
     }
 
     if (startDate != null) {

@@ -3,6 +3,7 @@
 import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:bcrypt/bcrypt.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/app_localizations.dart';
 
@@ -49,6 +50,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   // Sync state
   bool _isSyncing = false;
+
+  // View mode: my orders vs all orders (requires tenant password)
+  bool _showAllOrders = false;
 
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _customerSearchController = TextEditingController();
@@ -103,12 +107,14 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
+      final currentUser = ref.read(currentUserProvider);
       final result = await orderRepo.getPaginatedOrdersWithFullDetails(
         page: _currentPage,
         pageSize: _rowsPerPage,
         statusFilter: _statusFilter,
         searchQuery: _searchQuery.isNotEmpty ? _searchQuery : null,
         customerId: _selectedCustomerId,
+        cashierId: _showAllOrders ? null : currentUser?.id,
         startDate: _startDate,
         endDate: _endDate,
         sortColumn: _sortColumn,
@@ -151,6 +157,108 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       }
     });
     _loadOrders();
+  }
+
+  /// Toggle between "my orders" and "all orders".
+  /// Switching to "all orders" requires the tenant password.
+  /// Switching back to "my orders" is always allowed.
+  Future<void> _toggleShowAllOrders() async {
+    final l10n = AppLocalizations.of(context)!;
+
+    if (_showAllOrders) {
+      // Switching back to my orders — no password needed
+      setState(() => _showAllOrders = false);
+      _currentPage = 0;
+      _loadOrders();
+      return;
+    }
+
+    // Switching to all orders — require tenant password
+    final prefs = ref.read(sharedPreferencesProvider);
+    final tenantPasswordHash = prefs.getString('tenant_password_hash');
+
+    if (tenantPasswordHash == null || tenantPasswordHash.isEmpty) {
+      // No tenant password set — allow directly
+      setState(() => _showAllOrders = true);
+      _currentPage = 0;
+      _loadOrders();
+      return;
+    }
+
+    final passwordController = TextEditingController();
+    final verified = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        bool obscure = true;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Row(
+                children: [
+                  Icon(Icons.lock_outline, color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text(l10n.translate('view_all_orders')),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(l10n.translate('enter_tenant_password_to_view_all')),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: obscure,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: l10n.translate('tenant_password'),
+                      prefixIcon: const Icon(Icons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
+                        onPressed: () => setDialogState(() => obscure = !obscure),
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) {
+                      final ok = BCrypt.checkpw(passwordController.text.trim(), tenantPasswordHash);
+                      Navigator.of(context).pop(ok);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(l10n.translate('cancel')),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final ok = BCrypt.checkpw(passwordController.text.trim(), tenantPasswordHash);
+                    Navigator.of(context).pop(ok);
+                  },
+                  child: Text(l10n.translate('confirm')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+
+    if (verified == true) {
+      setState(() => _showAllOrders = true);
+      _currentPage = 0;
+      _loadOrders();
+    } else if (verified == false && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translate('invalid_tenant_password')),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
   }
 
   @override
@@ -232,6 +340,49 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             ),
           ),
         ),
+        // My orders / All orders toggle
+        Tooltip(
+          message: _showAllOrders
+              ? l10n.translate('showing_all_orders')
+              : l10n.translate('showing_my_orders'),
+          child: TextButton.icon(
+            onPressed: _toggleShowAllOrders,
+            icon: Icon(
+              _showAllOrders ? Icons.people : Icons.person,
+              size: 20,
+              color: _showAllOrders
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurface,
+            ),
+            label: Text(
+              _showAllOrders
+                  ? l10n.translate('all_orders')
+                  : l10n.translate('my_orders'),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _showAllOrders
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              backgroundColor: _showAllOrders
+                  ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5)
+                  : null,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: BorderSide(
+                  color: _showAllOrders
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.outline.withValues(alpha: 0.4),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
         // Search by code button
         IconButton(
           icon: const Icon(Icons.search),
