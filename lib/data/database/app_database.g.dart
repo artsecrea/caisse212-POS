@@ -61,6 +61,15 @@ class $CategoriesTable extends Categories
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _colorMeta = const VerificationMeta('color');
+  @override
+  late final GeneratedColumn<String> color = GeneratedColumn<String>(
+    'color',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _isActiveMeta = const VerificationMeta(
     'isActive',
   );
@@ -107,6 +116,7 @@ class $CategoriesTable extends Categories
     imageUrl,
     description,
     displayOrder,
+    color,
     isActive,
     createdAt,
     updatedAt,
@@ -158,6 +168,12 @@ class $CategoriesTable extends Categories
         ),
       );
     }
+    if (data.containsKey('color')) {
+      context.handle(
+        _colorMeta,
+        color.isAcceptableOrUnknown(data['color']!, _colorMeta),
+      );
+    }
     if (data.containsKey('is_active')) {
       context.handle(
         _isActiveMeta,
@@ -205,6 +221,10 @@ class $CategoriesTable extends Categories
         DriftSqlType.int,
         data['${effectivePrefix}display_order'],
       )!,
+      color: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}color'],
+      ),
       isActive: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_active'],
@@ -232,6 +252,7 @@ class Category extends DataClass implements Insertable<Category> {
   final String? imageUrl;
   final String? description;
   final int displayOrder;
+  final String? color;
   final bool isActive;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -241,6 +262,7 @@ class Category extends DataClass implements Insertable<Category> {
     this.imageUrl,
     this.description,
     required this.displayOrder,
+    this.color,
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
@@ -257,6 +279,9 @@ class Category extends DataClass implements Insertable<Category> {
       map['description'] = Variable<String>(description);
     }
     map['display_order'] = Variable<int>(displayOrder);
+    if (!nullToAbsent || color != null) {
+      map['color'] = Variable<String>(color);
+    }
     map['is_active'] = Variable<bool>(isActive);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -274,6 +299,9 @@ class Category extends DataClass implements Insertable<Category> {
           ? const Value.absent()
           : Value(description),
       displayOrder: Value(displayOrder),
+      color: color == null && nullToAbsent
+          ? const Value.absent()
+          : Value(color),
       isActive: Value(isActive),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
@@ -291,6 +319,7 @@ class Category extends DataClass implements Insertable<Category> {
       imageUrl: serializer.fromJson<String?>(json['imageUrl']),
       description: serializer.fromJson<String?>(json['description']),
       displayOrder: serializer.fromJson<int>(json['displayOrder']),
+      color: serializer.fromJson<String?>(json['color']),
       isActive: serializer.fromJson<bool>(json['isActive']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -305,6 +334,7 @@ class Category extends DataClass implements Insertable<Category> {
       'imageUrl': serializer.toJson<String?>(imageUrl),
       'description': serializer.toJson<String?>(description),
       'displayOrder': serializer.toJson<int>(displayOrder),
+      'color': serializer.toJson<String?>(color),
       'isActive': serializer.toJson<bool>(isActive),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -317,6 +347,7 @@ class Category extends DataClass implements Insertable<Category> {
     Value<String?> imageUrl = const Value.absent(),
     Value<String?> description = const Value.absent(),
     int? displayOrder,
+    Value<String?> color = const Value.absent(),
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -326,6 +357,7 @@ class Category extends DataClass implements Insertable<Category> {
     imageUrl: imageUrl.present ? imageUrl.value : this.imageUrl,
     description: description.present ? description.value : this.description,
     displayOrder: displayOrder ?? this.displayOrder,
+    color: color.present ? color.value : this.color,
     isActive: isActive ?? this.isActive,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -341,6 +373,7 @@ class Category extends DataClass implements Insertable<Category> {
       displayOrder: data.displayOrder.present
           ? data.displayOrder.value
           : this.displayOrder,
+      color: data.color.present ? data.color.value : this.color,
       isActive: data.isActive.present ? data.isActive.value : this.isActive,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -355,6 +388,7 @@ class Category extends DataClass implements Insertable<Category> {
           ..write('imageUrl: $imageUrl, ')
           ..write('description: $description, ')
           ..write('displayOrder: $displayOrder, ')
+          ..write('color: $color, ')
           ..write('isActive: $isActive, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -369,6 +403,7 @@ class Category extends DataClass implements Insertable<Category> {
     imageUrl,
     description,
     displayOrder,
+    color,
     isActive,
     createdAt,
     updatedAt,
@@ -382,6 +417,7 @@ class Category extends DataClass implements Insertable<Category> {
           other.imageUrl == this.imageUrl &&
           other.description == this.description &&
           other.displayOrder == this.displayOrder &&
+          other.color == this.color &&
           other.isActive == this.isActive &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
@@ -393,6 +429,7 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
   final Value<String?> imageUrl;
   final Value<String?> description;
   final Value<int> displayOrder;
+  final Value<String?> color;
   final Value<bool> isActive;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
@@ -402,6 +439,7 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
     this.imageUrl = const Value.absent(),
     this.description = const Value.absent(),
     this.displayOrder = const Value.absent(),
+    this.color = const Value.absent(),
     this.isActive = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -412,6 +450,7 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
     this.imageUrl = const Value.absent(),
     this.description = const Value.absent(),
     this.displayOrder = const Value.absent(),
+    this.color = const Value.absent(),
     this.isActive = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -422,6 +461,7 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
     Expression<String>? imageUrl,
     Expression<String>? description,
     Expression<int>? displayOrder,
+    Expression<String>? color,
     Expression<bool>? isActive,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
@@ -432,6 +472,7 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
       if (imageUrl != null) 'image_url': imageUrl,
       if (description != null) 'description': description,
       if (displayOrder != null) 'display_order': displayOrder,
+      if (color != null) 'color': color,
       if (isActive != null) 'is_active': isActive,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -444,6 +485,7 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
     Value<String?>? imageUrl,
     Value<String?>? description,
     Value<int>? displayOrder,
+    Value<String?>? color,
     Value<bool>? isActive,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
@@ -454,6 +496,7 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
       imageUrl: imageUrl ?? this.imageUrl,
       description: description ?? this.description,
       displayOrder: displayOrder ?? this.displayOrder,
+      color: color ?? this.color,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -478,6 +521,9 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
     if (displayOrder.present) {
       map['display_order'] = Variable<int>(displayOrder.value);
     }
+    if (color.present) {
+      map['color'] = Variable<String>(color.value);
+    }
     if (isActive.present) {
       map['is_active'] = Variable<bool>(isActive.value);
     }
@@ -498,6 +544,7 @@ class CategoriesCompanion extends UpdateCompanion<Category> {
           ..write('imageUrl: $imageUrl, ')
           ..write('description: $description, ')
           ..write('displayOrder: $displayOrder, ')
+          ..write('color: $color, ')
           ..write('isActive: $isActive, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
@@ -638,6 +685,15 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     type: DriftSqlType.double,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _colorMeta = const VerificationMeta('color');
+  @override
+  late final GeneratedColumn<String> color = GeneratedColumn<String>(
+    'color',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _isActiveMeta = const VerificationMeta(
     'isActive',
   );
@@ -706,6 +762,7 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     tvaAmount,
     discountAmount,
     finalPrice,
+    color,
     isActive,
     isVariant,
     createdAt,
@@ -804,6 +861,12 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     } else if (isInserting) {
       context.missing(_finalPriceMeta);
     }
+    if (data.containsKey('color')) {
+      context.handle(
+        _colorMeta,
+        color.isAcceptableOrUnknown(data['color']!, _colorMeta),
+      );
+    }
     if (data.containsKey('is_active')) {
       context.handle(
         _isActiveMeta,
@@ -885,6 +948,10 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         DriftSqlType.double,
         data['${effectivePrefix}final_price'],
       )!,
+      color: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}color'],
+      ),
       isActive: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_active'],
@@ -923,6 +990,7 @@ class Product extends DataClass implements Insertable<Product> {
   final double tvaAmount;
   final double discountAmount;
   final double finalPrice;
+  final String? color;
   final bool isActive;
   final bool isVariant;
   final DateTime createdAt;
@@ -940,6 +1008,7 @@ class Product extends DataClass implements Insertable<Product> {
     required this.tvaAmount,
     required this.discountAmount,
     required this.finalPrice,
+    this.color,
     required this.isActive,
     required this.isVariant,
     required this.createdAt,
@@ -970,6 +1039,9 @@ class Product extends DataClass implements Insertable<Product> {
     map['tva_amount'] = Variable<double>(tvaAmount);
     map['discount_amount'] = Variable<double>(discountAmount);
     map['final_price'] = Variable<double>(finalPrice);
+    if (!nullToAbsent || color != null) {
+      map['color'] = Variable<String>(color);
+    }
     map['is_active'] = Variable<bool>(isActive);
     map['is_variant'] = Variable<bool>(isVariant);
     map['created_at'] = Variable<DateTime>(createdAt);
@@ -1001,6 +1073,9 @@ class Product extends DataClass implements Insertable<Product> {
       tvaAmount: Value(tvaAmount),
       discountAmount: Value(discountAmount),
       finalPrice: Value(finalPrice),
+      color: color == null && nullToAbsent
+          ? const Value.absent()
+          : Value(color),
       isActive: Value(isActive),
       isVariant: Value(isVariant),
       createdAt: Value(createdAt),
@@ -1026,6 +1101,7 @@ class Product extends DataClass implements Insertable<Product> {
       tvaAmount: serializer.fromJson<double>(json['tvaAmount']),
       discountAmount: serializer.fromJson<double>(json['discountAmount']),
       finalPrice: serializer.fromJson<double>(json['finalPrice']),
+      color: serializer.fromJson<String?>(json['color']),
       isActive: serializer.fromJson<bool>(json['isActive']),
       isVariant: serializer.fromJson<bool>(json['isVariant']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -1048,6 +1124,7 @@ class Product extends DataClass implements Insertable<Product> {
       'tvaAmount': serializer.toJson<double>(tvaAmount),
       'discountAmount': serializer.toJson<double>(discountAmount),
       'finalPrice': serializer.toJson<double>(finalPrice),
+      'color': serializer.toJson<String?>(color),
       'isActive': serializer.toJson<bool>(isActive),
       'isVariant': serializer.toJson<bool>(isVariant),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -1068,6 +1145,7 @@ class Product extends DataClass implements Insertable<Product> {
     double? tvaAmount,
     double? discountAmount,
     double? finalPrice,
+    Value<String?> color = const Value.absent(),
     bool? isActive,
     bool? isVariant,
     DateTime? createdAt,
@@ -1085,6 +1163,7 @@ class Product extends DataClass implements Insertable<Product> {
     tvaAmount: tvaAmount ?? this.tvaAmount,
     discountAmount: discountAmount ?? this.discountAmount,
     finalPrice: finalPrice ?? this.finalPrice,
+    color: color.present ? color.value : this.color,
     isActive: isActive ?? this.isActive,
     isVariant: isVariant ?? this.isVariant,
     createdAt: createdAt ?? this.createdAt,
@@ -1112,6 +1191,7 @@ class Product extends DataClass implements Insertable<Product> {
       finalPrice: data.finalPrice.present
           ? data.finalPrice.value
           : this.finalPrice,
+      color: data.color.present ? data.color.value : this.color,
       isActive: data.isActive.present ? data.isActive.value : this.isActive,
       isVariant: data.isVariant.present ? data.isVariant.value : this.isVariant,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
@@ -1134,6 +1214,7 @@ class Product extends DataClass implements Insertable<Product> {
           ..write('tvaAmount: $tvaAmount, ')
           ..write('discountAmount: $discountAmount, ')
           ..write('finalPrice: $finalPrice, ')
+          ..write('color: $color, ')
           ..write('isActive: $isActive, ')
           ..write('isVariant: $isVariant, ')
           ..write('createdAt: $createdAt, ')
@@ -1156,6 +1237,7 @@ class Product extends DataClass implements Insertable<Product> {
     tvaAmount,
     discountAmount,
     finalPrice,
+    color,
     isActive,
     isVariant,
     createdAt,
@@ -1177,6 +1259,7 @@ class Product extends DataClass implements Insertable<Product> {
           other.tvaAmount == this.tvaAmount &&
           other.discountAmount == this.discountAmount &&
           other.finalPrice == this.finalPrice &&
+          other.color == this.color &&
           other.isActive == this.isActive &&
           other.isVariant == this.isVariant &&
           other.createdAt == this.createdAt &&
@@ -1196,6 +1279,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
   final Value<double> tvaAmount;
   final Value<double> discountAmount;
   final Value<double> finalPrice;
+  final Value<String?> color;
   final Value<bool> isActive;
   final Value<bool> isVariant;
   final Value<DateTime> createdAt;
@@ -1213,6 +1297,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.tvaAmount = const Value.absent(),
     this.discountAmount = const Value.absent(),
     this.finalPrice = const Value.absent(),
+    this.color = const Value.absent(),
     this.isActive = const Value.absent(),
     this.isVariant = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -1231,6 +1316,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.tvaAmount = const Value.absent(),
     this.discountAmount = const Value.absent(),
     required double finalPrice,
+    this.color = const Value.absent(),
     this.isActive = const Value.absent(),
     this.isVariant = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -1251,6 +1337,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Expression<double>? tvaAmount,
     Expression<double>? discountAmount,
     Expression<double>? finalPrice,
+    Expression<String>? color,
     Expression<bool>? isActive,
     Expression<bool>? isVariant,
     Expression<DateTime>? createdAt,
@@ -1269,6 +1356,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       if (tvaAmount != null) 'tva_amount': tvaAmount,
       if (discountAmount != null) 'discount_amount': discountAmount,
       if (finalPrice != null) 'final_price': finalPrice,
+      if (color != null) 'color': color,
       if (isActive != null) 'is_active': isActive,
       if (isVariant != null) 'is_variant': isVariant,
       if (createdAt != null) 'created_at': createdAt,
@@ -1289,6 +1377,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Value<double>? tvaAmount,
     Value<double>? discountAmount,
     Value<double>? finalPrice,
+    Value<String?>? color,
     Value<bool>? isActive,
     Value<bool>? isVariant,
     Value<DateTime>? createdAt,
@@ -1307,6 +1396,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       tvaAmount: tvaAmount ?? this.tvaAmount,
       discountAmount: discountAmount ?? this.discountAmount,
       finalPrice: finalPrice ?? this.finalPrice,
+      color: color ?? this.color,
       isActive: isActive ?? this.isActive,
       isVariant: isVariant ?? this.isVariant,
       createdAt: createdAt ?? this.createdAt,
@@ -1353,6 +1443,9 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     if (finalPrice.present) {
       map['final_price'] = Variable<double>(finalPrice.value);
     }
+    if (color.present) {
+      map['color'] = Variable<String>(color.value);
+    }
     if (isActive.present) {
       map['is_active'] = Variable<bool>(isActive.value);
     }
@@ -1383,6 +1476,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
           ..write('tvaAmount: $tvaAmount, ')
           ..write('discountAmount: $discountAmount, ')
           ..write('finalPrice: $finalPrice, ')
+          ..write('color: $color, ')
           ..write('isActive: $isActive, ')
           ..write('isVariant: $isVariant, ')
           ..write('createdAt: $createdAt, ')
@@ -14790,6 +14884,7 @@ typedef $$CategoriesTableCreateCompanionBuilder =
       Value<String?> imageUrl,
       Value<String?> description,
       Value<int> displayOrder,
+      Value<String?> color,
       Value<bool> isActive,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -14801,6 +14896,7 @@ typedef $$CategoriesTableUpdateCompanionBuilder =
       Value<String?> imageUrl,
       Value<String?> description,
       Value<int> displayOrder,
+      Value<String?> color,
       Value<bool> isActive,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
@@ -14837,6 +14933,11 @@ class $$CategoriesTableFilterComposer
 
   ColumnFilters<int> get displayOrder => $composableBuilder(
     column: $table.displayOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get color => $composableBuilder(
+    column: $table.color,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -14890,6 +14991,11 @@ class $$CategoriesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get color => $composableBuilder(
+    column: $table.color,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isActive => $composableBuilder(
     column: $table.isActive,
     builder: (column) => ColumnOrderings(column),
@@ -14934,6 +15040,9 @@ class $$CategoriesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get color =>
+      $composableBuilder(column: $table.color, builder: (column) => column);
+
   GeneratedColumn<bool> get isActive =>
       $composableBuilder(column: $table.isActive, builder: (column) => column);
 
@@ -14977,6 +15086,7 @@ class $$CategoriesTableTableManager
                 Value<String?> imageUrl = const Value.absent(),
                 Value<String?> description = const Value.absent(),
                 Value<int> displayOrder = const Value.absent(),
+                Value<String?> color = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -14986,6 +15096,7 @@ class $$CategoriesTableTableManager
                 imageUrl: imageUrl,
                 description: description,
                 displayOrder: displayOrder,
+                color: color,
                 isActive: isActive,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -14997,6 +15108,7 @@ class $$CategoriesTableTableManager
                 Value<String?> imageUrl = const Value.absent(),
                 Value<String?> description = const Value.absent(),
                 Value<int> displayOrder = const Value.absent(),
+                Value<String?> color = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
@@ -15006,6 +15118,7 @@ class $$CategoriesTableTableManager
                 imageUrl: imageUrl,
                 description: description,
                 displayOrder: displayOrder,
+                color: color,
                 isActive: isActive,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
@@ -15046,6 +15159,7 @@ typedef $$ProductsTableCreateCompanionBuilder =
       Value<double> tvaAmount,
       Value<double> discountAmount,
       required double finalPrice,
+      Value<String?> color,
       Value<bool> isActive,
       Value<bool> isVariant,
       Value<DateTime> createdAt,
@@ -15065,6 +15179,7 @@ typedef $$ProductsTableUpdateCompanionBuilder =
       Value<double> tvaAmount,
       Value<double> discountAmount,
       Value<double> finalPrice,
+      Value<String?> color,
       Value<bool> isActive,
       Value<bool> isVariant,
       Value<DateTime> createdAt,
@@ -15137,6 +15252,11 @@ class $$ProductsTableFilterComposer
 
   ColumnFilters<double> get finalPrice => $composableBuilder(
     column: $table.finalPrice,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get color => $composableBuilder(
+    column: $table.color,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -15230,6 +15350,11 @@ class $$ProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get color => $composableBuilder(
+    column: $table.color,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isActive => $composableBuilder(
     column: $table.isActive,
     builder: (column) => ColumnOrderings(column),
@@ -15304,6 +15429,9 @@ class $$ProductsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get color =>
+      $composableBuilder(column: $table.color, builder: (column) => column);
+
   GeneratedColumn<bool> get isActive =>
       $composableBuilder(column: $table.isActive, builder: (column) => column);
 
@@ -15357,6 +15485,7 @@ class $$ProductsTableTableManager
                 Value<double> tvaAmount = const Value.absent(),
                 Value<double> discountAmount = const Value.absent(),
                 Value<double> finalPrice = const Value.absent(),
+                Value<String?> color = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<bool> isVariant = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -15374,6 +15503,7 @@ class $$ProductsTableTableManager
                 tvaAmount: tvaAmount,
                 discountAmount: discountAmount,
                 finalPrice: finalPrice,
+                color: color,
                 isActive: isActive,
                 isVariant: isVariant,
                 createdAt: createdAt,
@@ -15393,6 +15523,7 @@ class $$ProductsTableTableManager
                 Value<double> tvaAmount = const Value.absent(),
                 Value<double> discountAmount = const Value.absent(),
                 required double finalPrice,
+                Value<String?> color = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<bool> isVariant = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -15410,6 +15541,7 @@ class $$ProductsTableTableManager
                 tvaAmount: tvaAmount,
                 discountAmount: discountAmount,
                 finalPrice: finalPrice,
+                color: color,
                 isActive: isActive,
                 isVariant: isVariant,
                 createdAt: createdAt,

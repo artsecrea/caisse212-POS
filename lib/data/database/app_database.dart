@@ -64,7 +64,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration {
@@ -86,6 +86,23 @@ class AppDatabase extends _$AppDatabase {
             );
           } catch (e) {
             // Column may already exist if fresh install
+          }
+        }
+        if (from < 3) {
+          // Add color column to products and categories
+          try {
+            await customStatement(
+              'ALTER TABLE products ADD COLUMN color TEXT;',
+            );
+          } catch (e) {
+            // Column may already exist
+          }
+          try {
+            await customStatement(
+              'ALTER TABLE categories ADD COLUMN color TEXT;',
+            );
+          } catch (e) {
+            // Column may already exist
           }
         }
       },

@@ -793,6 +793,7 @@ class ServerService {
         'categoryId': p.categoryId,
         'stationId': p.stationId,
         'isVariant': p.isVariant,
+        'color': p.color,
       }).toList();
 
       return Response.ok(
@@ -824,6 +825,7 @@ class ServerService {
         'imageUrl': c.imageUrl,
         'description': c.description,
         'displayOrder': c.displayOrder,
+        'color': c.color,
       }).toList();
 
       return Response.ok(

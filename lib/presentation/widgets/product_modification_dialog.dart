@@ -546,11 +546,11 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   width: 80,
                   height: 80,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _placeholderImage(context),
+                  errorBuilder: (_, __, ___) => _placeholderImage(context, productName),
                 )
-                    : _placeholderImage(context),
+                    : const SizedBox.shrink(),
               ),
-              const SizedBox(width: 16),
+              SizedBox(width: productImageUrl != null ? 16 : 0),
               Expanded(
                 child: componentsAsync.maybeWhen(
                   data: (componentsData) {
@@ -624,11 +624,23 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 
-  Widget _placeholderImage(BuildContext context) => Container(
+  Widget _placeholderImage(BuildContext context, String name) => Container(
     width: 80,
     height: 80,
-    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-    child: const Icon(Icons.fastfood, size: 40),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    padding: const EdgeInsets.all(4),
+    child: Center(
+      child: Text(
+        name,
+        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+        textAlign: TextAlign.center,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+    ),
   );
 
   // ─── Quantity row (single definition, no duplication) ────────────────────────

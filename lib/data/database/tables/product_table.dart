@@ -16,6 +16,7 @@ class Products extends Table {
   RealColumn get tvaAmount => real().withDefault(const Constant(0.0))();
   RealColumn get discountAmount => real().withDefault(const Constant(0.0))();
   RealColumn get finalPrice => real()();
+  TextColumn get color => text().nullable()();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
   BoolColumn get isVariant => boolean().withDefault(const Constant(false))();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();

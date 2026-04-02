@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
@@ -108,6 +107,7 @@ class CategorySelector extends ConsumerWidget {
               name: category.name,
               imageUrl: category.imageUrl,
               isSelected: selectedCategory == category.id,
+              colorHex: category.color,
               onTap: () {
                 ref.read(selectedCategoryProvider.notifier).state = category.id;
               },
@@ -249,17 +249,46 @@ class _CategoryChip extends StatelessWidget {
   final String name;
   final String? imageUrl;
   final bool isSelected;
+  final String? colorHex;
   final VoidCallback onTap;
 
   const _CategoryChip({
     required this.name,
     this.imageUrl,
     required this.isSelected,
+    this.colorHex,
     required this.onTap,
   });
 
+  Color? _parseColor(String? colorStr) {
+    if (colorStr == null || colorStr.isEmpty) return null;
+    try {
+      String hex = colorStr.replaceAll('#', '');
+      if (hex.length == 6) hex = 'FF$hex';
+      if (hex.length == 8) {
+        return Color(int.parse(hex, radix: 16));
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Color _textColorFor(Color? bg) {
+    if (bg == null) return Colors.black;
+    return bg.computeLuminance() > 0.5 ? Colors.black : Colors.white;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final chipColor = _parseColor(colorHex);
+    final bgColor = isSelected
+        ? Theme.of(context).primaryColor
+        : chipColor ?? Theme.of(context).colorScheme.surfaceContainerHighest;
+    final textColor = isSelected
+        ? Colors.white
+        : chipColor != null
+            ? _textColorFor(chipColor)
+            : Theme.of(context).colorScheme.onSurface;
+
     return Padding(
       padding: const EdgeInsets.only(right: 12),
       child: InkWell(
@@ -271,13 +300,11 @@ class _CategoryChip extends StatelessWidget {
             maxWidth: 120,
           ),
           decoration: BoxDecoration(
-            color: isSelected
-                ? Theme.of(context).primaryColor
-                : Theme.of(context).colorScheme.surfaceContainerHighest,
+            color: bgColor,
             border: Border.all(
               color: isSelected
                   ? Theme.of(context).primaryColor
-                  : Colors.grey[300]!,
+                  : chipColor ?? Colors.grey[300]!,
               width: 2,
             ),
           ),
@@ -290,7 +317,7 @@ class _CategoryChip extends StatelessWidget {
                 child: Text(
                   name,
                   style: TextStyle(
-                    color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                    color: textColor,
                     fontSize: 20,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   ),

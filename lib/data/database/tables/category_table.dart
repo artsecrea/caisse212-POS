@@ -9,6 +9,7 @@ class Categories extends Table {
   TextColumn get imageUrl => text().nullable()();
   TextColumn get description => text().nullable()();
   IntColumn get displayOrder => integer().withDefault(const Constant(0))();
+  TextColumn get color => text().nullable()();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
