@@ -860,10 +860,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                       if (reloadedOrder != null) {
                         try {
+                          final prefs = ref.read(sharedPreferencesProvider);
+                          final businessName = prefs.getString('business_name');
                           await printingService.printOrderReceipt(
                             order: reloadedOrder,
                             cashierName: currentUser.firstName,
-                            storeName: '#',
+                            storeName: businessName,
                           );
 
                           if (printingService.config.kdsEnabled) {

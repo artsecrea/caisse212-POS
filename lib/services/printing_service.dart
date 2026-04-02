@@ -557,12 +557,16 @@ class PrintingService {
       final base64Logo = prefs.getString('business_logo');
       if (base64Logo == null || base64Logo.isEmpty) return null;
 
-      final logoBytes = base64Decode(base64Logo);
-      final decoded = img.decodeImage(Uint8List.fromList(logoBytes));
+      final logoBytes = Uint8List.fromList(base64Decode(base64Logo));
+      debugPrint('Logo bytes length: ${logoBytes.length}, first bytes: ${logoBytes.take(8).toList()}');
+
+      final decoded = img.decodeImage(logoBytes);
       if (decoded == null) {
-        debugPrint('Failed to decode business logo image');
+        debugPrint('Failed to decode business logo image (decodeImage returned null)');
         return null;
       }
+
+      debugPrint('Logo decoded: ${decoded.width}x${decoded.height}');
 
       // Resize to fit receipt width (max ~384px for 58mm, ~576px for 80mm)
       final maxWidth = _config.paperSize == PaperSize.mm58 ? 384 : 576;
@@ -571,19 +575,22 @@ class PrintingService {
         resized = img.copyResize(decoded, width: maxWidth);
       }
 
-      // Create a new opaque RGB image (no alpha) with white background
+      // Create a new opaque RGBA image with white background.
+      // Must keep 4 channels (RGBA) because the printer library's rasterizer
+      // calls getBytes(order: ChannelOrder.rgba) and expects 4 bytes per pixel.
+      // Do NOT pre-grayscale — the printer library handles grayscale + invert internally.
       final w = resized.width;
       final h = resized.height;
-      final result = img.Image(width: w, height: h, numChannels: 3);
+      final result = img.Image(width: w, height: h, numChannels: 4);
 
-      // Fill with white
-      img.fill(result, color: img.ColorRgb8(255, 255, 255));
+      // Fill with opaque white
+      img.fill(result, color: img.ColorRgba8(255, 255, 255, 255));
 
       // Composite the original image onto white, handling alpha blending
       img.compositeImage(result, resized);
 
-      // Convert to grayscale for thermal printer compatibility
-      return img.grayscale(result);
+      debugPrint('Logo ready for printing: ${result.width}x${result.height}, channels=${result.numChannels}');
+      return result;
     } catch (e) {
       debugPrint('Error loading business logo: $e');
       return null;
@@ -939,7 +946,7 @@ class PrintingService {
           ),
         );
         bytes += generator.barcode(
-          Barcode.code128(order.orderCode!.codeUnits),
+          Barcode.code128(order.orderCode!.split('')),
           height: 80,
           align: PosAlign.center,
         );
@@ -1120,7 +1127,7 @@ class PrintingService {
           ),
         );
         bytes += generator.barcode(
-          Barcode.code128(order.orderCode!.codeUnits),
+          Barcode.code128(order.orderCode!.split('')),
           height: 80,
           align: PosAlign.center,
         );
@@ -1375,7 +1382,7 @@ class PrintingService {
           ),
         );
         bytes += generator.barcode(
-          Barcode.code128(orderCode.codeUnits),
+          Barcode.code128(orderCode.split('')),
           height: 80,
           align: PosAlign.center,
         );

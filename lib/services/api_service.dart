@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -185,12 +186,12 @@ class ApiService {
             final logoData = data['posTerminal']['businessLogo'];
             String base64Logo;
             if (logoData is String) {
-              // Already a base64 string
+              // Already a base64 string - use as-is
               base64Logo = logoData;
             } else if (logoData is List) {
-              // Byte array from server
-              final bytes = List<int>.from(logoData);
-              base64Logo = base64Encode(bytes);
+              // Byte array from server (may contain signed values from Java: -128 to 127)
+              final bytes = logoData.map<int>((e) => (e as int) & 0xFF).toList();
+              base64Logo = base64Encode(Uint8List.fromList(bytes));
             } else {
               throw Exception('Unexpected logo data type: ${logoData.runtimeType}');
             }

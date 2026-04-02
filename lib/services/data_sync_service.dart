@@ -3,7 +3,10 @@ import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/pending_operations_service.dart';
 import 'package:loggecrea/loggecrea.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import 'dart:convert';
+import 'dart:io';
 
 /// Data Sync Service for fetching data from API and storing in local database
 class DataSyncService {
@@ -61,6 +64,53 @@ class DataSyncService {
     await (_database.delete(_database.customers)
       ..where((c) => c.isSynced.equals(true) & c.createdAt.isSmallerThanValue(cutoffDate)))
       .go();
+  }
+
+  /// Dump/backup the database file before clearing.
+  /// Copies the current DB to a timestamped backup in a 'backups' subdirectory.
+  /// Returns the path to the backup file, or null if backup failed.
+  Future<String?> dumpDatabaseBeforeClear() async {
+    try {
+      final dbFolder = await getApplicationDocumentsDirectory();
+      final dbFile = File(p.join(dbFolder.path, AppDatabase.dbName));
+
+      if (!await dbFile.exists()) {
+        _logger.warning('Database file does not exist, nothing to dump');
+        return null;
+      }
+
+      // Create backups directory
+      final backupDir = Directory(p.join(dbFolder.path, 'backups'));
+      if (!await backupDir.exists()) {
+        await backupDir.create(recursive: true);
+      }
+
+      // Create timestamped backup filename
+      final timestamp = DateTime.now().toIso8601String().replaceAll(':', '-').replaceAll('.', '-');
+      final backupPath = p.join(backupDir.path, 'backup_$timestamp.db');
+      await dbFile.copy(backupPath);
+
+      _logger.info('Database backed up to: $backupPath');
+
+      // Clean up old backups - keep only the last 5
+      final backups = backupDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.db'))
+          .toList()
+        ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+      for (var i = 5; i < backups.length; i++) {
+        try {
+          await backups[i].delete();
+        } catch (_) {}
+      }
+
+      return backupPath;
+    } catch (e) {
+      _logger.error('Failed to dump database: $e');
+      return null;
+    }
   }
 
   /// Clear all data from the database (for demo mode or full reset)
@@ -171,6 +221,7 @@ class DataSyncService {
           description: Value(category['description']),
           displayOrder: Value(category['displayOrder'] ?? 0),
           isActive: Value(category['isActive'] ?? true),
+          color: Value(category['color']),
         ),
         mode: InsertMode.insertOrReplace,
       );
@@ -210,6 +261,7 @@ class DataSyncService {
           finalPrice: (product['finalPrice'] as num).toDouble(),
           isActive: Value(product['isActive'] ?? true),
           isVariant: Value(product['isVariant'] ?? false),
+          color: Value(product['color']),
         ),
         mode: InsertMode.insertOrReplace,
       );

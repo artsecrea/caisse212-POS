@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,8 +26,7 @@ class ProductModificationDialog extends ConsumerStatefulWidget {
   ConsumerState<ProductModificationDialog> createState() => _ProductModificationDialogState();
 }
 
-class _ProductModificationDialogState extends ConsumerState<ProductModificationDialog>
-    with SingleTickerProviderStateMixin {
+class _ProductModificationDialogState extends ConsumerState<ProductModificationDialog> {
   final Map<int, int> _componentQuantities = {};
   final Map<int, bool> _componentSpecial = {};
 
@@ -36,7 +34,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   late TextEditingController _noteController;
   late TextEditingController _quantityController;
   late FocusNode _discountFocusNode;
-  late TabController _tabController;
 
   bool _isPercentageDiscount = false;
   double _productDiscount = 0.0;
@@ -65,7 +62,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
     _manualDiscountController = TextEditingController();
     _noteController = TextEditingController();
     _quantityController = TextEditingController(text: '1');
@@ -103,7 +99,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   @override
   void dispose() {
-    _tabController.dispose();
     _manualDiscountController.dispose();
     _noteController.dispose();
     _quantityController.dispose();
@@ -138,6 +133,22 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   void _updateSelectedVariant(AsyncValue<List<Map<String, dynamic>>> variantsAsync) {
     variantsAsync.whenData((variantsData) {
+      // Auto-clear selections that became incompatible.
+      // For each selected attribute, check if its value is still reachable
+      // given the other selections.
+      bool cleared = true;
+      while (cleared) {
+        cleared = false;
+        for (final attrId in _selectedAttributeValues.keys.toList()) {
+          final compatible = _getCompatibleValueIds(attrId, variantsData);
+          if (!compatible.contains(_selectedAttributeValues[attrId])) {
+            _selectedAttributeValues.remove(attrId);
+            cleared = true; // removal may affect other attributes, re-check
+          }
+        }
+      }
+
+      // Now try to find a variant that matches ALL remaining selections
       for (final vData in variantsData) {
         final attributeValues = vData['attributeValues'] as List;
         if (attributeValues.length != _selectedAttributeValues.length) continue;
@@ -433,13 +444,18 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       child: Container(
-        width: 750,
-        constraints: const BoxConstraints(maxHeight: 850),
+        width: MediaQuery.of(context).size.width * 0.85,
+        constraints: BoxConstraints(
+          maxWidth: 1100,
+          maxHeight: MediaQuery.of(context).size.height * 0.9,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // ── Header: product name, image, price, close ──
             _buildHeader(
               context,
               productName: productName,
@@ -450,36 +466,40 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               l10n: l10n,
             ),
 
+            // ── Variant selector (if applicable) ──
             if (_isVariantProduct && attributesAsync != null)
               _buildVariantSection(
                   context, attributesAsync, variantsAsync, l10n),
 
-            TabBar(
-              controller: _tabController,
-              labelColor: Theme.of(context).primaryColor,
-              unselectedLabelColor:
-              Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-              indicatorColor: Theme.of(context).primaryColor,
-              tabs: [
-                Tab(icon: const Icon(Icons.restaurant_menu), text: l10n.translate('components')),
-                Tab(
-                  icon: const Icon(Icons.attach_money),
-                  text: '${l10n.translate("price")} & ${l10n.translate("discounts")}',
-                ),
-              ],
-            ),
-
+            // ── Two-column body ──
             Expanded(
-              child: TabBarView(
-                controller: _tabController,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildComponentsTab(componentsAsync, componentGroupsAsync),
-                  _buildPriceDiscountTab(productPrice),
+                  // LEFT: Discount, Note, Preview
+                  Expanded(
+                    flex: 4,
+                    child: _buildLeftPanel(productPrice, l10n, currencyFormatter),
+                  ),
+                  // Divider
+                  Container(
+                    width: 1,
+                    color: Theme.of(context).dividerColor,
+                  ),
+                  // RIGHT: Components
+                  Expanded(
+                    flex: 5,
+                    child: _buildComponentsPanel(componentsAsync, componentGroupsAsync, l10n),
+                  ),
                 ],
               ),
             ),
 
-            Padding(
+            // ── Footer buttons ──
+            Container(
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+              ),
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
@@ -514,6 +534,302 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 
+  // ─── Left panel: Quantity, Discount, Note, Preview ───────────────────────────
+
+  Widget _buildLeftPanel(double basePrice, AppLocalizations l10n, CurrencyFormatter currencyFormatter) {
+    final componentsAsync = ref.watch(productComponentsProvider(_productId));
+    final currency = ref.watch(settingsProvider).currency;
+
+    return componentsAsync.when(
+      data: (componentsData) {
+        final componentTotal = _calculateComponentTotal(componentsData);
+        final priceWithComponents = basePrice + componentTotal;
+        final maxDiscountValue =
+            _isPercentageDiscount ? 100.0 : (priceWithComponents - _productDiscount);
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Quantity ──
+              _buildQuantityRow(context, componentsAsync, basePrice, currencyFormatter, l10n),
+              const SizedBox(height: 16),
+
+              // ── Product discount (read-only) ──
+              if (_productDiscount > 0) ...[
+                _buildProductDiscountCard(l10n, currencyFormatter),
+                const SizedBox(height: 12),
+              ],
+
+              // ── Manual discount ──
+              PermissionGuard(
+                permission: Permissions.manualDiscount,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.translate('discount'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: OnscreenKeyboardTextField(
+                            controller: _manualDiscountController,
+                            focusNode: _discountFocusNode,
+                            keyboardType:
+                                const TextInputType.numberWithOptions(decimal: true),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                  RegExp(r'^\d*\.?\d{0,2}')),
+                            ],
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              prefixIcon: Icon(_isPercentageDiscount
+                                  ? Icons.percent
+                                  : Icons.attach_money),
+                              hintText: '0.00',
+                              suffixText: _isPercentageDiscount ? '%' : currency,
+                              errorText: _discountError,
+                              helperText: _isPercentageDiscount
+                                  ? '${l10n.translate("max")}: 100%'
+                                  : '${l10n.translate("max")}: ${currencyFormatter.format(maxDiscountValue > 0 ? maxDiscountValue : 0)}',
+                              isDense: true,
+                            ),
+                            onChanged: (value) =>
+                                _validateAndUpdateDiscount(value, priceWithComponents),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SegmentedButton<bool>(
+                          segments: [
+                            ButtonSegment(
+                              value: false,
+                              label: Text(currency),
+                              icon: const Icon(Icons.attach_money, size: 16),
+                            ),
+                            const ButtonSegment(
+                              value: true,
+                              label: Text('%'),
+                              icon: Icon(Icons.percent, size: 16),
+                            ),
+                          ],
+                          selected: {_isPercentageDiscount},
+                          onSelectionChanged: (newSelection) {
+                            setState(() {
+                              _isPercentageDiscount = newSelection.first;
+                              _validateAndUpdateDiscount(
+                                  _manualDiscountController.text, priceWithComponents);
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+
+              // ── Note ──
+              Text(
+                l10n.translate('note'),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _noteController,
+                decoration: InputDecoration(
+                  labelText: l10n.translate('add_note'),
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.note),
+                  isDense: true,
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 16),
+
+              // ── Preview ──
+              _buildPreviewCard(
+                basePrice: basePrice,
+                componentTotal: componentTotal,
+                priceWithComponents: priceWithComponents,
+                currencyFormatter: currencyFormatter,
+                l10n: l10n,
+              ),
+            ],
+          ),
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) =>
+          Center(child: Text(l10n.translate('error_loading_components'))),
+    );
+  }
+
+  Widget _buildProductDiscountCard(AppLocalizations l10n, CurrencyFormatter currencyFormatter) {
+    final totalProductDiscount = _productDiscount * _quantity;
+    final discountColor = Theme.of(context).brightness == Brightness.dark
+        ? Colors.green[400]!
+        : Colors.green[700]!;
+    return Card(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          children: [
+            Icon(Icons.local_offer, size: 20, color: discountColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                l10n.translate('built_in_discount'),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+            Text(
+              '-${currencyFormatter.format(totalProductDiscount)}',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: discountColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Right panel: Components ─────────────────────────────────────────────────
+
+  Widget _buildComponentsPanel(
+      AsyncValue<List<dynamic>> componentsAsync,
+      AsyncValue<List<dynamic>> componentGroupsAsync,
+      AppLocalizations l10n,
+  ) {
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Section header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.restaurant_menu, size: 18, color: Theme.of(context).primaryColor),
+              const SizedBox(width: 8),
+              Text(
+                l10n.translate('components'),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).primaryColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Components list
+        Expanded(
+          child: _buildComponentsList(componentsAsync, componentGroupsAsync, currencyFormatter, l10n),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildComponentsList(
+      AsyncValue<List<dynamic>> componentsAsync,
+      AsyncValue<List<dynamic>> componentGroupsAsync,
+      CurrencyFormatter currencyFormatter,
+      AppLocalizations l10n,
+  ) {
+    return componentsAsync.when(
+      data: (componentsData) {
+        if (componentsData.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.restaurant_menu, size: 48,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                const SizedBox(height: 8),
+                Text(l10n.translate('no_components'),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              ],
+            ),
+          );
+        }
+
+        return componentGroupsAsync.when(
+          data: (groups) {
+            final Map<int?, List<Map<String, dynamic>>> grouped = {};
+            for (var cd in componentsData) {
+              final groupId = cd['component']?.componentGroupId as int?;
+              grouped.putIfAbsent(groupId, () => []).add(cd);
+            }
+
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              itemCount: grouped.length,
+              itemBuilder: (context, index) {
+                final groupId = grouped.keys.elementAt(index);
+                final groupComponents = grouped[groupId]!;
+                final group = groupId != null
+                    ? groups.cast<dynamic>().firstWhere(
+                          (g) => g.id == groupId,
+                      orElse: () => null,
+                    )
+                    : null;
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (group != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                        child: Text(
+                          group.name as String,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8),
+                          ),
+                        ),
+                      ),
+                    ...groupComponents.map((cd) =>
+                        _buildComponentCard(cd, currencyFormatter, l10n)),
+                  ],
+                );
+              },
+            );
+          },
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => Center(child: Text('Error: $error')),
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => const Center(child: Text('Error.')),
+    );
+  }
+
   // ─── Header ──────────────────────────────────────────────────────────────────
 
   Widget _buildHeader(
@@ -526,7 +842,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         required AppLocalizations l10n,
       }) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       decoration: BoxDecoration(
         color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
         borderRadius: const BorderRadius.only(
@@ -534,116 +850,80 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           topRight: Radius.circular(16),
         ),
       ),
-      child: Column(
+      child: Row(
         children: [
-          Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: productImageUrl != null
-                    ? Image.network(
-                  productImageUrl,
-                  width: 80,
-                  height: 80,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _placeholderImage(context, productName),
-                )
-                    : const SizedBox.shrink(),
+          if (productImageUrl != null) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(
+                productImageUrl,
+                width: 56,
+                height: 56,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
-              SizedBox(width: productImageUrl != null ? 16 : 0),
-              Expanded(
-                child: componentsAsync.maybeWhen(
+            ),
+            const SizedBox(width: 14),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _variantName ?? productName,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (_variantName != null)
+                  Text(
+                    productName,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                const SizedBox(height: 2),
+                componentsAsync.maybeWhen(
                   data: (componentsData) {
                     final componentTotal = _calculateComponentTotal(componentsData);
-                    final priceWithComponents = productPrice + componentTotal;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _variantName ?? productName,
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                        if (_variantName != null)
-                          Text(
-                            productName,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                            ),
-                          ),
-                        const SizedBox(height: 4),
-                        Text(
-                          currencyFormatter.format(productPrice),
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        if (componentTotal > 0) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            '+${currencyFormatter.format(componentTotal)} ${l10n.translate("components")}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.green[700],
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 4),
-                        Text(
-                          currencyFormatter.format(priceWithComponents),
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                      ],
+                    final total = (productPrice + componentTotal) * _quantity;
+                    return Text(
+                      '${currencyFormatter.format(productPrice)}${componentTotal > 0 ? '  +${currencyFormatter.format(componentTotal)}' : ''}  ×$_quantity  =  ${currencyFormatter.format(total)}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                     );
                   },
-                  orElse: () => Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(productName,
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 4),
-                      Text(currencyFormatter.format(productPrice),
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    ],
+                  orElse: () => Text(
+                    currencyFormatter.format(productPrice),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
                   ),
                 ),
-              ),
-              IconButton(
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.close),
-              ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 16),
-          _buildQuantityRow(context, componentsAsync, productPrice, currencyFormatter, l10n),
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close),
+            tooltip: l10n.translate('close'),
+          ),
         ],
       ),
     );
   }
 
-  Widget _placeholderImage(BuildContext context, String name) => Container(
-    width: 80,
-    height: 80,
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(8),
-    ),
-    padding: const EdgeInsets.all(4),
-    child: Center(
-      child: Text(
-        name,
-        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-        textAlign: TextAlign.center,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-      ),
-    ),
-  );
-
-  // ─── Quantity row (single definition, no duplication) ────────────────────────
+  // ─── Quantity row ────────────────────────────────────────────────────────────
 
   Widget _buildQuantityRow(
       BuildContext context,
@@ -652,19 +932,17 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       CurrencyFormatter currencyFormatter,
       AppLocalizations l10n,
       ) {
-    final componentTotal = componentsAsync.maybeWhen(
-      data: (data) => _calculateComponentTotal(data),
-      orElse: () => 0.0,
-    );
-    final totalPrice = (productPrice + componentTotal) * _quantity;
-
     return Row(
       children: [
         Text(
           '${l10n.translate("quantity")}:',
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 8),
         IconButton(
           onPressed: _quantity > 1
               ? () => setState(() {
@@ -674,19 +952,27 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               : null,
           icon: Icon(
             Icons.remove_circle,
-            color: _quantity > 1 ? Colors.red : Colors.grey,
-            size: 32,
+            color: _quantity > 1
+                ? Theme.of(context).colorScheme.error
+                : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
+            size: 30,
           ),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
         ),
         SizedBox(
-          width: 100,
+          width: 70,
           child: OnscreenKeyboardTextField(
             controller: _quantityController,
             keyboardType: TextInputType.number,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
             decoration: InputDecoration(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               isDense: true,
             ),
@@ -703,18 +989,67 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             _quantity++;
             _quantityController.text = _quantity.toString();
           }),
-          icon: Icon(Icons.add_circle, color: Theme.of(context).primaryColor, size: 32),
-        ),
-        const Spacer(),
-        Text(
-          '${l10n.translate("total")}: ${currencyFormatter.format(totalPrice)}',
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          icon: Icon(Icons.add_circle, color: Theme.of(context).primaryColor, size: 30),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
         ),
       ],
     );
   }
 
   // ─── Variant section ─────────────────────────────────────────────────────────
+
+  /// For a given [attributeId], return the set of valueIds that are compatible
+  /// with the currently selected values of all *other* attributes.
+  ///
+  /// A valueId is compatible if at least one active variant exists that has:
+  ///  - that (attributeId, valueId) pair, AND
+  ///  - every other currently-selected (otherAttributeId, otherValueId) pair.
+  ///
+  /// If no other attributes have been selected yet, all values are compatible.
+  Set<int> _getCompatibleValueIds(
+      int attributeId,
+      List<Map<String, dynamic>> variantsData,
+      ) {
+    // Selections for attributes OTHER than the one we're checking
+    final otherSelections = Map<int, int>.from(_selectedAttributeValues)
+      ..remove(attributeId);
+
+    // If nothing else is selected, everything is compatible
+    if (otherSelections.isEmpty) {
+      final allValueIds = <int>{};
+      for (final vData in variantsData) {
+        final avList = vData['attributeValues'] as List;
+        for (final av in avList) {
+          if (av.attributeId == attributeId) {
+            allValueIds.add(av.valueId as int);
+          }
+        }
+      }
+      return allValueIds;
+    }
+
+    final compatible = <int>{};
+
+    for (final vData in variantsData) {
+      final avList = vData['attributeValues'] as List;
+
+      // Check if this variant matches ALL other selected attributes
+      final matchesOthers = otherSelections.entries.every((sel) =>
+          avList.any((av) => av.attributeId == sel.key && av.valueId == sel.value));
+
+      if (!matchesOthers) continue;
+
+      // It does — so every value this variant has for [attributeId] is compatible
+      for (final av in avList) {
+        if (av.attributeId == attributeId) {
+          compatible.add(av.valueId as int);
+        }
+      }
+    }
+
+    return compatible;
+  }
 
   Widget _buildVariantSection(
       BuildContext context,
@@ -725,25 +1060,30 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     return attributesAsync.when(
       data: (attributes) {
         if (attributes.isEmpty) return const SizedBox.shrink();
+
+        // Pre-compute compatible values for each attribute using variant data
+        final variantsData = variantsAsync?.valueOrNull ?? [];
+
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
             border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Row(
                 children: [
-                  Icon(Icons.style, size: 18, color: Theme.of(context).primaryColor),
+                  Icon(Icons.style, size: 18, color: Theme.of(context).colorScheme.primary),
                   const SizedBox(width: 8),
                   Text(
                     l10n.translate('select_variant'),
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Theme.of(context).primaryColor,
+                      color: Theme.of(context).colorScheme.primary,
                     ),
                   ),
                   if (_selectedVariant == null) ...[
@@ -751,76 +1091,99 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0.2),
+                        color: Theme.of(context).colorScheme.error.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         l10n.translate('required'),
                         style: TextStyle(
                           fontSize: 11,
-                          color: Colors.orange[800],
-                          fontWeight: FontWeight.w500,
+                          color: Theme.of(context).colorScheme.error,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                   ],
                 ],
               ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 16,
-                runSpacing: 12,
-                children: attributes.map<Widget>((attr) {
-                  final attributeId = attr['attributeId'] as int;
-                  final attributeName = attr['attributeName'] as String;
-                  final values = attr['values'] as List<Map<String, dynamic>>;
+              const SizedBox(height: 10),
+              ...attributes.map<Widget>((attr) {
+                final attributeId = attr['attributeId'] as int;
+                final attributeName = attr['attributeName'] as String;
+                final values = attr['values'] as List<Map<String, dynamic>>;
+                final selectedValue = _selectedAttributeValues[attributeId];
 
-                  return SizedBox(
-                    width: 200,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          attributeName,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.7),
-                          ),
+                // Compute which values are compatible given current selections
+                final compatibleIds = variantsData.isNotEmpty
+                    ? _getCompatibleValueIds(attributeId, variantsData)
+                    : values.map((v) => v['valueId'] as int).toSet();
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        attributeName,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                         ),
-                        const SizedBox(height: 4),
-                        DropdownButtonFormField<int>(
-                          value: _selectedAttributeValues[attributeId],
-                          decoration: InputDecoration(
-                            contentPadding:
-                            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8)),
-                            isDense: true,
-                          ),
-                          hint: Text(l10n.translate('select')),
-                          items: values
-                              .map((v) => DropdownMenuItem<int>(
-                            value: v['valueId'] as int,
-                            child: Text(v['value'] as String),
-                          ))
-                              .toList(),
-                          onChanged: (valueId) {
-                            if (valueId != null) {
-                              setState(
-                                      () => _selectedAttributeValues[attributeId] = valueId);
-                              _updateSelectedVariant(variantsAsync!);
-                            }
-                          },
+                      ),
+                      const SizedBox(height: 6),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: values.map((v) {
+                            final valueId = v['valueId'] as int;
+                            final valueName = v['value'] as String;
+                            final isSelected = selectedValue == valueId;
+                            final isCompatible = compatibleIds.contains(valueId);
+
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(valueName),
+                                selected: isSelected,
+                                onSelected: isCompatible
+                                    ? (_) {
+                                        setState(() => _selectedAttributeValues[attributeId] = valueId);
+                                        _updateSelectedVariant(variantsAsync!);
+                                      }
+                                    : null,
+                                selectedColor: Theme.of(context).colorScheme.primaryContainer,
+                                disabledColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                                labelStyle: TextStyle(
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                  color: !isCompatible
+                                      ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)
+                                      : isSelected
+                                          ? Theme.of(context).colorScheme.onPrimaryContainer
+                                          : Theme.of(context).colorScheme.onSurface,
+                                  decoration: !isCompatible ? TextDecoration.lineThrough : null,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: BorderSide(
+                                    color: !isCompatible
+                                        ? Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)
+                                        : isSelected
+                                            ? Theme.of(context).colorScheme.primary
+                                            : Theme.of(context).colorScheme.outline.withValues(alpha: 0.5),
+                                  ),
+                                ),
+                                showCheckmark: false,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            );
+                          }).toList(),
                         ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
             ],
           ),
         );
@@ -831,75 +1194,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 
-  // ─── Components tab ──────────────────────────────────────────────────────────
-
-  Widget _buildComponentsTab(
-      AsyncValue<List<dynamic>> componentsAsync,
-      AsyncValue<List<dynamic>> componentGroupsAsync,
-      ) {
-    final l10n = AppLocalizations.of(context)!;
-    final currencyFormatter = ref.watch(currencyFormatterProvider);
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: componentsAsync.when(
-        data: (componentsData) {
-          if (componentsData.isEmpty) {
-            return Center(child: Text(l10n.translate('no_components')));
-          }
-
-          return componentGroupsAsync.when(
-            data: (groups) {
-              // Group components by their componentGroupId
-              final Map<int?, List<Map<String, dynamic>>> grouped = {};
-              for (var cd in componentsData) {
-                final groupId = cd['component']?.componentGroupId as int?;
-                grouped.putIfAbsent(groupId, () => []).add(cd);
-              }
-
-              return ListView.builder(
-                itemCount: grouped.length,
-                itemBuilder: (context, index) {
-                  final groupId = grouped.keys.elementAt(index);
-                  final groupComponents = grouped[groupId]!;
-                  final group = groupId != null
-                      ? groups.cast<dynamic>().firstWhere(
-                        (g) => g.id == groupId,
-                    orElse: () => null,
-                  )
-                      : null;
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (group != null)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                          child: Text(
-                            group.name as String,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                            ),
-                          ),
-                        ),
-                      ...groupComponents.map((cd) =>
-                          _buildComponentCard(cd, currencyFormatter, l10n)),
-                    ],
-                  );
-                },
-              );
-            },
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => Center(child: Text('Error: $error')),
-          );
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => const Center(child: Text('Error.')),
-      ),
-    );
-  }
+  // ─── Component card ──────────────────────────────────────────────────────────
 
   Widget _buildComponentCard(
       Map<String, dynamic> componentData,
@@ -943,17 +1238,17 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       margin: const EdgeInsets.only(bottom: 8),
       elevation: isRequired ? 3 : 1,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(12),
         child: Row(
           children: [
             // Decrement button
             _componentButton(
               icon: Icons.remove,
               active: canDecrement,
-              activeColor: Colors.red,
+              activeColor: Theme.of(context).colorScheme.error,
               onTap: canDecrement ? decrement : null,
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
 
             // Info
             Expanded(
@@ -962,55 +1257,58 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 children: [
                   Row(
                     children: [
-                      Expanded(
+                      Flexible(
                         child: Text(
                           component.name,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       if (isRequired) ...[
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
+                              horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: Colors.orange,
+                            color: Theme.of(context).colorScheme.error.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             l10n.translate('required').toUpperCase(),
-                            style: const TextStyle(
-                              fontSize: 11,
+                            style: TextStyle(
+                              fontSize: 10,
                               fontWeight: FontWeight.bold,
-                              color: Colors.white,
+                              color: Theme.of(context).colorScheme.error,
                             ),
                           ),
                         ),
                       ],
                     ],
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   Row(
                     children: [
                       if (defaultPrice > 0)
                         Text(
                           '+${currencyFormatter.format(defaultPrice)}',
                           style: TextStyle(
-                            fontSize: 14,
+                            fontSize: 13,
                             fontWeight: FontWeight.w600,
-                            color: Colors.green[700],
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? Colors.green[400]
+                                : Colors.green[700],
                           ),
                         ),
-                      const SizedBox(width: 12),
+                      if (defaultPrice > 0) const SizedBox(width: 8),
                       Text(
-                        'Min: $minQuantity || Max: $maxQuantity',
+                        '$minQuantity–$maxQuantity',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.6),
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
                         ),
                       ),
                     ],
@@ -1018,33 +1316,37 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 ],
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
 
             // Quantity badge
             Container(
-              width: 50,
-              height: 50,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
                 borderRadius: BorderRadius.circular(8),
-                border:
-                Border.all(color: Theme.of(context).primaryColor, width: 2),
+                border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
               ),
               child: Center(
                 child: Text(
                   quantity.toString(),
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 20),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
 
             // Increment button
             _componentButton(
               icon: Icons.add,
               active: canIncrement,
-              activeColor: Colors.green,
+              activeColor: Theme.of(context).brightness == Brightness.dark
+                  ? Colors.green[400]!
+                  : Colors.green[700]!,
               onTap: canIncrement ? increment : null,
             ),
           ],
@@ -1058,268 +1360,25 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     required bool active,
     required Color activeColor,
     VoidCallback? onTap,
-  }) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: active
-                ? activeColor.withValues(alpha: 0.1)
-                : Colors.grey.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(icon, color: active ? activeColor : Colors.grey, size: 24),
+  }) {
+    final disabledColor = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.25);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: active
+              ? activeColor.withValues(alpha: 0.12)
+              : disabledColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
         ),
-      );
-
-  // ─── Price & Discount tab ────────────────────────────────────────────────────
-
-  Widget _buildPriceDiscountTab(double basePrice) {
-    final l10n = AppLocalizations.of(context)!;
-    final currencyFormatter = ref.watch(currencyFormatterProvider);
-    final currency = ref.watch(settingsProvider).currency;
-    final componentsAsync = ref.watch(productComponentsProvider(_productId));
-
-    return componentsAsync.when(
-      data: (componentsData) {
-        final componentTotal = _calculateComponentTotal(componentsData);
-        final priceWithComponents = basePrice + componentTotal;
-        final totalPriceWithComponents = priceWithComponents * _quantity;
-        final totalProductDiscount = _productDiscount * _quantity;
-        final maxDiscountValue =
-        _isPercentageDiscount ? 100.0 : (priceWithComponents - _productDiscount);
-
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Base price card
-              Card(
-                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: Column(
-                    children: [
-                      _priceRow(l10n.translate('base_price') + ' (x1):', basePrice,
-                          currencyFormatter),
-                      if (componentTotal > 0) ...[
-                        const Divider(height: 12),
-                        _priceRow(
-                          l10n.translate('components') + ' (x1):',
-                          componentTotal,
-                          currencyFormatter,
-                          prefix: '+',
-                          valueColor: Theme.of(context).brightness == Brightness.dark
-                              ? Colors.green[400]!
-                              : Colors.green[700]!,
-                        ),
-                        const Divider(height: 12),
-                        _priceRow(l10n.translate('subtotal') + ' (x1):',
-                            priceWithComponents, currencyFormatter,
-                            boldValue: true),
-                      ],
-                      if (_quantity > 1) ...[
-                        const Divider(height: 12),
-                        _priceRow(
-                          '${l10n.translate("total")} (x$_quantity):',
-                          totalPriceWithComponents,
-                          currencyFormatter,
-                          boldLabel: true,
-                          boldValue: true,
-                          valueSize: 18,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 2),
-
-              // Product discount (read-only)
-              if (_productDiscount > 0) ...[
-                Text(
-                  l10n.translate('product_discount'),
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.green[900]!.withValues(alpha: 0.3)
-                      : Colors.green[50],
-                  child: Padding(
-                    padding: const EdgeInsets.all(6),
-                    child: Row(
-                      children: [
-                        Icon(Icons.local_offer,
-                            color: Theme.of(context).brightness == Brightness.dark
-                                ? Colors.green[400]
-                                : Colors.green[700]),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                l10n.translate('built_in_discount'),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).brightness == Brightness.dark
-                                      ? Colors.green[300]
-                                      : Colors.green[900],
-                                ),
-                              ),
-                              if (_quantity > 1)
-                                Text(
-                                  '${currencyFormatter.format(_productDiscount)} x $_quantity',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(context).brightness == Brightness.dark
-                                        ? Colors.green[400]
-                                        : Colors.green[700],
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          '-${currencyFormatter.format(totalProductDiscount)}',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).brightness == Brightness.dark
-                                ? Colors.green[400]
-                                : Colors.green[700],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 2),
-              ],
-
-              // Manual discount — permission-gated
-              PermissionGuard(
-                permission: Permissions.manualDiscount,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      l10n.translate('discount'),
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          flex: 2,
-                          child: OnscreenKeyboardTextField(
-                            controller: _manualDiscountController,
-                            focusNode: _discountFocusNode,
-                            keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                  RegExp(r'^\d*\.?\d{0,2}')),
-                            ],
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              prefixIcon: Icon(_isPercentageDiscount
-                                  ? Icons.percent
-                                  : Icons.attach_money),
-                              hintText: '0.00',
-                              suffixText: _isPercentageDiscount ? '%' : currency,
-                              errorText: _discountError,
-                              helperText: _isPercentageDiscount
-                                  ? '${l10n.translate("max")}: 100%'
-                                  : '${l10n.translate("max")}: ${currencyFormatter.format(maxDiscountValue > 0 ? maxDiscountValue : 0)}',
-                            ),
-                            onChanged: (value) =>
-                                _validateAndUpdateDiscount(value, priceWithComponents),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: SegmentedButton<bool>(
-                            segments: [
-                              ButtonSegment(
-                                value: false,
-                                label: Text(currency),
-                                icon: const Icon(Icons.attach_money, size: 16),
-                              ),
-                              const ButtonSegment(
-                                value: true,
-                                label: Text('%'),
-                                icon: Icon(Icons.percent, size: 16),
-                              ),
-                            ],
-                            selected: {_isPercentageDiscount},
-                            onSelectionChanged: (newSelection) {
-                              setState(() {
-                                _isPercentageDiscount = newSelection.first;
-                                _validateAndUpdateDiscount(
-                                    _manualDiscountController.text, priceWithComponents);
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                  ],
-                ),
-              ),
-
-              // Note
-              Text(
-                l10n.translate('note'),
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 2),
-              TextField(
-                controller: _noteController,
-                decoration: InputDecoration(
-                  labelText: l10n.translate('add_note'),
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.note),
-                ),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 2),
-
-              // Preview card
-              _buildPreviewCard(
-                basePrice: basePrice,
-                componentTotal: componentTotal,
-                priceWithComponents: priceWithComponents,
-                currencyFormatter: currencyFormatter,
-                l10n: l10n,
-              ),
-            ],
-          ),
-        );
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) =>
-          Center(child: Text(l10n.translate('error_loading_components'))),
+        child: Icon(icon, color: active ? activeColor : disabledColor, size: 22),
+      ),
     );
   }
+
+  // ─── Preview card ────────────────────────────────────────────────────────────
 
   Widget _buildPreviewCard({
     required double basePrice,
@@ -1336,9 +1395,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         (priceWithComponents - _productDiscount - manualDiscount) * _quantity;
 
     return Card(
-      color: Theme.of(context).brightness == Brightness.dark
-          ? Colors.orange[900]!.withValues(alpha: 0.3)
-          : Colors.orange[50],
+      color: Theme.of(context).colorScheme.tertiaryContainer.withValues(alpha: 0.3),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1405,9 +1462,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         bool isDiscount = false,
         bool isFinal = false,
       }) {
-    final discountColor = Theme.of(context).brightness == Brightness.dark
-        ? Colors.orange[400]!
-        : Colors.orange[700]!;
+    final discountColor = Theme.of(context).colorScheme.error;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1439,37 +1494,4 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 
-  /// Simple helper for the price info card rows.
-  Widget _priceRow(
-      String label,
-      double value,
-      CurrencyFormatter fmt, {
-        String prefix = '',
-        Color? valueColor,
-        bool boldLabel = false,
-        bool boldValue = false,
-        double valueSize = 16,
-      }) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: boldLabel ? FontWeight.w600 : FontWeight.w500,
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
-        ),
-        Text(
-          '$prefix${fmt.format(value)}',
-          style: TextStyle(
-            fontSize: valueSize,
-            fontWeight: boldValue ? FontWeight.bold : FontWeight.normal,
-            color: valueColor ?? Theme.of(context).colorScheme.primary,
-          ),
-        ),
-      ],
-    );
-  }
 }

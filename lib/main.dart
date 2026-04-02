@@ -23,6 +23,7 @@ import 'package:caisse212/services/session_service.dart';
 import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/server_startup_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 import 'core/theme/app_theme.dart';
 import 'data/database/app_database.dart';
 import 'presentation/login_screen/login_screen.dart';
@@ -35,6 +36,19 @@ void main() async {
   // Wrap everything in error handling for release builds
   await runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
+
+    // Initialize window manager for desktop platforms (fullscreen support)
+    if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+      try {
+        await windowManager.ensureInitialized();
+        await windowManager.waitUntilReadyToShow(null, () async {
+          await windowManager.show();
+          await windowManager.focus();
+        });
+      } catch (e) {
+        debugPrint('Window manager init failed: $e');
+      }
+    }
 
     // Set up error handling for Flutter errors
     FlutterError.onError = (FlutterErrorDetails details) {

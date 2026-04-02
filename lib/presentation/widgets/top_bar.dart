@@ -581,9 +581,12 @@ class _TopBarState extends ConsumerState<TopBar> {
       // Clear API service data INCLUDING tenant password hash
       await apiService.clearAllAuthData(); // Use clearAllAuthData for full logout
 
-      // Clear the database
+      // Dump/backup the database before clearing
       final database = ref.read(databaseProvider);
       final syncService = DataSyncService(database, apiService);
+      await syncService.dumpDatabaseBeforeClear();
+
+      // Clear the database
       await syncService.clearAllData();
 
       if (mounted) {

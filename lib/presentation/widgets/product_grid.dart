@@ -61,8 +61,8 @@ class ProductGrid extends ConsumerWidget {
           return GridView.builder(
             padding: const EdgeInsets.all(16),
             gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-              mainAxisExtent: showImages ? 200 : 80,
-              maxCrossAxisExtent: showImages ? 200 : 150,
+              mainAxisExtent: showImages ? 200 : 100,
+              maxCrossAxisExtent: showImages ? 200 : 200,
               crossAxisSpacing: 8,
               mainAxisSpacing: 8,
             ),
@@ -154,14 +154,38 @@ class _ProductCard extends ConsumerWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(4),
         ),
+        color: _parseColor(product.color) ?? Theme.of(context).cardColor,
         child: showImages ? _buildWithImage(context,ref) : _buildCompact(context, ref),
       ),
     );
   }
 
+  /// Parse a hex color string (e.g. "#FF5733" or "FF5733") into a Color.
+  Color? _parseColor(String? colorStr) {
+    if (colorStr == null || colorStr.isEmpty) return null;
+    try {
+      String hex = colorStr.replaceAll('#', '');
+      if (hex.length == 6) hex = 'FF$hex'; // add full opacity
+      if (hex.length == 8) {
+        return Color(int.parse(hex, radix: 16));
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Determine a contrasting text color for a given background.
+  Color _textColorFor(Color? bg) {
+    if (bg == null) return Colors.black;
+    // Use luminance to decide
+    return bg.computeLuminance() > 0.5 ? Colors.black : Colors.white;
+  }
+
   Widget _buildWithImage(BuildContext context, WidgetRef ref) {
     final currencyFormatter = ref.watch(currencyFormatterProvider);
     final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
+    final cardColor = _parseColor(product.color);
+    final textColor = _textColorFor(cardColor);
+    final hasImage = product.imageUrl != null && product.imageUrl!.isNotEmpty;
 
     return componentsDataAsync.when(
       data: (componentsData) {
@@ -173,114 +197,138 @@ class _ProductCard extends ConsumerWidget {
           displayPrice += (defaultPrice * defaultQuantity);
         }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              flex: 3,
-              child: ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-            child: product.imageUrl != null
-                ? CachedNetworkImage(
-                    imageUrl: product.imageUrl!,
-                    fit: BoxFit.cover,
-                    errorWidget: (context, error, stack) {
-                      return Container(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        child: Icon(
-                          Icons.fastfood,
-                          size: 48,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      );
-                    },
-                  )
-                : Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    child: Icon(
-                      Icons.fastfood,
-                      size: 48,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-          ),
-        ),
-        Expanded(
-          flex: 2,
-          child: Padding(
+        if (!hasImage) {
+          // No image: text fills the entire card
+          return Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  product.name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      product.name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: cardColor != null ? textColor : null,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                 ),
+                const SizedBox(height: 4),
                 Text(
                   currencyFormatter.format(displayPrice),
                   style: TextStyle(
-                    color: Theme.of(context).colorScheme.primary,
+                    color: cardColor != null
+                        ? textColor.withValues(alpha: 0.85)
+                        : Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.bold,
                     fontSize: 16,
                   ),
                 ),
               ],
             ),
-          ),
-        ),
-      ],
-    );
-      },
-      loading: () => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            flex: 3,
-            child: Container(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: const Center(child: CircularProgressIndicator()),
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(product.name),
-            ),
-          ),
-        ],
-      ),
-      error: (_, __) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            flex: 3,
-            child: Container(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: Icon(Icons.fastfood, size: 48),
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(product.name),
-                  Text(currencyFormatter.format(product.finalPrice)),
-                ],
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: 3,
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                child: CachedNetworkImage(
+                  imageUrl: product.imageUrl!,
+                  fit: BoxFit.cover,
+                  errorWidget: (context, error, stack) {
+                    return Container(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      child: Center(
+                        child: Text(
+                          product.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
-          ),
-        ],
+            Expanded(
+              flex: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      product.name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: cardColor != null ? textColor : null,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      currencyFormatter.format(displayPrice),
+                      style: TextStyle(
+                        color: cardColor != null
+                            ? textColor.withValues(alpha: 0.85)
+                            : Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Center(
+                child: Text(
+                  product.name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: cardColor != null ? textColor : null,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+            Text(
+              currencyFormatter.format(product.finalPrice),
+              style: TextStyle(
+                color: cardColor != null
+                    ? textColor.withValues(alpha: 0.85)
+                    : Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -288,6 +336,8 @@ class _ProductCard extends ConsumerWidget {
   Widget _buildCompact(BuildContext context, WidgetRef ref) {
     final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
     final currencyFormatter = ref.watch(currencyFormatterProvider);
+    final cardColor = _parseColor(product.color);
+    final textColor = _textColorFor(cardColor);
 
     return componentsDataAsync.when(
       data: (componentsData) {
@@ -300,26 +350,32 @@ class _ProductCard extends ConsumerWidget {
         }
 
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12,
-              vertical: 8),
-          child: Row(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Expanded(
-                child: Text(
-                  product.name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    product.name,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: cardColor != null ? textColor : null,
+                    ),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(width: 8),
               Text(
                 currencyFormatter.format(displayPrice),
                 style: TextStyle(
-                  color: Theme.of(context).colorScheme.primary,
+                  color: cardColor != null
+                      ? textColor.withValues(alpha: 0.85)
+                      : Theme.of(context).colorScheme.primary,
                   fontWeight: FontWeight.bold,
                   fontSize: 14,
                 ),
@@ -334,24 +390,31 @@ class _ProductCard extends ConsumerWidget {
       ),
       error: (_, __) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Expanded(
-              child: Text(
-                product.name,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  product.name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: cardColor != null ? textColor : null,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(width: 8),
             Text(
               currencyFormatter.format(product.finalPrice),
               style: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
+                color: cardColor != null
+                    ? textColor.withValues(alpha: 0.85)
+                    : Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
               ),
