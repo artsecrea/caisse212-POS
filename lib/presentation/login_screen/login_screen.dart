@@ -1,8 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
+import 'package:window_manager/window_manager.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/settings_provider.dart';
 import '../../providers/update_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/data_sync_service.dart';
@@ -28,6 +32,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   bool _isLoading = false;
   bool _obscurePassword = true;
+  bool _isFullScreen = false;
   String? _errorMessage;
   // bool _showServerConfig = false;
   List<String> _availableUsernames = [];
@@ -42,6 +47,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void initState() {
     super.initState();
     _loadUsernames();
+    _checkFullScreenStatus();
   }
 
   /// Load available usernames from database
@@ -54,6 +60,35 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       });
     } catch (e) {
       print('Error loading usernames: $e');
+    }
+  }
+
+  /// Check current fullscreen status on startup
+  Future<void> _checkFullScreenStatus() async {
+    try {
+      if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+        final isFullScreen = await windowManager.isFullScreen();
+        if (mounted) setState(() => _isFullScreen = isFullScreen);
+      }
+    } catch (_) {}
+  }
+
+  /// Toggle between fullscreen and windowed mode
+  Future<void> _toggleFullScreen() async {
+    try {
+      final newState = !_isFullScreen;
+      if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+        await windowManager.setFullScreen(newState);
+      } else if (Platform.isAndroid || Platform.isIOS) {
+        if (newState) {
+          await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+        } else {
+          await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        }
+      }
+      if (mounted) setState(() => _isFullScreen = newState);
+    } catch (e) {
+      debugPrint('Error toggling fullscreen: $e');
     }
   }
 
@@ -334,6 +369,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return;
     }
 
+    // Manual validation for fields using OnscreenKeyboardTextField
+    if (_passwordController.text.isEmpty) {
+      setState(() {
+        _errorMessage = AppLocalizations.of(context)!.translate('password_required');
+      });
+      return;
+    }
+
     final l10n = AppLocalizations.of(context)!;
 
     setState(() {
@@ -556,9 +599,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // Clear API service data INCLUDING tenant password hash
       await apiService.clearAllAuthData(); // Use clearAllAuthData for full logout
 
-      // Clear the database
+      // Dump/backup the database before clearing
       final database = ref.read(databaseProvider);
       final syncService = DataSyncService(database, apiService);
+      await syncService.dumpDatabaseBeforeClear();
+
+      // Clear the database
       await syncService.clearAllData();
 
       if (mounted) {
@@ -740,7 +786,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               },
                             ),
                             const SizedBox(height: 20),
-                            TextFormField(
+                            OnscreenKeyboardTextField(
                               controller: _passwordController,
                               obscureText: _obscurePassword,
                               decoration: InputDecoration(
@@ -763,15 +809,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 ),
                               ),
                               style: const TextStyle(fontSize: 16),
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return l10n.translate('password_required');
-                                }
-                                return null;
-                              },
                             ),
                             const SizedBox(height: 20),
-                            TextFormField(
+                            OnscreenKeyboardTextField(
                               controller: _startingBalanceController,
                               keyboardType: TextInputType.number,
                               decoration: InputDecoration(
@@ -783,18 +823,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 hintText: '0.0',
                               ),
                               style: const TextStyle(fontSize: 16),
-                              validator: (value) {
-                                if (value != null && value.isNotEmpty) {
-                                  final amount = double.tryParse(value);
-                                  if (amount == null) {
-                                    return 'Please enter a valid number';
-                                  }
-                                  if (amount < 0) {
-                                    return 'Amount cannot be negative';
-                                  }
-                                }
-                                return null;
-                              },
                             ),
                             if (_errorMessage != null) ...[
                               const SizedBox(height: 20),
@@ -896,6 +924,77 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             right: 20,
             child: Row(
               children: [
+                // Fullscreen toggle button
+                Material(
+                  color: Colors.black38,
+                  borderRadius: BorderRadius.circular(16),
+                  elevation: 4,
+                  child: InkWell(
+                    onTap: _toggleFullScreen,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      child: Icon(
+                        _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                        size: 36,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Language selector button
+                Material(
+                  color: Colors.black38,
+                  borderRadius: BorderRadius.circular(16),
+                  elevation: 4,
+                  child: PopupMenuButton<String>(
+                    onSelected: (languageCode) {
+                      ref.read(settingsProvider.notifier).setLanguage(languageCode);
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'en',
+                        child: Row(
+                          children: [
+                            const Text('🇬🇧', style: TextStyle(fontSize: 20)),
+                            const SizedBox(width: 8),
+                            const Text('English'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'fr',
+                        child: Row(
+                          children: [
+                            const Text('🇫🇷', style: TextStyle(fontSize: 20)),
+                            const SizedBox(width: 8),
+                            const Text('Français'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'ar',
+                        child: Row(
+                          children: [
+                            const Text('🇲🇦', style: TextStyle(fontSize: 20)),
+                            const SizedBox(width: 8),
+                            const Text('العربية'),
+                          ],
+                        ),
+                      ),
+                    ],
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      child: const Icon(
+                        Icons.language,
+                        size: 36,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 // Config button
                 Material(
                   color: Colors.black38,
