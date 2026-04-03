@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/update_provider.dart';
+import '../widgets/caisse212_logo.dart';
 import '../../services/api_service.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/session_service.dart';
@@ -422,7 +423,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final hash = user.password;
       final verified = BCrypt.checkpw(password, hash);
 
+      // Also check custom password from SharedPreferences
+      bool customVerified = false;
       if (!verified) {
+        final prefs = ref.read(sharedPreferencesProvider);
+        final customHash = prefs.getString('custom_password_${user.id}');
+        if (customHash != null) {
+          try {
+            customVerified = BCrypt.checkpw(password, customHash);
+          } catch (_) {}
+        }
+      }
+
+      if (!verified && !customVerified) {
         setState(() {
           _errorMessage = l10n.translate('invalid_password_try_again');
           _isLoading = false;
@@ -430,7 +443,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         return;
       }
 
-      if (user != null && verified) {
+      if (user != null && (verified || customVerified)) {
         // Local authentication successful
         ref.read(currentUserProvider.notifier).state = CurrentUser.fromUser(user);
 
@@ -659,20 +672,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Icon(
-                              Icons.point_of_sale,
-                              size: 80,
-                              color: Theme.of(context).primaryColor,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              l10n.translate('app_title'),
-                              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Theme.of(context).primaryColor,
-                                  ),
-                              textAlign: TextAlign.center,
-                            ),
+                            const Caisse212Logo(size: 80),
                             const SizedBox(height: 8),
                             Text(
                               l10n.translate('sign_in'),

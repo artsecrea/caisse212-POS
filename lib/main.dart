@@ -33,18 +33,97 @@ import 'providers/settings_provider.dart';
 import 'utils/app_localizations.dart';
 
 void main() async {
-  // Wrap everything in error handling for release builds
-  await runZonedGuarded(() async {
+  // All Flutter initialization MUST happen in the same zone as runApp
+  // So we put everything inside runZonedGuarded
+  runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
+    // Show a loading screen immediately to prevent blank white screen
+    runApp(const _BootScreen());
+
+    // Now do the async initialization
+    await _initializeApp();
+  }, (error, stack) {
+    _logError('ZonedError', error, stack);
+    // Show error on screen so user sees something instead of blank white screen
+    try {
+      runApp(MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                  const SizedBox(height: 16),
+                  const Text('Startup Error',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText('$error',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text('Please check logs or restart the application.',
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ));
+    } catch (_) {}
+  });
+}
+
+/// Boot screen shown while the app initializes
+class _BootScreen extends StatelessWidget {
+  const _BootScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 24),
+              Text(
+                'Loading...',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _initializeApp() async {
     // Initialize window manager for desktop platforms (fullscreen support)
-    if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+    if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
       try {
         await windowManager.ensureInitialized();
         await windowManager.waitUntilReadyToShow(null, () async {
           await windowManager.show();
           await windowManager.focus();
-        });
+        }).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            debugPrint('⚠️ Window manager timed out, continuing anyway');
+          },
+        );
       } catch (e) {
         debugPrint('Window manager init failed: $e');
       }
@@ -59,7 +138,7 @@ void main() async {
     // Handle errors that aren't caught by Flutter
     PlatformDispatcher.instance.onError = (error, stack) {
       _logError('PlatformError', error, stack);
-      return true;
+      return false; // Let Flutter show the error widget
     };
 
     final logger = Logger.instance;
@@ -76,17 +155,43 @@ void main() async {
 
     logger.info("App starting...");
     logger.info("Platform: ${Platform.operatingSystem}");
-    logger.info("Release mode: ${kReleaseMode}");
+    logger.info("Release mode: $kReleaseMode");
 
     SharedPreferences? sharedPreferences;
     try {
-      sharedPreferences = await SharedPreferences.getInstance();
+      sharedPreferences = await SharedPreferences.getInstance().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException('SharedPreferences timed out');
+        },
+      );
       logger.info("SharedPreferences initialized");
     } catch (e, stack) {
       logger.error("Failed to initialize SharedPreferences: $e");
       _logError('SharedPreferences', e, stack);
-      // Create a fallback - this might fail but we try anyway
-      rethrow;
+      // Show error UI instead of crashing
+      runApp(MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                const SizedBox(height: 16),
+                Text('Failed to initialize: $e',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 16),
+                const Text('Please restart the application.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ));
+      return;
     }
 
     logger.info("Starting app...");
@@ -101,18 +206,25 @@ void main() async {
         ),
       ),
     );
-  }, (error, stack) {
-    _logError('ZonedError', error, stack);
-  });
 }
 
 /// Get a safe log file path that works in release mode
 Future<String> _getLogFilePath() async {
   if (Platform.isWindows) {
-    // Use the executable directory for logs on Windows
-    final exePath = Platform.resolvedExecutable;
-    final exeDir = File(exePath).parent.path;
-    return '$exeDir\\logs.txt';
+    try {
+      // Try using the executable directory for logs on Windows
+      final exePath = Platform.resolvedExecutable;
+      final exeDir = File(exePath).parent.path;
+      final logPath = '$exeDir\\logs.txt';
+      // Test if writable
+      final testFile = File(logPath);
+      await testFile.writeAsString('', mode: FileMode.append);
+      return logPath;
+    } catch (_) {
+      // Fall back to temp directory
+      final tempDir = Directory.systemTemp.path;
+      return '$tempDir\\posecrea_logs.txt';
+    }
   }
   return 'logs.txt';
 }
@@ -172,14 +284,29 @@ class _GlobalSoundWrapperState extends ConsumerState<GlobalSoundWrapper> {
     _initialized = true;
 
     try {
-      await _initializeSounds();
+      await _initializeSounds().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          logger.warning("Sound initialization timed out");
+        },
+      );
       logger.info("Sound service initialized");
     } catch (e) {
       logger.warning("Sound service initialization failed: $e");
+      if (mounted) {
+        setState(() {
+          _soundsEnabled = false;
+        });
+      }
     }
 
     try {
-      await _appAnnounce();
+      await _appAnnounce().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          logger.warning("App announce timed out");
+        },
+      );
     } catch (e) {
       logger.warning("App announce failed: $e");
     }
@@ -250,9 +377,27 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     // Initialize server after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _initializeServer();
-      final soundService = ref.read(soundServiceProvider);
-      await soundService.preload(); // ✅ safe
+      try {
+        await _initializeServer().timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            logger.info('⚠️ Server initialization timed out');
+          },
+        );
+      } catch (e) {
+        logger.info('❌ Server init error: $e');
+      }
+      try {
+        final soundService = ref.read(soundServiceProvider);
+        await soundService.preload().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            debugPrint('⚠️ Sound preload timed out');
+          },
+        );
+      } catch (e) {
+        debugPrint('Sound preload failed: $e');
+      }
     });
   }
 
@@ -303,6 +448,47 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    try {
+      return _buildApp(context);
+    } catch (e, stack) {
+      logger.error('Fatal error building app: $e');
+      _logError('AppBuild', e, stack);
+      return MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                  const SizedBox(height: 16),
+                  const Text('Application Error',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('$e',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () {
+                      // Force rebuild
+                      setState(() {});
+                    },
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _buildApp(BuildContext context) {
     final sharedPreferences = ref.watch(sharedPreferencesProvider);
     final settings = ref.watch(settingsProvider);
 
@@ -313,12 +499,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     final initialRoute = hasSetup ? '/login' : '/tenant';
 
-    // Get POS name from SharedPreferences, use default if not set
-    final posName = sharedPreferences.getString('pos_name') ?? 'POS-UNKNOWN';
-
-    final l10n = AppLocalizations.of(context);
-
-
     // Get locale from settings
     final locale = Locale(settings.language);
 
@@ -327,15 +507,22 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       builder: (context, child) {
         // Update localization provider whenever context changes
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          final l10n = AppLocalizations.of(context);
-          if (l10n != null) {
-            ref.read(localizationProvider.notifier).state = l10n;
-          }
+          try {
+            final l10n = AppLocalizations.of(context);
+            if (l10n != null) {
+              ref.read(localizationProvider.notifier).state = l10n;
+            }
+          } catch (_) {}
         });
 
-        return OnscreenKeyboard.builder(
-          width: (context) => MediaQuery.sizeOf(context).width / 2,
-        )(context, child);
+        try {
+          return OnscreenKeyboard.builder(
+            width: (context) => MediaQuery.sizeOf(context).width / 2,
+          )(context, child);
+        } catch (e) {
+          debugPrint('OnscreenKeyboard builder failed: $e');
+          return child ?? const SizedBox.shrink();
+        }
       },
       debugShowCheckedModeBanner: false,
 

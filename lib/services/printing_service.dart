@@ -118,7 +118,12 @@ class PrintingService {
 
   PrintingService._internal();
 
-  final FlutterThermalPrinter _thermalPrinter = FlutterThermalPrinter.instance;
+  FlutterThermalPrinter? _thermalPrinterInstance;
+
+  FlutterThermalPrinter get _thermalPrinter {
+    _thermalPrinterInstance ??= FlutterThermalPrinter.instance;
+    return _thermalPrinterInstance!;
+  }
 
   List<Printer> _availablePrinters = [];
   Printer? _connectedReceiptPrinter;
@@ -164,11 +169,21 @@ class PrintingService {
     // Load saved configuration
     await _loadConfig(prefs);
 
-    // Listen to printer stream
-    _thermalPrinter.devicesStream.listen((printerList) {
-      _availablePrinters = printerList;
-      _printersController.add(printerList);
-    });
+    // Listen to printer stream - wrapped in try-catch for platforms
+    // where thermal printer may not be fully supported
+    try {
+      _thermalPrinter.devicesStream.listen(
+        (printerList) {
+          _availablePrinters = printerList;
+          _printersController.add(printerList);
+        },
+        onError: (e) {
+          debugPrint('Printer stream error: $e');
+        },
+      );
+    } catch (e) {
+      debugPrint('⚠️ Failed to listen to printer stream: $e');
+    }
   }
 
   /// Load configuration from SharedPreferences

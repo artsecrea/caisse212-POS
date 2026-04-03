@@ -48,6 +48,12 @@ class AppSettings {
   // UI settings
   final bool enableSnackBars; // Enable/disable snack bar notifications globally
 
+  // Customer Display settings
+  final bool enableCustomerDisplay; // Enable/disable customer-facing second screen
+
+  // Payment settings
+  final String defaultPaymentMethod; // Default payment method: 'CASH', 'CARD', 'MOBILE', 'OTHER'
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -94,6 +100,8 @@ class AppSettings {
     this.serverPassword,
     this.autoStartServer = true,
     this.enableSnackBars = false,
+    this.enableCustomerDisplay = false,
+    this.defaultPaymentMethod = 'CASH',
   });
 
   AppSettings copyWith({
@@ -128,6 +136,8 @@ class AppSettings {
     String? serverPassword,
     bool? autoStartServer,
     bool? enableSnackBars,
+    bool? enableCustomerDisplay,
+    String? defaultPaymentMethod,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -161,6 +171,8 @@ class AppSettings {
       serverPassword: serverPassword ?? this.serverPassword,
       autoStartServer: autoStartServer ?? this.autoStartServer,
       enableSnackBars: enableSnackBars ?? this.enableSnackBars,
+      enableCustomerDisplay: enableCustomerDisplay ?? this.enableCustomerDisplay,
+      defaultPaymentMethod: defaultPaymentMethod ?? this.defaultPaymentMethod,
     );
   }
 
@@ -197,6 +209,8 @@ class AppSettings {
       'serverPassword': serverPassword,
       'autoStartServer': autoStartServer,
       'enableSnackBars': enableSnackBars,
+      'enableCustomerDisplay': enableCustomerDisplay,
+      'defaultPaymentMethod': defaultPaymentMethod,
     };
   }
 
@@ -249,6 +263,8 @@ class AppSettings {
       serverPassword: json['serverPassword'] as String?,
       autoStartServer: json['autoStartServer'] as bool? ?? true,
       enableSnackBars: json['enableSnackBars'] as bool? ?? true,
+      enableCustomerDisplay: json['enableCustomerDisplay'] as bool? ?? false,
+      defaultPaymentMethod: json['defaultPaymentMethod'] as String? ?? 'CASH',
     );
   }
 

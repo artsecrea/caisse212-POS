@@ -42,6 +42,12 @@ class SettingsKeys {
 
   // UI settings
   static const String enableSnackBars = 'enable_snack_bars';
+
+  // Customer Display settings
+  static const String enableCustomerDisplay = 'enable_customer_display';
+
+  // Payment settings
+  static const String defaultPaymentMethod = 'default_payment_method';
 }
 
 // Settings Notifier
@@ -123,6 +129,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       serverPassword: _prefs.getString(SettingsKeys.serverPassword),
       autoStartServer: _prefs.getBool(SettingsKeys.autoStartServer) ?? false,
       enableSnackBars: _prefs.getBool(SettingsKeys.enableSnackBars) ?? false,
+      enableCustomerDisplay: _prefs.getBool(SettingsKeys.enableCustomerDisplay) ?? false,
+      defaultPaymentMethod: _prefs.getString(SettingsKeys.defaultPaymentMethod) ?? 'CASH',
     );
   }
 
@@ -292,6 +300,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setEnableSnackBars(bool value) async {
     await _prefs.setBool(SettingsKeys.enableSnackBars, value);
     state = state.copyWith(enableSnackBars: value);
+  }
+
+  Future<void> setEnableCustomerDisplay(bool value) async {
+    await _prefs.setBool(SettingsKeys.enableCustomerDisplay, value);
+    state = state.copyWith(enableCustomerDisplay: value);
+  }
+
+  Future<void> setDefaultPaymentMethod(String method) async {
+    await _prefs.setString(SettingsKeys.defaultPaymentMethod, method);
+    state = state.copyWith(defaultPaymentMethod: method);
   }
 
   /// Get the last data clear date

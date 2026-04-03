@@ -11,9 +11,11 @@ import 'package:caisse212/services/permission_service.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/session_service.dart';
+import '../../services/customer_display_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../settings/settings_screen.dart';
+import '../profile/profile_dialog.dart';
 import 'report_issue_dialog.dart';
 
 class TopBar extends ConsumerStatefulWidget {
@@ -611,6 +613,71 @@ class _TopBarState extends ConsumerState<TopBar> {
     }
   }
 
+  /// Build customer display toggle button
+  Widget _buildCustomerDisplayButton(AppLocalizations? l10n) {
+    final displayService = ref.read(customerDisplayServiceProvider);
+    final isOpen = ref.watch(customerDisplayOpenProvider);
+
+    return Tooltip(
+      message: l10n?.translate('customer_display') ?? 'Customer Display',
+      child: InkWell(
+        onTap: () async {
+          if (isOpen) {
+            await displayService.close();
+            ref.read(customerDisplayOpenProvider.notifier).state = false;
+          } else {
+            await displayService.open();
+            ref.read(customerDisplayOpenProvider.notifier).state = true;
+            // Send business name
+            final prefs = ref.read(sharedPreferencesProvider);
+            final businessName = prefs.getString('business_name');
+            if (businessName != null && businessName.isNotEmpty) {
+              await displayService.sendBusinessName(businessName);
+            }
+            // Send current order if any
+            final currentOrder = ref.read(orderProvider);
+            if (currentOrder.items.isNotEmpty) {
+              await displayService.sendOrderUpdate(currentOrder);
+            }
+          }
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isOpen ? Colors.green.withOpacity(0.2) : Colors.white.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isOpen ? Colors.green : Colors.white.withOpacity(0.3),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isOpen ? Icons.connected_tv : Icons.tv_off,
+                color: isOpen ? Colors.green : Colors.white70,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                isOpen
+                    ? (l10n?.translate('display_on') ?? 'Display On')
+                    : (l10n?.translate('display_off') ?? 'Display Off'),
+                style: TextStyle(
+                  color: isOpen ? Colors.green : Colors.white70,
+                  fontSize: 12,
+                  fontWeight: isOpen ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Sync data from server
   Future<void> _handleSync() async {
     final l10n = AppLocalizations.of(context);
@@ -923,6 +990,12 @@ class _TopBarState extends ConsumerState<TopBar> {
             ),
           ),
           const SizedBox(width: 16),
+          // Customer Display toggle button (only shown when enabled in settings)
+          if (ref.watch(settingsProvider).enableCustomerDisplay)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: _buildCustomerDisplayButton(l10n),
+            ),
           // User profile
           PopupMenuButton<String>(
             child: Row(
@@ -948,7 +1021,10 @@ class _TopBarState extends ConsumerState<TopBar> {
             ),
             onSelected: (value) async {
               if (value == 'profile') {
-                // Navigate to profile
+                showDialog(
+                  context: context,
+                  builder: (context) => const ProfileDialog(),
+                );
               } else if (value == 'settings') {
                 // Navigate to settings
               } else if (value == 'report_issue') {

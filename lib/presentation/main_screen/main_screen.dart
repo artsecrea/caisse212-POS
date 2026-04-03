@@ -30,6 +30,7 @@ import '../widgets/top_bar.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
+import '../../services/customer_display_service.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({Key? key}) : super(key: key);
@@ -240,6 +241,20 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final searchQuery = ref.watch(productSearchQueryProvider);
     final l10n = AppLocalizations.of(context)!;
+
+    // Push order updates to customer display if enabled
+    ref.listen<CurrentOrder>(orderProvider, (previous, next) {
+      final s = ref.read(settingsProvider);
+      if (!s.enableCustomerDisplay) return;
+      final displayService = ref.read(customerDisplayServiceProvider);
+      if (displayService.isOpen) {
+        if (next.items.isEmpty) {
+          displayService.clearDisplay();
+        } else {
+          displayService.sendOrderUpdate(next);
+        }
+      }
+    });
 
     // In fullPage mode:
     // - Show ProductGrid if searching (regardless of category selection)

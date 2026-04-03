@@ -161,16 +161,24 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     // Create ticket for unpaid items
     final unpaidItems = grouped[null] ?? [];
     if (unpaidItems.isNotEmpty) {
+      final defaultMethod = TransactionType.fromString(
+        ref.read(settingsProvider).defaultPaymentMethod,
+      );
       tickets.add(TicketData(
         items: unpaidItems,
+        paymentMethod: defaultMethod,
         discountPercentage: widget.order.discountPercentage,
       ));
     }
 
     // Ensure at least one ticket exists
     if (tickets.isEmpty) {
+      final defaultMethod = TransactionType.fromString(
+        ref.read(settingsProvider).defaultPaymentMethod,
+      );
       tickets.add(TicketData(
         items: [],
+        paymentMethod: defaultMethod,
         discountPercentage: widget.order.discountPercentage,
       ));
     }
@@ -1207,10 +1215,14 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       if (!mounted) return;
 
       final tickets = ref.read(ticketsProvider);
+      final defaultMethod = TransactionType.fromString(
+        ref.read(settingsProvider).defaultPaymentMethod,
+      );
       ref.read(ticketsProvider.notifier).state = [
         ...tickets,
         TicketData(
           items: [],
+          paymentMethod: defaultMethod,
           discountPercentage: widget.order.discountPercentage,
         ),
       ];
@@ -1597,8 +1609,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
       // The split-off qty-1 goes into a brand-new ticket
       final newItem = item.copyWith(id: newId, quantity: 1);
+      final defaultMethod = TransactionType.fromString(
+        ref.read(settingsProvider).defaultPaymentMethod,
+      );
       updatedTickets.add(TicketData(
         items: [newItem],
+        paymentMethod: defaultMethod,
         discountPercentage: widget.order.discountPercentage,
       ));
 
@@ -1990,8 +2006,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
       // Second portion goes into a brand-new ticket
       final newItem = item.copyWith(id: newId, quantity: quantity2);
+      final defaultMethodDiv = TransactionType.fromString(
+        ref.read(settingsProvider).defaultPaymentMethod,
+      );
       updatedTickets.add(TicketData(
         items: [newItem],
+        paymentMethod: defaultMethodDiv,
         discountPercentage: widget.order.discountPercentage,
       ));
 

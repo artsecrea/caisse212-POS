@@ -6,6 +6,7 @@ import 'package:bcrypt/bcrypt.dart';
 import '../../utils/app_localizations.dart';
 import '../login_screen/login_screen.dart';
 import '../widgets/report_issue_dialog.dart';
+import '../widgets/caisse212_logo.dart';
 
 class TenantScreen extends ConsumerStatefulWidget {
   const TenantScreen({super.key});
@@ -113,20 +114,7 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Icon(
-                              Icons.business,
-                              size: 80,
-                              color: Theme.of(context).primaryColor,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              l10n.translate('app_title'),
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            const Caisse212Logo(size: 70),
                             const SizedBox(height: 8),
                             Text(
                               l10n.translate('enter_tenant_id'),

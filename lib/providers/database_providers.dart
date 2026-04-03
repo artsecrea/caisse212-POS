@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart' hide Column show OrderingTerm, BooleanExpressionOperators;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database/app_database.dart';
@@ -48,7 +49,11 @@ final syncJobServiceProvider = Provider<SyncJobService>((ref) {
 final printingServiceProvider = Provider<PrintingService>((ref) {
   final prefs = ref.watch(sharedPreferencesProvider);
   final service = PrintingService();
-  service.initialize(prefs,ref);
+  try {
+    service.initialize(prefs, ref);
+  } catch (e) {
+    debugPrint('⚠️ PrintingService initialization failed: $e');
+  }
   return service;
 });
 

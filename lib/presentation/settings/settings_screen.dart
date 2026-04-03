@@ -349,6 +349,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           value: settings.orderPanelOnRight,
           onChanged: (value) => notifier.setOrderPanelOnRight(value),
         ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.connected_tv,
+          title: l10n.translate('customer_display'),
+          subtitle: l10n.translate('customer_display_subtitle'),
+          value: settings.enableCustomerDisplay,
+          onChanged: (value) => notifier.setEnableCustomerDisplay(value),
+        ),
       ],
     );
   }
@@ -391,6 +400,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           context: context,
           currentStatus: settings.paidOrderDefaultStatus,
           onChanged: (value) => notifier.setPaidOrderDefaultStatus(value),
+        ),
+        const SizedBox(height: 12),
+        _buildDefaultPaymentMethodSelector(
+          context: context,
+          currentMethod: settings.defaultPaymentMethod,
+          onChanged: (value) => notifier.setDefaultPaymentMethod(value),
         ),
       ],
     );
@@ -976,6 +991,94 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 color: isSelected ? color : null,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDefaultPaymentMethodSelector({
+    required BuildContext context,
+    required String currentMethod,
+    required ValueChanged<String> onChanged,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.payment),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.translate('default_payment_method'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      l10n.translate('default_payment_method_subtitle'),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.money,
+                  label: l10n.translate('cash'),
+                  value: 'CASH',
+                  currentValue: currentMethod,
+                  color: Colors.green,
+                  onTap: () => onChanged('CASH'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.credit_card,
+                  label: l10n.translate('card'),
+                  value: 'CARD',
+                  currentValue: currentMethod,
+                  color: Colors.blue,
+                  onTap: () => onChanged('CARD'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.phone_android,
+                  label: l10n.translate('mobile'),
+                  value: 'MOBILE',
+                  currentValue: currentMethod,
+                  color: Colors.purple,
+                  onTap: () => onChanged('MOBILE'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.more_horiz,
+                  label: l10n.translate('other'),
+                  value: 'OTHER',
+                  currentValue: currentMethod,
+                  color: Colors.grey,
+                  onTap: () => onChanged('OTHER'),
+                ),
+              ],
             ),
           ],
         ),

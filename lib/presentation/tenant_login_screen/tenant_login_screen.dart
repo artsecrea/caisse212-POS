@@ -13,6 +13,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
 import '../widgets/report_issue_dialog.dart';
 import '../widgets/update_dialog.dart';
+import '../widgets/caisse212_logo.dart';
 
 class TenantLoginScreen extends ConsumerStatefulWidget {
   const TenantLoginScreen({super.key});
@@ -571,20 +572,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Icon(
-                          Icons.cloud_sync,
-                          size: 80,
-                          color: Theme.of(context).primaryColor,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'POS System Setup',
-                          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).primaryColor,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
+                        const Caisse212Logo(size: 70),
                         const SizedBox(height: 8),
                         Text(
                           'Connect to your server or use demo mode',

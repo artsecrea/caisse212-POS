@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "posecrea" "\0"
+            VALUE "CompanyName", "artecrea" "\0"
+            VALUE "FileDescription", "CAISSE212" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "posecrea" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2025 artecrea. All rights reserved." "\0"
             VALUE "OriginalFilename", "posecrea.exe" "\0"
-            VALUE "ProductName", "posecrea" "\0"
+            VALUE "ProductName", "CAISSE212" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

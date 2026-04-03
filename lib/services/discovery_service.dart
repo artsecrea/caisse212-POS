@@ -40,6 +40,27 @@ class DiscoveryService {
       return;
     }
 
+    // On Windows, Bonjour service may not be available - add extra safety
+    if (Platform.isWindows) {
+      try {
+        await _doAnnounce(deviceName, ip, port).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            debugPrint('⚠️ Discovery announce timed out on Windows');
+            _isSupported = false;
+          },
+        );
+      } catch (e) {
+        debugPrint('❌ Discovery announce failed on Windows: $e');
+        _isSupported = false;
+      }
+      return;
+    }
+
+    await _doAnnounce(deviceName, ip, port);
+  }
+
+  Future<void> _doAnnounce(String deviceName, String? ip, int? port) async {
     try {
       await _broadcast?.stop();
 
