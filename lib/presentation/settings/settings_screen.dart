@@ -386,6 +386,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           currentStatus: settings.defaultOrderStatus,
           onChanged: (value) => notifier.setDefaultOrderStatus(value),
         ),
+        const SizedBox(height: 12),
+        _buildPaidOrderStatusSelector(
+          context: context,
+          currentStatus: settings.paidOrderDefaultStatus,
+          onChanged: (value) => notifier.setPaidOrderDefaultStatus(value),
+        ),
       ],
     );
   }
@@ -784,6 +790,95 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       l10n.translate('initial_order_status'),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.pause_circle,
+                  label: l10n.translate('on_hold'),
+                  value: 'ONHOLD',
+                  currentValue: currentStatus,
+                  color: Colors.grey,
+                  onTap: () => onChanged('ONHOLD'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.pending,
+                  label: l10n.translate('pending'),
+                  value: 'PENDING',
+                  currentValue: currentStatus,
+                  color: Colors.orange,
+                  onTap: () => onChanged('PENDING'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.restaurant,
+                  label: l10n.translate('preparing'),
+                  value: 'PREPARING',
+                  currentValue: currentStatus,
+                  color: Colors.blue,
+                  onTap: () => onChanged('PREPARING'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.check_circle,
+                  label: l10n.translate('completed'),
+                  value: 'COMPLETED',
+                  currentValue: currentStatus,
+                  color: Colors.green,
+                  onTap: () => onChanged('COMPLETED'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  Widget _buildPaidOrderStatusSelector({
+    required BuildContext context,
+    required String currentStatus,
+    required ValueChanged<String> onChanged,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.payment),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.translate('paid_order_default_status'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      l10n.translate('paid_order_initial_status'),
                       style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,

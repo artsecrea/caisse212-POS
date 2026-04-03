@@ -424,8 +424,8 @@ final waiterStatsProvider = FutureProvider.autoDispose.family<Map<String, dynami
   // Get all orders assigned to this waiter (not completed/cancelled)
   final ordersQuery = database.select(database.orders)
     ..where((tbl) => tbl.waiterId.equals(waiterId))
-    ..where((tbl) => tbl.status.isNotIn(['COMPLETED', 'CANCELLED']));
-  
+    ..where((tbl) => tbl.status.isNotIn(['COMPLETED', 'DELIVERED', 'CANCELLED']));
+
   final orders = await ordersQuery.get();
   int totalOrders = orders.length;
   double unpaidTotal = 0.0;

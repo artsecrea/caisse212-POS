@@ -11,6 +11,7 @@ class AppSettings {
   final String defaultOrderType; // 'DINE_IN' or 'TAKE_AWAY'
   final bool showProductImages;
   final String defaultOrderStatus; // 'PENDING', 'ONHOLD', etc.
+  final String paidOrderDefaultStatus; // Default status for paid orders: 'COMPLETED', 'DELIVERED', etc.
   final CategoryDisplayMode categoryDisplayMode; // How to display categories
   final String currency; // Currency symbol (e.g., '$', '€', '£', 'DH')
 
@@ -53,6 +54,7 @@ class AppSettings {
     this.defaultOrderType = 'DINE_IN',
     this.showProductImages = true,
     this.defaultOrderStatus = 'PENDING',
+    this.paidOrderDefaultStatus = 'COMPLETED',
     this.categoryDisplayMode = CategoryDisplayMode.topBar,
     this.currency = 'DH',
     this.showTableButton = true,
@@ -100,6 +102,7 @@ class AppSettings {
     String? defaultOrderType,
     bool? showProductImages,
     String? defaultOrderStatus,
+    String? paidOrderDefaultStatus,
     CategoryDisplayMode? categoryDisplayMode,
     String? currency,
     bool? showTableButton,
@@ -132,6 +135,7 @@ class AppSettings {
       defaultOrderType: defaultOrderType ?? this.defaultOrderType,
       showProductImages: showProductImages ?? this.showProductImages,
       defaultOrderStatus: defaultOrderStatus ?? this.defaultOrderStatus,
+      paidOrderDefaultStatus: paidOrderDefaultStatus ?? this.paidOrderDefaultStatus,
       categoryDisplayMode: categoryDisplayMode ?? this.categoryDisplayMode,
       currency: currency ?? this.currency,
       showTableButton: showTableButton ?? this.showTableButton,
@@ -167,6 +171,7 @@ class AppSettings {
       'defaultOrderType': defaultOrderType,
       'showProductImages': showProductImages,
       'defaultOrderStatus': defaultOrderStatus,
+      'paidOrderDefaultStatus': paidOrderDefaultStatus,
       'categoryDisplayMode': categoryDisplayMode.name,
       'currency': currency,
       'showTableButton': showTableButton,
@@ -201,6 +206,7 @@ class AppSettings {
       defaultOrderType: json['defaultOrderType'] as String? ?? 'DINE_IN',
       showProductImages: json['showProductImages'] as bool? ?? true,
       defaultOrderStatus: json['defaultOrderStatus'] as String? ?? 'PENDING',
+      paidOrderDefaultStatus: json['paidOrderDefaultStatus'] as String? ?? 'COMPLETED',
       categoryDisplayMode: CategoryDisplayMode.values.firstWhere(
         (e) => e.name == json['categoryDisplayMode'],
         orElse: () => CategoryDisplayMode.topBar,

@@ -173,6 +173,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               currentStatus: settings.defaultOrderStatus,
                               onChanged: (value) => settingsNotifier.setDefaultOrderStatus(value),
                             ),
+                            const SizedBox(height: 16),
+                            _buildPaidOrderStatusSelector(
+                              context: context,
+                              currentStatus: settings.paidOrderDefaultStatus,
+                              onChanged: (value) => settingsNotifier.setPaidOrderDefaultStatus(value),
+                            ),
                           ],
                         ),
                       ),
@@ -697,6 +703,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       label: Text(label),
       selected: isSelected,
       onSelected: (selected) => onChanged(value),
+    );
+  }
+
+  Widget _buildPaidOrderStatusSelector({
+    required BuildContext context,
+    required String currentStatus,
+    required ValueChanged<String> onChanged,
+  }) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Paid Order Default Status',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            ),
+            const Text(
+              'Status when order is fully paid',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildStatusChip(context, 'ONHOLD', 'On Hold', currentStatus, onChanged),
+                _buildStatusChip(context, 'PENDING', 'Pending', currentStatus, onChanged),
+                _buildStatusChip(context, 'PREPARING', 'Preparing', currentStatus, onChanged),
+                _buildStatusChip(context, 'COMPLETED', 'Completed', currentStatus, onChanged),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 

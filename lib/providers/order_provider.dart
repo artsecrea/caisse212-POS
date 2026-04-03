@@ -399,8 +399,8 @@ class OrderRepository {
     // Log order creation
     await _logService.logOrderCreated(orderId, 'Order created with code $orderCode, status $status');
 
-    // Auto-sync if order is COMPLETED and network is available
-    if (status == 'COMPLETED' && _syncService != null && _isOnlineCallback != null) {
+    // Auto-sync if network is available
+    if (_syncService != null && _isOnlineCallback != null) {
       final isOnline = _isOnlineCallback!();
       _logger.debug('Auto-sync on create: online=$isOnline orderCode=$orderCode');
       if (isOnline) {
@@ -409,7 +409,7 @@ class OrderRepository {
           if (orderSynced) {
             await _syncService!.syncTicketsForOrder(orderId);
           }
-          _logger.info('Auto-synced new COMPLETED order code=$orderCode');
+          _logger.info('Auto-synced new $status order code=$orderCode');
         } catch (e) {
           _logger.error('Failed to auto-sync new order: $e');
           // Order is saved locally, will be synced later
@@ -853,8 +853,8 @@ class OrderRepository {
 
     // Handle sync based on status change
     if (queueSyncOperation && orderCode.isNotEmpty) {
-      // If order becomes COMPLETED, try to sync it
-      if (status == 'COMPLETED' && _syncService != null && _isOnlineCallback != null) {
+      // If order status changes, try to sync it
+      if (_syncService != null && _isOnlineCallback != null) {
         final isOnline = _isOnlineCallback!();
         if (isOnline) {
           _logger.debug('Auto-sync on status change: online=$isOnline orderCode=$orderCode newStatus=$status');
@@ -863,9 +863,9 @@ class OrderRepository {
             if (orderSynced) {
               await _syncService!.syncTicketsForOrder(orderId);
             }
-            _logger.info('Synced COMPLETED order code=$orderCode');
+            _logger.info('Synced $status order code=$orderCode');
           } catch (e) {
-            _logger.error('Failed to sync COMPLETED order: $e');
+            _logger.error('Failed to sync $status order: $e');
             // Will be synced later by periodic sync
           }
         }

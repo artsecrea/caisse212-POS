@@ -14,6 +14,7 @@ class SettingsKeys {
   static const String defaultOrderType = 'default_order_type';
   static const String showProductImages = 'show_product_images';
   static const String defaultOrderStatus = 'default_order_status';
+  static const String paidOrderDefaultStatus = 'paid_order_default_status';
   static const String categoryDisplayMode = 'category_display_mode';
   static const String currency = 'currency';
   static const String showTableButton = 'show_table_button';
@@ -100,6 +101,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       defaultOrderType: _prefs.getString(SettingsKeys.defaultOrderType) ?? 'DINE_IN',
       showProductImages: _prefs.getBool(SettingsKeys.showProductImages) ?? true,
       defaultOrderStatus: _prefs.getString(SettingsKeys.defaultOrderStatus) ?? 'PENDING',
+      paidOrderDefaultStatus: _prefs.getString(SettingsKeys.paidOrderDefaultStatus) ?? 'COMPLETED',
       categoryDisplayMode: categoryMode,
       currency: _prefs.getString(SettingsKeys.currency) ?? '\$',
       showTableButton: _prefs.getBool(SettingsKeys.showTableButton) ?? true,
@@ -180,6 +182,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setDefaultOrderStatus(String status) async {
     await _prefs.setString(SettingsKeys.defaultOrderStatus, status);
     state = state.copyWith(defaultOrderStatus: status);
+  }
+
+  Future<void> setPaidOrderDefaultStatus(String status) async {
+    await _prefs.setString(SettingsKeys.paidOrderDefaultStatus, status);
+    state = state.copyWith(paidOrderDefaultStatus: status);
   }
 
   Future<void> setCategoryDisplayMode(CategoryDisplayMode mode) async {
@@ -322,6 +329,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _prefs.remove(SettingsKeys.defaultOrderType);
     await _prefs.remove(SettingsKeys.showProductImages);
     await _prefs.remove(SettingsKeys.defaultOrderStatus);
+    await _prefs.remove(SettingsKeys.paidOrderDefaultStatus);
     await _prefs.remove(SettingsKeys.categoryDisplayMode);
     await _prefs.remove(SettingsKeys.currency);
     await _prefs.remove(SettingsKeys.showTableButton);

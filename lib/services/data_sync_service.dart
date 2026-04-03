@@ -534,10 +534,10 @@ class DataSyncService {
     return productDataList;
   }
 
-  /// Get all completed orders that need to be synced (not yet synced)
+  /// Get all orders that need to be synced (not yet synced)
   Future<List<Map<String, dynamic>>> getOrdersForSync() async {
     final orders = await (_database.select(_database.orders)
-      ..where((o) => o.status.equals('COMPLETED') & o.isSynced.equals(false)))
+      ..where((o) => o.isSynced.equals(false)))
       .get();
 
     // Build order list with products
@@ -1087,7 +1087,7 @@ class DataSyncService {
   /// Get sync status summary
   Future<Map<String, int>> getSyncStatus() async {
     final unsyncedOrders = await (_database.select(_database.orders)
-      ..where((o) => o.status.equals('COMPLETED') & o.isSynced.equals(false)))
+      ..where((o) => o.isSynced.equals(false)))
       .get();
 
     final unsyncedTickets = await (_database.select(_database.tickets)

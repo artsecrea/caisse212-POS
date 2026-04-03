@@ -762,7 +762,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   Widget _buildOrderListTile(OrderFullDetails orderDetails, String currency, AppLocalizations l10n) {
     final order = orderDetails.order;
-    final needsSync = order.status == 'COMPLETED' && !order.isSynced;
+    final needsSync = !order.isSynced;
 
     return ListTile(
       leading: CircleAvatar(
@@ -778,7 +778,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           const SizedBox(width: 8),
           if (needsSync)
             const Icon(Icons.cloud_off, size: 14, color: Colors.orange),
-          if (order.isSynced && order.status == 'COMPLETED')
+          if (order.isSynced)
             const Icon(Icons.cloud_done, size: 14, color: Colors.green),
         ],
       ),
@@ -1380,7 +1380,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       await orderRepo.updateOrderStatus(order.id, newStatus);
 
       bool synced = false;
-      if (newStatus == 'COMPLETED' && isOnline) {
+      if (isOnline) {
         try {
           final syncManager = ref.read(syncManagerProvider.notifier);
           synced = await syncManager.autoSyncOrder(order.id);
@@ -1393,14 +1393,16 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
       if (mounted) {
         String message = '${l10n.translate('status_changed_to')} ${_getTranslatedStatus(newStatus, l10n)}';
-        if (newStatus == 'COMPLETED') {
-          message += synced ? ' ${l10n.translate('and_synced')}' : (isOnline ? ' (${l10n.translate('sync_pending')})' : ' (${l10n.translate('will_sync_when_online')})');
+        if (isOnline) {
+          message += synced ? ' ${l10n.translate('and_synced')}' : ' (${l10n.translate('sync_pending')})';
+        } else {
+          message += ' (${l10n.translate('will_sync_when_online')})';
         }
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(message),
-            backgroundColor: synced || newStatus != 'COMPLETED' ? Colors.green : Colors.orange,
+            backgroundColor: synced ? Colors.green : Colors.orange,
           ),
         );
       }

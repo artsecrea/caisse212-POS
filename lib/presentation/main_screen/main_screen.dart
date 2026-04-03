@@ -881,8 +881,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         ref.read(orderProvider.notifier).clearOrder();
                       }
 
-                      // Auto-sync if status is COMPLETED and online
-                      if (settings.defaultOrderStatus == 'COMPLETED') {
+                      // Auto-sync if online
+                      {
                         final isOnline = ref.read(lastKnownOnlineStatusProvider);
                         if (isOnline) {
                           try {
@@ -1068,8 +1068,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       final allItemsPaid = updatedOrder != null && updatedOrder.unpaidItems.isEmpty;
 
       if (allItemsPaid) {
-        // Update order status to COMPLETED (skip internal sync, we handle it below)
-        await orderRepo.updateOrderStatus(orderId, 'COMPLETED', queueSyncOperation: false);
+        // Update order status to paid default status (skip internal sync, we handle it below)
+        final paidStatus = settings.paidOrderDefaultStatus;
+        await orderRepo.updateOrderStatus(orderId, paidStatus, queueSyncOperation: false);
 
         // Auto-sync if online
         final isOnline = ref.read(lastKnownOnlineStatusProvider);
@@ -1077,7 +1078,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           try {
             final syncManager = ref.read(syncManagerProvider.notifier);
             await syncManager.autoSyncOrder(orderId);
-            _logger.info('Auto-synced completed order #$orderId after direct payment');
+            _logger.info('Auto-synced $paidStatus order #$orderId after direct payment');
           } catch (e) {
             _logger.error('Auto-sync failed after direct payment: $e');
           }

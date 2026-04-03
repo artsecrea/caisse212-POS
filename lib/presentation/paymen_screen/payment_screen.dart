@@ -10,6 +10,7 @@ import 'package:caisse212/utils/currency_formatter.dart';
 import '../../domain/models/order_models.dart';
 import '../../core/enums.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 
@@ -1533,7 +1534,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
   }
 
-  /// Check if all order products are paid, mark order as COMPLETED and sync
+  /// Check if all order products are paid, mark order as paid default status and sync
   Future<void> _checkAndCompleteOrder(int orderId) async {
     try {
       final database = ref.read(databaseProvider);
@@ -1547,10 +1548,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           allProducts.every((p) => p.state == 'PAID');
 
       if (allPaid) {
-        // Update order status to COMPLETED (skip internal sync, we handle it below)
+        // Update order status to paid default status (skip internal sync, we handle it below)
         final orderRepo = ref.read(orderRepositoryProvider);
-        await orderRepo.updateOrderStatus(orderId, 'COMPLETED', queueSyncOperation: false);
-        _logger.info('Order #$orderId marked as COMPLETED (all products paid)');
+        final settings = ref.read(settingsProvider);
+        final paidStatus = settings.paidOrderDefaultStatus;
+        await orderRepo.updateOrderStatus(orderId, paidStatus, queueSyncOperation: false);
+        _logger.info('Order #$orderId marked as $paidStatus (all products paid)');
 
         // Auto-sync if online
         final isOnline = ref.read(lastKnownOnlineStatusProvider);
@@ -1558,7 +1561,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           try {
             final syncManager = ref.read(syncManagerProvider.notifier);
             await syncManager.autoSyncOrder(orderId);
-            _logger.info('Auto-synced completed order #$orderId');
+            _logger.info('Auto-synced $paidStatus order #$orderId');
           } catch (e) {
             _logger.error('Auto-sync failed for order #$orderId: $e');
           }
