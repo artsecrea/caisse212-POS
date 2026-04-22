@@ -365,6 +365,60 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  /// Handle sync data from login screen
+  Future<void> _handleSync() async {
+    final l10n = AppLocalizations.of(context)!;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final prefs = ref.read(sharedPreferencesProvider);
+      final apiService = ApiService(prefs);
+      final database = ref.read(databaseProvider);
+      final syncService = DataSyncService(database, apiService);
+
+      // Show syncing message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.translate('syncing_data')),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
+      // Perform sync
+      await syncService.syncAllData();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.translate('sync_complete')),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${l10n.translate('sync_error')}: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -715,9 +769,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   decoration: InputDecoration(
                                     labelText: '${l10n.translate('username')} *',
                                     prefixIcon: const Icon(Icons.person),
-                                    suffixIcon: _availableUsernames.isNotEmpty
-                                        ? Icon(Icons.arrow_drop_down, color: Colors.grey[600])
-                                        : null,
+                                    suffixIcon: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (fieldController.text.isNotEmpty)
+                                          IconButton(
+                                            icon: Icon(Icons.clear, color: Colors.grey[600], size: 20),
+                                            onPressed: () {
+                                              fieldController.clear();
+                                              _usernameController.clear();
+                                              _passwordController.clear();
+                                              setState(() {});
+                                            },
+                                            tooltip: l10n.translate('clear_credentials'),
+                                          ),
+                                        if (_availableUsernames.isNotEmpty)
+                                          Icon(Icons.arrow_drop_down, color: Colors.grey[600]),
+                                        const SizedBox(width: 8),
+                                      ],
+                                    ),
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(12),
                                     ),
@@ -936,6 +1006,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       padding: const EdgeInsets.all(16),
                       child: Icon(
                         _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                        size: 36,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Sync button
+                Material(
+                  color: Colors.black38,
+                  borderRadius: BorderRadius.circular(16),
+                  elevation: 4,
+                  child: InkWell(
+                    onTap: _isLoading ? null : _handleSync,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      child: const Icon(
+                        Icons.sync,
                         size: 36,
                         color: Colors.white,
                       ),

@@ -712,17 +712,42 @@ class ServerService {
       final now = DateTime.now();
       final startOfDay = DateTime(now.year, now.month, now.day);
 
-      // Get all orders for this waiter today
-      final waiterOrders = await (database.select(database.orders)
+      // Get all orders for this waiter today (excluding cancelled orders)
+      final allWaiterOrders = await (database.select(database.orders)
         ..where((o) => o.waiterId.equals(waiterId) & o.createdAt.isBiggerOrEqualValue(startOfDay)))
         .get();
 
-      final totalOrders = waiterOrders.length;
-      final activeOrders = waiterOrders.where((o) => o.status != 'COMPLETED' && o.status != 'CANCELLED').length;
+      // Filter out cancelled orders for calculations
+      final waiterOrders = allWaiterOrders.where((o) => o.status != 'CANCELED').toList();
 
-      // Calculate totals
+      final totalOrders = waiterOrders.length;
+      final activeOrders = waiterOrders.where((o) => o.status != 'COMPLETED').length;
+      final cancelledOrders = allWaiterOrders.where((o) => o.status == 'CANCELED').length;
+
+      // Calculate totals (excluding cancelled orders)
       double expectedCash = 0.0;
       double totalCash = 0.0;
+      double cancelledAmount = 0.0;
+
+      // Calculate cancelled amount separately
+      for (final order in allWaiterOrders.where((o) => o.status == 'CANCELED')) {
+        final orderProducts = await (database.select(database.orderProducts)
+          ..where((op) => op.orderId.equals(order.id)))
+          .get();
+
+        for (final product in orderProducts) {
+          double itemTotal = product.unitaryPrice * product.quantity;
+          final components = await (database.select(database.orderProductComponents)
+            ..where((c) => c.orderProductId.equals(product.id)))
+            .get();
+          for (final component in components) {
+            itemTotal += component.price * component.quantity;
+          }
+          itemTotal -= (product.unitaryDiscount * product.quantity);
+          itemTotal -= (product.manualDiscount * product.quantity);
+          cancelledAmount += itemTotal;
+        }
+      }
 
       for (final order in waiterOrders) {
         final orderProducts = await (database.select(database.orderProducts)
@@ -748,9 +773,16 @@ class ServerService {
 
           expectedCash += itemTotal;
 
-          // Check if product is paid
+          // Check if product is paid (and ticket is not cancelled)
           if (product.ticketId != null) {
-            totalCash += itemTotal;
+            // Check if the ticket is cancelled
+            final ticket = await (database.select(database.tickets)
+              ..where((t) => t.id.equals(product.ticketId!)))
+              .getSingleOrNull();
+
+            if (ticket != null && !ticket.isCancelled) {
+              totalCash += itemTotal;
+            }
           }
         }
       }
@@ -759,8 +791,10 @@ class ServerService {
         jsonEncode({
           'totalOrders': totalOrders,
           'activeOrders': activeOrders,
+          'cancelledOrders': cancelledOrders,
           'expectedCash': expectedCash,
           'totalCash': totalCash,
+          'cancelledAmount': cancelledAmount,
         }),
         headers: {'Content-Type': 'application/json'},
       );
@@ -1782,6 +1816,7 @@ class ServerService {
       clientName: clientName,
       products: socketProducts,
       note: order.note,
+      cancellationReason: order.cancellationReason,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     );

@@ -12,6 +12,7 @@ class Tickets extends Table {
   TextColumn get paymentMethod => text()(); // TransactionType enum value
   RealColumn get amount => real()();
   BoolColumn get isPaid => boolean().withDefault(const Constant(false))();
+  BoolColumn get isCancelled => boolean().withDefault(const Constant(false))(); // Whether ticket belongs to a cancelled order
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

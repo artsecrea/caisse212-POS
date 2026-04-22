@@ -205,6 +205,12 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     await printingService.toggleKds(prefs, enabled);
   }
 
+  Future<void> _togglePrinting(bool enabled) async {
+    final printingService = ref.read(printingServiceProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+    await printingService.togglePrinting(prefs, enabled);
+  }
+
   Future<void> _setPaperSize(PaperSize size) async {
     final printingService = ref.read(printingServiceProvider);
     final prefs = ref.read(sharedPreferencesProvider);
@@ -459,19 +465,42 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                       ],
                     ),
                     const SizedBox(height: 20),
+                    // Master Printing Toggle
+                    SwitchListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('enable_printing'),
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(
+                        l10n.translate('enable_printing_subtitle'),
+                        style: const TextStyle(fontSize: 15),
+                      ),
+                      value: _config.printingEnabled,
+                      onChanged: _togglePrinting,
+                      activeTrackColor: Colors.green.withValues(alpha: 0.5),
+                      inactiveTrackColor: Colors.grey.withValues(alpha: 0.3),
+                    ),
+                    const Divider(height: 32),
                     // KDS Toggle
                     SwitchListTile(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                       title: Text(
                         l10n.translate('enable_kds_printing'),
-                        style: const TextStyle(fontSize: 18),
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: _config.printingEnabled ? null : Colors.grey,
+                        ),
                       ),
                       subtitle: Text(
                         l10n.translate('print_kitchen_tickets_automatically'),
-                        style: const TextStyle(fontSize: 15),
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: _config.printingEnabled ? null : Colors.grey,
+                        ),
                       ),
                       value: _config.kdsEnabled,
-                      onChanged: _toggleKds,
+                      onChanged: _config.printingEnabled ? _toggleKds : null,
                     ),
                     const Divider(height: 32),
                     // Paper Size
@@ -479,11 +508,17 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                       title: Text(
                         l10n.translate('paper_size'),
-                        style: const TextStyle(fontSize: 18),
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: _config.printingEnabled ? null : Colors.grey,
+                        ),
                       ),
                       subtitle: Text(
                         _config.paperSize == PaperSize.mm58 ? '58mm' : '80mm',
-                        style: const TextStyle(fontSize: 15),
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: _config.printingEnabled ? null : Colors.grey,
+                        ),
                       ),
                       trailing: SegmentedButton<PaperSize>(
                         style: SegmentedButton.styleFrom(
@@ -495,7 +530,9 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                           ButtonSegment(value: PaperSize.mm80, label: Text('80mm')),
                         ],
                         selected: {_config.paperSize},
-                        onSelectionChanged: (values) => _setPaperSize(values.first),
+                        onSelectionChanged: _config.printingEnabled
+                            ? (values) => _setPaperSize(values.first)
+                            : null,
                       ),
                     ),
                     const Divider(height: 32),

@@ -22,6 +22,8 @@ class SessionSummaryReport {
   final double paidByCard;
   final double paidByPhone;
   final double paidByOther;
+  final int cancelledTickets;
+  final double cancelledAmount;
 
   SessionSummaryReport({
     required this.sessionId,
@@ -43,6 +45,8 @@ class SessionSummaryReport {
     required this.paidByCard,
     required this.paidByPhone,
     required this.paidByOther,
+    this.cancelledTickets = 0,
+    this.cancelledAmount = 0,
   });
 
   double get totalPaid => paidByCash + paidByCard + paidByPhone + paidByOther;
@@ -66,6 +70,8 @@ class DailySummaryReport {
   final double totalPaidByOther;
   final double totalStartingBalance;
   final double totalEndingBalance;
+  final int totalCancelledTickets;
+  final double totalCancelledAmount;
 
   DailySummaryReport({
     required this.startDate,
@@ -84,6 +90,8 @@ class DailySummaryReport {
     required this.totalPaidByOther,
     required this.totalStartingBalance,
     required this.totalEndingBalance,
+    this.totalCancelledTickets = 0,
+    this.totalCancelledAmount = 0,
   });
 
   double get totalPaid => totalPaidByCash + totalPaidByCard + totalPaidByPhone + totalPaidByOther;
@@ -133,6 +141,8 @@ class DailySummaryService {
     double totalPaidByOther = 0;
     double totalStartingBalance = 0;
     double totalEndingBalance = 0;
+    int totalCancelledTickets = 0;
+    double totalCancelledAmount = 0;
 
     for (final session in sessions) {
       totalOrders += session.totalOrders;
@@ -147,6 +157,8 @@ class DailySummaryService {
       totalPaidByOther += session.paidByOther;
       totalStartingBalance += session.startingBalance;
       totalEndingBalance += session.endingBalance ?? 0;
+      totalCancelledTickets += session.cancelledTickets;
+      totalCancelledAmount += session.cancelledAmount;
     }
 
     return DailySummaryReport(
@@ -166,6 +178,8 @@ class DailySummaryService {
       totalPaidByOther: totalPaidByOther,
       totalStartingBalance: totalStartingBalance,
       totalEndingBalance: totalEndingBalance,
+      totalCancelledTickets: totalCancelledTickets,
+      totalCancelledAmount: totalCancelledAmount,
     );
   }
 
@@ -182,21 +196,25 @@ class DailySummaryService {
       ..where((u) => u.id.equals(session.cashierId)))
         .getSingleOrNull();
 
-    // Get tickets for this session
-    final tickets = await (_db.select(_db.tickets)
+    // Get tickets for this session (exclude cancelled tickets)
+    final allTickets = await (_db.select(_db.tickets)
       ..where((t) => t.sessionId.equals(sessionId)))
         .get();
+
+    // Filter out cancelled tickets for calculations
+    final tickets = allTickets.where((t) => !t.isCancelled).toList();
+    final cancelledTickets = allTickets.where((t) => t.isCancelled).toList();
 
     // Get unique order IDs from tickets
     final orderIds = tickets.map((t) => t.orderId).toSet().toList();
 
-    // Get orders
+    // Get orders (excluding cancelled orders)
     List<Order> orders = [];
     for (final orderId in orderIds) {
       final order = await (_db.select(_db.orders)
         ..where((o) => o.id.equals(orderId)))
           .getSingleOrNull();
-      if (order != null) {
+      if (order != null && order.status != 'CANCELED') {
         orders.add(order);
       }
     }
@@ -262,7 +280,7 @@ class DailySummaryService {
       }
     }
 
-    // Calculate ticket totals by payment method
+    // Calculate ticket totals by payment method (excluding cancelled)
     double paidByCash = 0;
     double paidByCard = 0;
     double paidByPhone = 0;
@@ -287,6 +305,10 @@ class DailySummaryService {
       }
     }
 
+    // Calculate cancelled ticket totals
+    final cancelledTicketCount = cancelledTickets.length;
+    final cancelledAmount = cancelledTickets.fold<double>(0, (sum, t) => sum + t.amount);
+
     return SessionSummaryReport(
       sessionId: session.id,
       sessionCode: session.code,
@@ -307,6 +329,8 @@ class DailySummaryService {
       paidByCard: paidByCard,
       paidByPhone: paidByPhone,
       paidByOther: paidByOther,
+      cancelledTickets: cancelledTicketCount,
+      cancelledAmount: cancelledAmount,
     );
   }
 }

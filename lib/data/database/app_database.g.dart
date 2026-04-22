@@ -8502,6 +8502,17 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _cancellationReasonMeta =
+      const VerificationMeta('cancellationReason');
+  @override
+  late final GeneratedColumn<String> cancellationReason =
+      GeneratedColumn<String>(
+        'cancellation_reason',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -8562,6 +8573,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     clientId,
     commercialId,
     note,
+    cancellationReason,
     createdAt,
     updatedAt,
     isSynced,
@@ -8697,6 +8709,15 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         note.isAcceptableOrUnknown(data['note']!, _noteMeta),
       );
     }
+    if (data.containsKey('cancellation_reason')) {
+      context.handle(
+        _cancellationReasonMeta,
+        cancellationReason.isAcceptableOrUnknown(
+          data['cancellation_reason']!,
+          _cancellationReasonMeta,
+        ),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -8800,6 +8821,10 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         DriftSqlType.string,
         data['${effectivePrefix}note'],
       ),
+      cancellationReason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}cancellation_reason'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -8841,6 +8866,7 @@ class Order extends DataClass implements Insertable<Order> {
   final int? clientId;
   final int? commercialId;
   final String? note;
+  final String? cancellationReason;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isSynced;
@@ -8864,6 +8890,7 @@ class Order extends DataClass implements Insertable<Order> {
     this.clientId,
     this.commercialId,
     this.note,
+    this.cancellationReason,
     required this.createdAt,
     required this.updatedAt,
     required this.isSynced,
@@ -8912,6 +8939,9 @@ class Order extends DataClass implements Insertable<Order> {
     if (!nullToAbsent || note != null) {
       map['note'] = Variable<String>(note);
     }
+    if (!nullToAbsent || cancellationReason != null) {
+      map['cancellation_reason'] = Variable<String>(cancellationReason);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     map['is_synced'] = Variable<bool>(isSynced);
@@ -8959,6 +8989,9 @@ class Order extends DataClass implements Insertable<Order> {
           ? const Value.absent()
           : Value(commercialId),
       note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      cancellationReason: cancellationReason == null && nullToAbsent
+          ? const Value.absent()
+          : Value(cancellationReason),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
       isSynced: Value(isSynced),
@@ -8992,6 +9025,9 @@ class Order extends DataClass implements Insertable<Order> {
       clientId: serializer.fromJson<int?>(json['clientId']),
       commercialId: serializer.fromJson<int?>(json['commercialId']),
       note: serializer.fromJson<String?>(json['note']),
+      cancellationReason: serializer.fromJson<String?>(
+        json['cancellationReason'],
+      ),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
@@ -9020,6 +9056,7 @@ class Order extends DataClass implements Insertable<Order> {
       'clientId': serializer.toJson<int?>(clientId),
       'commercialId': serializer.toJson<int?>(commercialId),
       'note': serializer.toJson<String?>(note),
+      'cancellationReason': serializer.toJson<String?>(cancellationReason),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'isSynced': serializer.toJson<bool>(isSynced),
@@ -9046,6 +9083,7 @@ class Order extends DataClass implements Insertable<Order> {
     Value<int?> clientId = const Value.absent(),
     Value<int?> commercialId = const Value.absent(),
     Value<String?> note = const Value.absent(),
+    Value<String?> cancellationReason = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? isSynced,
@@ -9069,6 +9107,9 @@ class Order extends DataClass implements Insertable<Order> {
     clientId: clientId.present ? clientId.value : this.clientId,
     commercialId: commercialId.present ? commercialId.value : this.commercialId,
     note: note.present ? note.value : this.note,
+    cancellationReason: cancellationReason.present
+        ? cancellationReason.value
+        : this.cancellationReason,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     isSynced: isSynced ?? this.isSynced,
@@ -9098,6 +9139,9 @@ class Order extends DataClass implements Insertable<Order> {
           ? data.commercialId.value
           : this.commercialId,
       note: data.note.present ? data.note.value : this.note,
+      cancellationReason: data.cancellationReason.present
+          ? data.cancellationReason.value
+          : this.cancellationReason,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
@@ -9126,6 +9170,7 @@ class Order extends DataClass implements Insertable<Order> {
           ..write('clientId: $clientId, ')
           ..write('commercialId: $commercialId, ')
           ..write('note: $note, ')
+          ..write('cancellationReason: $cancellationReason, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('isSynced: $isSynced')
@@ -9154,6 +9199,7 @@ class Order extends DataClass implements Insertable<Order> {
     clientId,
     commercialId,
     note,
+    cancellationReason,
     createdAt,
     updatedAt,
     isSynced,
@@ -9181,6 +9227,7 @@ class Order extends DataClass implements Insertable<Order> {
           other.clientId == this.clientId &&
           other.commercialId == this.commercialId &&
           other.note == this.note &&
+          other.cancellationReason == this.cancellationReason &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.isSynced == this.isSynced);
@@ -9206,6 +9253,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
   final Value<int?> clientId;
   final Value<int?> commercialId;
   final Value<String?> note;
+  final Value<String?> cancellationReason;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<bool> isSynced;
@@ -9229,6 +9277,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.clientId = const Value.absent(),
     this.commercialId = const Value.absent(),
     this.note = const Value.absent(),
+    this.cancellationReason = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.isSynced = const Value.absent(),
@@ -9253,6 +9302,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.clientId = const Value.absent(),
     this.commercialId = const Value.absent(),
     this.note = const Value.absent(),
+    this.cancellationReason = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.isSynced = const Value.absent(),
@@ -9277,6 +9327,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Expression<int>? clientId,
     Expression<int>? commercialId,
     Expression<String>? note,
+    Expression<String>? cancellationReason,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<bool>? isSynced,
@@ -9301,6 +9352,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       if (clientId != null) 'client_id': clientId,
       if (commercialId != null) 'commercial_id': commercialId,
       if (note != null) 'note': note,
+      if (cancellationReason != null) 'cancellation_reason': cancellationReason,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (isSynced != null) 'is_synced': isSynced,
@@ -9327,6 +9379,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Value<int?>? clientId,
     Value<int?>? commercialId,
     Value<String?>? note,
+    Value<String?>? cancellationReason,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<bool>? isSynced,
@@ -9351,6 +9404,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       clientId: clientId ?? this.clientId,
       commercialId: commercialId ?? this.commercialId,
       note: note ?? this.note,
+      cancellationReason: cancellationReason ?? this.cancellationReason,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isSynced: isSynced ?? this.isSynced,
@@ -9417,6 +9471,9 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     if (note.present) {
       map['note'] = Variable<String>(note.value);
     }
+    if (cancellationReason.present) {
+      map['cancellation_reason'] = Variable<String>(cancellationReason.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -9451,6 +9508,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
           ..write('clientId: $clientId, ')
           ..write('commercialId: $commercialId, ')
           ..write('note: $note, ')
+          ..write('cancellationReason: $cancellationReason, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('isSynced: $isSynced')
@@ -12445,6 +12503,21 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _isCancelledMeta = const VerificationMeta(
+    'isCancelled',
+  );
+  @override
+  late final GeneratedColumn<bool> isCancelled = GeneratedColumn<bool>(
+    'is_cancelled',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_cancelled" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _isSyncedMeta = const VerificationMeta(
     'isSynced',
   );
@@ -12483,6 +12556,7 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     paymentMethod,
     amount,
     isPaid,
+    isCancelled,
     isSynced,
     updatedAt,
   ];
@@ -12560,6 +12634,15 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
         isPaid.isAcceptableOrUnknown(data['is_paid']!, _isPaidMeta),
       );
     }
+    if (data.containsKey('is_cancelled')) {
+      context.handle(
+        _isCancelledMeta,
+        isCancelled.isAcceptableOrUnknown(
+          data['is_cancelled']!,
+          _isCancelledMeta,
+        ),
+      );
+    }
     if (data.containsKey('is_synced')) {
       context.handle(
         _isSyncedMeta,
@@ -12617,6 +12700,10 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
         DriftSqlType.bool,
         data['${effectivePrefix}is_paid'],
       )!,
+      isCancelled: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_cancelled'],
+      )!,
       isSynced: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_synced'],
@@ -12644,6 +12731,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
   final String paymentMethod;
   final double amount;
   final bool isPaid;
+  final bool isCancelled;
   final bool isSynced;
   final DateTime updatedAt;
   const Ticket({
@@ -12656,6 +12744,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     required this.paymentMethod,
     required this.amount,
     required this.isPaid,
+    required this.isCancelled,
     required this.isSynced,
     required this.updatedAt,
   });
@@ -12673,6 +12762,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     map['payment_method'] = Variable<String>(paymentMethod);
     map['amount'] = Variable<double>(amount);
     map['is_paid'] = Variable<bool>(isPaid);
+    map['is_cancelled'] = Variable<bool>(isCancelled);
     map['is_synced'] = Variable<bool>(isSynced);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -12691,6 +12781,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       paymentMethod: Value(paymentMethod),
       amount: Value(amount),
       isPaid: Value(isPaid),
+      isCancelled: Value(isCancelled),
       isSynced: Value(isSynced),
       updatedAt: Value(updatedAt),
     );
@@ -12711,6 +12802,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       paymentMethod: serializer.fromJson<String>(json['paymentMethod']),
       amount: serializer.fromJson<double>(json['amount']),
       isPaid: serializer.fromJson<bool>(json['isPaid']),
+      isCancelled: serializer.fromJson<bool>(json['isCancelled']),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -12728,6 +12820,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       'paymentMethod': serializer.toJson<String>(paymentMethod),
       'amount': serializer.toJson<double>(amount),
       'isPaid': serializer.toJson<bool>(isPaid),
+      'isCancelled': serializer.toJson<bool>(isCancelled),
       'isSynced': serializer.toJson<bool>(isSynced),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -12743,6 +12836,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     String? paymentMethod,
     double? amount,
     bool? isPaid,
+    bool? isCancelled,
     bool? isSynced,
     DateTime? updatedAt,
   }) => Ticket(
@@ -12755,6 +12849,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     paymentMethod: paymentMethod ?? this.paymentMethod,
     amount: amount ?? this.amount,
     isPaid: isPaid ?? this.isPaid,
+    isCancelled: isCancelled ?? this.isCancelled,
     isSynced: isSynced ?? this.isSynced,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -12773,6 +12868,9 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           : this.paymentMethod,
       amount: data.amount.present ? data.amount.value : this.amount,
       isPaid: data.isPaid.present ? data.isPaid.value : this.isPaid,
+      isCancelled: data.isCancelled.present
+          ? data.isCancelled.value
+          : this.isCancelled,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -12790,6 +12888,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           ..write('paymentMethod: $paymentMethod, ')
           ..write('amount: $amount, ')
           ..write('isPaid: $isPaid, ')
+          ..write('isCancelled: $isCancelled, ')
           ..write('isSynced: $isSynced, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -12807,6 +12906,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     paymentMethod,
     amount,
     isPaid,
+    isCancelled,
     isSynced,
     updatedAt,
   );
@@ -12823,6 +12923,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           other.paymentMethod == this.paymentMethod &&
           other.amount == this.amount &&
           other.isPaid == this.isPaid &&
+          other.isCancelled == this.isCancelled &&
           other.isSynced == this.isSynced &&
           other.updatedAt == this.updatedAt);
 }
@@ -12837,6 +12938,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
   final Value<String> paymentMethod;
   final Value<double> amount;
   final Value<bool> isPaid;
+  final Value<bool> isCancelled;
   final Value<bool> isSynced;
   final Value<DateTime> updatedAt;
   const TicketsCompanion({
@@ -12849,6 +12951,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     this.paymentMethod = const Value.absent(),
     this.amount = const Value.absent(),
     this.isPaid = const Value.absent(),
+    this.isCancelled = const Value.absent(),
     this.isSynced = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -12862,6 +12965,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     required String paymentMethod,
     required double amount,
     this.isPaid = const Value.absent(),
+    this.isCancelled = const Value.absent(),
     this.isSynced = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : num = Value(num),
@@ -12878,6 +12982,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Expression<String>? paymentMethod,
     Expression<double>? amount,
     Expression<bool>? isPaid,
+    Expression<bool>? isCancelled,
     Expression<bool>? isSynced,
     Expression<DateTime>? updatedAt,
   }) {
@@ -12891,6 +12996,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       if (paymentMethod != null) 'payment_method': paymentMethod,
       if (amount != null) 'amount': amount,
       if (isPaid != null) 'is_paid': isPaid,
+      if (isCancelled != null) 'is_cancelled': isCancelled,
       if (isSynced != null) 'is_synced': isSynced,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -12906,6 +13012,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Value<String>? paymentMethod,
     Value<double>? amount,
     Value<bool>? isPaid,
+    Value<bool>? isCancelled,
     Value<bool>? isSynced,
     Value<DateTime>? updatedAt,
   }) {
@@ -12919,6 +13026,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       paymentMethod: paymentMethod ?? this.paymentMethod,
       amount: amount ?? this.amount,
       isPaid: isPaid ?? this.isPaid,
+      isCancelled: isCancelled ?? this.isCancelled,
       isSynced: isSynced ?? this.isSynced,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -12954,6 +13062,9 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     if (isPaid.present) {
       map['is_paid'] = Variable<bool>(isPaid.value);
     }
+    if (isCancelled.present) {
+      map['is_cancelled'] = Variable<bool>(isCancelled.value);
+    }
     if (isSynced.present) {
       map['is_synced'] = Variable<bool>(isSynced.value);
     }
@@ -12975,6 +13086,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
           ..write('paymentMethod: $paymentMethod, ')
           ..write('amount: $amount, ')
           ..write('isPaid: $isPaid, ')
+          ..write('isCancelled: $isCancelled, ')
           ..write('isSynced: $isSynced, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -19028,6 +19140,7 @@ typedef $$OrdersTableCreateCompanionBuilder =
       Value<int?> clientId,
       Value<int?> commercialId,
       Value<String?> note,
+      Value<String?> cancellationReason,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> isSynced,
@@ -19053,6 +19166,7 @@ typedef $$OrdersTableUpdateCompanionBuilder =
       Value<int?> clientId,
       Value<int?> commercialId,
       Value<String?> note,
+      Value<String?> cancellationReason,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> isSynced,
@@ -19201,6 +19315,11 @@ class $$OrdersTableFilterComposer
 
   ColumnFilters<String> get note => $composableBuilder(
     column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get cancellationReason => $composableBuilder(
+    column: $table.cancellationReason,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -19374,6 +19493,11 @@ class $$OrdersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get cancellationReason => $composableBuilder(
+    column: $table.cancellationReason,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -19459,6 +19583,11 @@ class $$OrdersTableAnnotationComposer
 
   GeneratedColumn<String> get note =>
       $composableBuilder(column: $table.note, builder: (column) => column);
+
+  GeneratedColumn<String> get cancellationReason => $composableBuilder(
+    column: $table.cancellationReason,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -19567,6 +19696,7 @@ class $$OrdersTableTableManager
                 Value<int?> clientId = const Value.absent(),
                 Value<int?> commercialId = const Value.absent(),
                 Value<String?> note = const Value.absent(),
+                Value<String?> cancellationReason = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
@@ -19590,6 +19720,7 @@ class $$OrdersTableTableManager
                 clientId: clientId,
                 commercialId: commercialId,
                 note: note,
+                cancellationReason: cancellationReason,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 isSynced: isSynced,
@@ -19615,6 +19746,7 @@ class $$OrdersTableTableManager
                 Value<int?> clientId = const Value.absent(),
                 Value<int?> commercialId = const Value.absent(),
                 Value<String?> note = const Value.absent(),
+                Value<String?> cancellationReason = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
@@ -19638,6 +19770,7 @@ class $$OrdersTableTableManager
                 clientId: clientId,
                 commercialId: commercialId,
                 note: note,
+                cancellationReason: cancellationReason,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 isSynced: isSynced,
@@ -21168,6 +21301,7 @@ typedef $$TicketsTableCreateCompanionBuilder =
       required String paymentMethod,
       required double amount,
       Value<bool> isPaid,
+      Value<bool> isCancelled,
       Value<bool> isSynced,
       Value<DateTime> updatedAt,
     });
@@ -21182,6 +21316,7 @@ typedef $$TicketsTableUpdateCompanionBuilder =
       Value<String> paymentMethod,
       Value<double> amount,
       Value<bool> isPaid,
+      Value<bool> isCancelled,
       Value<bool> isSynced,
       Value<DateTime> updatedAt,
     });
@@ -21255,6 +21390,11 @@ class $$TicketsTableFilterComposer
 
   ColumnFilters<bool> get isPaid => $composableBuilder(
     column: $table.isPaid,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isCancelled => $composableBuilder(
+    column: $table.isCancelled,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -21341,6 +21481,11 @@ class $$TicketsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isCancelled => $composableBuilder(
+    column: $table.isCancelled,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isSynced => $composableBuilder(
     column: $table.isSynced,
     builder: (column) => ColumnOrderings(column),
@@ -21412,6 +21557,11 @@ class $$TicketsTableAnnotationComposer
   GeneratedColumn<bool> get isPaid =>
       $composableBuilder(column: $table.isPaid, builder: (column) => column);
 
+  GeneratedColumn<bool> get isCancelled => $composableBuilder(
+    column: $table.isCancelled,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get isSynced =>
       $composableBuilder(column: $table.isSynced, builder: (column) => column);
 
@@ -21479,6 +21629,7 @@ class $$TicketsTableTableManager
                 Value<String> paymentMethod = const Value.absent(),
                 Value<double> amount = const Value.absent(),
                 Value<bool> isPaid = const Value.absent(),
+                Value<bool> isCancelled = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => TicketsCompanion(
@@ -21491,6 +21642,7 @@ class $$TicketsTableTableManager
                 paymentMethod: paymentMethod,
                 amount: amount,
                 isPaid: isPaid,
+                isCancelled: isCancelled,
                 isSynced: isSynced,
                 updatedAt: updatedAt,
               ),
@@ -21505,6 +21657,7 @@ class $$TicketsTableTableManager
                 required String paymentMethod,
                 required double amount,
                 Value<bool> isPaid = const Value.absent(),
+                Value<bool> isCancelled = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => TicketsCompanion.insert(
@@ -21517,6 +21670,7 @@ class $$TicketsTableTableManager
                 paymentMethod: paymentMethod,
                 amount: amount,
                 isPaid: isPaid,
+                isCancelled: isCancelled,
                 isSynced: isSynced,
                 updatedAt: updatedAt,
               ),

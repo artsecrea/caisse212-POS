@@ -22,7 +22,7 @@ class Caisse212Logo extends StatelessWidget {
       children: [
         // SVG Logo in purple
         SvgPicture.asset(
-          'assets/images/logo.svg',
+          'assets/images/caisse212_icon.svg',
           width: size,
           height: size,
           colorFilter: const ColorFilter.mode(

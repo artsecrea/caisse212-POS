@@ -32,6 +32,7 @@ class SettingsKeys {
   static const String buttonOrder = 'button_order';
   static const String autoClearSyncedData = 'auto_clear_synced_data';
   static const String lastDataClearDate = 'last_data_clear_date';
+  static const String syncUnpaidOrders = 'sync_unpaid_orders';
 
   static const String orderPanelOnRight = 'order_panel_on_right';
 
@@ -124,6 +125,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showDailySummaryButton: _prefs.getBool(SettingsKeys.showDailySummaryButton) ?? true,
       buttonOrder: buttonOrder,
       autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
+      syncUnpaidOrders: _prefs.getBool(SettingsKeys.syncUnpaidOrders) ?? true,
       orderPanelOnRight: _prefs.getBool(SettingsKeys.orderPanelOnRight) ?? false,
       serverPort: _prefs.getInt(SettingsKeys.serverPort) ?? 8080,
       serverPassword: _prefs.getString(SettingsKeys.serverPassword),
@@ -275,6 +277,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setAutoClearSyncedData(bool value) async {
     await _prefs.setBool(SettingsKeys.autoClearSyncedData, value);
     state = state.copyWith(autoClearSyncedData: value);
+  }
+
+  Future<void> setSyncUnpaidOrders(bool value) async {
+    await _prefs.setBool(SettingsKeys.syncUnpaidOrders, value);
+    state = state.copyWith(syncUnpaidOrders: value);
   }
 
   // Server settings

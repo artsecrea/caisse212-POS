@@ -326,6 +326,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         DropdownMenuItem(value: 'ALL', child: Text('All Statuses')),
         DropdownMenuItem(value: 'PAID', child: Text('Paid')),
         DropdownMenuItem(value: 'UNPAID', child: Text('Unpaid')),
+        DropdownMenuItem(value: 'CANCELLED', child: Text('Cancelled')),
       ],
       onChanged: (value) {
         setState(() {
@@ -409,17 +410,30 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
   DataRow _buildDataRow(TicketWithDetails ticketDetails) {
     final ticket = ticketDetails.ticket;
-    final needsSync = ticket.isPaid && !ticket.isSynced;
+    final needsSync = ticket.isPaid && !ticket.isSynced && !ticket.isCancelled;
 
     return DataRow(
+      color: ticket.isCancelled
+          ? WidgetStateProperty.all(Colors.red.withValues(alpha: 0.05))
+          : null,
       cells: [
         DataCell(
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(ticket.id.toString()),
+              Text(
+                ticket.id.toString(),
+                style: ticket.isCancelled
+                    ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.grey)
+                    : null,
+              ),
               const SizedBox(width: 4),
-              if (ticket.isPaid)
+              if (ticket.isCancelled)
+                const Tooltip(
+                  message: 'Cancelled',
+                  child: Icon(Icons.cancel, size: 14, color: Colors.red),
+                )
+              else if (ticket.isPaid)
                 Tooltip(
                   message: needsSync ? 'Not synced to server' : 'Synced to server',
                   child: Icon(
@@ -431,12 +445,22 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
             ],
           ),
         ),
-        DataCell(Text(ticket.num)),
+        DataCell(Text(
+          ticket.num,
+          style: ticket.isCancelled
+              ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.grey)
+              : null,
+        )),
         DataCell(Text(ticket.orderId.toString())),
         DataCell(Text(ticketDetails.itemCount.toString())),
-        DataCell(Text('\$${ticket.amount.toStringAsFixed(2)}')),
+        DataCell(Text(
+          '\$${ticket.amount.toStringAsFixed(2)}',
+          style: ticket.isCancelled
+              ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.grey)
+              : null,
+        )),
         DataCell(Text(ticket.paymentMethod.toUpperCase())),
-        DataCell(_buildStatusChip(ticket.isPaid)),
+        DataCell(_buildStatusChip(ticket.isPaid, isCancelled: ticket.isCancelled)),
         DataCell(Text(_formatDate(ticket.date))),
         DataCell(
           Row(
@@ -465,8 +489,20 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     );
   }
 
-  Widget _buildStatusChip(bool isPaid) {
-    final color = isPaid ? Colors.green : Colors.orange;
+  Widget _buildStatusChip(bool isPaid, {bool isCancelled = false}) {
+    final Color color;
+    final String text;
+
+    if (isCancelled) {
+      color = Colors.red;
+      text = 'CANCELLED';
+    } else if (isPaid) {
+      color = Colors.green;
+      text = 'PAID';
+    } else {
+      color = Colors.orange;
+      text = 'UNPAID';
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -476,7 +512,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         border: Border.all(color: color),
       ),
       child: Text(
-        isPaid ? 'PAID' : 'UNPAID',
+        text,
         style: TextStyle(
           color: color,
           fontWeight: FontWeight.w600,
@@ -577,8 +613,13 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     var filtered = tickets;
 
     if (_statusFilter != 'ALL') {
-      final isPaid = _statusFilter == 'PAID';
-      filtered = filtered.where((t) => t.ticket.isPaid == isPaid).toList();
+      if (_statusFilter == 'CANCELLED') {
+        filtered = filtered.where((t) => t.ticket.isCancelled).toList();
+      } else if (_statusFilter == 'PAID') {
+        filtered = filtered.where((t) => t.ticket.isPaid && !t.ticket.isCancelled).toList();
+      } else if (_statusFilter == 'UNPAID') {
+        filtered = filtered.where((t) => !t.ticket.isPaid && !t.ticket.isCancelled).toList();
+      }
     }
 
     if (_searchQuery.isNotEmpty) {

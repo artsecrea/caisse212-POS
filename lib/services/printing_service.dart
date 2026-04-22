@@ -32,6 +32,7 @@ class PrinterConfig {
   final String? kdsPrinterName;
   final ConnectionType? kdsConnectionType;
   final bool kdsEnabled;
+  final bool printingEnabled; // Master switch to enable/disable all printing
   final PaperSize paperSize;
   final int textSize; // 1=Normal, 2=Medium, 3=Large
   final String printingLanguage; // 'en' or 'fr'
@@ -44,6 +45,7 @@ class PrinterConfig {
     this.kdsPrinterName,
     this.kdsConnectionType,
     this.kdsEnabled = true,
+    this.printingEnabled = true,
     this.paperSize = PaperSize.mm80,
     this.textSize = 1,
     this.printingLanguage = 'en',
@@ -57,6 +59,7 @@ class PrinterConfig {
     String? kdsPrinterName,
     ConnectionType? kdsConnectionType,
     bool? kdsEnabled,
+    bool? printingEnabled,
     PaperSize? paperSize,
     int? textSize,
     String? printingLanguage,
@@ -71,6 +74,7 @@ class PrinterConfig {
       kdsPrinterName: kdsPrinterName ?? this.kdsPrinterName,
       kdsConnectionType: kdsConnectionType ?? this.kdsConnectionType,
       kdsEnabled: kdsEnabled ?? this.kdsEnabled,
+      printingEnabled: printingEnabled ?? this.printingEnabled,
       paperSize: paperSize ?? this.paperSize,
       textSize: textSize ?? this.textSize,
       printingLanguage: printingLanguage ?? this.printingLanguage,
@@ -85,6 +89,7 @@ class PrinterConfig {
     'kdsPrinterName': kdsPrinterName,
     'kdsConnectionType': kdsConnectionType?.index,
     'kdsEnabled': kdsEnabled,
+    'printingEnabled': printingEnabled,
     'paperSize': paperSize.value,
     'textSize': textSize,
     'printingLanguage': printingLanguage,
@@ -103,6 +108,7 @@ class PrinterConfig {
           ? ConnectionType.values[json['kdsConnectionType']]
           : null,
       kdsEnabled: json['kdsEnabled'] ?? true,
+      printingEnabled: json['printingEnabled'] ?? true,
       paperSize: json['paperSize'] == 58 ? PaperSize.mm58 : PaperSize.mm80,
       textSize: json['textSize'] ?? 1,
       printingLanguage: json['printingLanguage'] ?? 'en',
@@ -195,6 +201,7 @@ class PrintingService {
     final kdsName = prefs.getString('printer_kds_name');
     final kdsType = prefs.getInt('printer_kds_type');
     final kdsEnabled = prefs.getBool('printer_kds_enabled') ?? true;
+    final printingEnabled = prefs.getBool('printer_printing_enabled') ?? true;
     final paperSizeValue = prefs.getInt('printer_paper_size') ?? 80;
     final textSizeValue = prefs.getInt('printer_text_size') ?? 1;
     final printingLanguage = prefs.getString('printer_language') ?? 'en';
@@ -211,6 +218,7 @@ class PrintingService {
           ? ConnectionType.values[kdsType]
           : null,
       kdsEnabled: kdsEnabled,
+      printingEnabled: printingEnabled,
       paperSize: paperSizeValue == 58 ? PaperSize.mm58 : PaperSize.mm80,
       textSize: textSizeValue,
       printingLanguage: printingLanguage,
@@ -277,6 +285,7 @@ class PrintingService {
     }
 
     await prefs.setBool('printer_kds_enabled', newConfig.kdsEnabled);
+    await prefs.setBool('printer_printing_enabled', newConfig.printingEnabled);
     await prefs.setInt('printer_paper_size', newConfig.paperSize.value);
     await prefs.setInt('printer_text_size', newConfig.textSize);
     await prefs.setString('printer_language', newConfig.printingLanguage);
@@ -424,6 +433,12 @@ class PrintingService {
   /// Toggle KDS printing
   Future<void> toggleKds(SharedPreferences prefs, bool enabled) async {
     final newConfig = _config.copyWith(kdsEnabled: enabled);
+    await saveConfig(prefs, newConfig);
+  }
+
+  /// Toggle printing entirely (master switch)
+  Future<void> togglePrinting(SharedPreferences prefs, bool enabled) async {
+    final newConfig = _config.copyWith(printingEnabled: enabled);
     await saveConfig(prefs, newConfig);
   }
 

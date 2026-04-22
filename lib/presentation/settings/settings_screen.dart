@@ -599,6 +599,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           value: settings.autoClearSyncedData,
           onChanged: (value) => notifier.setAutoClearSyncedData(value),
         ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.receipt_long,
+          title: l10n.translate('sync_unpaid_orders'),
+          subtitle: l10n.translate('sync_unpaid_orders_subtitle'),
+          value: settings.syncUnpaidOrders,
+          onChanged: (value) => notifier.setSyncUnpaidOrders(value),
+        ),
         const SizedBox(height: 12),
         _buildNumberSelector(
           context: context,

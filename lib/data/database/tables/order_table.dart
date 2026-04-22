@@ -20,6 +20,7 @@ class Orders extends Table {
   IntColumn get clientId => integer().nullable()();
   IntColumn get commercialId => integer().nullable()();
   TextColumn get note => text().nullable()();
+  TextColumn get cancellationReason => text().nullable()(); // Reason for cancellation when status is CANCELED
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server

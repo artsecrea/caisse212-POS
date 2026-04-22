@@ -585,6 +585,11 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                 const Divider(height: 16),
                 _buildSummaryRow(l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', '${report.totalUnpaidOrders}', Colors.orange),
                 _buildSummaryRow(l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', currencyFormatter.format(report.totalUnpaidAmount), Colors.orange),
+                if (report.totalCancelledTickets > 0) ...[
+                  const Divider(height: 16),
+                  _buildSummaryRow(l10n?.translate('cancelled_tickets') ?? 'Cancelled Tickets', '${report.totalCancelledTickets}', Colors.red),
+                  _buildSummaryRow(l10n?.translate('cancelled_amount') ?? 'Cancelled Amount', currencyFormatter.format(report.totalCancelledAmount), Colors.red),
+                ],
                 const Divider(height: 16),
                 _buildSummaryRow(l10n?.translate('paid_by_cash') ?? 'Paid by Cash', currencyFormatter.format(report.totalPaidByCash), Colors.green),
                 _buildSummaryRow(l10n?.translate('paid_by_card') ?? 'Paid by Card', currencyFormatter.format(report.totalPaidByCard), Colors.blue),
@@ -678,6 +683,10 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             children: [
               _buildDetailItem(l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', '${session.unpaidOrders}', Colors.orange),
               _buildDetailItem(l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', currencyFormatter.format(session.unpaidAmount), Colors.orange),
+              if (session.cancelledTickets > 0) ...[
+                _buildDetailItem(l10n?.translate('cancelled_tickets') ?? 'Cancelled Tickets', '${session.cancelledTickets}', Colors.red),
+                _buildDetailItem(l10n?.translate('cancelled_amount') ?? 'Cancelled Amount', currencyFormatter.format(session.cancelledAmount), Colors.red),
+              ],
             ],
           ),
           const Divider(height: 24),

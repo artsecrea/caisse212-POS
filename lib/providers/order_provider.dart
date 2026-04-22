@@ -728,7 +728,7 @@ class OrderRepository {
       waiterName = waiter != null ? '${waiter.firstName} ${waiter.lastName ?? ''}'.trim() : null;
     }
 
-    int numberOfPersons = order.persons ?? 1;
+    int numberOfPersons = order.persons;
 
     return CurrentOrder(
       orderId: order.id,
@@ -837,23 +837,30 @@ class OrderRepository {
     return result;
   }
 
-  Future<void> updateOrderStatus(int orderId, String status, {bool queueSyncOperation = true}) async {
+  Future<void> updateOrderStatus(int orderId, String status, {bool queueSyncOperation = true, String? cancellationReason}) async {
     // Get current status before updating
     final currentOrder = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
     final oldStatus = currentOrder?.status ?? '';
     final wasAlreadySynced = currentOrder?.isSynced ?? false;
     final orderCode = currentOrder?.code ?? '';
 
-    await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(OrdersCompanion(
+    // Build the update companion including cancellationReason
+    final updateCompanion = OrdersCompanion(
       status: Value(status),
       updatedAt: Value(DateTime.now()),
-      // Mark as not synced when status changes
-      isSynced: const Value(false),
-    ));
+      // Mark as not synced when status changes (except ONHOLD which doesn't sync)
+      isSynced: Value(status == 'ONHOLD'),
+      // Set cancellation reason when cancelled, clear it otherwise
+      cancellationReason: Value(status == 'CANCELED' ? cancellationReason : null),
+    );
 
-    // Handle sync based on status change
-    if (queueSyncOperation && orderCode.isNotEmpty) {
-      // If order status changes, try to sync it
+    await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(updateCompanion);
+
+    // Handle sync based on status change (skip ONHOLD)
+    if (queueSyncOperation && orderCode.isNotEmpty && status != 'ONHOLD') {
+      bool syncedSuccessfully = false;
+
+      // Try to sync if online
       if (_syncService != null && _isOnlineCallback != null) {
         final isOnline = _isOnlineCallback!();
         if (isOnline) {
@@ -862,21 +869,27 @@ class OrderRepository {
             final orderSynced = await _syncService!.syncSingleOrder(orderId);
             if (orderSynced) {
               await _syncService!.syncTicketsForOrder(orderId);
+              syncedSuccessfully = true;
             }
             _logger.info('Synced $status order code=$orderCode');
           } catch (e) {
             _logger.error('Failed to sync $status order: $e');
-            // Will be synced later by periodic sync
+            // Will queue operation below
           }
         }
-      } else if (wasAlreadySynced) {
-        // Order was synced before, queue status update
+      }
+
+      // If order was previously synced and we didn't sync successfully now, queue the update
+      if (wasAlreadySynced && !syncedSuccessfully) {
         try {
           final pendingOpsService = PendingOperationsService(_database);
           await pendingOpsService.queueOrderUpdate(
             entityId: orderId,
             orderCode: orderCode,
-            updateData: {'status': status},
+            updateData: {
+              'status': status,
+              if (cancellationReason != null) 'cancellationReason': cancellationReason,
+            },
           );
           _logger.info('Queued status update operation for order code=$orderCode');
         } catch (e) {
@@ -954,7 +967,6 @@ class OrderRepository {
     bool sortAscending = false,
   }) async {
     // Build the base query with filters
-    var countQuery = _database.select(_database.orders);
     var totalCount = 0;
     // Get total count with filters
     {

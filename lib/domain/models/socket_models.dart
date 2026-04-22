@@ -21,6 +21,7 @@ class SocketOrderModel {
   final String? clientName;
   final List<SocketOrderProductModel> products;
   final String? note;
+  final String? cancellationReason;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -38,6 +39,7 @@ class SocketOrderModel {
     this.clientName,
     required this.products,
     this.note,
+    this.cancellationReason,
     this.createdAt,
     this.updatedAt,
   });
@@ -57,6 +59,7 @@ class SocketOrderModel {
       'clientName': clientName,
       'products': products.map((p) => p.toJson()).toList(),
       'note': note,
+      'cancellationReason': cancellationReason,
     };
   }
 
@@ -90,6 +93,7 @@ class SocketOrderModel {
           .map((p) => SocketOrderProductModel.fromJson(p as Map<String, dynamic>))
           .toList(),
       note: json['note'] as String?,
+      cancellationReason: json['cancellationReason'] as String?,
     );
   }
 

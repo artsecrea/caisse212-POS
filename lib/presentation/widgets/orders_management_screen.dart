@@ -1,6 +1,7 @@
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/orders_management_screen.dart
 
-import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
+import 'package:drift/drift.dart' show OrderingTerm, OrderingMode, Value;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
@@ -809,7 +810,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               PopupMenuItem(value: 'view', child: Row(children: [const Icon(Icons.visibility, size: 18), const SizedBox(width: 8), Text(l10n.translate('view'))])),
               PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
               PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
-              PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
+              PopupMenuItem(value: 'cancel', child: Row(children: [const Icon(Icons.cancel, size: 18, color: Colors.orange), const SizedBox(width: 8), Text(l10n.translate('cancel_order'), style: const TextStyle(color: Colors.orange))])),
+              PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_forever, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
             ],
           ),
         ],
@@ -961,10 +963,26 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 tooltip: l10n.translate('status'),
               ),
               PermissionIconButton(
-                permission: Permissions.ordersDelete,
-                icon: const Icon(Icons.delete, size: 18, color: Colors.red),
-                onPressed: () => _deleteOrder(order),
-                tooltip: l10n.translate('delete'),
+                permission: Permissions.ordersUpdate,
+                icon: const Icon(Icons.cancel, size: 18, color: Colors.orange),
+                onPressed: () => _cancelOrder(order),
+                tooltip: l10n.translate('cancel_order'),
+              ),
+              GestureDetector(
+                onLongPress: () => _deleteOrder(order),
+                child: PermissionIconButton(
+                  permission: Permissions.ordersDelete,
+                  icon: const Icon(Icons.delete_forever, size: 18, color: Colors.red),
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(l10n.translate('long_press_to_delete')),
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  tooltip: l10n.translate('long_press_to_delete'),
+                ),
               ),
             ],
           ),
@@ -1205,6 +1223,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       case 'status':
         _showChangeStatusDialog(order);
         break;
+      case 'cancel':
+        _cancelOrder(order);
+        break;
       case 'delete':
         _deleteOrder(order);
         break;
@@ -1275,6 +1296,52 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     }
   }
 
+  void _cancelOrder(Order order) async {
+    final l10n = AppLocalizations.of(context)!;
+    final reasonController = TextEditingController();
+
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.translate('cancel_order')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${l10n.translate('confirm_cancel_order')} ${order.code}?'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: reasonController,
+              decoration: InputDecoration(
+                labelText: l10n.translate('cancellation_reason'),
+                hintText: l10n.translate('enter_cancellation_reason'),
+                border: const OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, null),
+            child: Text(l10n.translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, reasonController.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: Text(l10n.translate('confirm')),
+          ),
+        ],
+      ),
+    );
+
+    reasonController.dispose();
+
+    if (result != null) {
+      await _changeOrderStatus(order, 'CANCELED', cancellationReason: result.isNotEmpty ? result : null);
+    }
+  }
+
   void _showChangeStatusDialog(Order order) async {
     final l10n = AppLocalizations.of(context)!;
     final statuses = ['ONHOLD', 'PENDING', 'PREPARING', 'READY', 'DELIVERED', 'COMPLETED', 'CANCELED'];
@@ -1297,7 +1364,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                     const SizedBox(width: 8),
                     if (order.isSynced)
                       const Icon(Icons.cloud_done, size: 16, color: Colors.green)
-                    else if (order.status == 'COMPLETED')
+                    else if (order.status != 'ONHOLD')
                       const Icon(Icons.cloud_off, size: 16, color: Colors.orange),
                   ],
                 ),
@@ -1312,7 +1379,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(_getTranslatedStatus(status, l10n), style: const TextStyle(fontSize: 11)),
-                        if (status == 'COMPLETED') ...[
+                        // Show cloud icon for all statuses except ONHOLD
+                        if (status != 'ONHOLD') ...[
                           const SizedBox(width: 4),
                           const Icon(Icons.cloud_upload, size: 12),
                         ],
@@ -1325,6 +1393,27 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                       });
                     },
                   )).toList(),
+                ),
+                const SizedBox(height: 12),
+                // Info about sync behavior
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          l10n.translate('sync_info_all_except_onhold'),
+                          style: const TextStyle(fontSize: 11, color: Colors.blue),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1346,7 +1435,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     );
 
     if (result != null && result != order.status) {
-      await _changeOrderStatus(order, result);
+      // If changing to CANCELED, show reason dialog
+      if (result == 'CANCELED') {
+        _cancelOrder(order);
+      } else {
+        await _changeOrderStatus(order, result);
+      }
     }
   }
 
@@ -1371,16 +1465,34 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     }
   }
 
-  Future<void> _changeOrderStatus(Order order, String newStatus) async {
+  Future<void> _changeOrderStatus(Order order, String newStatus, {String? cancellationReason}) async {
     final l10n = AppLocalizations.of(context)!;
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
+      final database = ref.read(databaseProvider);
       final isOnline = ref.read(networkStateProvider);
 
-      await orderRepo.updateOrderStatus(order.id, newStatus);
+      // Update order status with cancellation reason if provided
+      await orderRepo.updateOrderStatus(order.id, newStatus, cancellationReason: cancellationReason);
+
+      // Update tickets isCancelled based on order status
+      final isCancelled = newStatus == 'CANCELED';
+      try {
+        await (database.update(database.tickets)
+          ..where((t) => t.orderId.equals(order.id)))
+          .write(TicketsCompanion(
+            isCancelled: Value(isCancelled),
+            isSynced: const Value(false),
+            updatedAt: Value(DateTime.now()),
+          ));
+      } catch (e) {
+        // Column might not exist yet - will be created on next migration
+        debugPrint('Could not update tickets isCancelled: $e');
+      }
 
       bool synced = false;
-      if (isOnline) {
+      // Auto-sync for all statuses except ONHOLD
+      if (isOnline && newStatus != 'ONHOLD') {
         try {
           final syncManager = ref.read(syncManagerProvider.notifier);
           synced = await syncManager.autoSyncOrder(order.id);
@@ -1393,7 +1505,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
       if (mounted) {
         String message = '${l10n.translate('status_changed_to')} ${_getTranslatedStatus(newStatus, l10n)}';
-        if (isOnline) {
+        if (newStatus == 'ONHOLD') {
+          message += ' (${l10n.translate('will_not_sync')})';
+        } else if (isOnline) {
           message += synced ? ' ${l10n.translate('and_synced')}' : ' (${l10n.translate('sync_pending')})';
         } else {
           message += ' (${l10n.translate('will_sync_when_online')})';

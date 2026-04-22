@@ -38,6 +38,7 @@ class AppSettings {
   final int dataRetentionDays; // Days to keep synced data before deletion
   final int autoSyncDurationMinutes; // Auto-sync interval in minutes (default: 5)
   final bool autoClearSyncedData; // Clear synced data at start of each day
+  final bool syncUnpaidOrders; // Whether to sync unpaid orders (default: true)
   final bool orderPanelOnRight;
 
   // Server settings
@@ -95,6 +96,7 @@ class AppSettings {
     this.dataRetentionDays = 7,
     this.autoSyncDurationMinutes = 5,
     this.autoClearSyncedData = true,
+    this.syncUnpaidOrders = true,
     this.orderPanelOnRight = false,
     this.serverPort = 2004,
     this.serverPassword,
@@ -131,6 +133,7 @@ class AppSettings {
     int? dataRetentionDays,
     int? autoSyncDurationMinutes,
     bool? autoClearSyncedData,
+    bool? syncUnpaidOrders,
     bool? orderPanelOnRight,
     int? serverPort,
     String? serverPassword,
@@ -166,6 +169,7 @@ class AppSettings {
       dataRetentionDays: dataRetentionDays ?? this.dataRetentionDays,
       autoSyncDurationMinutes: autoSyncDurationMinutes ?? this.autoSyncDurationMinutes,
       autoClearSyncedData: autoClearSyncedData ?? this.autoClearSyncedData,
+      syncUnpaidOrders: syncUnpaidOrders ?? this.syncUnpaidOrders,
       orderPanelOnRight: orderPanelOnRight ?? this.orderPanelOnRight,
       serverPort: serverPort ?? this.serverPort,
       serverPassword: serverPassword ?? this.serverPassword,
@@ -204,6 +208,7 @@ class AppSettings {
       'dataRetentionDays': dataRetentionDays,
       'autoSyncDurationMinutes': autoSyncDurationMinutes,
       'autoClearSyncedData': autoClearSyncedData,
+      'syncUnpaidOrders': syncUnpaidOrders,
       'orderPanelOnRight': orderPanelOnRight,
       'serverPort': serverPort,
       'serverPassword': serverPassword,
@@ -258,6 +263,7 @@ class AppSettings {
       dataRetentionDays: json['dataRetentionDays'] as int? ?? 7,
       autoSyncDurationMinutes: json['autoSyncDurationMinutes'] as int? ?? 5,
       autoClearSyncedData: json['autoClearSyncedData'] as bool? ?? true,
+      syncUnpaidOrders: json['syncUnpaidOrders'] as bool? ?? true,
       orderPanelOnRight: json['orderPanelOnRight'] as bool? ?? false,
       serverPort: json['serverPort'] as int?,
       serverPassword: json['serverPassword'] as String?,

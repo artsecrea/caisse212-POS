@@ -64,7 +64,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration {
@@ -100,6 +100,24 @@ class AppDatabase extends _$AppDatabase {
           try {
             await customStatement(
               'ALTER TABLE categories ADD COLUMN color TEXT;',
+            );
+          } catch (e) {
+            // Column may already exist
+          }
+        }
+        if (from < 4) {
+          // Add cancellationReason to orders
+          try {
+            await customStatement(
+              'ALTER TABLE orders ADD COLUMN cancellation_reason TEXT;',
+            );
+          } catch (e) {
+            // Column may already exist
+          }
+          // Add isCancelled to tickets
+          try {
+            await customStatement(
+              'ALTER TABLE tickets ADD COLUMN is_cancelled INTEGER NOT NULL DEFAULT 0;',
             );
           } catch (e) {
             // Column may already exist

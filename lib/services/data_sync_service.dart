@@ -534,10 +534,10 @@ class DataSyncService {
     return productDataList;
   }
 
-  /// Get all orders that need to be synced (not yet synced)
+  /// Get all orders that need to be synced (not yet synced, excluding ONHOLD)
   Future<List<Map<String, dynamic>>> getOrdersForSync() async {
     final orders = await (_database.select(_database.orders)
-      ..where((o) => o.isSynced.equals(false)))
+      ..where((o) => o.isSynced.equals(false) & o.status.isNotValue('ONHOLD')))
       .get();
 
     // Build order list with products
@@ -554,9 +554,6 @@ class DataSyncService {
 
       // Build order map with products - discountPercentage is set to 0
       // because it has been merged into each product's manualDiscount
-
-
-
       ordersList.add({
         'id': order.id,
         'code': order.code,
@@ -570,6 +567,7 @@ class DataSyncService {
         'commercialId': order.commercialId,
         'discountPercentage': 0.0,
         'note': order.note,
+        'cancellationReason': order.cancellationReason,
         'createdBy': order.createdBy,
         'servedBy': order.waiterId,
         'products': productsList,
@@ -581,7 +579,7 @@ class DataSyncService {
     return ordersList;
   }
 
-  /// Get all tickets for completed, synced orders that haven't been synced yet
+  /// Get all tickets for synced orders that haven't been synced yet
   Future<List<Map<String, dynamic>>> getTicketsForSync() async {
     // Get synced order IDs and codes
     final syncedOrders = await (_database.select(_database.orders)
@@ -606,9 +604,6 @@ class DataSyncService {
       // Get session code if ticket has a session
       String? sessionCode = sessions.firstWhere((s) => s.id == t.sessionId).code;
 
-
-      print(">>>>>>>>>>>>>>>>>>> $sessionCode");
-
       ticketsList.add({
         'id': t.id,
         'num': t.num,
@@ -619,6 +614,7 @@ class DataSyncService {
         'paymentMethod': t.paymentMethod,
         'amount': t.amount,
         'isPaid': t.isPaid,
+        'isCancelled': t.isCancelled,
         'printCount': t.printCount,
         'date': t.date.toIso8601String(),
         'createdAt': t.date.toIso8601String(),
@@ -822,6 +818,7 @@ class DataSyncService {
         'createdBy': order.createdBy,
         'servedBy': order.waiterId,
         'note': order.note,
+        'cancellationReason': order.cancellationReason,
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),
         'updatedAt': order.updatedAt.toIso8601String(),
@@ -877,6 +874,7 @@ class DataSyncService {
           'paymentMethod': t.paymentMethod,
           'amount': t.amount,
           'isPaid': t.isPaid,
+          'isCancelled': t.isCancelled,
           'printCount': t.printCount,
           'date': t.date.toIso8601String(),
           'createdAt': t.date.toIso8601String(),

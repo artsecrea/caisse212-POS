@@ -83,6 +83,8 @@ dev_dependencies:
   drift_dev: ^2.20.3
   riverpod_generator: ^2.3.11
   json_serializable: ^6.7.1
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.7
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -99,6 +101,9 @@ flutter:
   assets:
     - assets/sounds/button_tap.mp3
     - assets/images/logo.svg
+    - assets/images/caisse212.svg
+    - assets/images/caisse212_icon.svg
+    - assets/images/caisse212_icon.png
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
@@ -127,3 +132,21 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
+# Flutter Launcher Icons Configuration
+flutter_launcher_icons:
+  android: true
+  ios: true
+  windows:
+    generate: true
+    image_path: "assets/images/caisse212_icon.png"
+  image_path: "assets/images/caisse212_icon.png"
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/images/caisse212_icon.png"
+  remove_alpha_ios: true
+# Flutter Native Splash Configuration
+flutter_native_splash:
+  color: "#ffffff"
+  image: assets/images/caisse212_icon.png
+  android: true
+  ios: true
+  web: false

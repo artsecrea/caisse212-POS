@@ -33,50 +33,26 @@ import 'providers/settings_provider.dart';
 import 'utils/app_localizations.dart';
 
 void main() async {
-  // All Flutter initialization MUST happen in the same zone as runApp
-  // So we put everything inside runZonedGuarded
+  // Initialize Flutter bindings OUTSIDE of runZonedGuarded to avoid zone mismatch
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Set up error handling for Flutter errors early
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    _logError('FlutterError', details.exception, details.stack);
+  };
+
+  // Handle errors that aren't caught by Flutter
+  PlatformDispatcher.instance.onError = (error, stack) {
+    _logError('PlatformError', error, stack);
+    return false; // Let Flutter show the error widget
+  };
+
+  // Use runZonedGuarded only for catching async errors, not for runApp
   runZonedGuarded(() async {
-    WidgetsFlutterBinding.ensureInitialized();
-
-    // Show a loading screen immediately to prevent blank white screen
-    runApp(const _BootScreen());
-
-    // Now do the async initialization
     await _initializeApp();
   }, (error, stack) {
     _logError('ZonedError', error, stack);
-    // Show error on screen so user sees something instead of blank white screen
-    try {
-      runApp(MaterialApp(
-        debugShowCheckedModeBanner: false,
-        home: Scaffold(
-          body: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
-                  const SizedBox(height: 16),
-                  const Text('Startup Error',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  SelectableText('$error',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text('Please check logs or restart the application.',
-                    style: TextStyle(fontSize: 14, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ));
-    } catch (_) {}
   });
 }
 
@@ -111,6 +87,9 @@ class _BootScreen extends StatelessWidget {
 }
 
 Future<void> _initializeApp() async {
+    // Show a loading screen immediately to prevent blank white screen
+    runApp(const _BootScreen());
+
     // Initialize window manager for desktop platforms (fullscreen support)
     if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
       try {
@@ -129,17 +108,6 @@ Future<void> _initializeApp() async {
       }
     }
 
-    // Set up error handling for Flutter errors
-    FlutterError.onError = (FlutterErrorDetails details) {
-      FlutterError.presentError(details);
-      _logError('FlutterError', details.exception, details.stack);
-    };
-
-    // Handle errors that aren't caught by Flutter
-    PlatformDispatcher.instance.onError = (error, stack) {
-      _logError('PlatformError', error, stack);
-      return false; // Let Flutter show the error widget
-    };
 
     final logger = Logger.instance;
 
