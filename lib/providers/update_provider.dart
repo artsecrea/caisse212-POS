@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/update_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -125,34 +126,15 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
             state = state.copyWith(downloadProgress: progress);
           },
         );
-      } else if (Platform.isWindows) {
-        // Windows: Download and launch updater
-        final updatePath = await _updateService.downloadUpdateForWindows(
-          state.availableUpdate!,
-          onProgress: (progress) {
-            state = state.copyWith(downloadProgress: progress);
-          },
-        );
-
-        if (updatePath != null) {
-          // Get the actual executable directory (not current working directory)
-          final executablePath = Platform.resolvedExecutable;
-          final appDirectory = File(executablePath).parent.path;
-
-          // Launch Windows updater
-          success = await _updateService.launchWindowsUpdater(
-            updateArchivePath: updatePath,
-            appDirectory: appDirectory,
-            executableName: 'posecrea.exe', // Adjust based on your app name
-            excludeFolders: ['logs', 'data', 'config'],
-            checksum: state.availableUpdate!.checksum,
-          );
-
-          if (success) {
-            // Exit the app to allow updater to work
-            exit(0);
-          }
-        }
+      } else if (!kIsWeb &&
+          (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+        // Desktop: handled by desktop_updater via UpdateDialogListener /
+        // DesktopUpdateWidget in the widget tree. The controller (from
+        // desktopUpdaterControllerProvider) drives the download & restart.
+        // Nothing to do here – the user will see the update card / dialog
+        // automatically once the archive JSON is fetched.
+        state = state.copyWith(isDownloading: false);
+        return true;
       }
 
       state = state.copyWith(

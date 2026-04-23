@@ -125,19 +125,113 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
 
       double componentTotal = 0.0;
       for (final orderComp in orderComponents) {
-        // Use stored price instead of looking up component
         componentTotal += orderComp.price * orderComp.quantity;
       }
 
-      // Calculate based on pricing rules
-      final subtotal = item.unitaryPrice * item.quantity;
-      final discountAmount = (item.unitaryDiscount + item.manualDiscount) * item.quantity;
-      final taxableAmount = subtotal - discountAmount;
-      final taxAmount = item.unitaryTva * item.quantity;
-      total += (taxableAmount + taxAmount + componentTotal);
+      // (basePrice - discount + tva) * qty + componentPrices
+      final lineTotal = (item.unitaryPrice - item.unitaryDiscount - item.manualDiscount + item.unitaryTva) * item.quantity + componentTotal;
+      total += lineTotal;
     }
 
     return total;
+  }
+
+  Future<void> _cancelOrder(Order order) async {
+    final l10n = AppLocalizations.of(context)!;
+    final reasonController = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('cancel_order')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${l10n.translate('confirm_cancel_order')} ${order.code}?'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonController,
+              decoration: InputDecoration(
+                labelText: l10n.translate('cancellation_reason'),
+                hintText: l10n.translate('enter_cancellation_reason'),
+                border: const OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[700], foregroundColor: Colors.white),
+            child: Text(l10n.translate('cancel_order')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final orderRepo = ref.read(orderRepositoryProvider);
+      final reason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
+      await orderRepo.updateOrderStatus(order.id, 'CANCELLED', cancellationReason: reason);
+
+      if (mounted) {
+        setState(() => _selectedOrder = null);
+        SnackBarHelper.showSuccessSnackBar(context, ref, l10n.translate('order_canceled_successfully'));
+      }
+    } catch (e) {
+      if (mounted) {
+        SnackBarHelper.showErrorSnackBar(context, ref, '${l10n.translate('error_canceling_order')}: $e');
+      }
+    } finally {
+      reasonController.dispose();
+    }
+  }
+
+  Future<void> _deleteOrder(Order order) async {
+    final l10n = AppLocalizations.of(context)!;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('delete_order')),
+        content: Text('${l10n.translate('confirm_delete_order')} ${order.code}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700], foregroundColor: Colors.white),
+            child: Text(l10n.translate('delete')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final orderRepo = ref.read(orderRepositoryProvider);
+      await orderRepo.deleteOrder(order.id);
+
+      if (mounted) {
+        setState(() => _selectedOrder = null);
+        SnackBarHelper.showSuccessSnackBar(context, ref, l10n.translate('order_deleted_successfully'));
+      }
+    } catch (e) {
+      if (mounted) {
+        SnackBarHelper.showErrorSnackBar(context, ref, 'Error deleting order: $e');
+      }
+    }
   }
 
   Future<List<Map<String, dynamic>>> _getOrderItemsWithDetails(int orderId) async {
@@ -480,7 +574,9 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
                                   ),
                                 ),
                                 Text(
-                                  currencyFormatter.format(orderProduct.unitaryPrice * orderProduct.quantity),
+                                  currencyFormatter.format(
+                                    (orderProduct.unitaryPrice - orderProduct.unitaryDiscount - orderProduct.manualDiscount + orderProduct.unitaryTva) * orderProduct.quantity,
+                                  ),
                                   style: const TextStyle(fontWeight: FontWeight.bold),
                                 ),
                               ],
@@ -571,7 +667,7 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green[600],
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -582,7 +678,29 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.blue[600],
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  onPressed: () => _cancelOrder(order),
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: Text(l10n.translate('cancel_order')),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange[700],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  onPressed: () => _deleteOrder(order),
+                  icon: const Icon(Icons.delete_forever),
+                  label: Text(l10n.translate('delete_order')),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[700],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -592,10 +710,10 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
                       _selectedOrder = null;
                     });
                   },
-                  icon: const Icon(Icons.cancel),
+                  icon: const Icon(Icons.arrow_back),
                   label: Text(l10n.translate('cancel')),
                   style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                 ),
               ],

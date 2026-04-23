@@ -5,8 +5,8 @@ import '../services/sync_job_service.dart';
 
 /// Provider for network connectivity status
 final connectivityProvider = StreamProvider<ConnectivityResult>((ref) async* {
-  await for (final result in Connectivity().onConnectivityChanged) {
-    yield result;
+  await for (final results in Connectivity().onConnectivityChanged) {
+    yield results.firstOrNull ?? ConnectivityResult.none;
   }
 });
 
@@ -14,10 +14,10 @@ final connectivityProvider = StreamProvider<ConnectivityResult>((ref) async* {
 final isOnlineProvider = StreamProvider<bool>((ref) async* {
   final connectivity = Connectivity();
 
-  await for (final result in connectivity.onConnectivityChanged) {
+  await for (final results in connectivity.onConnectivityChanged) {
     // Just check network connectivity, not server health
     // Let actual sync operations fail if server is down
-    yield result != ConnectivityResult.none;
+    yield results.isNotEmpty && !results.contains(ConnectivityResult.none);
   }
 });
 
@@ -31,8 +31,8 @@ class OnlineStatusNotifier extends StateNotifier<bool> {
 
   void _init() {
     // Set initial state based on current connectivity
-    Connectivity().checkConnectivity().then((result) {
-      state = result != ConnectivityResult.none;
+    Connectivity().checkConnectivity().then((results) {
+      state = results.isNotEmpty && !results.contains(ConnectivityResult.none);
     });
 
     ref.listen(isOnlineProvider, (previous, next) {

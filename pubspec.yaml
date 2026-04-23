@@ -39,7 +39,7 @@ dependencies:
   shelf_router: ^1.1.4
   audioplayers: ^6.5.1
 
-  connectivity_plus: ^5.0.2
+  connectivity_plus: ^6.1.4
   bcrypt: ^1.2.0
 
   # UI Components
@@ -63,6 +63,7 @@ dependencies:
   flutter_barcode_listener: ^0.1.4
 
   # Update Service
+  desktop_updater: ^1.4.0
   package_info_plus: ^8.0.0
   window_manager: ^0.4.3
   open_filex: ^4.5.0

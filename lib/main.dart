@@ -1,10 +1,11 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:caisse212/presentation/widgets/printers_management_screen.dart';
+import 'package:caisse212/providers/desktop_update_provider.dart';
 import 'package:caisse212/providers/localization_provider.dart';
 import 'package:caisse212/services/discovery_service.dart';
 import 'package:caisse212/services/sound_service.dart';
-import 'package:cmdecrea/cmdecrea.dart';
+import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -20,12 +21,10 @@ import 'package:caisse212/presentation/widgets/users_management_screen.dart';
 import 'package:caisse212/presentation/widgets/tickets_management_screen.dart';
 
 import 'package:caisse212/services/session_service.dart';
-import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/server_startup_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/theme/app_theme.dart';
-import 'data/database/app_database.dart';
 import 'presentation/login_screen/login_screen.dart';
 import 'presentation/main_screen/main_screen.dart';
 import 'providers/database_providers.dart';
@@ -33,27 +32,23 @@ import 'providers/settings_provider.dart';
 import 'utils/app_localizations.dart';
 
 void main() async {
-  // Initialize Flutter bindings OUTSIDE of runZonedGuarded to avoid zone mismatch
+  // Initialize Flutter bindings in the root zone to avoid zone mismatch.
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Set up error handling for Flutter errors early
+  // Set up error handling for Flutter errors early.
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
     _logError('FlutterError', details.exception, details.stack);
   };
 
-  // Handle errors that aren't caught by Flutter
+  // Catch all other uncaught platform/async errors without spawning a new zone.
   PlatformDispatcher.instance.onError = (error, stack) {
     _logError('PlatformError', error, stack);
-    return false; // Let Flutter show the error widget
+    return false;
   };
 
-  // Use runZonedGuarded only for catching async errors, not for runApp
-  runZonedGuarded(() async {
-    await _initializeApp();
-  }, (error, stack) {
-    _logError('ZonedError', error, stack);
-  });
+  // Call directly (same zone as ensureInitialized) to avoid zone mismatch.
+  await _initializeApp();
 }
 
 /// Boot screen shown while the app initializes
@@ -470,7 +465,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // Get locale from settings
     final locale = Locale(settings.language);
 
-    return MaterialApp(
+    // Desktop updater controller (null on non-desktop or before login)
+    final desktopUpdaterController =
+        ref.watch(desktopUpdaterControllerProvider);
+
+    final app = MaterialApp(
       title: 'CAISSE212',
       builder: (context, child) {
         // Update localization provider whenever context changes
@@ -483,14 +482,30 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           } catch (_) {}
         });
 
+        Widget result;
         try {
-          return OnscreenKeyboard.builder(
+          result = OnscreenKeyboard.builder(
             width: (context) => MediaQuery.sizeOf(context).width / 2,
           )(context, child);
         } catch (e) {
           debugPrint('OnscreenKeyboard builder failed: $e');
-          return child ?? const SizedBox.shrink();
+          result = child ?? const SizedBox.shrink();
         }
+
+        // Overlay the update dialog listener on desktop when controller is available.
+        // UpdateDialogListener has no child parameter – it renders as a floating overlay.
+        if (!kIsWeb &&
+            (Platform.isWindows || Platform.isMacOS || Platform.isLinux) &&
+            desktopUpdaterController != null) {
+          result = Stack(
+            children: [
+              result,
+              UpdateDialogListener(controller: desktopUpdaterController),
+            ],
+          );
+        }
+
+        return result;
       },
       debugShowCheckedModeBanner: false,
 
@@ -513,7 +528,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       darkTheme: AppTheme.darkTheme(),
       themeMode: settings.isDarkMode ? ThemeMode.dark : ThemeMode.light,
       initialRoute: initialRoute,
-      routes:{
+      routes: {
         '/tenant': (context) => const TenantLoginScreen(),
         '/tenant_login': (context) => const TenantLoginScreen(),
         '/login': (context) => const LoginScreen(),
@@ -527,6 +542,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         '/api-tester': (context) => const ApiTesterScreen(),
       },
     );
+
+    return app;
   }
 }
 
