@@ -4,7 +4,7 @@ description: "A new Flutter project."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.0.0-BETA
+version: 1.0.0+1
 
 environment:
   sdk: ^3.9.2
@@ -71,6 +71,7 @@ dependencies:
   http: ^1.2.0
   bonsoir: ^5.0.0
   file_picker: ^10.3.10
+  fl_chart: ^0.69.0
 
 dev_dependencies:
   flutter_test:

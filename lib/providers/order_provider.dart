@@ -318,12 +318,12 @@ class OrderRepository {
     }
   }
 
-  Future<int> saveOrder(CurrentOrder order, int userId, {String status = 'PENDING'}) async {
+  Future<int> saveOrder(CurrentOrder order, int userId, {String status = 'PENDING', int? sessionId}) async {
 
     if (order.orderId != null) {
       throw Exception("Order already has an order code, use updateOrder instead.");
     }
-    print(order.items.first.toJson());
+    _logger.debug('saveOrder: ${order.items.first.toJson()}');
     // Generate order code
     final uuid = const Uuid();
     final orderCode = order.orderCode != null ? order.orderCode! : uuid.v4().substring(0, 8).toUpperCase();
@@ -352,11 +352,11 @@ class OrderRepository {
 
         clientId: Value(order.customerId),
         commercialId: Value(order.commercialId),
+        sessionId: Value(sessionId),
         createdAt: Value(DateTime.now()),
         updatedAt: Value(DateTime.now()),
       ),
     );
-// flutter pub run build_runner build --delete-conflicting-outputs
     // Insert order products - set state based on order status
     final itemState = status == 'ONHOLD' ? 'ONHOLD' : 'PENDING';
     for (final item in order.items) {
@@ -372,6 +372,9 @@ class OrderRepository {
           note: Value(item.note),
           unitaryTva: Value(item.tva),
           state: Value(itemState),
+          planStartAt: Value(item.planStartAt),
+          planEndAt: Value(item.planEndAt),
+          planWaiterId: Value(item.planWaiterId),
         ),
       );
 
@@ -478,10 +481,19 @@ class OrderRepository {
   Future<void> updateOrder(CurrentOrder order, {bool queueSyncOperation = true}) async {
     int orderId = order.orderId!;
 
-    // Check if order was synced and queue update operation
     final existingOrder = await (_database.select(_database.orders)
       ..where((tbl) => tbl.id.equals(orderId)))
       .getSingleOrNull();
+
+    // Z-report guard: refuse item modifications on orders from a closed session
+    if (existingOrder?.sessionId != null) {
+      final session = await (_database.select(_database.cashSessions)
+            ..where((tbl) => tbl.id.equals(existingOrder!.sessionId!)))
+          .getSingleOrNull();
+      if (session?.status == 'ended') {
+        throw Exception('Cannot modify order from a closed (Z-report) session');
+      }
+    }
 
     final wasAlreadySynced = existingOrder?.isSynced ?? false;
     final orderCode = existingOrder?.code ?? order.orderCode ?? '';
@@ -524,6 +536,9 @@ class OrderRepository {
           note: Value(item.note),
           unitaryTva: Value(item.tva),
           state: Value('PENDING'),
+          planStartAt: Value(item.planStartAt),
+          planEndAt: Value(item.planEndAt),
+          planWaiterId: Value(item.planWaiterId),
         ),
       );
 
@@ -697,6 +712,9 @@ class OrderRepository {
         tva: orderProduct.unitaryTva,
         ticketId: orderProduct.ticketId,
         state: orderProduct.state,
+        planStartAt: orderProduct.planStartAt,
+        planEndAt: orderProduct.planEndAt,
+        planWaiterId: orderProduct.planWaiterId,
       ));
     }
 
@@ -837,12 +855,27 @@ class OrderRepository {
     return result;
   }
 
-  Future<void> updateOrderStatus(int orderId, String status, {bool queueSyncOperation = true, String? cancellationReason}) async {
+  Future<void> updateOrderStatus(int orderId, String status, {bool queueSyncOperation = true, String? cancellationReason, int? sessionId}) async {
     // Get current status before updating
     final currentOrder = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
     final oldStatus = currentOrder?.status ?? '';
     final wasAlreadySynced = currentOrder?.isSynced ?? false;
     final orderCode = currentOrder?.code ?? '';
+
+    // Z-report guard: only COMPLETED (payment finalization) allowed on Z-locked orders
+    if (currentOrder?.sessionId != null && status != 'COMPLETED') {
+      final session = await (_database.select(_database.cashSessions)
+            ..where((tbl) => tbl.id.equals(currentOrder!.sessionId!)))
+          .getSingleOrNull();
+      if (session?.status == 'ended') {
+        throw Exception('Cannot change status of order from a closed (Z-report) session');
+      }
+    }
+
+    // Stamp sessionId if order has none and caller is providing one (confirmation flow)
+    final sessionIdToStamp = (currentOrder?.sessionId == null && sessionId != null)
+        ? Value(sessionId)
+        : const Value<int?>.absent();
 
     // Build the update companion including cancellationReason
     final updateCompanion = OrdersCompanion(
@@ -852,6 +885,7 @@ class OrderRepository {
       isSynced: Value(status == 'ONHOLD'),
       // Set cancellation reason when cancelled, clear it otherwise
       cancellationReason: Value(status == 'CANCELED' ? cancellationReason : null),
+      sessionId: sessionIdToStamp,
     );
 
     await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(updateCompanion);
@@ -1250,6 +1284,14 @@ class OrderRepository {
     // Calculate final total
     final total = subtotal + totalTva - totalDiscount;
 
+    bool isZLocked = false;
+    if (order.sessionId != null) {
+      final session = await (_database.select(_database.cashSessions)
+            ..where((tbl) => tbl.id.equals(order.sessionId!)))
+          .getSingleOrNull();
+      isZLocked = session?.status == 'ended';
+    }
+
     return OrderFullDetails(
       order: order,
       userName: userName,
@@ -1266,6 +1308,7 @@ class OrderRepository {
       total: total,
       totalPaid: totalPaid,
       items: itemDetails,
+      isZLocked: isZLocked,
     );
   }
 
@@ -1277,8 +1320,18 @@ class OrderRepository {
 
   // Delete an order
   Future<void> deleteOrder(int orderId, {bool queueSyncOperation = true}) async {
-    // Check if order was synced to server
     final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
+
+    // Z-report guard: refuse deletes on orders from a closed session
+    if (order?.sessionId != null) {
+      final session = await (_database.select(_database.cashSessions)
+            ..where((tbl) => tbl.id.equals(order!.sessionId!)))
+          .getSingleOrNull();
+      if (session?.status == 'ended') {
+        throw Exception('Cannot delete order from a closed (Z-report) session');
+      }
+    }
+
 
     if (order != null && order.isSynced && queueSyncOperation) {
       // Try to delete from server if online, otherwise queue

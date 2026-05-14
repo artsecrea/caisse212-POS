@@ -223,10 +223,14 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
   }
 
   Future<void> _showAddCustomerDialog(BuildContext context, AppLocalizations l10n) async {
-    await showDialog(
+    final result = await showDialog<Map<String, dynamic>?>(
       context: context,
       builder: (context) => _AddCustomerDialog(database: ref.read(databaseProvider)),
     );
+    // If the user saved a new customer, immediately select it.
+    if (result != null && mounted) {
+      Navigator.of(context).pop(result);
+    }
   }
 }
 
@@ -313,28 +317,12 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
       );
 
       if (mounted) {
-        final l10n = AppLocalizations.of(context)!;
-        Navigator.of(context).pop();
-
-        // Show success message with customer name
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '${l10n.translate('customer_added_successfully')}: ${_firstNameController.text} ${_lastNameController.text}',
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        // Pop with the new customer data so the caller can auto-select it.
+        Navigator.of(context).pop({
+          'id': customerId,
+          'name':
+              '${_firstNameController.text.trim()} ${_lastNameController.text.trim()}',
+        });
       }
     } catch (e) {
       setState(() => _isLoading = false);

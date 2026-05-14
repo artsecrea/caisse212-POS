@@ -35,6 +35,9 @@ class OrderPanel extends ConsumerWidget {
         manualDiscount: result['manualDiscount'] as double?,
         quantity: result['quantity'] as int?,
         note: result['note'] as String?,
+        planStartAt: result['planStartAt'] as DateTime?,
+        planEndAt: result['planEndAt'] as DateTime?,
+        planWaiterId: result['planWaiterId'] as int?,
       );
       ref.read(orderProvider.notifier).updateItem(index, updatedItem);
     }

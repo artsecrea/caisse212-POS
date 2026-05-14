@@ -19,7 +19,9 @@ import 'package:caisse212/presentation/widgets/orders_management_screen.dart';
 import 'package:caisse212/presentation/widgets/sessions_management_screen.dart';
 import 'package:caisse212/presentation/widgets/users_management_screen.dart';
 import 'package:caisse212/presentation/widgets/tickets_management_screen.dart';
-
+import 'package:caisse212/presentation/widgets/agenda_screen.dart';
+import 'package:caisse212/presentation/widgets/dashboard_screen.dart';
+import 'package:caisse212/presentation/widgets/notes_screen.dart';
 import 'package:caisse212/services/session_service.dart';
 import 'package:caisse212/services/server_startup_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -470,7 +472,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         ref.watch(desktopUpdaterControllerProvider);
 
     final app = MaterialApp(
-      title: 'CAISSE212',
+      title: 'updatere    dsdlkfndsl',
       builder: (context, child) {
         // Update localization provider whenever context changes
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -540,6 +542,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         '/sessions': (context) => const SessionsManagementScreen(),
         '/printers': (context) => const PrintersManagementScreen(),
         '/api-tester': (context) => const ApiTesterScreen(),
+        '/agenda': (context) => const AgendaScreen(),
+        '/dashboard': (context) => const DashboardScreen(),
+        '/notes': (context) => const NotesScreen(),
       },
     );
 

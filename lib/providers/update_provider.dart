@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:loggecrea/loggecrea.dart';
 import '../services/update_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -51,6 +52,7 @@ class UpdateState {
 /// Update notifier
 class UpdateNotifier extends StateNotifier<UpdateState> {
   final UpdateService _updateService;
+  final _logger = Logger.instance;
 
   UpdateNotifier(this._updateService) : super(UpdateState());
 
@@ -73,8 +75,7 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
         final comparisonResult = _compareVersions(updateInfo.version, currentVersion);
 
         if (comparisonResult > 0) {
-          // Remote version is newer
-          print('Update available: ${updateInfo.version} > $currentVersion');
+          _logger.info('Update available: ${updateInfo.version} > $currentVersion');
           state = state.copyWith(
             isChecking: false,
             availableUpdate: updateInfo,
@@ -82,8 +83,7 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
           );
           return true;
         } else {
-          // Current version is up to date
-          print('App is up to date: $currentVersion >= ${updateInfo.version}');
+          _logger.info('App is up to date: $currentVersion >= ${updateInfo.version}');
           state = state.copyWith(
             isChecking: false,
             clearUpdate: true,
@@ -96,7 +96,7 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
         return false;
       }
     } catch (e) {
-      print('Error checking for updates: $e');
+      _logger.error('Error checking for updates: $e');
       state = state.copyWith(
         isChecking: false,
         error: 'Failed to check for updates: $e',
@@ -156,7 +156,7 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
   /// Dismiss update notification (only if not mandatory)
   void dismissUpdate() {
     if (!state.updateRequired) {
-      state = UpdateState();
+      state = state.copyWith(clearUpdate: true);
     }
   }
 

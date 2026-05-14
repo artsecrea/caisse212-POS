@@ -19,6 +19,8 @@ class Products extends Table {
   TextColumn get color => text().nullable()();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
   BoolColumn get isVariant => boolean().withDefault(const Constant(false))();
+  BoolColumn get isPlannable => boolean().withDefault(const Constant(false))();
+  IntColumn get planDurationMinutes => integer().nullable()(); // Default plan duration in minutes
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

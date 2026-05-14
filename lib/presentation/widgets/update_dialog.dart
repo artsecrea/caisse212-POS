@@ -18,8 +18,8 @@ class UpdateDialog extends ConsumerWidget {
 
     if (updateInfo == null) return const SizedBox.shrink();
 
-    return WillPopScope(
-      onWillPop: () async => !isMandatory,
+    return PopScope(
+      canPop: !isMandatory,
       child: AlertDialog(
         title: Row(
           children: [
@@ -45,7 +45,7 @@ class UpdateDialog extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              if (updateInfo.releaseNotes!.isNotEmpty) ...[
+              if ((updateInfo.releaseNotes ?? '').isNotEmpty) ...[
                 const Text(
                   'What\'s New:',
                   style: TextStyle(fontWeight: FontWeight.bold),

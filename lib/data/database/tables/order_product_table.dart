@@ -13,5 +13,8 @@ class OrderProducts extends Table {
   RealColumn get manualDiscount => real().withDefault(const Constant(0.0))();
   TextColumn get note => text().nullable()();
   TextColumn get state => text().withDefault(const Constant('PENDING'))(); // PENDING, PREPARING, COMPLETED, CANCELED
+  DateTimeColumn get planStartAt => dateTime().nullable()(); // Planned start time
+  DateTimeColumn get planEndAt => dateTime().nullable()(); // Planned end time
+  IntColumn get planWaiterId => integer().nullable()(); // Assigned waiter for this booking
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

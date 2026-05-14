@@ -261,6 +261,8 @@ class DataSyncService {
           finalPrice: (product['finalPrice'] as num).toDouble(),
           isActive: Value(product['isActive'] ?? true),
           isVariant: Value(product['isVariant'] ?? false),
+          isPlannable: Value(product['isPlannable'] ?? false),
+          planDurationMinutes: Value(product['planDurationMinutes'] as int?),
           color: Value(product['color']),
         ),
         mode: InsertMode.insertOrReplace,

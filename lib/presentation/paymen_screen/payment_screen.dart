@@ -101,10 +101,10 @@ class CalculatorState {
   }
 }
 
-// Providers
-final ticketsProvider = StateProvider<List<TicketData>>((ref) => []);
-final calculatorProvider = StateProvider<CalculatorState>((ref) => CalculatorState());
-final selectedTicketProvider = StateProvider<int?>((ref) => null);
+// Providers — autoDispose so state resets when dialog closes
+final ticketsProvider = StateProvider.autoDispose<List<TicketData>>((ref) => []);
+final calculatorProvider = StateProvider.autoDispose<CalculatorState>((ref) => CalculatorState());
+final selectedTicketProvider = StateProvider.autoDispose<int?>((ref) => null);
 
 /// Modern Payment Screen - Rebuilt for touch screens
 class PaymentScreen extends ConsumerStatefulWidget {
@@ -184,6 +184,15 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
 
     ref.read(ticketsProvider.notifier).state = tickets;
+    ref.read(calculatorProvider.notifier).state = CalculatorState();
+
+    // Auto-select the single unpaid ticket if there is exactly one
+    final unpaidIndices = [
+      for (int i = 0; i < tickets.length; i++)
+        if (!tickets[i].isPaid) i,
+    ];
+    ref.read(selectedTicketProvider.notifier).state =
+        unpaidIndices.length == 1 ? unpaidIndices.first : null;
   }
 
   @override
@@ -344,6 +353,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   Widget _buildTicketsArea(List<TicketData> tickets) {
     final hasUnpaidTicketsWithItems = tickets.any((t) => !t.isPaid && t.items.isNotEmpty);
+    final hasEmptyUnpaidTicket = tickets.any((t) => !t.isPaid && t.items.isEmpty);
     final l10n = AppLocalizations.of(context)!;
 
     return Column(
@@ -376,13 +386,18 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: _addNewTicket,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: Text(l10n.translate('new_ticket'), style: const TextStyle(fontSize: 14)),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              Tooltip(
+                message: hasEmptyUnpaidTicket ? l10n.translate('fill_empty_ticket_first') : '',
+                child: ElevatedButton.icon(
+                  onPressed: hasEmptyUnpaidTicket ? null : _addNewTicket,
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: Text(l10n.translate('new_ticket'), style: const TextStyle(fontSize: 14)),
+                  style: ElevatedButton.styleFrom(
+                    disabledBackgroundColor: Colors.grey.shade300,
+                    disabledForegroundColor: Colors.grey.shade600,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
                 ),
               ),
             ],
@@ -884,7 +899,30 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       return _buildPaidTicketPanel(ticket);
     }
 
+    if (ticket.items.isEmpty) {
+      return _buildEmptyTicketPanel();
+    }
+
     return _buildActivePaymentPanel(selectedIndex, ticket);
+  }
+
+  Widget _buildEmptyTicketPanel() {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.inbox_rounded, size: 80, color: theme.colorScheme.onSurface.withValues(alpha: 0.2)),
+          const SizedBox(height: 20),
+          Text(
+            l10n.translate('ticket_has_no_items'),
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, color: theme.colorScheme.onSurface.withValues(alpha: 0.5)),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildPaidTicketPanel(TicketData ticket) {
@@ -1065,7 +1103,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton.icon(
-                  onPressed: calcState.enteredAmount >= ticket.total
+                  onPressed: ticket.items.isNotEmpty && calcState.enteredAmount >= ticket.total
                       ? () => _processPayment(ticketIndex, ticket)
                       : null,
                   icon: const Icon(Icons.check_circle_rounded, size: 24),
@@ -1215,10 +1253,23 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       if (!mounted) return;
 
       final tickets = ref.read(ticketsProvider);
+      final l10n = AppLocalizations.of(context)!;
+
+      // Block if any unpaid ticket is already empty
+      if (tickets.any((t) => !t.isPaid && t.items.isEmpty)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.translate('fill_empty_ticket_first')),
+            backgroundColor: Colors.orange.shade700,
+          ),
+        );
+        return;
+      }
+
       final defaultMethod = TransactionType.fromString(
         ref.read(settingsProvider).defaultPaymentMethod,
       );
-      ref.read(ticketsProvider.notifier).state = [
+      final newTickets = [
         ...tickets,
         TicketData(
           items: [],
@@ -1226,6 +1277,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           discountPercentage: widget.order.discountPercentage,
         ),
       ];
+      ref.read(ticketsProvider.notifier).state = newTickets;
+      // Auto-select the new empty ticket so user knows to drag items into it
+      ref.read(selectedTicketProvider.notifier).state = newTickets.length - 1;
     });
   }
 
@@ -1250,15 +1304,24 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         return;
       }
 
-      // Move items to first ticket
       final removedItems = tickets[index].items;
       final updatedTickets = List<TicketData>.from(tickets);
       updatedTickets.removeAt(index);
 
+      // Move orphaned items to the first unpaid ticket (never a paid ticket)
       if (removedItems.isNotEmpty) {
-        updatedTickets[0] = updatedTickets[0].copyWith(
-          items: [...updatedTickets[0].items, ...removedItems],
-        );
+        final destIdx = updatedTickets.indexWhere((t) => !t.isPaid);
+        if (destIdx != -1) {
+          updatedTickets[destIdx] = updatedTickets[destIdx].copyWith(
+            items: [...updatedTickets[destIdx].items, ...removedItems],
+          );
+        }
+      }
+
+      // Reset selected index if it pointed at removed or out-of-bounds ticket
+      final selected = ref.read(selectedTicketProvider);
+      if (selected != null && selected >= updatedTickets.length) {
+        ref.read(selectedTicketProvider.notifier).state = null;
       }
 
       ref.read(ticketsProvider.notifier).state = updatedTickets;
@@ -1285,9 +1348,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final tickets = ref.read(ticketsProvider);
     final item = tickets[sourceTicketIndex].items[itemIndex];
 
-    // Check if same product (same db id) already exists in target ticket → merge in DB
+    // Check if same product+variant already exists in target ticket → merge in DB
     final existingIndex = tickets[targetTicketIndex].items.indexWhere(
-      (existing) => existing.id == item.id && existing.id != null,
+      (existing) => existing.productId == item.productId &&
+          existing.variantId == item.variantId &&
+          existing.id != null &&
+          existing.id != item.id,
     );
 
     if (existingIndex != -1) {
@@ -1307,9 +1373,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       final movedItem = updatedTickets[sourceTicketIndex].items[itemIndex];
       updatedTickets[sourceTicketIndex].items.removeAt(itemIndex);
 
-      // Check if same product (same db id) exists in target ticket → merge UI
+      // Check if same product+variant exists in target ticket → merge UI
       final mergeIndex = updatedTickets[targetTicketIndex].items.indexWhere(
-        (existing) => existing.id == movedItem.id && existing.id != null,
+        (existing) => existing.productId == movedItem.productId &&
+            existing.variantId == movedItem.variantId &&
+            existing.id != null &&
+            existing.id != movedItem.id,
       );
 
       if (mergeIndex != -1) {

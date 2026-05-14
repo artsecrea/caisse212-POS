@@ -1336,9 +1336,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }) {
     final l10n = AppLocalizations.of(context)!;
     final languages = [
-      {'code': 'en', 'name': 'English', 'flag': '🇬🇧'},
-      {'code': 'ar', 'name': 'العربية', 'flag': '🇸🇦'},
-      {'code': 'fr', 'name': 'Français', 'flag': '🇫🇷'},
+      {'code': 'en', 'name': 'English', 'flag': ''},
+      {'code': 'ar', 'name': 'العربية', 'flag': ''},
+      {'code': 'fr', 'name': 'Français', 'flag': ''},
     ];
 
     return Card(

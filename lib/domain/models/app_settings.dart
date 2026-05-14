@@ -55,6 +55,9 @@ class AppSettings {
   // Payment settings
   final String defaultPaymentMethod; // Default payment method: 'CASH', 'CARD', 'MOBILE', 'OTHER'
 
+  // Agenda settings
+  final int agendaTimeStep; // Time grid interval in minutes: 60, 30, or 15
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -104,6 +107,7 @@ class AppSettings {
     this.enableSnackBars = false,
     this.enableCustomerDisplay = false,
     this.defaultPaymentMethod = 'CASH',
+    this.agendaTimeStep = 60,
   });
 
   AppSettings copyWith({
@@ -141,6 +145,7 @@ class AppSettings {
     bool? enableSnackBars,
     bool? enableCustomerDisplay,
     String? defaultPaymentMethod,
+    int? agendaTimeStep,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -177,6 +182,7 @@ class AppSettings {
       enableSnackBars: enableSnackBars ?? this.enableSnackBars,
       enableCustomerDisplay: enableCustomerDisplay ?? this.enableCustomerDisplay,
       defaultPaymentMethod: defaultPaymentMethod ?? this.defaultPaymentMethod,
+      agendaTimeStep: agendaTimeStep ?? this.agendaTimeStep,
     );
   }
 
@@ -216,6 +222,7 @@ class AppSettings {
       'enableSnackBars': enableSnackBars,
       'enableCustomerDisplay': enableCustomerDisplay,
       'defaultPaymentMethod': defaultPaymentMethod,
+      'agendaTimeStep': agendaTimeStep,
     };
   }
 
@@ -271,6 +278,7 @@ class AppSettings {
       enableSnackBars: json['enableSnackBars'] as bool? ?? true,
       enableCustomerDisplay: json['enableCustomerDisplay'] as bool? ?? false,
       defaultPaymentMethod: json['defaultPaymentMethod'] as String? ?? 'CASH',
+      agendaTimeStep: json['agendaTimeStep'] as int? ?? 60,
     );
   }
 

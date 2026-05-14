@@ -5,6 +5,7 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show O
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:window_manager/window_manager.dart';
+import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/update_provider.dart';
@@ -35,8 +36,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscurePassword = true;
   bool _isFullScreen = false;
   String? _errorMessage;
-  // bool _showServerConfig = false;
-  List<String> _availableUsernames = [];
+  List<User> _availableUsers = [];
+  String? _selectedUsername;
 
   // Generate date-based password (YYYYMMDD format)
   String get _configPassword {
@@ -47,20 +48,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    _loadUsernames();
+    _loadUsers();
     _checkFullScreenStatus();
   }
 
-  /// Load available usernames from database
-  Future<void> _loadUsernames() async {
+  Future<void> _loadUsers() async {
     try {
       final database = ref.read(databaseProvider);
       final users = await database.select(database.users).get();
       setState(() {
-        _availableUsernames = users.map((u) => u.username).toList();
+        _availableUsers = users;
       });
     } catch (e) {
-      print('Error loading usernames: $e');
+      debugPrint('Error loading users: $e');
     }
   }
 
@@ -736,123 +736,58 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 32),
-                            // Username autocomplete field
-                            Autocomplete<String>(
-                              initialValue: TextEditingValue(text: _usernameController.text),
-                              optionsBuilder: (TextEditingValue textEditingValue) {
-                                if (textEditingValue.text.isEmpty) {
-                                  return _availableUsernames;
-                                }
-                                return _availableUsernames.where((String username) {
-                                  return username.toLowerCase().contains(
-                                    textEditingValue.text.toLowerCase(),
-                                  );
-                                });
-                              },
-                              onSelected: (String selection) {
-                                _usernameController.text = selection;
-                              },
-                              fieldViewBuilder: (
-                                BuildContext context,
-                                TextEditingController fieldController,
-                                FocusNode fieldFocusNode,
-                                VoidCallback onFieldSubmitted,
-                              ) {
-                                // Sync with our main controller
-                                fieldController.addListener(() {
-                                  _usernameController.text = fieldController.text;
-                                });
-
-                                return TextFormField(
-                                  controller: fieldController,
-                                  focusNode: fieldFocusNode,
-                                  decoration: InputDecoration(
-                                    labelText: '${l10n.translate('username')} *',
-                                    prefixIcon: const Icon(Icons.person),
-                                    suffixIcon: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (fieldController.text.isNotEmpty)
-                                          IconButton(
-                                            icon: Icon(Icons.clear, color: Colors.grey[600], size: 20),
-                                            onPressed: () {
-                                              fieldController.clear();
-                                              _usernameController.clear();
-                                              _passwordController.clear();
-                                              setState(() {});
-                                            },
-                                            tooltip: l10n.translate('clear_credentials'),
+                            // User dropdown
+                            DropdownButtonFormField<String>(
+                              initialValue: _selectedUsername,
+                              decoration: InputDecoration(
+                                labelText: '${l10n.translate('username')} *',
+                                prefixIcon: const Icon(Icons.person),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              isExpanded: true,
+                              dropdownColor: Theme.of(context).colorScheme.surface,
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                              items: _availableUsers.map((user) {
+                                final displayName =
+                                    '${user.firstName} ${user.lastName}'.trim();
+                                return DropdownMenuItem<String>(
+                                  value: user.username,
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.person, size: 20,
+                                          color: Theme.of(context).colorScheme.onSurface),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          displayName.isNotEmpty
+                                              ? displayName
+                                              : user.username,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Theme.of(context).colorScheme.onSurface,
                                           ),
-                                        if (_availableUsernames.isNotEmpty)
-                                          Icon(Icons.arrow_drop_down, color: Colors.grey[600]),
-                                        const SizedBox(width: 8),
-                                      ],
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  style: const TextStyle(fontSize: 16),
-                                  validator: (value) {
-                                    if (value == null || value.trim().isEmpty) {
-                                      return l10n.translate('username_required');
-                                    }
-                                    if (value.trim().length < 3) {
-                                      return 'Username must be at least 3 characters';
-                                    }
-                                    return null;
-                                  },
-                                  onFieldSubmitted: (value) => onFieldSubmitted(),
-                                );
-                              },
-                              optionsViewBuilder: (
-                                BuildContext context,
-                                AutocompleteOnSelected<String> onSelected,
-                                Iterable<String> options,
-                              ) {
-                                return Align(
-                                  alignment: Alignment.topLeft,
-                                  child: Material(
-                                    elevation: 4.0,
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: Container(
-                                      constraints: const BoxConstraints(maxHeight: 200),
-                                      width: 380, // Match the field width approximately
-                                      child: ListView.builder(
-                                        padding: const EdgeInsets.all(8.0),
-                                        itemCount: options.length,
-                                        shrinkWrap: true,
-                                        itemBuilder: (BuildContext context, int index) {
-                                          final String option = options.elementAt(index);
-                                          return InkWell(
-                                            onTap: () {
-                                              onSelected(option);
-                                            },
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                horizontal: 16.0,
-                                                vertical: 12.0,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                borderRadius: BorderRadius.circular(8),
-                                              ),
-                                              child: Row(
-                                                children: [
-                                                  const Icon(Icons.person, size: 20),
-                                                  const SizedBox(width: 12),
-                                                  Text(
-                                                    option,
-                                                    style: const TextStyle(fontSize: 16),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        },
+                                        ),
                                       ),
-                                    ),
+                                    ],
                                   ),
                                 );
+                              }).toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  _selectedUsername = value;
+                                  _usernameController.text = value ?? '';
+                                });
+                              },
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return l10n.translate('username_required');
+                                }
+                                return null;
                               },
                             ),
                             const SizedBox(height: 20),

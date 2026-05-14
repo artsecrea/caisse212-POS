@@ -43,6 +43,7 @@ class SettingsKeys {
 
   // UI settings
   static const String enableSnackBars = 'enable_snack_bars';
+  static const String agendaTimeStep = 'agenda_time_step';
 
   // Customer Display settings
   static const String enableCustomerDisplay = 'enable_customer_display';
@@ -133,6 +134,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       enableSnackBars: _prefs.getBool(SettingsKeys.enableSnackBars) ?? false,
       enableCustomerDisplay: _prefs.getBool(SettingsKeys.enableCustomerDisplay) ?? false,
       defaultPaymentMethod: _prefs.getString(SettingsKeys.defaultPaymentMethod) ?? 'CASH',
+      agendaTimeStep: _prefs.getInt(SettingsKeys.agendaTimeStep) ?? 60,
     );
   }
 
@@ -317,6 +319,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setDefaultPaymentMethod(String method) async {
     await _prefs.setString(SettingsKeys.defaultPaymentMethod, method);
     state = state.copyWith(defaultPaymentMethod: method);
+  }
+
+  Future<void> setAgendaTimeStep(int minutes) async {
+    assert(minutes == 60 || minutes == 30 || minutes == 15);
+    await _prefs.setInt(SettingsKeys.agendaTimeStep, minutes);
+    state = state.copyWith(agendaTimeStep: minutes);
   }
 
   /// Get the last data clear date

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
+import 'package:intl/intl.dart';
+import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
@@ -48,7 +50,18 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   String? _variantImageUrl;
   String? _variantName;
 
+  // ─── Planning state ──────────────────────────────────────────────────────────
+  bool _isPlannable = false;
+  int? _planDurationMinutes;
+  DateTime? _planStartAt;
+  DateTime? _planEndAt;
+  int? _planWaiterId;
+  String? _planWaiterName;
+
   // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  /// When a plannable product has a start date selected, quantity is locked to 1.
+  bool get _isQuantityLocked => _isPlannable && _planStartAt != null;
 
   int get _productId => widget.product is OrderItem
       ? (widget.product as OrderItem).productId
@@ -90,11 +103,37 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           _loadExistingVariant(item.variantId!);
         });
       }
+      // Restore planning fields
+      _planStartAt = item.planStartAt;
+      _planEndAt = item.planEndAt;
+      _planWaiterId = item.planWaiterId;
     } else {
       _productDiscount = widget.product.discountAmount ?? 0.0;
       // Seeding happens in build() via ref.listen so it fires as soon as the
       // provider resolves, even on the very first frame.
     }
+
+    // Load plannable flag for this product
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final db = ref.read(databaseProvider);
+      final product = await (db.select(db.products)
+            ..where((t) => t.id.equals(_productId)))
+          .getSingleOrNull();
+      if (product != null && mounted) {
+        setState(() {
+          _isPlannable = product.isPlannable;
+          _planDurationMinutes = product.planDurationMinutes;
+          if (_planStartAt != null && _planEndAt == null && _planDurationMinutes != null) {
+            _planEndAt = _planStartAt!.add(Duration(minutes: _planDurationMinutes!));
+          }
+          // Lock quantity to 1 if already in plannable+start-set state (edit mode)
+          if (_isPlannable && _planStartAt != null) {
+            _quantity = 1;
+            _quantityController.text = '1';
+          }
+        });
+      }
+    });
   }
 
   @override
@@ -309,7 +348,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       return;
     }
 
-    final quantity = int.tryParse(_quantityController.text) ?? 1;
+    final quantity = _isQuantityLocked ? 1 : (int.tryParse(_quantityController.text) ?? 1);
     if (quantity < 1) {
       SnackBarHelper.showErrorSnackBar(context, ref, 'Quantity must be at least 1');
       return;
@@ -402,6 +441,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       'variantPrice': variantPrice,
       'variantTva': variantTva,
       'variantImageUrl': variantImageUrl,
+      'planStartAt': _planStartAt,
+      'planEndAt': _planEndAt,
+      'planWaiterId': _planWaiterId,
     });
   }
 
@@ -479,7 +521,15 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   // LEFT: Discount, Note, Preview
                   Expanded(
                     flex: 4,
-                    child: _buildLeftPanel(productPrice, l10n, currencyFormatter),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          _buildLeftPanel(productPrice, l10n, currencyFormatter),
+                          // Planning section (only for plannable products)
+                          if (_isPlannable) _buildPlanningSection(context, l10n),
+                        ],
+                      ),
+                    ),
                   ),
                   // Divider
                   Container(
@@ -832,6 +882,167 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   // ─── Header ──────────────────────────────────────────────────────────────────
 
+  // ─── Planning Section ────────────────────────────────────────────────────────
+
+  Widget _buildPlanningSection(BuildContext context, AppLocalizations l10n) {
+    final theme = Theme.of(context);
+    final dateTimeFmt = DateFormat('dd/MM HH:mm');
+
+    Future<void> pickStart() async {
+      final now = DateTime.now();
+      final pickedDate = await showDatePicker(
+        context: context,
+        initialDate: _planStartAt ?? now,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2030),
+      );
+      if (pickedDate == null || !context.mounted) return;
+      final pickedTime = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(_planStartAt ?? now),
+      );
+      if (pickedTime == null || !context.mounted) return;
+      final newStart = DateTime(pickedDate.year, pickedDate.month, pickedDate.day,
+          pickedTime.hour, pickedTime.minute);
+      setState(() {
+        _planStartAt = newStart;
+        if (_planDurationMinutes != null) {
+          _planEndAt = newStart.add(Duration(minutes: _planDurationMinutes!));
+        } else if (_planEndAt != null && _planEndAt!.isBefore(newStart)) {
+          _planEndAt = newStart.add(const Duration(hours: 1));
+        }
+        // Enforce quantity = 1 as soon as a date is selected for plannable product
+        if (_isPlannable) {
+          _quantity = 1;
+          _quantityController.text = '1';
+        }
+      });
+    }
+
+    Future<void> pickEnd() async {
+      final now = _planStartAt ?? DateTime.now();
+      final pickedDate = await showDatePicker(
+        context: context,
+        initialDate: _planEndAt ?? now.add(const Duration(hours: 1)),
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2030),
+      );
+      if (pickedDate == null || !context.mounted) return;
+      final pickedTime = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(_planEndAt ?? now.add(const Duration(hours: 1))),
+      );
+      if (pickedTime == null || !context.mounted) return;
+      final newEnd = DateTime(pickedDate.year, pickedDate.month, pickedDate.day,
+          pickedTime.hour, pickedTime.minute);
+      setState(() => _planEndAt = newEnd);
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.calendar_month, size: 18, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                l10n.translate('planning'),
+                style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold, color: theme.colorScheme.primary),
+              ),
+              const Spacer(),
+              if (_planStartAt != null)
+                IconButton(
+                  icon: const Icon(Icons.clear, size: 16),
+                  tooltip: 'Clear planning',
+                  onPressed: () => setState(() {
+                    _planStartAt = null;
+                    _planEndAt = null;
+                    _planWaiterId = null;
+                    _planWaiterName = null;
+                    // Quantity lock lifts when planning is cleared
+                  }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Start time button
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.play_arrow, size: 16),
+                label: Text(_planStartAt != null
+                    ? dateTimeFmt.format(_planStartAt!)
+                    : l10n.translate('select_start_time')),
+                onPressed: pickStart,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.stop, size: 16),
+                label: Text(_planEndAt != null
+                    ? dateTimeFmt.format(_planEndAt!)
+                    : l10n.translate('select_end_time')),
+                onPressed: _planStartAt != null ? pickEnd : null,
+              ),
+            ),
+          ]),
+          if (_planStartAt != null && _planEndAt != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Duration: ${_planEndAt!.difference(_planStartAt!).inMinutes} min',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+          // Waiter selector
+          const SizedBox(height: 8),
+          _buildWaiterSelectorForPlan(context, l10n),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWaiterSelectorForPlan(BuildContext context, AppLocalizations l10n) {
+    final theme = Theme.of(context);
+    return FutureBuilder<List<Waiter>>(
+      future: ref.read(databaseProvider).select(ref.read(databaseProvider).waiters).get(),
+      builder: (ctx, snap) {
+        if (!snap.hasData || snap.data!.isEmpty) return const SizedBox.shrink();
+        final waiters = snap.data!;
+        return DropdownButtonFormField<int?>(
+          value: _planWaiterId,
+          decoration: InputDecoration(
+            labelText: l10n.translate('assign_waiter'),
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          items: [
+            DropdownMenuItem<int?>(value: null, child: Text(l10n.translate('unspecified'))),
+            ...waiters.map((w) => DropdownMenuItem<int?>(
+                value: w.id,
+                child: Text('${w.firstName} ${w.lastName ?? ''}'.trim()))),
+          ],
+          onChanged: (v) => setState(() {
+            _planWaiterId = v;
+            _planWaiterName = v == null
+                ? null
+                : waiters.firstWhere((w) => w.id == v).firstName;
+          }),
+        );
+      },
+    );
+  }
+
   Widget _buildHeader(
       BuildContext context, {
         required String productName,
@@ -932,6 +1143,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       CurrencyFormatter currencyFormatter,
       AppLocalizations l10n,
       ) {
+    final locked = _isQuantityLocked;
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final disabledColor = onSurface.withValues(alpha: 0.3);
+
     return Row(
       children: [
         Text(
@@ -939,60 +1154,92 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           style: TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w600,
-            color: Theme.of(context).colorScheme.onSurface,
+            color: onSurface,
           ),
         ),
         const SizedBox(width: 8),
-        IconButton(
-          onPressed: _quantity > 1
-              ? () => setState(() {
-            _quantity--;
-            _quantityController.text = _quantity.toString();
-          })
-              : null,
-          icon: Icon(
-            Icons.remove_circle,
-            color: _quantity > 1
-                ? Theme.of(context).colorScheme.error
-                : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
-            size: 30,
-          ),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-        ),
-        SizedBox(
-          width: 70,
-          child: OnscreenKeyboardTextField(
-            controller: _quantityController,
-            keyboardType: TextInputType.number,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.onSurface,
+        if (locked) ...[
+          // Locked display: show quantity badge + lock icon, no controls
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              border: Border.all(
+                  color: Theme.of(context).colorScheme.primary, width: 1.5),
+              borderRadius: BorderRadius.circular(8),
+              color: Theme.of(context)
+                  .colorScheme
+                  .primaryContainer
+                  .withValues(alpha: 0.3),
             ),
-            decoration: InputDecoration(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              isDense: true,
+            child: Text(
+              '1',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
             ),
-            onChanged: (value) {
-              final parsed = int.tryParse(value);
-              if (parsed != null && parsed > 0) {
-                setState(() => _quantity = parsed);
-              }
-            },
           ),
-        ),
-        IconButton(
-          onPressed: () => setState(() {
-            _quantity++;
-            _quantityController.text = _quantity.toString();
-          }),
-          icon: Icon(Icons.add_circle, color: Theme.of(context).primaryColor, size: 30),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-        ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: 'Quantity locked to 1 for bookable products',
+            child: Icon(Icons.lock, size: 18, color: disabledColor),
+          ),
+        ] else ...[
+          IconButton(
+            onPressed: _quantity > 1
+                ? () => setState(() {
+                      _quantity--;
+                      _quantityController.text = _quantity.toString();
+                    })
+                : null,
+            icon: Icon(
+              Icons.remove_circle,
+              color: _quantity > 1
+                  ? Theme.of(context).colorScheme.error
+                  : disabledColor,
+              size: 30,
+            ),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+          SizedBox(
+            width: 70,
+            child: OnscreenKeyboardTextField(
+              controller: _quantityController,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: onSurface,
+              ),
+              decoration: InputDecoration(
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                isDense: true,
+              ),
+              onChanged: (value) {
+                final parsed = int.tryParse(value);
+                if (parsed != null && parsed > 0) {
+                  setState(() => _quantity = parsed);
+                }
+              },
+            ),
+          ),
+          IconButton(
+            onPressed: () => setState(() {
+              _quantity++;
+              _quantityController.text = _quantity.toString();
+            }),
+            icon: Icon(Icons.add_circle,
+                color: Theme.of(context).primaryColor, size: 30),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
       ],
     );
   }

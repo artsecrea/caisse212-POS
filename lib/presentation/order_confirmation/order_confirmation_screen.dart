@@ -47,9 +47,9 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
   Future<void> _confirmOrder(Order order) async {
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
+      final sessionId = ref.read(currentSessionProvider)?.id;
 
-      // Update order status to PENDING
-      await orderRepo.updateOrderStatus(order.id, 'PENDING');
+      await orderRepo.updateOrderStatus(order.id, 'PENDING', sessionId: sessionId);
 
       if (mounted) {
         SnackBarHelper.showSuccessSnackBar(
@@ -73,9 +73,9 @@ class _OrderConfirmationScreenState extends ConsumerState<OrderConfirmationScree
   Future<void> _confirmAndPay(Order order) async {
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
+      final sessionId = ref.read(currentSessionProvider)?.id;
 
-      // Update order status to PENDING first
-      await orderRepo.updateOrderStatus(order.id, 'PENDING');
+      await orderRepo.updateOrderStatus(order.id, 'PENDING', sessionId: sessionId);
 
       // Load the order for payment
       final fullOrder = await orderRepo.getOrderById(order.id);

@@ -63,10 +63,43 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   // Customers list for filter (search results)
   List<Customer> _customers = [];
 
+  int? _autoOpenOrderId;
+
   @override
   void initState() {
     super.initState();
     _loadOrders();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is Map && args['orderId'] != null && _autoOpenOrderId == null) {
+      _autoOpenOrderId = args['orderId'] as int;
+      // Wait for the first frame and orders to load, then show the detail.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoOpenOrder());
+    }
+  }
+
+  Future<void> _tryAutoOpenOrder() async {
+    if (_autoOpenOrderId == null) return;
+    final targetId = _autoOpenOrderId!;
+    _autoOpenOrderId = null;
+
+    // The orders may still be loading — wait up to 3 s.
+    for (var i = 0; i < 30 && _isLoading; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    if (!mounted) return;
+
+    try {
+      final db = ref.read(databaseProvider);
+      final order = await (db.select(db.orders)
+            ..where((t) => t.id.equals(targetId)))
+          .getSingleOrNull();
+      if (order != null && mounted) _showOrderDetails(order);
+    } catch (_) {}
   }
 
   @override
@@ -764,6 +797,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   Widget _buildOrderListTile(OrderFullDetails orderDetails, String currency, AppLocalizations l10n) {
     final order = orderDetails.order;
     final needsSync = !order.isSynced;
+    final isZLocked = orderDetails.isZLocked;
+    final isUnpaid = orderDetails.totalPaid < orderDetails.total;
 
     return ListTile(
       leading: CircleAvatar(
@@ -777,9 +812,14 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         children: [
           Text(order.code, style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(width: 8),
-          if (needsSync)
-            const Icon(Icons.cloud_off, size: 14, color: Colors.orange),
-          if (order.isSynced)
+          if (isZLocked)
+            const Tooltip(
+              message: 'Z-Report locked',
+              child: Icon(Icons.lock, size: 14, color: Colors.purple),
+            )
+          else if (needsSync)
+            const Icon(Icons.cloud_off, size: 14, color: Colors.orange)
+          else if (order.isSynced)
             const Icon(Icons.cloud_done, size: 14, color: Colors.green),
         ],
       ),
@@ -808,15 +848,19 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             onSelected: (value) => _handleOrderAction(value, order, orderDetails),
             itemBuilder: (context) => [
               PopupMenuItem(value: 'view', child: Row(children: [const Icon(Icons.visibility, size: 18), const SizedBox(width: 8), Text(l10n.translate('view'))])),
-              PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
-              PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
-              PopupMenuItem(value: 'cancel', child: Row(children: [const Icon(Icons.cancel, size: 18, color: Colors.orange), const SizedBox(width: 8), Text(l10n.translate('cancel_order'), style: const TextStyle(color: Colors.orange))])),
-              PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_forever, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
+              if (isZLocked && isUnpaid)
+                const PopupMenuItem(value: 'pay', child: Row(children: [Icon(Icons.payment, size: 18, color: Colors.teal), SizedBox(width: 8), Text('Pay', style: TextStyle(color: Colors.teal))]))
+              else if (!isZLocked) ...[
+                PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
+                PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
+                PopupMenuItem(value: 'cancel', child: Row(children: [const Icon(Icons.cancel, size: 18, color: Colors.orange), const SizedBox(width: 8), Text(l10n.translate('cancel_order'), style: const TextStyle(color: Colors.orange))])),
+                PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_forever, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
+              ],
             ],
           ),
         ],
       ),
-      onTap: () => _editOrder(order),
+      onTap: isZLocked ? () => _showOrderDetails(order) : () => _editOrder(order),
     );
   }
 
@@ -880,9 +924,11 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     final isCompleted = order.status == 'COMPLETED';
     final isSynced = order.isSynced;
     final needsSync = isCompleted && !isSynced;
+    final isZLocked = orderDetails.isZLocked;
+    final isUnpaid = orderDetails.totalPaid < orderDetails.total;
 
     return DataRow(
-      onSelectChanged: (_) => _editOrder(order),
+      onSelectChanged: (_) => isZLocked ? _showOrderDetails(order) : _editOrder(order),
       cells: [
         DataCell(
           Row(
@@ -890,7 +936,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             children: [
               Text(order.code, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
               const SizedBox(width: 4),
-              if (isCompleted)
+              if (isZLocked)
+                const Tooltip(
+                  message: 'Z-Report locked',
+                  child: Icon(Icons.lock, size: 14, color: Colors.purple),
+                ),
+              if (isCompleted && !isZLocked)
                 Tooltip(
                   message: needsSync ? l10n.translate('not_synced') : l10n.translate('synced'),
                   child: Icon(
@@ -950,40 +1001,52 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
-              PermissionIconButton(
-                permission: Permissions.ordersUpdate,
-                icon: const Icon(Icons.edit, size: 18, color: Colors.green),
-                onPressed: () => _editOrder(order),
-                tooltip: l10n.translate('edit'),
-              ),
-              PermissionIconButton(
-                permission: Permissions.ordersUpdate,
-                icon: const Icon(Icons.swap_horiz, size: 18, color: Colors.blue),
-                onPressed: () => _showChangeStatusDialog(order),
-                tooltip: l10n.translate('status'),
-              ),
-              PermissionIconButton(
-                permission: Permissions.ordersUpdate,
-                icon: const Icon(Icons.cancel, size: 18, color: Colors.orange),
-                onPressed: () => _cancelOrder(order),
-                tooltip: l10n.translate('cancel_order'),
-              ),
-              GestureDetector(
-                onLongPress: () => _deleteOrder(order),
-                child: PermissionIconButton(
-                  permission: Permissions.ordersDelete,
-                  icon: const Icon(Icons.delete_forever, size: 18, color: Colors.red),
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(l10n.translate('long_press_to_delete')),
-                        duration: const Duration(seconds: 2),
-                      ),
-                    );
-                  },
-                  tooltip: l10n.translate('long_press_to_delete'),
+              if (isZLocked && isUnpaid)
+                Tooltip(
+                  message: 'Pay (Z-locked)',
+                  child: IconButton(
+                    icon: const Icon(Icons.payment, size: 18, color: Colors.teal),
+                    onPressed: () => _editOrder(order),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
+                )
+              else if (!isZLocked) ...[
+                PermissionIconButton(
+                  permission: Permissions.ordersUpdate,
+                  icon: const Icon(Icons.edit, size: 18, color: Colors.green),
+                  onPressed: () => _editOrder(order),
+                  tooltip: l10n.translate('edit'),
                 ),
-              ),
+                PermissionIconButton(
+                  permission: Permissions.ordersUpdate,
+                  icon: const Icon(Icons.swap_horiz, size: 18, color: Colors.blue),
+                  onPressed: () => _showChangeStatusDialog(order),
+                  tooltip: l10n.translate('status'),
+                ),
+                PermissionIconButton(
+                  permission: Permissions.ordersUpdate,
+                  icon: const Icon(Icons.cancel, size: 18, color: Colors.orange),
+                  onPressed: () => _cancelOrder(order),
+                  tooltip: l10n.translate('cancel_order'),
+                ),
+                GestureDetector(
+                  onLongPress: () => _deleteOrder(order),
+                  child: PermissionIconButton(
+                    permission: Permissions.ordersDelete,
+                    icon: const Icon(Icons.delete_forever, size: 18, color: Colors.red),
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(l10n.translate('long_press_to_delete')),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                    tooltip: l10n.translate('long_press_to_delete'),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1213,11 +1276,22 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   void _handleOrderAction(String action, Order order, OrderFullDetails details) {
+    if (details.isZLocked && action != 'view' && action != 'pay') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Z-Report locked: session is closed. Only view or pay allowed.'),
+          backgroundColor: Colors.purple,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
     switch (action) {
       case 'view':
         _showOrderDetails(order);
         break;
       case 'edit':
+      case 'pay':
         _editOrder(order);
         break;
       case 'status':

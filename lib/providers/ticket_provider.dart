@@ -65,8 +65,18 @@ class TicketRepository {
 
   // Delete a ticket
   Future<void> deleteTicket(int ticketId, {bool queueSyncOperation = true}) async {
-    // Check if ticket was synced
     final ticket = await getTicketById(ticketId);
+
+    // Z-report guard: refuse deletes on tickets from a closed session
+    if (ticket?.sessionId != null) {
+      final session = await (_database.select(_database.cashSessions)
+            ..where((tbl) => tbl.id.equals(ticket!.sessionId!)))
+          .getSingleOrNull();
+      if (session?.status == 'ended') {
+        throw Exception('Cannot delete ticket from a closed (Z-report) session');
+      }
+    }
+
     final wasSynced = ticket?.isSynced ?? false;
 
     // Queue delete operation if ticket was synced
@@ -102,14 +112,32 @@ class TicketRepository {
     final tickets = await getAllTickets();
     final List<TicketWithDetails> result = [];
 
+    // Cache ended session IDs to avoid N+1 lookups
+    final endedSessionIds = <int>{};
+    final checkedSessionIds = <int>{};
+
     for (final ticket in tickets) {
       final items = await (_database.select(_database.orderProducts)
             ..where((tbl) => tbl.ticketId.equals(ticket.id)))
           .get();
 
+      bool isZLocked = false;
+      if (ticket.sessionId != null) {
+        final sid = ticket.sessionId!;
+        if (!checkedSessionIds.contains(sid)) {
+          checkedSessionIds.add(sid);
+          final session = await (_database.select(_database.cashSessions)
+                ..where((tbl) => tbl.id.equals(sid)))
+              .getSingleOrNull();
+          if (session?.status == 'ended') endedSessionIds.add(sid);
+        }
+        isZLocked = endedSessionIds.contains(sid);
+      }
+
       result.add(TicketWithDetails(
         ticket: ticket,
         itemCount: items.length,
+        isZLocked: isZLocked,
       ));
     }
 
@@ -159,10 +187,12 @@ class TicketRepository {
 class TicketWithDetails {
   final Ticket ticket;
   final int itemCount;
+  final bool isZLocked; // True when linked session is ended (Z-report closed)
 
   TicketWithDetails({
     required this.ticket,
     required this.itemCount,
+    this.isZLocked = false,
   });
 }
 

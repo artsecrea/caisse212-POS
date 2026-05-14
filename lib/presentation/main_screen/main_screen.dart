@@ -765,6 +765,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                             currentOrder,
                             currentUser.id,
                             status: settings.defaultOrderStatus,
+                            sessionId: ref.read(currentSessionProvider)?.id,
                           );
 
                           if (currentOrder.tableId != null) {
@@ -864,6 +865,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           currentOrder,
                           currentUser.id,
                           status: settings.defaultOrderStatus,
+                          sessionId: ref.read(currentSessionProvider)?.id,
                         );
 
                         if (currentOrder.tableId != null) {
@@ -969,6 +971,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           currentOrder,
           currentUser.id,
           status: settings.defaultOrderStatus,
+          sessionId: session?.id,
         );
         if (currentOrder.tableId != null) {
           await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
@@ -1142,6 +1145,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           currentOrder,
           currentUser.id,
           status: settings.defaultOrderStatus,
+          sessionId: ref.read(currentSessionProvider)?.id,
         );
         if (currentOrder.tableId != null) {
           await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);

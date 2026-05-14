@@ -18,6 +18,9 @@ class OrderItem {
   final double manualDiscount; // manual discount amount per item
   final double tva; // TVA amount per item
   final String state; // PENDING, ONHOLD, PREPARING, READY, SERVED, etc.
+  final DateTime? planStartAt; // Planning start time
+  final DateTime? planEndAt; // Planning end time
+  final int? planWaiterId; // Assigned waiter for this booking
 
   OrderItem({
     this.id,
@@ -35,6 +38,9 @@ class OrderItem {
     this.manualDiscount = 0.0,
     this.tva = 0.0,
     this.state = 'PENDING',
+    this.planStartAt,
+    this.planEndAt,
+    this.planWaiterId,
   });
 
   /// Returns the display name - variant name if available, otherwise product name
@@ -86,6 +92,9 @@ class OrderItem {
     double? manualDiscount,
     double? tva,
     String? state,
+    DateTime? planStartAt,
+    DateTime? planEndAt,
+    int? planWaiterId,
   }) {
     return OrderItem(
       id: id ?? this.id,
@@ -103,6 +112,9 @@ class OrderItem {
       manualDiscount: manualDiscount ?? this.manualDiscount,
       tva: tva ?? this.tva,
       state: state ?? this.state,
+      planStartAt: planStartAt ?? this.planStartAt,
+      planEndAt: planEndAt ?? this.planEndAt,
+      planWaiterId: planWaiterId ?? this.planWaiterId,
     );
   }
 
@@ -129,6 +141,9 @@ class OrderItem {
       'discount': discount,
       'tva': tva,
       'state': state,
+      'planStartAt': planStartAt?.toIso8601String(),
+      'planEndAt': planEndAt?.toIso8601String(),
+      'planWaiterId': planWaiterId,
     };
   }
 
@@ -383,6 +398,7 @@ class OrderFullDetails {
   final double total;
   final double totalPaid;
   final List<OrderItemDetails> items;
+  final bool isZLocked; // True when linked session is ended (Z-report closed)
 
   OrderFullDetails({
     required this.order,
@@ -400,6 +416,7 @@ class OrderFullDetails {
     required this.total,
     required this.totalPaid,
     this.items = const [],
+    this.isZLocked = false,
   });
 }
 

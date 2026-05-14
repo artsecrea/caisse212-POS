@@ -10,6 +10,7 @@ import '../../providers/network_provider.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/pending_operations_service.dart';
 import '../../services/permission_service.dart';
+import '../../utils/currency_formatter.dart';
 
 class TicketsManagementScreen extends ConsumerStatefulWidget {
   const TicketsManagementScreen({super.key});
@@ -411,11 +412,14 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   DataRow _buildDataRow(TicketWithDetails ticketDetails) {
     final ticket = ticketDetails.ticket;
     final needsSync = ticket.isPaid && !ticket.isSynced && !ticket.isCancelled;
+    final isZLocked = ticketDetails.isZLocked;
 
     return DataRow(
       color: ticket.isCancelled
           ? WidgetStateProperty.all(Colors.red.withValues(alpha: 0.05))
-          : null,
+          : isZLocked
+              ? WidgetStateProperty.all(Colors.purple.withValues(alpha: 0.04))
+              : null,
       cells: [
         DataCell(
           Row(
@@ -428,7 +432,12 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                     : null,
               ),
               const SizedBox(width: 4),
-              if (ticket.isCancelled)
+              if (isZLocked)
+                const Tooltip(
+                  message: 'Z-Report locked',
+                  child: Icon(Icons.lock, size: 14, color: Colors.purple),
+                )
+              else if (ticket.isCancelled)
                 const Tooltip(
                   message: 'Cancelled',
                   child: Icon(Icons.cancel, size: 14, color: Colors.red),
@@ -454,7 +463,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         DataCell(Text(ticket.orderId.toString())),
         DataCell(Text(ticketDetails.itemCount.toString())),
         DataCell(Text(
-          '\$${ticket.amount.toStringAsFixed(2)}',
+          ref.watch(currencyFormatterProvider).format(ticket.amount),
           style: ticket.isCancelled
               ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.grey)
               : null,
@@ -471,16 +480,16 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                 onPressed: () => _showTicketDetails(ticket, ticketDetails.itemCount),
                 tooltip: 'View Details',
               ),
-              if (!ticket.isPaid)
+              if (!ticket.isPaid && !isZLocked)
                 IconButton(
                   icon: const Icon(Icons.edit, size: 20),
                   onPressed: () => _editTicket(ticket),
                   tooltip: 'Edit Ticket',
                 ),
               IconButton(
-                icon: const Icon(Icons.delete, size: 20, color: Colors.red),
-                onPressed: () => _deleteTicket(ticket),
-                tooltip: 'Delete Ticket',
+                icon: Icon(Icons.delete, size: 20, color: isZLocked ? Colors.grey : Colors.red),
+                onPressed: isZLocked ? null : () => _deleteTicket(ticket),
+                tooltip: isZLocked ? 'Z-Report locked' : 'Delete Ticket',
               ),
             ],
           ),
@@ -726,10 +735,10 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   }
 
   void _editTicket(Ticket ticket) async {
-    // Show edit dialog
+    final currencySymbol = ref.read(currencyFormatterProvider).symbol;
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => _EditTicketDialog(ticket: ticket),
+      builder: (context) => _EditTicketDialog(ticket: ticket, currencySymbol: currencySymbol),
     );
 
     if (result != null && mounted) {
@@ -817,6 +826,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
     return Dialog(
       child: Container(
         width: 600,
@@ -886,7 +896,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
                             _buildInfoRow('Order ID', '#${ticket.orderId}'),
                             _buildInfoRow('Status', ticket.isPaid ? 'PAID' : 'UNPAID'),
                             _buildInfoRow('Payment Method', ticket.paymentMethod.toUpperCase()),
-                            _buildInfoRow('Amount', '\$${ticket.amount.toStringAsFixed(2)}'),
+                            _buildInfoRow('Amount', currencyFormatter.format(ticket.amount)),
                             _buildInfoRow('Print Count', ticket.printCount.toString()),
                             _buildInfoRow('Date', _formatFullDateTime(ticket.date)),
                           ],
@@ -924,7 +934,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
                                     ),
                                     const SizedBox(width: 12),
                                     Text(
-                                      '\$${item.unitaryPrice.toStringAsFixed(2)}',
+                                      currencyFormatter.format(item.unitaryPrice),
                                       style: const TextStyle(fontWeight: FontWeight.w600),
                                     ),
                                   ],
@@ -1111,8 +1121,9 @@ class _TicketDetailsDialog extends ConsumerWidget {
 // Edit Ticket Dialog
 class _EditTicketDialog extends StatefulWidget {
   final Ticket ticket;
+  final String currencySymbol;
 
-  const _EditTicketDialog({required this.ticket});
+  const _EditTicketDialog({required this.ticket, required this.currencySymbol});
 
   @override
   State<_EditTicketDialog> createState() => _EditTicketDialogState();
@@ -1164,10 +1175,10 @@ class _EditTicketDialogState extends State<_EditTicketDialog> {
 
           OnscreenKeyboardTextField(
             controller: _amountController,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Amount',
-              border: OutlineInputBorder(),
-              prefixText: '\$',
+              border: const OutlineInputBorder(),
+              prefixText: '${widget.currencySymbol} ',
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
           ),

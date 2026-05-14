@@ -448,6 +448,9 @@ class SampleDataGenerator {
           imageUrl: Value(prod['imageUrl'] as String?),
           discountAmount: Value(discount),
           tvaAmount: Value(tva),
+          // Mark first 3 products as plannable (for demo/testing)
+          isPlannable: Value((prod['id'] as int) <= 3),
+          planDurationMinutes: Value((prod['id'] as int) <= 3 ? 60 : null),
         ),
       );
     }

@@ -116,6 +116,23 @@ class PrinterConfig {
   }
 }
 
+/// Entry representing a single order in a user's daily report
+class UserDailyOrderEntry {
+  final String orderCode;
+  final double amount;
+  final bool isPaid;
+  final String paymentMethod;
+  final DateTime date;
+
+  const UserDailyOrderEntry({
+    required this.orderCode,
+    required this.amount,
+    required this.isPaid,
+    required this.paymentMethod,
+    required this.date,
+  });
+}
+
 /// Printing service for thermal printers
 class PrintingService {
   static final PrintingService _instance = PrintingService._internal();
@@ -2203,6 +2220,256 @@ class PrintingService {
     } catch (e, stackTrace) {
       debugPrint('Error printing daily summary report: $e');
       debugPrint('Stack trace: $stackTrace');
+      return false;
+    }
+  }
+
+  /// Print daily orders summary for a specific user
+  Future<bool> printDailyOrdersForUser({
+    required String userName,
+    required String userCode,
+    required List<UserDailyOrderEntry> orders,
+    required DateTime reportDate,
+    String? currency,
+    String? storeName,
+  }) async {
+    final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
+    if (!printerReady) {
+      debugPrint('Could not establish receipt printer connection for daily orders');
+      return false;
+    }
+
+    _isPrintingInProgress = true;
+    _printingStatusController.add(_translate('printing', fallback: 'Printing...'));
+
+    try {
+      final currencySymbol = _getCurrency(currency);
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(_config.paperSize, profile);
+      List<int> bytes = [];
+
+      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
+      bytes += _printLogoHeader(generator);
+
+      if (storeName != null) {
+        bytes += generator.text(
+          storeName,
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
+          ),
+        );
+      }
+
+      bytes += generator.text(
+        _translate('daily_orders_report', fallback: 'Daily Orders Report'),
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+
+      bytes += generator.hr();
+
+      bytes += generator.text(
+        '${_text('date', fallback: 'Date')}: ${_formatDate(reportDate)}',
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.text(
+        '${_text('user', fallback: 'User')}: $userName ($userCode)',
+        styles: PosStyles(
+          align: PosAlign.left,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.text(
+        '${_text('total_orders', fallback: 'Orders')}: ${orders.length}',
+        styles: PosStyles(
+          align: PosAlign.left,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+
+      bytes += generator.hr();
+
+      bytes += generator.row([
+        PosColumn(
+          text: _text('order', fallback: 'Order'),
+          width: 4,
+          styles: PosStyles(
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text: _text('amount', fallback: 'Amount'),
+          width: 5,
+          styles: PosStyles(
+            bold: true,
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text: _text('status', fallback: 'Status'),
+          width: 3,
+          styles: PosStyles(
+            bold: true,
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+      ]);
+
+      bytes += generator.hr();
+
+      for (final order in orders) {
+        bytes += generator.row([
+          PosColumn(
+            text: order.orderCode,
+            width: 4,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: CurrencyFormatter.formatWithCurrency(order.amount, currencySymbol),
+            width: 5,
+            styles: PosStyles(
+              align: PosAlign.right,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+          PosColumn(
+            text: order.isPaid
+                ? _text('paid', fallback: 'PAID')
+                : _text('unpaid', fallback: 'UNPD'),
+            width: 3,
+            styles: PosStyles(
+              align: PosAlign.right,
+              bold: order.isPaid,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          ),
+        ]);
+      }
+
+      bytes += generator.hr();
+
+      final paidOrders = orders.where((o) => o.isPaid).toList();
+      final unpaidOrders = orders.where((o) => !o.isPaid).toList();
+      final totalPaid = paidOrders.fold(0.0, (sum, o) => sum + o.amount);
+      final totalUnpaid = unpaidOrders.fold(0.0, (sum, o) => sum + o.amount);
+
+      bytes += generator.row([
+        PosColumn(
+          text: '${_text('paid', fallback: 'Paid')} (${paidOrders.length}):',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text: CurrencyFormatter.formatWithCurrency(totalPaid, currencySymbol),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+      ]);
+
+      bytes += generator.row([
+        PosColumn(
+          text: '${_text('unpaid', fallback: 'Unpaid')} (${unpaidOrders.length}):',
+          width: 6,
+          styles: PosStyles(
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+        PosColumn(
+          text: CurrencyFormatter.formatWithCurrency(totalUnpaid, currencySymbol),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        ),
+      ]);
+
+      bytes += generator.hr();
+
+      bytes += generator.row([
+        PosColumn(
+          text: '${_text('total', fallback: 'TOTAL')}:',
+          width: 6,
+          styles: PosStyles(
+            bold: true,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
+          ),
+        ),
+        PosColumn(
+          text: CurrencyFormatter.formatWithCurrency(totalPaid + totalUnpaid, currencySymbol),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            bold: true,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
+          ),
+        ),
+      ]);
+
+      bytes += generator.emptyLines(1);
+      bytes += generator.text(
+        '${_text('printed_at', fallback: 'Printed')}: ${_formatDateTime(DateTime.now())}',
+        styles: PosStyles(
+          align: PosAlign.center,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+
+      bytes += generator.emptyLines(2);
+      bytes += generator.cut();
+
+      await _thermalPrinter.printData(
+        _connectedReceiptPrinter!,
+        bytes,
+        longData: true,
+      );
+
+      debugPrint('Daily orders report printed successfully');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint('Error printing daily orders report: $e');
+      debugPrint('Stack trace: $stackTrace');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
       return false;
     }
   }

@@ -157,118 +157,242 @@ class ServerService {
 
 
 
-  /// GET /orders/?since=date&updated_after_log_id=int&station=string
-  /// Returns: orders (new orders), orders_updated (full updated orders), orders_deleted (deleted order IDs)
+  /// GET /orders/?since=date&from_date=date&to_date=date&updated_after_log_id=int
+  ///                &station=string&status=csv&after_id=int
+  ///
+  /// Date params (any combination accepted; `from_date` is an alias for `since`):
+  ///   - `since` / `from_date` — lower bound (inclusive).  Default: start of today.
+  ///   - `to_date`             — upper bound (inclusive).  Default: no upper bound.
+  ///
+  /// Filter priority:
+  ///   1. Date window (`since`/`from_date`/`to_date`) — the primary scope.
+  ///   2. `updated_after_log_id` — incremental cursor; constrained by date window.
+  ///   3. `station` — pre-filtered at DB level (no noisy post-fetch skips).
+  ///
+  /// Returns: orders (new), orders_updated (updated), orders_deleted (IDs),
+  ///          last_log_id (opaque cursor for next poll).
   Future<Response> _getOrders(Request request) async {
     try {
       final database = _ref.read(databaseProvider);
       final logService = OrderLogService(database);
       final queryParams = request.url.queryParameters;
 
-      // Parse query parameters
-      final sinceStr = queryParams['since'];
+      // ── Parse query parameters ──────────────────────────────────────────
+      // Accept both `since` and `from_date` as the lower-bound date param
+      final sinceStr = queryParams['since'] ?? queryParams['from_date'];
+      final toDateStr = queryParams['to_date'];
       final afterIdStr = queryParams['after_id'];
       final updatedAfterLogIdStr = queryParams['updated_after_log_id'];
       final stationName = queryParams['station'];
       final statusStr = queryParams['status'];
 
       DateTime? since;
+      DateTime? toDate;
       int? updatedAfterLogId;
       final afterId = int.tryParse(afterIdStr ?? '');
-      List<String> status = statusStr != null ? statusStr.split(',').map((s) => s.trim().toUpperCase()).toList() : [];
+      final List<String> status = statusStr != null
+          ? statusStr.split(',').map((s) => s.trim().toUpperCase()).toList()
+          : [];
 
-      // Parse since date
+      // 1. Parse lower-bound date
       if (sinceStr != null) {
         try {
           since = DateTime.parse(sinceStr);
-        } catch (e) {
+        } catch (_) {
           return Response.badRequest(
-            body: jsonEncode({'error': 'Invalid date format for "since" parameter'}),
+            body: jsonEncode(
+                {'error': 'Invalid date format for "since"/"from_date" parameter'}),
             headers: {'Content-Type': 'application/json'},
           );
         }
       }
 
+      // 2. Parse upper-bound date
+      if (toDateStr != null) {
+        try {
+          toDate = DateTime.parse(toDateStr);
+        } catch (_) {
+          return Response.badRequest(
+            body: jsonEncode(
+                {'error': 'Invalid date format for "to_date" parameter'}),
+            headers: {'Content-Type': 'application/json'},
+          );
+        }
+      }
 
-      // Parse updated_after_log_id
+      // 3. Parse updated_after_log_id
       if (updatedAfterLogIdStr != null) {
         updatedAfterLogId = int.tryParse(updatedAfterLogIdStr);
         if (updatedAfterLogId == null) {
           return Response.badRequest(
-            body: jsonEncode({'error': 'Invalid integer for "updated_after_log_id" parameter'}),
+            body: jsonEncode(
+                {'error': 'Invalid integer for "updated_after_log_id" parameter'}),
             headers: {'Content-Type': 'application/json'},
           );
         }
       }
 
-      // Default to today if no parameters provided
+      // 4. Default to today when neither date nor log-cursor provided
       if (since == null && updatedAfterLogId == null) {
         final now = DateTime.now();
         since = DateTime(now.year, now.month, now.day);
       }
 
-      // Get new orders (created today or since specific date)
+      // ── Pre-resolve station ID so we can filter orders at DB level ───────
+      // This avoids fetching orders that have no products for the station,
+      // eliminating the "no products after station filter, skipping" noise.
+      int? stationId;
+      if (stationName != null) {
+        final station = await (database.select(database.stations)
+              ..where((tbl) => tbl.name.lower().equals(stationName.toLowerCase())))
+            .getSingleOrNull();
+        if (station == null) {
+          // Unknown station — return empty result immediately
+          final lastLogId = await logService.getLastUpdateLogId();
+          return Response.ok(
+            jsonEncode({
+              'orders': [],
+              'orders_updated': [],
+              'orders_deleted': [],
+              'last_log_id': lastLogId,
+              'count': 0,
+              'updated_count': 0,
+              'deleted_count': 0,
+            }),
+            headers: {'Content-Type': 'application/json'},
+          );
+        }
+        stationId = station.id;
+      }
+
+      // Build the set of order IDs that contain at least one product from
+      // the requested station (empty set means no station filter).
+      Set<int>? orderIdsForStation;
+      if (stationId != null) {
+        final rows = await (database.select(database.orderProducts).join([
+          drift.innerJoin(
+            database.products,
+            database.products.id
+                .equalsExp(database.orderProducts.productId),
+          ),
+        ])
+              ..where(database.products.stationId.equals(stationId)))
+            .get();
+        orderIdsForStation = rows
+            .map((r) => r.readTable(database.orderProducts).orderId)
+            .toSet();
+        if (orderIdsForStation.isEmpty) {
+          // Station exists but no products are assigned to it yet
+          final lastLogId = await logService.getLastUpdateLogId();
+          return Response.ok(
+            jsonEncode({
+              'orders': [],
+              'orders_updated': [],
+              'orders_deleted': [],
+              'last_log_id': lastLogId,
+              'count': 0,
+              'updated_count': 0,
+              'deleted_count': 0,
+            }),
+            headers: {'Content-Type': 'application/json'},
+          );
+        }
+      }
+
+      // ── New orders (created within the date window) ──────────────────────
       var ordersQuery = database.select(database.orders).join([]);
       if (since != null) {
-        ordersQuery = ordersQuery..where(database.orders.createdAt.isBiggerOrEqualValue(since));
+        ordersQuery = ordersQuery
+          ..where(database.orders.createdAt.isBiggerOrEqualValue(since));
+      }
+      if (toDate != null) {
+        ordersQuery = ordersQuery
+          ..where(database.orders.createdAt.isSmallerOrEqualValue(toDate));
       }
       if (status.isNotEmpty) {
-        ordersQuery = ordersQuery..where(database.orders.status.isIn(status));
+        ordersQuery = ordersQuery
+          ..where(database.orders.status.isIn(status));
       }
-      if(afterId != null) {
-        ordersQuery = ordersQuery..where(database.orders.id.isBiggerThanValue(afterId));
+      if (afterId != null) {
+        ordersQuery = ordersQuery
+          ..where(database.orders.id.isBiggerThanValue(afterId));
+      }
+      if (orderIdsForStation != null) {
+        ordersQuery = ordersQuery
+          ..where(database.orders.id.isIn(orderIdsForStation.toList()));
       }
 
       final ordersData = await ordersQuery.get();
-      final newOrders = ordersData.map((row) => row.readTable(database.orders)).toList();
+      final newOrders =
+          ordersData.map((row) => row.readTable(database.orders)).toList();
 
-      // Get updated order IDs from logs
-      // Get updated order IDs from logs
-      List<int> updatedOrderIds= [];
-
-      if (updatedAfterLogId != null) {
-        updatedOrderIds = await logService.getUpdatedOrdersSinceLogId(updatedAfterLogId);
+      // ── Updated order IDs from logs (date-first, then log cursor) ───────
+      List<int> updatedOrderIds;
+      if (updatedAfterLogId != null && since != null) {
+        updatedOrderIds = await logService
+            .getUpdatedOrdersSinceLogIdAndDate(updatedAfterLogId, since);
+      } else if (updatedAfterLogId != null) {
+        updatedOrderIds =
+            await logService.getUpdatedOrdersSinceLogId(updatedAfterLogId);
+      } else if (since != null) {
+        updatedOrderIds = await logService.getUpdatedOrdersSinceDate(since);
       } else {
         updatedOrderIds = await logService.getUpdatedOrdersToday();
       }
 
-      // Fetch full updated orders
+      // Fetch full updated orders, re-applying date + station filters
       final updatedOrders = <Order>[];
+      final sinceDate = since;
       for (final orderId in updatedOrderIds) {
-        final order = await (database.select(database.orders)
-              ..where((tbl) => tbl.id.equals(orderId)))
-            .getSingleOrNull();
+        // Skip if we already know this order doesn't belong to the station
+        if (orderIdsForStation != null &&
+            !orderIdsForStation.contains(orderId)) {
+          continue;
+        }
+        final orderQuery = database.select(database.orders)
+          ..where((tbl) => tbl.id.equals(orderId));
+        if (sinceDate != null) {
+          orderQuery
+            ..where((tbl) => tbl.createdAt.isBiggerOrEqualValue(sinceDate));
+        }
+        if (toDate != null) {
+          final td = toDate;
+          orderQuery
+            ..where((tbl) => tbl.createdAt.isSmallerOrEqualValue(td));
+        }
+        final order = await orderQuery.getSingleOrNull();
         if (order != null) {
           updatedOrders.add(order);
         }
       }
 
-      // Get deleted order IDs from logs
+      // ── Deleted order IDs from logs ───────────────────────────────────────
       List<int> deletedOrderIds;
-      if (updatedAfterLogId != null) {
-        deletedOrderIds = await logService.getDeletedOrdersSinceLogId(updatedAfterLogId);
+      if (updatedAfterLogId != null && since != null) {
+        deletedOrderIds = await logService
+            .getDeletedOrdersSinceLogIdAndDate(updatedAfterLogId, since);
+      } else if (updatedAfterLogId != null) {
+        deletedOrderIds =
+            await logService.getDeletedOrdersSinceLogId(updatedAfterLogId);
+      } else if (since != null) {
+        deletedOrderIds = await logService.getDeletedOrdersSinceDate(since);
       } else {
         deletedOrderIds = await logService.getDeletedOrdersToday();
       }
 
-      // Convert to SocketOrderModel
+      // ── Convert to SocketOrderModel ──────────────────────────────────────
       final socketNewOrders = (await Future.wait(
-        newOrders.map(
-              (order) => _buildSocketOrder(order, stationName),
-        ),
-      ))
-        .whereType<SocketOrderModel>()
-        .toList();
-
-      final socketUpdatedOrders = (await Future.wait(
-        updatedOrders.map(
-              (order) => _buildSocketOrder(order, stationName),
-        ),
+        newOrders.map((order) => _buildSocketOrder(order, stationName)),
       ))
           .whereType<SocketOrderModel>()
           .toList();
 
-      // Get the last log ID for the client to use in next request
+      final socketUpdatedOrders = (await Future.wait(
+        updatedOrders.map((order) => _buildSocketOrder(order, stationName)),
+      ))
+          .whereType<SocketOrderModel>()
+          .toList();
+
       final lastLogId = await logService.getLastUpdateLogId();
 
       return Response.ok(
@@ -287,7 +411,8 @@ class ServerService {
       print('❌ Error in _getOrders: $e');
       print(stackTrace);
       return Response.internalServerError(
-        body: jsonEncode({'error': 'Internal server error', 'details': e.toString()}),
+        body: jsonEncode(
+            {'error': 'Internal server error', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
       );
     }
@@ -828,6 +953,8 @@ class ServerService {
         'stationId': p.stationId,
         'isVariant': p.isVariant,
         'color': p.color,
+        'isPlannable': p.isPlannable,
+        'planDurationMinutes': p.planDurationMinutes,
       }).toList();
 
       return Response.ok(

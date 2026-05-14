@@ -724,6 +724,31 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _isPlannableMeta = const VerificationMeta(
+    'isPlannable',
+  );
+  @override
+  late final GeneratedColumn<bool> isPlannable = GeneratedColumn<bool>(
+    'is_plannable',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_plannable" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _planDurationMinutesMeta =
+      const VerificationMeta('planDurationMinutes');
+  @override
+  late final GeneratedColumn<int> planDurationMinutes = GeneratedColumn<int>(
+    'plan_duration_minutes',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -765,6 +790,8 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     color,
     isActive,
     isVariant,
+    isPlannable,
+    planDurationMinutes,
     createdAt,
     updatedAt,
   ];
@@ -879,6 +906,24 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         isVariant.isAcceptableOrUnknown(data['is_variant']!, _isVariantMeta),
       );
     }
+    if (data.containsKey('is_plannable')) {
+      context.handle(
+        _isPlannableMeta,
+        isPlannable.isAcceptableOrUnknown(
+          data['is_plannable']!,
+          _isPlannableMeta,
+        ),
+      );
+    }
+    if (data.containsKey('plan_duration_minutes')) {
+      context.handle(
+        _planDurationMinutesMeta,
+        planDurationMinutes.isAcceptableOrUnknown(
+          data['plan_duration_minutes']!,
+          _planDurationMinutesMeta,
+        ),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -960,6 +1005,14 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         DriftSqlType.bool,
         data['${effectivePrefix}is_variant'],
       )!,
+      isPlannable: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_plannable'],
+      )!,
+      planDurationMinutes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}plan_duration_minutes'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -993,6 +1046,8 @@ class Product extends DataClass implements Insertable<Product> {
   final String? color;
   final bool isActive;
   final bool isVariant;
+  final bool isPlannable;
+  final int? planDurationMinutes;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Product({
@@ -1011,6 +1066,8 @@ class Product extends DataClass implements Insertable<Product> {
     this.color,
     required this.isActive,
     required this.isVariant,
+    required this.isPlannable,
+    this.planDurationMinutes,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -1044,6 +1101,10 @@ class Product extends DataClass implements Insertable<Product> {
     }
     map['is_active'] = Variable<bool>(isActive);
     map['is_variant'] = Variable<bool>(isVariant);
+    map['is_plannable'] = Variable<bool>(isPlannable);
+    if (!nullToAbsent || planDurationMinutes != null) {
+      map['plan_duration_minutes'] = Variable<int>(planDurationMinutes);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -1078,6 +1139,10 @@ class Product extends DataClass implements Insertable<Product> {
           : Value(color),
       isActive: Value(isActive),
       isVariant: Value(isVariant),
+      isPlannable: Value(isPlannable),
+      planDurationMinutes: planDurationMinutes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(planDurationMinutes),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -1104,6 +1169,10 @@ class Product extends DataClass implements Insertable<Product> {
       color: serializer.fromJson<String?>(json['color']),
       isActive: serializer.fromJson<bool>(json['isActive']),
       isVariant: serializer.fromJson<bool>(json['isVariant']),
+      isPlannable: serializer.fromJson<bool>(json['isPlannable']),
+      planDurationMinutes: serializer.fromJson<int?>(
+        json['planDurationMinutes'],
+      ),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -1127,6 +1196,8 @@ class Product extends DataClass implements Insertable<Product> {
       'color': serializer.toJson<String?>(color),
       'isActive': serializer.toJson<bool>(isActive),
       'isVariant': serializer.toJson<bool>(isVariant),
+      'isPlannable': serializer.toJson<bool>(isPlannable),
+      'planDurationMinutes': serializer.toJson<int?>(planDurationMinutes),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -1148,6 +1219,8 @@ class Product extends DataClass implements Insertable<Product> {
     Value<String?> color = const Value.absent(),
     bool? isActive,
     bool? isVariant,
+    bool? isPlannable,
+    Value<int?> planDurationMinutes = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Product(
@@ -1166,6 +1239,10 @@ class Product extends DataClass implements Insertable<Product> {
     color: color.present ? color.value : this.color,
     isActive: isActive ?? this.isActive,
     isVariant: isVariant ?? this.isVariant,
+    isPlannable: isPlannable ?? this.isPlannable,
+    planDurationMinutes: planDurationMinutes.present
+        ? planDurationMinutes.value
+        : this.planDurationMinutes,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -1194,6 +1271,12 @@ class Product extends DataClass implements Insertable<Product> {
       color: data.color.present ? data.color.value : this.color,
       isActive: data.isActive.present ? data.isActive.value : this.isActive,
       isVariant: data.isVariant.present ? data.isVariant.value : this.isVariant,
+      isPlannable: data.isPlannable.present
+          ? data.isPlannable.value
+          : this.isPlannable,
+      planDurationMinutes: data.planDurationMinutes.present
+          ? data.planDurationMinutes.value
+          : this.planDurationMinutes,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -1217,6 +1300,8 @@ class Product extends DataClass implements Insertable<Product> {
           ..write('color: $color, ')
           ..write('isActive: $isActive, ')
           ..write('isVariant: $isVariant, ')
+          ..write('isPlannable: $isPlannable, ')
+          ..write('planDurationMinutes: $planDurationMinutes, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -1240,6 +1325,8 @@ class Product extends DataClass implements Insertable<Product> {
     color,
     isActive,
     isVariant,
+    isPlannable,
+    planDurationMinutes,
     createdAt,
     updatedAt,
   );
@@ -1262,6 +1349,8 @@ class Product extends DataClass implements Insertable<Product> {
           other.color == this.color &&
           other.isActive == this.isActive &&
           other.isVariant == this.isVariant &&
+          other.isPlannable == this.isPlannable &&
+          other.planDurationMinutes == this.planDurationMinutes &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -1282,6 +1371,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
   final Value<String?> color;
   final Value<bool> isActive;
   final Value<bool> isVariant;
+  final Value<bool> isPlannable;
+  final Value<int?> planDurationMinutes;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const ProductsCompanion({
@@ -1300,6 +1391,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.color = const Value.absent(),
     this.isActive = const Value.absent(),
     this.isVariant = const Value.absent(),
+    this.isPlannable = const Value.absent(),
+    this.planDurationMinutes = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -1319,6 +1412,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.color = const Value.absent(),
     this.isActive = const Value.absent(),
     this.isVariant = const Value.absent(),
+    this.isPlannable = const Value.absent(),
+    this.planDurationMinutes = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : name = Value(name),
@@ -1340,6 +1435,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Expression<String>? color,
     Expression<bool>? isActive,
     Expression<bool>? isVariant,
+    Expression<bool>? isPlannable,
+    Expression<int>? planDurationMinutes,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -1359,6 +1456,9 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       if (color != null) 'color': color,
       if (isActive != null) 'is_active': isActive,
       if (isVariant != null) 'is_variant': isVariant,
+      if (isPlannable != null) 'is_plannable': isPlannable,
+      if (planDurationMinutes != null)
+        'plan_duration_minutes': planDurationMinutes,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -1380,6 +1480,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Value<String?>? color,
     Value<bool>? isActive,
     Value<bool>? isVariant,
+    Value<bool>? isPlannable,
+    Value<int?>? planDurationMinutes,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -1399,6 +1501,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       color: color ?? this.color,
       isActive: isActive ?? this.isActive,
       isVariant: isVariant ?? this.isVariant,
+      isPlannable: isPlannable ?? this.isPlannable,
+      planDurationMinutes: planDurationMinutes ?? this.planDurationMinutes,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -1452,6 +1556,12 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     if (isVariant.present) {
       map['is_variant'] = Variable<bool>(isVariant.value);
     }
+    if (isPlannable.present) {
+      map['is_plannable'] = Variable<bool>(isPlannable.value);
+    }
+    if (planDurationMinutes.present) {
+      map['plan_duration_minutes'] = Variable<int>(planDurationMinutes.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -1479,6 +1589,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
           ..write('color: $color, ')
           ..write('isActive: $isActive, ')
           ..write('isVariant: $isVariant, ')
+          ..write('isPlannable: $isPlannable, ')
+          ..write('planDurationMinutes: $planDurationMinutes, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -8513,6 +8625,17 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         type: DriftSqlType.string,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _sessionIdMeta = const VerificationMeta(
+    'sessionId',
+  );
+  @override
+  late final GeneratedColumn<int> sessionId = GeneratedColumn<int>(
+    'session_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -8574,6 +8697,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     commercialId,
     note,
     cancellationReason,
+    sessionId,
     createdAt,
     updatedAt,
     isSynced,
@@ -8718,6 +8842,12 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         ),
       );
     }
+    if (data.containsKey('session_id')) {
+      context.handle(
+        _sessionIdMeta,
+        sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -8825,6 +8955,10 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         DriftSqlType.string,
         data['${effectivePrefix}cancellation_reason'],
       ),
+      sessionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}session_id'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -8867,6 +9001,7 @@ class Order extends DataClass implements Insertable<Order> {
   final int? commercialId;
   final String? note;
   final String? cancellationReason;
+  final int? sessionId;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isSynced;
@@ -8891,6 +9026,7 @@ class Order extends DataClass implements Insertable<Order> {
     this.commercialId,
     this.note,
     this.cancellationReason,
+    this.sessionId,
     required this.createdAt,
     required this.updatedAt,
     required this.isSynced,
@@ -8942,6 +9078,9 @@ class Order extends DataClass implements Insertable<Order> {
     if (!nullToAbsent || cancellationReason != null) {
       map['cancellation_reason'] = Variable<String>(cancellationReason);
     }
+    if (!nullToAbsent || sessionId != null) {
+      map['session_id'] = Variable<int>(sessionId);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     map['is_synced'] = Variable<bool>(isSynced);
@@ -8992,6 +9131,9 @@ class Order extends DataClass implements Insertable<Order> {
       cancellationReason: cancellationReason == null && nullToAbsent
           ? const Value.absent()
           : Value(cancellationReason),
+      sessionId: sessionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sessionId),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
       isSynced: Value(isSynced),
@@ -9028,6 +9170,7 @@ class Order extends DataClass implements Insertable<Order> {
       cancellationReason: serializer.fromJson<String?>(
         json['cancellationReason'],
       ),
+      sessionId: serializer.fromJson<int?>(json['sessionId']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
@@ -9057,6 +9200,7 @@ class Order extends DataClass implements Insertable<Order> {
       'commercialId': serializer.toJson<int?>(commercialId),
       'note': serializer.toJson<String?>(note),
       'cancellationReason': serializer.toJson<String?>(cancellationReason),
+      'sessionId': serializer.toJson<int?>(sessionId),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'isSynced': serializer.toJson<bool>(isSynced),
@@ -9084,6 +9228,7 @@ class Order extends DataClass implements Insertable<Order> {
     Value<int?> commercialId = const Value.absent(),
     Value<String?> note = const Value.absent(),
     Value<String?> cancellationReason = const Value.absent(),
+    Value<int?> sessionId = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? isSynced,
@@ -9110,6 +9255,7 @@ class Order extends DataClass implements Insertable<Order> {
     cancellationReason: cancellationReason.present
         ? cancellationReason.value
         : this.cancellationReason,
+    sessionId: sessionId.present ? sessionId.value : this.sessionId,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     isSynced: isSynced ?? this.isSynced,
@@ -9142,6 +9288,7 @@ class Order extends DataClass implements Insertable<Order> {
       cancellationReason: data.cancellationReason.present
           ? data.cancellationReason.value
           : this.cancellationReason,
+      sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
@@ -9171,6 +9318,7 @@ class Order extends DataClass implements Insertable<Order> {
           ..write('commercialId: $commercialId, ')
           ..write('note: $note, ')
           ..write('cancellationReason: $cancellationReason, ')
+          ..write('sessionId: $sessionId, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('isSynced: $isSynced')
@@ -9200,6 +9348,7 @@ class Order extends DataClass implements Insertable<Order> {
     commercialId,
     note,
     cancellationReason,
+    sessionId,
     createdAt,
     updatedAt,
     isSynced,
@@ -9228,6 +9377,7 @@ class Order extends DataClass implements Insertable<Order> {
           other.commercialId == this.commercialId &&
           other.note == this.note &&
           other.cancellationReason == this.cancellationReason &&
+          other.sessionId == this.sessionId &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.isSynced == this.isSynced);
@@ -9254,6 +9404,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
   final Value<int?> commercialId;
   final Value<String?> note;
   final Value<String?> cancellationReason;
+  final Value<int?> sessionId;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<bool> isSynced;
@@ -9278,6 +9429,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.commercialId = const Value.absent(),
     this.note = const Value.absent(),
     this.cancellationReason = const Value.absent(),
+    this.sessionId = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.isSynced = const Value.absent(),
@@ -9303,6 +9455,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.commercialId = const Value.absent(),
     this.note = const Value.absent(),
     this.cancellationReason = const Value.absent(),
+    this.sessionId = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.isSynced = const Value.absent(),
@@ -9328,6 +9481,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Expression<int>? commercialId,
     Expression<String>? note,
     Expression<String>? cancellationReason,
+    Expression<int>? sessionId,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<bool>? isSynced,
@@ -9353,6 +9507,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       if (commercialId != null) 'commercial_id': commercialId,
       if (note != null) 'note': note,
       if (cancellationReason != null) 'cancellation_reason': cancellationReason,
+      if (sessionId != null) 'session_id': sessionId,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (isSynced != null) 'is_synced': isSynced,
@@ -9380,6 +9535,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Value<int?>? commercialId,
     Value<String?>? note,
     Value<String?>? cancellationReason,
+    Value<int?>? sessionId,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<bool>? isSynced,
@@ -9405,6 +9561,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       commercialId: commercialId ?? this.commercialId,
       note: note ?? this.note,
       cancellationReason: cancellationReason ?? this.cancellationReason,
+      sessionId: sessionId ?? this.sessionId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isSynced: isSynced ?? this.isSynced,
@@ -9474,6 +9631,9 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     if (cancellationReason.present) {
       map['cancellation_reason'] = Variable<String>(cancellationReason.value);
     }
+    if (sessionId.present) {
+      map['session_id'] = Variable<int>(sessionId.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -9509,6 +9669,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
           ..write('commercialId: $commercialId, ')
           ..write('note: $note, ')
           ..write('cancellationReason: $cancellationReason, ')
+          ..write('sessionId: $sessionId, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('isSynced: $isSynced')
@@ -9658,6 +9819,39 @@ class $OrderProductsTable extends OrderProducts
     requiredDuringInsert: false,
     defaultValue: const Constant('PENDING'),
   );
+  static const VerificationMeta _planStartAtMeta = const VerificationMeta(
+    'planStartAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> planStartAt = GeneratedColumn<DateTime>(
+    'plan_start_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _planEndAtMeta = const VerificationMeta(
+    'planEndAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> planEndAt = GeneratedColumn<DateTime>(
+    'plan_end_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _planWaiterIdMeta = const VerificationMeta(
+    'planWaiterId',
+  );
+  @override
+  late final GeneratedColumn<int> planWaiterId = GeneratedColumn<int>(
+    'plan_waiter_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -9684,6 +9878,9 @@ class $OrderProductsTable extends OrderProducts
     manualDiscount,
     note,
     state,
+    planStartAt,
+    planEndAt,
+    planWaiterId,
     updatedAt,
   ];
   @override
@@ -9782,6 +9979,30 @@ class $OrderProductsTable extends OrderProducts
         state.isAcceptableOrUnknown(data['state']!, _stateMeta),
       );
     }
+    if (data.containsKey('plan_start_at')) {
+      context.handle(
+        _planStartAtMeta,
+        planStartAt.isAcceptableOrUnknown(
+          data['plan_start_at']!,
+          _planStartAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('plan_end_at')) {
+      context.handle(
+        _planEndAtMeta,
+        planEndAt.isAcceptableOrUnknown(data['plan_end_at']!, _planEndAtMeta),
+      );
+    }
+    if (data.containsKey('plan_waiter_id')) {
+      context.handle(
+        _planWaiterIdMeta,
+        planWaiterId.isAcceptableOrUnknown(
+          data['plan_waiter_id']!,
+          _planWaiterIdMeta,
+        ),
+      );
+    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -9845,6 +10066,18 @@ class $OrderProductsTable extends OrderProducts
         DriftSqlType.string,
         data['${effectivePrefix}state'],
       )!,
+      planStartAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}plan_start_at'],
+      ),
+      planEndAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}plan_end_at'],
+      ),
+      planWaiterId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}plan_waiter_id'],
+      ),
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
@@ -9871,6 +10104,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
   final double manualDiscount;
   final String? note;
   final String state;
+  final DateTime? planStartAt;
+  final DateTime? planEndAt;
+  final int? planWaiterId;
   final DateTime updatedAt;
   const OrderProduct({
     required this.id,
@@ -9885,6 +10121,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     required this.manualDiscount,
     this.note,
     required this.state,
+    this.planStartAt,
+    this.planEndAt,
+    this.planWaiterId,
     required this.updatedAt,
   });
   @override
@@ -9908,6 +10147,15 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       map['note'] = Variable<String>(note);
     }
     map['state'] = Variable<String>(state);
+    if (!nullToAbsent || planStartAt != null) {
+      map['plan_start_at'] = Variable<DateTime>(planStartAt);
+    }
+    if (!nullToAbsent || planEndAt != null) {
+      map['plan_end_at'] = Variable<DateTime>(planEndAt);
+    }
+    if (!nullToAbsent || planWaiterId != null) {
+      map['plan_waiter_id'] = Variable<int>(planWaiterId);
+    }
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
   }
@@ -9930,6 +10178,15 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       manualDiscount: Value(manualDiscount),
       note: note == null && nullToAbsent ? const Value.absent() : Value(note),
       state: Value(state),
+      planStartAt: planStartAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(planStartAt),
+      planEndAt: planEndAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(planEndAt),
+      planWaiterId: planWaiterId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(planWaiterId),
       updatedAt: Value(updatedAt),
     );
   }
@@ -9952,6 +10209,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       manualDiscount: serializer.fromJson<double>(json['manualDiscount']),
       note: serializer.fromJson<String?>(json['note']),
       state: serializer.fromJson<String>(json['state']),
+      planStartAt: serializer.fromJson<DateTime?>(json['planStartAt']),
+      planEndAt: serializer.fromJson<DateTime?>(json['planEndAt']),
+      planWaiterId: serializer.fromJson<int?>(json['planWaiterId']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
   }
@@ -9971,6 +10231,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       'manualDiscount': serializer.toJson<double>(manualDiscount),
       'note': serializer.toJson<String?>(note),
       'state': serializer.toJson<String>(state),
+      'planStartAt': serializer.toJson<DateTime?>(planStartAt),
+      'planEndAt': serializer.toJson<DateTime?>(planEndAt),
+      'planWaiterId': serializer.toJson<int?>(planWaiterId),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
   }
@@ -9988,6 +10251,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     double? manualDiscount,
     Value<String?> note = const Value.absent(),
     String? state,
+    Value<DateTime?> planStartAt = const Value.absent(),
+    Value<DateTime?> planEndAt = const Value.absent(),
+    Value<int?> planWaiterId = const Value.absent(),
     DateTime? updatedAt,
   }) => OrderProduct(
     id: id ?? this.id,
@@ -10002,6 +10268,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     manualDiscount: manualDiscount ?? this.manualDiscount,
     note: note.present ? note.value : this.note,
     state: state ?? this.state,
+    planStartAt: planStartAt.present ? planStartAt.value : this.planStartAt,
+    planEndAt: planEndAt.present ? planEndAt.value : this.planEndAt,
+    planWaiterId: planWaiterId.present ? planWaiterId.value : this.planWaiterId,
     updatedAt: updatedAt ?? this.updatedAt,
   );
   OrderProduct copyWithCompanion(OrderProductsCompanion data) {
@@ -10026,6 +10295,13 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           : this.manualDiscount,
       note: data.note.present ? data.note.value : this.note,
       state: data.state.present ? data.state.value : this.state,
+      planStartAt: data.planStartAt.present
+          ? data.planStartAt.value
+          : this.planStartAt,
+      planEndAt: data.planEndAt.present ? data.planEndAt.value : this.planEndAt,
+      planWaiterId: data.planWaiterId.present
+          ? data.planWaiterId.value
+          : this.planWaiterId,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
@@ -10045,6 +10321,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           ..write('manualDiscount: $manualDiscount, ')
           ..write('note: $note, ')
           ..write('state: $state, ')
+          ..write('planStartAt: $planStartAt, ')
+          ..write('planEndAt: $planEndAt, ')
+          ..write('planWaiterId: $planWaiterId, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
@@ -10064,6 +10343,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     manualDiscount,
     note,
     state,
+    planStartAt,
+    planEndAt,
+    planWaiterId,
     updatedAt,
   );
   @override
@@ -10082,6 +10364,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           other.manualDiscount == this.manualDiscount &&
           other.note == this.note &&
           other.state == this.state &&
+          other.planStartAt == this.planStartAt &&
+          other.planEndAt == this.planEndAt &&
+          other.planWaiterId == this.planWaiterId &&
           other.updatedAt == this.updatedAt);
 }
 
@@ -10098,6 +10383,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
   final Value<double> manualDiscount;
   final Value<String?> note;
   final Value<String> state;
+  final Value<DateTime?> planStartAt;
+  final Value<DateTime?> planEndAt;
+  final Value<int?> planWaiterId;
   final Value<DateTime> updatedAt;
   const OrderProductsCompanion({
     this.id = const Value.absent(),
@@ -10112,6 +10400,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     this.manualDiscount = const Value.absent(),
     this.note = const Value.absent(),
     this.state = const Value.absent(),
+    this.planStartAt = const Value.absent(),
+    this.planEndAt = const Value.absent(),
+    this.planWaiterId = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
   OrderProductsCompanion.insert({
@@ -10127,6 +10418,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     this.manualDiscount = const Value.absent(),
     this.note = const Value.absent(),
     this.state = const Value.absent(),
+    this.planStartAt = const Value.absent(),
+    this.planEndAt = const Value.absent(),
+    this.planWaiterId = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : orderId = Value(orderId),
        productId = Value(productId),
@@ -10144,6 +10438,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Expression<double>? manualDiscount,
     Expression<String>? note,
     Expression<String>? state,
+    Expression<DateTime>? planStartAt,
+    Expression<DateTime>? planEndAt,
+    Expression<int>? planWaiterId,
     Expression<DateTime>? updatedAt,
   }) {
     return RawValuesInsertable({
@@ -10159,6 +10456,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       if (manualDiscount != null) 'manual_discount': manualDiscount,
       if (note != null) 'note': note,
       if (state != null) 'state': state,
+      if (planStartAt != null) 'plan_start_at': planStartAt,
+      if (planEndAt != null) 'plan_end_at': planEndAt,
+      if (planWaiterId != null) 'plan_waiter_id': planWaiterId,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
   }
@@ -10176,6 +10476,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Value<double>? manualDiscount,
     Value<String?>? note,
     Value<String>? state,
+    Value<DateTime?>? planStartAt,
+    Value<DateTime?>? planEndAt,
+    Value<int?>? planWaiterId,
     Value<DateTime>? updatedAt,
   }) {
     return OrderProductsCompanion(
@@ -10191,6 +10494,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       manualDiscount: manualDiscount ?? this.manualDiscount,
       note: note ?? this.note,
       state: state ?? this.state,
+      planStartAt: planStartAt ?? this.planStartAt,
+      planEndAt: planEndAt ?? this.planEndAt,
+      planWaiterId: planWaiterId ?? this.planWaiterId,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -10234,6 +10540,15 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     if (state.present) {
       map['state'] = Variable<String>(state.value);
     }
+    if (planStartAt.present) {
+      map['plan_start_at'] = Variable<DateTime>(planStartAt.value);
+    }
+    if (planEndAt.present) {
+      map['plan_end_at'] = Variable<DateTime>(planEndAt.value);
+    }
+    if (planWaiterId.present) {
+      map['plan_waiter_id'] = Variable<int>(planWaiterId.value);
+    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
@@ -10255,6 +10570,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
           ..write('manualDiscount: $manualDiscount, ')
           ..write('note: $note, ')
           ..write('state: $state, ')
+          ..write('planStartAt: $planStartAt, ')
+          ..write('planEndAt: $planEndAt, ')
+          ..write('planWaiterId: $planWaiterId, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
@@ -14905,6 +15223,631 @@ class WaiterAreasCompanion extends UpdateCompanion<WaiterArea> {
   }
 }
 
+class $NotesTable extends Notes with TableInfo<$NotesTable, Note> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $NotesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _contentMeta = const VerificationMeta(
+    'content',
+  );
+  @override
+  late final GeneratedColumn<String> content = GeneratedColumn<String>(
+    'content',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _colorMeta = const VerificationMeta('color');
+  @override
+  late final GeneratedColumn<String> color = GeneratedColumn<String>(
+    'color',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('#FFFF88'),
+  );
+  static const VerificationMeta _posXMeta = const VerificationMeta('posX');
+  @override
+  late final GeneratedColumn<double> posX = GeneratedColumn<double>(
+    'pos_x',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(20.0),
+  );
+  static const VerificationMeta _posYMeta = const VerificationMeta('posY');
+  @override
+  late final GeneratedColumn<double> posY = GeneratedColumn<double>(
+    'pos_y',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(20.0),
+  );
+  static const VerificationMeta _widthMeta = const VerificationMeta('width');
+  @override
+  late final GeneratedColumn<double> width = GeneratedColumn<double>(
+    'width',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(200.0),
+  );
+  static const VerificationMeta _heightMeta = const VerificationMeta('height');
+  @override
+  late final GeneratedColumn<double> height = GeneratedColumn<double>(
+    'height',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(180.0),
+  );
+  static const VerificationMeta _orderIdMeta = const VerificationMeta(
+    'orderId',
+  );
+  @override
+  late final GeneratedColumn<int> orderId = GeneratedColumn<int>(
+    'order_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES orders (id) ON DELETE SET NULL',
+    ),
+  );
+  static const VerificationMeta _orderCodeMeta = const VerificationMeta(
+    'orderCode',
+  );
+  @override
+  late final GeneratedColumn<String> orderCode = GeneratedColumn<String>(
+    'order_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    defaultValue: currentDateAndTime,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    defaultValue: currentDateAndTime,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    content,
+    color,
+    posX,
+    posY,
+    width,
+    height,
+    orderId,
+    orderCode,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'notes';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<Note> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('content')) {
+      context.handle(
+        _contentMeta,
+        content.isAcceptableOrUnknown(data['content']!, _contentMeta),
+      );
+    }
+    if (data.containsKey('color')) {
+      context.handle(
+        _colorMeta,
+        color.isAcceptableOrUnknown(data['color']!, _colorMeta),
+      );
+    }
+    if (data.containsKey('pos_x')) {
+      context.handle(
+        _posXMeta,
+        posX.isAcceptableOrUnknown(data['pos_x']!, _posXMeta),
+      );
+    }
+    if (data.containsKey('pos_y')) {
+      context.handle(
+        _posYMeta,
+        posY.isAcceptableOrUnknown(data['pos_y']!, _posYMeta),
+      );
+    }
+    if (data.containsKey('width')) {
+      context.handle(
+        _widthMeta,
+        width.isAcceptableOrUnknown(data['width']!, _widthMeta),
+      );
+    }
+    if (data.containsKey('height')) {
+      context.handle(
+        _heightMeta,
+        height.isAcceptableOrUnknown(data['height']!, _heightMeta),
+      );
+    }
+    if (data.containsKey('order_id')) {
+      context.handle(
+        _orderIdMeta,
+        orderId.isAcceptableOrUnknown(data['order_id']!, _orderIdMeta),
+      );
+    }
+    if (data.containsKey('order_code')) {
+      context.handle(
+        _orderCodeMeta,
+        orderCode.isAcceptableOrUnknown(data['order_code']!, _orderCodeMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  Note map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return Note(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      content: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}content'],
+      )!,
+      color: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}color'],
+      )!,
+      posX: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}pos_x'],
+      )!,
+      posY: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}pos_y'],
+      )!,
+      width: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}width'],
+      )!,
+      height: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}height'],
+      )!,
+      orderId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}order_id'],
+      ),
+      orderCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}order_code'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $NotesTable createAlias(String alias) {
+    return $NotesTable(attachedDatabase, alias);
+  }
+}
+
+class Note extends DataClass implements Insertable<Note> {
+  final int id;
+  final String content;
+  final String color;
+  final double posX;
+  final double posY;
+  final double width;
+  final double height;
+  final int? orderId;
+  final String? orderCode;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const Note({
+    required this.id,
+    required this.content,
+    required this.color,
+    required this.posX,
+    required this.posY,
+    required this.width,
+    required this.height,
+    this.orderId,
+    this.orderCode,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['content'] = Variable<String>(content);
+    map['color'] = Variable<String>(color);
+    map['pos_x'] = Variable<double>(posX);
+    map['pos_y'] = Variable<double>(posY);
+    map['width'] = Variable<double>(width);
+    map['height'] = Variable<double>(height);
+    if (!nullToAbsent || orderId != null) {
+      map['order_id'] = Variable<int>(orderId);
+    }
+    if (!nullToAbsent || orderCode != null) {
+      map['order_code'] = Variable<String>(orderCode);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  NotesCompanion toCompanion(bool nullToAbsent) {
+    return NotesCompanion(
+      id: Value(id),
+      content: Value(content),
+      color: Value(color),
+      posX: Value(posX),
+      posY: Value(posY),
+      width: Value(width),
+      height: Value(height),
+      orderId: orderId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(orderId),
+      orderCode: orderCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(orderCode),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory Note.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return Note(
+      id: serializer.fromJson<int>(json['id']),
+      content: serializer.fromJson<String>(json['content']),
+      color: serializer.fromJson<String>(json['color']),
+      posX: serializer.fromJson<double>(json['posX']),
+      posY: serializer.fromJson<double>(json['posY']),
+      width: serializer.fromJson<double>(json['width']),
+      height: serializer.fromJson<double>(json['height']),
+      orderId: serializer.fromJson<int?>(json['orderId']),
+      orderCode: serializer.fromJson<String?>(json['orderCode']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'content': serializer.toJson<String>(content),
+      'color': serializer.toJson<String>(color),
+      'posX': serializer.toJson<double>(posX),
+      'posY': serializer.toJson<double>(posY),
+      'width': serializer.toJson<double>(width),
+      'height': serializer.toJson<double>(height),
+      'orderId': serializer.toJson<int?>(orderId),
+      'orderCode': serializer.toJson<String?>(orderCode),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  Note copyWith({
+    int? id,
+    String? content,
+    String? color,
+    double? posX,
+    double? posY,
+    double? width,
+    double? height,
+    Value<int?> orderId = const Value.absent(),
+    Value<String?> orderCode = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => Note(
+    id: id ?? this.id,
+    content: content ?? this.content,
+    color: color ?? this.color,
+    posX: posX ?? this.posX,
+    posY: posY ?? this.posY,
+    width: width ?? this.width,
+    height: height ?? this.height,
+    orderId: orderId.present ? orderId.value : this.orderId,
+    orderCode: orderCode.present ? orderCode.value : this.orderCode,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  Note copyWithCompanion(NotesCompanion data) {
+    return Note(
+      id: data.id.present ? data.id.value : this.id,
+      content: data.content.present ? data.content.value : this.content,
+      color: data.color.present ? data.color.value : this.color,
+      posX: data.posX.present ? data.posX.value : this.posX,
+      posY: data.posY.present ? data.posY.value : this.posY,
+      width: data.width.present ? data.width.value : this.width,
+      height: data.height.present ? data.height.value : this.height,
+      orderId: data.orderId.present ? data.orderId.value : this.orderId,
+      orderCode: data.orderCode.present ? data.orderCode.value : this.orderCode,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('Note(')
+          ..write('id: $id, ')
+          ..write('content: $content, ')
+          ..write('color: $color, ')
+          ..write('posX: $posX, ')
+          ..write('posY: $posY, ')
+          ..write('width: $width, ')
+          ..write('height: $height, ')
+          ..write('orderId: $orderId, ')
+          ..write('orderCode: $orderCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    content,
+    color,
+    posX,
+    posY,
+    width,
+    height,
+    orderId,
+    orderCode,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Note &&
+          other.id == this.id &&
+          other.content == this.content &&
+          other.color == this.color &&
+          other.posX == this.posX &&
+          other.posY == this.posY &&
+          other.width == this.width &&
+          other.height == this.height &&
+          other.orderId == this.orderId &&
+          other.orderCode == this.orderCode &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class NotesCompanion extends UpdateCompanion<Note> {
+  final Value<int> id;
+  final Value<String> content;
+  final Value<String> color;
+  final Value<double> posX;
+  final Value<double> posY;
+  final Value<double> width;
+  final Value<double> height;
+  final Value<int?> orderId;
+  final Value<String?> orderCode;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  const NotesCompanion({
+    this.id = const Value.absent(),
+    this.content = const Value.absent(),
+    this.color = const Value.absent(),
+    this.posX = const Value.absent(),
+    this.posY = const Value.absent(),
+    this.width = const Value.absent(),
+    this.height = const Value.absent(),
+    this.orderId = const Value.absent(),
+    this.orderCode = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  NotesCompanion.insert({
+    this.id = const Value.absent(),
+    this.content = const Value.absent(),
+    this.color = const Value.absent(),
+    this.posX = const Value.absent(),
+    this.posY = const Value.absent(),
+    this.width = const Value.absent(),
+    this.height = const Value.absent(),
+    this.orderId = const Value.absent(),
+    this.orderCode = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  static Insertable<Note> custom({
+    Expression<int>? id,
+    Expression<String>? content,
+    Expression<String>? color,
+    Expression<double>? posX,
+    Expression<double>? posY,
+    Expression<double>? width,
+    Expression<double>? height,
+    Expression<int>? orderId,
+    Expression<String>? orderCode,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (content != null) 'content': content,
+      if (color != null) 'color': color,
+      if (posX != null) 'pos_x': posX,
+      if (posY != null) 'pos_y': posY,
+      if (width != null) 'width': width,
+      if (height != null) 'height': height,
+      if (orderId != null) 'order_id': orderId,
+      if (orderCode != null) 'order_code': orderCode,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  NotesCompanion copyWith({
+    Value<int>? id,
+    Value<String>? content,
+    Value<String>? color,
+    Value<double>? posX,
+    Value<double>? posY,
+    Value<double>? width,
+    Value<double>? height,
+    Value<int?>? orderId,
+    Value<String?>? orderCode,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+  }) {
+    return NotesCompanion(
+      id: id ?? this.id,
+      content: content ?? this.content,
+      color: color ?? this.color,
+      posX: posX ?? this.posX,
+      posY: posY ?? this.posY,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      orderId: orderId ?? this.orderId,
+      orderCode: orderCode ?? this.orderCode,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (content.present) {
+      map['content'] = Variable<String>(content.value);
+    }
+    if (color.present) {
+      map['color'] = Variable<String>(color.value);
+    }
+    if (posX.present) {
+      map['pos_x'] = Variable<double>(posX.value);
+    }
+    if (posY.present) {
+      map['pos_y'] = Variable<double>(posY.value);
+    }
+    if (width.present) {
+      map['width'] = Variable<double>(width.value);
+    }
+    if (height.present) {
+      map['height'] = Variable<double>(height.value);
+    }
+    if (orderId.present) {
+      map['order_id'] = Variable<int>(orderId.value);
+    }
+    if (orderCode.present) {
+      map['order_code'] = Variable<String>(orderCode.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('NotesCompanion(')
+          ..write('id: $id, ')
+          ..write('content: $content, ')
+          ..write('color: $color, ')
+          ..write('posX: $posX, ')
+          ..write('posY: $posY, ')
+          ..write('width: $width, ')
+          ..write('height: $height, ')
+          ..write('orderId: $orderId, ')
+          ..write('orderCode: $orderCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -14942,6 +15885,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $OrderLogsTable orderLogs = $OrderLogsTable(this);
   late final $WaitersTable waiters = $WaitersTable(this);
   late final $WaiterAreasTable waiterAreas = $WaiterAreasTable(this);
+  late final $NotesTable notes = $NotesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -14973,6 +15917,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     orderLogs,
     waiters,
     waiterAreas,
+    notes,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -14982,6 +15927,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('tickets', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'orders',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('notes', kind: UpdateKind.update)],
     ),
   ]);
   @override
@@ -15274,6 +16226,8 @@ typedef $$ProductsTableCreateCompanionBuilder =
       Value<String?> color,
       Value<bool> isActive,
       Value<bool> isVariant,
+      Value<bool> isPlannable,
+      Value<int?> planDurationMinutes,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -15294,6 +16248,8 @@ typedef $$ProductsTableUpdateCompanionBuilder =
       Value<String?> color,
       Value<bool> isActive,
       Value<bool> isVariant,
+      Value<bool> isPlannable,
+      Value<int?> planDurationMinutes,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -15379,6 +16335,16 @@ class $$ProductsTableFilterComposer
 
   ColumnFilters<bool> get isVariant => $composableBuilder(
     column: $table.isVariant,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isPlannable => $composableBuilder(
+    column: $table.isPlannable,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get planDurationMinutes => $composableBuilder(
+    column: $table.planDurationMinutes,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -15477,6 +16443,16 @@ class $$ProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isPlannable => $composableBuilder(
+    column: $table.isPlannable,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get planDurationMinutes => $composableBuilder(
+    column: $table.planDurationMinutes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -15550,6 +16526,16 @@ class $$ProductsTableAnnotationComposer
   GeneratedColumn<bool> get isVariant =>
       $composableBuilder(column: $table.isVariant, builder: (column) => column);
 
+  GeneratedColumn<bool> get isPlannable => $composableBuilder(
+    column: $table.isPlannable,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get planDurationMinutes => $composableBuilder(
+    column: $table.planDurationMinutes,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -15600,6 +16586,8 @@ class $$ProductsTableTableManager
                 Value<String?> color = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<bool> isVariant = const Value.absent(),
+                Value<bool> isPlannable = const Value.absent(),
+                Value<int?> planDurationMinutes = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => ProductsCompanion(
@@ -15618,6 +16606,8 @@ class $$ProductsTableTableManager
                 color: color,
                 isActive: isActive,
                 isVariant: isVariant,
+                isPlannable: isPlannable,
+                planDurationMinutes: planDurationMinutes,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -15638,6 +16628,8 @@ class $$ProductsTableTableManager
                 Value<String?> color = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
                 Value<bool> isVariant = const Value.absent(),
+                Value<bool> isPlannable = const Value.absent(),
+                Value<int?> planDurationMinutes = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => ProductsCompanion.insert(
@@ -15656,6 +16648,8 @@ class $$ProductsTableTableManager
                 color: color,
                 isActive: isActive,
                 isVariant: isVariant,
+                isPlannable: isPlannable,
+                planDurationMinutes: planDurationMinutes,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -19141,6 +20135,7 @@ typedef $$OrdersTableCreateCompanionBuilder =
       Value<int?> commercialId,
       Value<String?> note,
       Value<String?> cancellationReason,
+      Value<int?> sessionId,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> isSynced,
@@ -19167,6 +20162,7 @@ typedef $$OrdersTableUpdateCompanionBuilder =
       Value<int?> commercialId,
       Value<String?> note,
       Value<String?> cancellationReason,
+      Value<int?> sessionId,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> isSynced,
@@ -19208,6 +20204,25 @@ final class $$OrdersTableReferences
     ).filter((f) => f.orderId.id.sqlEquals($_itemColumn<int>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_orderLogsRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$NotesTable, List<Note>> _notesRefsTable(
+    _$AppDatabase db,
+  ) => MultiTypedResultKey.fromTable(
+    db.notes,
+    aliasName: $_aliasNameGenerator(db.orders.id, db.notes.orderId),
+  );
+
+  $$NotesTableProcessedTableManager get notesRefs {
+    final manager = $$NotesTableTableManager(
+      $_db,
+      $_db.notes,
+    ).filter((f) => f.orderId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_notesRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -19323,6 +20338,11 @@ class $$OrdersTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get sessionId => $composableBuilder(
+    column: $table.sessionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnFilters(column),
@@ -19379,6 +20399,31 @@ class $$OrdersTableFilterComposer
           }) => $$OrderLogsTableFilterComposer(
             $db: $db,
             $table: $db.orderLogs,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> notesRefs(
+    Expression<bool> Function($$NotesTableFilterComposer f) f,
+  ) {
+    final $$NotesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.notes,
+      getReferencedColumn: (t) => t.orderId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NotesTableFilterComposer(
+            $db: $db,
+            $table: $db.notes,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -19498,6 +20543,11 @@ class $$OrdersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get sessionId => $composableBuilder(
+    column: $table.sessionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -19589,6 +20639,9 @@ class $$OrdersTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get sessionId =>
+      $composableBuilder(column: $table.sessionId, builder: (column) => column);
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -19647,6 +20700,31 @@ class $$OrdersTableAnnotationComposer
     );
     return f(composer);
   }
+
+  Expression<T> notesRefs<T extends Object>(
+    Expression<T> Function($$NotesTableAnnotationComposer a) f,
+  ) {
+    final $$NotesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.notes,
+      getReferencedColumn: (t) => t.orderId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NotesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.notes,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$OrdersTableTableManager
@@ -19662,7 +20740,11 @@ class $$OrdersTableTableManager
           $$OrdersTableUpdateCompanionBuilder,
           (Order, $$OrdersTableReferences),
           Order,
-          PrefetchHooks Function({bool ticketsRefs, bool orderLogsRefs})
+          PrefetchHooks Function({
+            bool ticketsRefs,
+            bool orderLogsRefs,
+            bool notesRefs,
+          })
         > {
   $$OrdersTableTableManager(_$AppDatabase db, $OrdersTable table)
     : super(
@@ -19697,6 +20779,7 @@ class $$OrdersTableTableManager
                 Value<int?> commercialId = const Value.absent(),
                 Value<String?> note = const Value.absent(),
                 Value<String?> cancellationReason = const Value.absent(),
+                Value<int?> sessionId = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
@@ -19721,6 +20804,7 @@ class $$OrdersTableTableManager
                 commercialId: commercialId,
                 note: note,
                 cancellationReason: cancellationReason,
+                sessionId: sessionId,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 isSynced: isSynced,
@@ -19747,6 +20831,7 @@ class $$OrdersTableTableManager
                 Value<int?> commercialId = const Value.absent(),
                 Value<String?> note = const Value.absent(),
                 Value<String?> cancellationReason = const Value.absent(),
+                Value<int?> sessionId = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
@@ -19771,6 +20856,7 @@ class $$OrdersTableTableManager
                 commercialId: commercialId,
                 note: note,
                 cancellationReason: cancellationReason,
+                sessionId: sessionId,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 isSynced: isSynced,
@@ -19782,12 +20868,17 @@ class $$OrdersTableTableManager
               )
               .toList(),
           prefetchHooksCallback:
-              ({ticketsRefs = false, orderLogsRefs = false}) {
+              ({
+                ticketsRefs = false,
+                orderLogsRefs = false,
+                notesRefs = false,
+              }) {
                 return PrefetchHooks(
                   db: db,
                   explicitlyWatchedTables: [
                     if (ticketsRefs) db.tickets,
                     if (orderLogsRefs) db.orderLogs,
+                    if (notesRefs) db.notes,
                   ],
                   addJoins: null,
                   getPrefetchedDataCallback: (items) async {
@@ -19830,6 +20921,19 @@ class $$OrdersTableTableManager
                               ),
                           typedResults: items,
                         ),
+                      if (notesRefs)
+                        await $_getPrefetchedData<Order, $OrdersTable, Note>(
+                          currentTable: table,
+                          referencedTable: $$OrdersTableReferences
+                              ._notesRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$OrdersTableReferences(db, table, p0).notesRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.orderId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
                     ];
                   },
                 );
@@ -19850,7 +20954,11 @@ typedef $$OrdersTableProcessedTableManager =
       $$OrdersTableUpdateCompanionBuilder,
       (Order, $$OrdersTableReferences),
       Order,
-      PrefetchHooks Function({bool ticketsRefs, bool orderLogsRefs})
+      PrefetchHooks Function({
+        bool ticketsRefs,
+        bool orderLogsRefs,
+        bool notesRefs,
+      })
     >;
 typedef $$OrderProductsTableCreateCompanionBuilder =
     OrderProductsCompanion Function({
@@ -19866,6 +20974,9 @@ typedef $$OrderProductsTableCreateCompanionBuilder =
       Value<double> manualDiscount,
       Value<String?> note,
       Value<String> state,
+      Value<DateTime?> planStartAt,
+      Value<DateTime?> planEndAt,
+      Value<int?> planWaiterId,
       Value<DateTime> updatedAt,
     });
 typedef $$OrderProductsTableUpdateCompanionBuilder =
@@ -19882,6 +20993,9 @@ typedef $$OrderProductsTableUpdateCompanionBuilder =
       Value<double> manualDiscount,
       Value<String?> note,
       Value<String> state,
+      Value<DateTime?> planStartAt,
+      Value<DateTime?> planEndAt,
+      Value<int?> planWaiterId,
       Value<DateTime> updatedAt,
     });
 
@@ -19951,6 +21065,21 @@ class $$OrderProductsTableFilterComposer
 
   ColumnFilters<String> get state => $composableBuilder(
     column: $table.state,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get planStartAt => $composableBuilder(
+    column: $table.planStartAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get planEndAt => $composableBuilder(
+    column: $table.planEndAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get planWaiterId => $composableBuilder(
+    column: $table.planWaiterId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -20029,6 +21158,21 @@ class $$OrderProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get planStartAt => $composableBuilder(
+    column: $table.planStartAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get planEndAt => $composableBuilder(
+    column: $table.planEndAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get planWaiterId => $composableBuilder(
+    column: $table.planWaiterId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
@@ -20088,6 +21232,19 @@ class $$OrderProductsTableAnnotationComposer
   GeneratedColumn<String> get state =>
       $composableBuilder(column: $table.state, builder: (column) => column);
 
+  GeneratedColumn<DateTime> get planStartAt => $composableBuilder(
+    column: $table.planStartAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get planEndAt =>
+      $composableBuilder(column: $table.planEndAt, builder: (column) => column);
+
+  GeneratedColumn<int> get planWaiterId => $composableBuilder(
+    column: $table.planWaiterId,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
@@ -20135,6 +21292,9 @@ class $$OrderProductsTableTableManager
                 Value<double> manualDiscount = const Value.absent(),
                 Value<String?> note = const Value.absent(),
                 Value<String> state = const Value.absent(),
+                Value<DateTime?> planStartAt = const Value.absent(),
+                Value<DateTime?> planEndAt = const Value.absent(),
+                Value<int?> planWaiterId = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrderProductsCompanion(
                 id: id,
@@ -20149,6 +21309,9 @@ class $$OrderProductsTableTableManager
                 manualDiscount: manualDiscount,
                 note: note,
                 state: state,
+                planStartAt: planStartAt,
+                planEndAt: planEndAt,
+                planWaiterId: planWaiterId,
                 updatedAt: updatedAt,
               ),
           createCompanionCallback:
@@ -20165,6 +21328,9 @@ class $$OrderProductsTableTableManager
                 Value<double> manualDiscount = const Value.absent(),
                 Value<String?> note = const Value.absent(),
                 Value<String> state = const Value.absent(),
+                Value<DateTime?> planStartAt = const Value.absent(),
+                Value<DateTime?> planEndAt = const Value.absent(),
+                Value<int?> planWaiterId = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrderProductsCompanion.insert(
                 id: id,
@@ -20179,6 +21345,9 @@ class $$OrderProductsTableTableManager
                 manualDiscount: manualDiscount,
                 note: note,
                 state: state,
+                planStartAt: planStartAt,
+                planEndAt: planEndAt,
+                planWaiterId: planWaiterId,
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
@@ -22799,6 +23968,429 @@ typedef $$WaiterAreasTableProcessedTableManager =
       WaiterArea,
       PrefetchHooks Function()
     >;
+typedef $$NotesTableCreateCompanionBuilder =
+    NotesCompanion Function({
+      Value<int> id,
+      Value<String> content,
+      Value<String> color,
+      Value<double> posX,
+      Value<double> posY,
+      Value<double> width,
+      Value<double> height,
+      Value<int?> orderId,
+      Value<String?> orderCode,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+    });
+typedef $$NotesTableUpdateCompanionBuilder =
+    NotesCompanion Function({
+      Value<int> id,
+      Value<String> content,
+      Value<String> color,
+      Value<double> posX,
+      Value<double> posY,
+      Value<double> width,
+      Value<double> height,
+      Value<int?> orderId,
+      Value<String?> orderCode,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+    });
+
+final class $$NotesTableReferences
+    extends BaseReferences<_$AppDatabase, $NotesTable, Note> {
+  $$NotesTableReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static $OrdersTable _orderIdTable(_$AppDatabase db) => db.orders.createAlias(
+    $_aliasNameGenerator(db.notes.orderId, db.orders.id),
+  );
+
+  $$OrdersTableProcessedTableManager? get orderId {
+    final $_column = $_itemColumn<int>('order_id');
+    if ($_column == null) return null;
+    final manager = $$OrdersTableTableManager(
+      $_db,
+      $_db.orders,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_orderIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$NotesTableFilterComposer extends Composer<_$AppDatabase, $NotesTable> {
+  $$NotesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get content => $composableBuilder(
+    column: $table.content,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get color => $composableBuilder(
+    column: $table.color,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get posX => $composableBuilder(
+    column: $table.posX,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get posY => $composableBuilder(
+    column: $table.posY,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get width => $composableBuilder(
+    column: $table.width,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get height => $composableBuilder(
+    column: $table.height,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get orderCode => $composableBuilder(
+    column: $table.orderCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$OrdersTableFilterComposer get orderId {
+    final $$OrdersTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.orderId,
+      referencedTable: $db.orders,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$OrdersTableFilterComposer(
+            $db: $db,
+            $table: $db.orders,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$NotesTableOrderingComposer
+    extends Composer<_$AppDatabase, $NotesTable> {
+  $$NotesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get content => $composableBuilder(
+    column: $table.content,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get color => $composableBuilder(
+    column: $table.color,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get posX => $composableBuilder(
+    column: $table.posX,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get posY => $composableBuilder(
+    column: $table.posY,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get width => $composableBuilder(
+    column: $table.width,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get height => $composableBuilder(
+    column: $table.height,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get orderCode => $composableBuilder(
+    column: $table.orderCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$OrdersTableOrderingComposer get orderId {
+    final $$OrdersTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.orderId,
+      referencedTable: $db.orders,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$OrdersTableOrderingComposer(
+            $db: $db,
+            $table: $db.orders,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$NotesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $NotesTable> {
+  $$NotesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get content =>
+      $composableBuilder(column: $table.content, builder: (column) => column);
+
+  GeneratedColumn<String> get color =>
+      $composableBuilder(column: $table.color, builder: (column) => column);
+
+  GeneratedColumn<double> get posX =>
+      $composableBuilder(column: $table.posX, builder: (column) => column);
+
+  GeneratedColumn<double> get posY =>
+      $composableBuilder(column: $table.posY, builder: (column) => column);
+
+  GeneratedColumn<double> get width =>
+      $composableBuilder(column: $table.width, builder: (column) => column);
+
+  GeneratedColumn<double> get height =>
+      $composableBuilder(column: $table.height, builder: (column) => column);
+
+  GeneratedColumn<String> get orderCode =>
+      $composableBuilder(column: $table.orderCode, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  $$OrdersTableAnnotationComposer get orderId {
+    final $$OrdersTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.orderId,
+      referencedTable: $db.orders,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$OrdersTableAnnotationComposer(
+            $db: $db,
+            $table: $db.orders,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$NotesTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $NotesTable,
+          Note,
+          $$NotesTableFilterComposer,
+          $$NotesTableOrderingComposer,
+          $$NotesTableAnnotationComposer,
+          $$NotesTableCreateCompanionBuilder,
+          $$NotesTableUpdateCompanionBuilder,
+          (Note, $$NotesTableReferences),
+          Note,
+          PrefetchHooks Function({bool orderId})
+        > {
+  $$NotesTableTableManager(_$AppDatabase db, $NotesTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$NotesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$NotesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$NotesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> content = const Value.absent(),
+                Value<String> color = const Value.absent(),
+                Value<double> posX = const Value.absent(),
+                Value<double> posY = const Value.absent(),
+                Value<double> width = const Value.absent(),
+                Value<double> height = const Value.absent(),
+                Value<int?> orderId = const Value.absent(),
+                Value<String?> orderCode = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+              }) => NotesCompanion(
+                id: id,
+                content: content,
+                color: color,
+                posX: posX,
+                posY: posY,
+                width: width,
+                height: height,
+                orderId: orderId,
+                orderCode: orderCode,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> content = const Value.absent(),
+                Value<String> color = const Value.absent(),
+                Value<double> posX = const Value.absent(),
+                Value<double> posY = const Value.absent(),
+                Value<double> width = const Value.absent(),
+                Value<double> height = const Value.absent(),
+                Value<int?> orderId = const Value.absent(),
+                Value<String?> orderCode = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+              }) => NotesCompanion.insert(
+                id: id,
+                content: content,
+                color: color,
+                posX: posX,
+                posY: posY,
+                width: width,
+                height: height,
+                orderId: orderId,
+                orderCode: orderCode,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) =>
+                    (e.readTable(table), $$NotesTableReferences(db, table, e)),
+              )
+              .toList(),
+          prefetchHooksCallback: ({orderId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (orderId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.orderId,
+                                referencedTable: $$NotesTableReferences
+                                    ._orderIdTable(db),
+                                referencedColumn: $$NotesTableReferences
+                                    ._orderIdTable(db)
+                                    .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$NotesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $NotesTable,
+      Note,
+      $$NotesTableFilterComposer,
+      $$NotesTableOrderingComposer,
+      $$NotesTableAnnotationComposer,
+      $$NotesTableCreateCompanionBuilder,
+      $$NotesTableUpdateCompanionBuilder,
+      (Note, $$NotesTableReferences),
+      Note,
+      PrefetchHooks Function({bool orderId})
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -22860,4 +24452,6 @@ class $AppDatabaseManager {
       $$WaitersTableTableManager(_db, _db.waiters);
   $$WaiterAreasTableTableManager get waiterAreas =>
       $$WaiterAreasTableTableManager(_db, _db.waiterAreas);
+  $$NotesTableTableManager get notes =>
+      $$NotesTableTableManager(_db, _db.notes);
 }

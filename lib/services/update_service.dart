@@ -31,7 +31,7 @@ class UpdateInfo {
       appName: json['appName'] as String? ?? '',
       platform: json['platform'] as String? ?? '',
       version: json['version'] as String,
-      downloadUrl: json['downloadUrl'] as String,
+      downloadUrl: json['url'] as String,
       checksum: json['sha256'] as String? ?? '',
       isMandatory: json['mandatory'] as bool? ?? false,
       releaseNotes: json['releaseNotes'] as String?,
@@ -65,7 +65,7 @@ class UpdateService {
   int? _getTenantId() => _prefs?.getInt(_tenantIdKey);
 
   /// Get current platform string for API
-  String get _platform {
+  static String get currentPlatform {
     if (Platform.isAndroid) return 'android';
     if (Platform.isWindows) return 'windows';
     if (Platform.isIOS) return 'ios';
@@ -74,18 +74,22 @@ class UpdateService {
     return 'unknown';
   }
 
-  /// Check for available updates by calling api/pos/update_check
+  /// Check for available updates (Android only; desktop uses desktop_updater).
   Future<UpdateInfo?> checkForUpdates() async {
     try {
       await _initPrefs();
-      
+
       final baseUrl = _prefs?.getString(_baseUrlKey);
       if (baseUrl == null || baseUrl.isEmpty) {
         _logger.warning('No base URL configured for update check');
         return null;
       }
 
-      final url = '$baseUrl/api/pos/update_check?platform=$_platform';
+      // Strip trailing /api so we can re-append it cleanly.
+      var root = baseUrl.trimRight();
+      if (root.endsWith('/api')) root = root.substring(0, root.length - 4);
+      final platform = UpdateService.currentPlatform;
+      final url = '$root/api/pos/update_check?platform=$platform';
       _logger.info('Checking for updates: $url');
 
       // Prepare headers with authentication

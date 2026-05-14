@@ -920,6 +920,31 @@ class _TopBarState extends ConsumerState<TopBar> {
           const SizedBox(width: 16),
           // Barcode scanner mode toggle
           _buildBarcodeScanToggle(),
+          // Agenda button
+          const SizedBox(width: 8),
+          Tooltip(
+            message: 'Agenda',
+            child: IconButton(
+              icon: const Icon(Icons.calendar_month_outlined, color: Colors.white),
+              onPressed: () => Navigator.pushNamed(context, '/agenda'),
+            ),
+          ),
+          // Dashboard button
+          Tooltip(
+            message: 'Dashboard',
+            child: IconButton(
+              icon: const Icon(Icons.dashboard_outlined, color: Colors.white),
+              onPressed: () => Navigator.pushNamed(context, '/dashboard'),
+            ),
+          ),
+          // Notes button
+          Tooltip(
+            message: l10n?.translate('notes') ?? 'Notes',
+            child: IconButton(
+              icon: const Icon(Icons.sticky_note_2_outlined, color: Colors.white),
+              onPressed: () => Navigator.pushNamed(context, '/notes'),
+            ),
+          ),
           const Spacer(),
           // Session icon - shows current session details
           IconButton(
@@ -1144,6 +1169,21 @@ class _TopBarState extends ConsumerState<TopBar> {
                   },
                 ));
               }
+
+              // Agenda (planning view)
+              items.add(PopupMenuItem(
+                value: 'agenda',
+                child: Row(
+                  children: [
+                    const Icon(Icons.calendar_month),
+                    const SizedBox(width: 8),
+                    Text(l10n?.translate('agenda') ?? 'Agenda'),
+                  ],
+                ),
+                onTap: () {
+                  Navigator.pushNamed(context, '/agenda');
+                },
+              ));
 
               // Printers - permission protected
               if (permissionService.hasPermission(Permissions.devicesView)) {

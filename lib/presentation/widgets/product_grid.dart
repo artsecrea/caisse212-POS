@@ -439,6 +439,11 @@ class _ProductCard extends ConsumerWidget {
     final variantTva = modifications['variantTva'] as double?;
     final variantImageUrl = modifications['variantImageUrl'] as String?;
 
+    // Planning data
+    final planStartAt = modifications['planStartAt'] as DateTime?;
+    final planEndAt = modifications['planEndAt'] as DateTime?;
+    final planWaiterId = modifications['planWaiterId'] as int?;
+
     final orderItem = OrderItem(
       productId: product.id,
       productName: product.name,
@@ -452,6 +457,9 @@ class _ProductCard extends ConsumerWidget {
       discount: discount,
       manualDiscount: manualDiscount,
       note: note,
+      planStartAt: planStartAt,
+      planEndAt: planEndAt,
+      planWaiterId: planWaiterId,
     );
 
     ref.read(orderProvider.notifier).addItem(orderItem);

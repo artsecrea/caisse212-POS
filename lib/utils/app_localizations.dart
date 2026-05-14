@@ -444,6 +444,16 @@ class AppLocalizations {
       'this_week': 'This Week',
       'this_month': 'This Month',
 
+      // Planning / Agenda
+      'agenda': 'Agenda',
+      'planning': 'Planning',
+      'select_start_time': 'Select start',
+      'select_end_time': 'Select end',
+      'assign_waiter': 'Assign waiter',
+      'unspecified': 'Unspecified',
+      'is_plannable': 'Plannable',
+      'plan_duration': 'Duration (min)',
+
       // Status
       'online': 'Online',
       'offline': 'Offline',
@@ -513,6 +523,8 @@ class AppLocalizations {
       'all_tickets_paid_successfully': 'All tickets paid successfully!',
       'cannot_remove_last_ticket': 'Cannot remove the last ticket',
       'cannot_remove_paid_ticket': 'Cannot remove paid ticket',
+      'fill_empty_ticket_first': 'Fill the empty ticket before adding a new one',
+      'ticket_has_no_items': 'This ticket has no items.\nDrag items from another ticket.',
 
       // Session Screen
       'current_session': 'Current Session',
@@ -707,6 +719,7 @@ class AppLocalizations {
       'end_session': 'End Session',
       'session_paused_resume_login': 'Session paused. Resume when you login again.',
       'session_ended_successfully': 'Session ended successfully.',
+      'order_locked_closed_session': 'This order belongs to a closed session and cannot be modified.',
       'logged_out_completely': 'Logged out completely. All data cleared.',
       'error_during_logout': 'Error during logout',
       'demo_mode_sync_unavailable': 'Demo mode: Sync not available',
@@ -980,6 +993,36 @@ class AppLocalizations {
 
       "additional_discount": "Additional Discount",
       "no_components": "No components available for this product",
+
+      // Notes - English
+      'notes': 'Notes',
+      'add_note': 'Add Note',
+      'edit_note': 'Edit Note',
+      'delete_note': 'Delete Note',
+      'clear_all_notes': 'Clear All Notes',
+      'confirm_delete_note': 'Are you sure you want to delete this note?',
+      'confirm_clear_all_notes': 'This will permanently delete all notes. Are you sure?',
+      'board_view': 'Board',
+      'table_view': 'Table',
+      'note_content': 'Content',
+      'note_content_hint': 'Write your note here...',
+      'note_color': 'Color',
+      'linked_order': 'Linked Order',
+      'no_linked_order': 'No linked order',
+      'no_notes': 'No notes yet',
+      'add_first_note': 'Tap the + button to create your first note',
+      'unlinked': 'No Order',
+      'actions': 'Actions',
+      'date': 'Date',
+
+      // Onscreen keyboard settings
+      'onscreen_keyboard': 'Onscreen Keyboard',
+      'onscreen_keyboard_subtitle': 'Configure the virtual keyboard appearance and behavior',
+      'enable_onscreen_keyboard': 'Enable Onscreen Keyboard',
+      'enable_onscreen_keyboard_subtitle': 'Show a virtual keyboard when text fields are focused',
+      'keyboard_width': 'Keyboard Width',
+      'keyboard_width_subtitle': 'Set the keyboard width as a percentage of screen width',
+      'of_screen_width': 'of screen width',
     },
     'ar': {
       // Common - Arabic
@@ -1414,6 +1457,16 @@ class AppLocalizations {
       'this_week': 'هذا الأسبوع',
       'this_month': 'هذا الشهر',
 
+      // Planning / Agenda
+      'agenda': 'جدول الأعمال',
+      'planning': 'التخطيط',
+      'select_start_time': 'اختر وقت البدء',
+      'select_end_time': 'اختر وقت الانتهاء',
+      'assign_waiter': 'تعيين نادل',
+      'unspecified': 'غير محدد',
+      'is_plannable': 'قابل للتخطيط',
+      'plan_duration': 'المدة (دقيقة)',
+
       // Status
       'online': 'متصل',
       'offline': 'غير متصل',
@@ -1483,6 +1536,8 @@ class AppLocalizations {
       'all_tickets_paid_successfully': 'تم دفع جميع التذاكر بنجاح!',
       'cannot_remove_last_ticket': 'لا يمكن إزالة التذكرة الأخيرة',
       'cannot_remove_paid_ticket': 'لا يمكن إزالة تذكرة مدفوعة',
+      'fill_empty_ticket_first': 'يجب ملء التذكرة الفارغة قبل إضافة تذكرة جديدة',
+      'ticket_has_no_items': 'هذه التذكرة فارغة.\nاسحب عناصر إليها.',
 
       // Session Screen
       'current_session': 'الجلسة الحالية',
@@ -1683,6 +1738,7 @@ class AppLocalizations {
       'end_session': 'إنهاء الجلسة',
       'session_paused_resume_login': 'تم إيقاف الجلسة مؤقتًا. استئناف عند تسجيل الدخول مرة أخرى.',
       'session_ended_successfully': 'تم إنهاء الجلسة بنجاح.',
+      'order_locked_closed_session': 'هذا الطلب ينتمي إلى جلسة مغلقة ولا يمكن تعديله.',
       'logged_out_completely': 'تم تسجيل الخروج بالكامل. تم مسح جميع البيانات.',
       'error_during_logout': 'خطأ أثناء تسجيل الخروج',
       'demo_mode_sync_unavailable': 'وضع العرض التوضيحي: المزامنة غير متاحة',
@@ -1934,6 +1990,36 @@ class AppLocalizations {
       'variants': 'أنواع',
 
       'no_components': 'لا توجد مكونات لهذا المنتج',
+
+      // Notes - Arabic
+      'notes': 'الملاحظات',
+      'add_note': 'إضافة ملاحظة',
+      'edit_note': 'تعديل الملاحظة',
+      'delete_note': 'حذف الملاحظة',
+      'clear_all_notes': 'حذف كل الملاحظات',
+      'confirm_delete_note': 'هل أنت متأكد من حذف هذه الملاحظة؟',
+      'confirm_clear_all_notes': 'سيتم حذف جميع الملاحظات نهائياً. هل أنت متأكد؟',
+      'board_view': 'لوحة',
+      'table_view': 'جدول',
+      'note_content': 'المحتوى',
+      'note_content_hint': 'اكتب ملاحظتك هنا...',
+      'note_color': 'اللون',
+      'linked_order': 'طلب مرتبط',
+      'no_linked_order': 'بدون طلب',
+      'no_notes': 'لا توجد ملاحظات',
+      'add_first_note': 'اضغط + لإنشاء ملاحظتك الأولى',
+      'unlinked': 'بلا طلب',
+      'actions': 'إجراءات',
+      'date': 'التاريخ',
+
+      // Onscreen keyboard settings - Arabic
+      'onscreen_keyboard': 'لوحة المفاتيح',
+      'onscreen_keyboard_subtitle': 'ضبط مظهر وسلوك لوحة المفاتيح الافتراضية',
+      'enable_onscreen_keyboard': 'تفعيل لوحة المفاتيح',
+      'enable_onscreen_keyboard_subtitle': 'عرض لوحة مفاتيح افتراضية عند التركيز على حقول النص',
+      'keyboard_width': 'عرض لوحة المفاتيح',
+      'keyboard_width_subtitle': 'حدد عرض لوحة المفاتيح كنسبة مئوية من عرض الشاشة',
+      'of_screen_width': 'من عرض الشاشة',
     },
     'fr': {
       // Common - French
@@ -2355,6 +2441,16 @@ class AppLocalizations {
       'demo_login': 'Connexion démo',
       'server_login': 'Connexion au serveur',
 
+      // Planning / Agenda
+      'agenda': 'Agenda',
+      'planning': 'Planification',
+      'select_start_time': 'Choisir début',
+      'select_end_time': 'Choisir fin',
+      'assign_waiter': 'Attribuer serveur',
+      'unspecified': 'Non spécifié',
+      'is_plannable': 'Planifiable',
+      'plan_duration': 'Durée (min)',
+
       // Errors
       'error_occurred': 'Une erreur s\'est produite',
       'try_again': 'Réessayer',
@@ -2435,6 +2531,8 @@ class AppLocalizations {
       'all_tickets_paid_successfully': 'Tous les tickets payés avec succès!',
       'cannot_remove_last_ticket': 'Impossible de supprimer le dernier ticket',
       'cannot_remove_paid_ticket': 'Impossible de supprimer un ticket payé',
+      'fill_empty_ticket_first': 'Remplissez le ticket vide avant d\'en créer un nouveau',
+      'ticket_has_no_items': 'Ce ticket est vide.\nGlissez des articles ici.',
 
       // Session Screen
       'current_session': 'Session actuelle',
@@ -2906,6 +3004,36 @@ class AppLocalizations {
       'variants': 'Variantes',
 
       'no_components': 'Aucun composant',
+
+      // Notes - French
+      'notes': 'Notes',
+      'add_note': 'Ajouter une note',
+      'edit_note': 'Modifier la note',
+      'delete_note': 'Supprimer la note',
+      'clear_all_notes': 'Tout effacer',
+      'confirm_delete_note': 'Êtes-vous sûr de vouloir supprimer cette note ?',
+      'confirm_clear_all_notes': 'Toutes les notes seront supprimées définitivement. Confirmer ?',
+      'board_view': 'Tableau',
+      'table_view': 'Liste',
+      'note_content': 'Contenu',
+      'note_content_hint': 'Écrivez votre note ici...',
+      'note_color': 'Couleur',
+      'linked_order': 'Commande liée',
+      'no_linked_order': 'Aucune commande',
+      'no_notes': 'Aucune note',
+      'add_first_note': 'Appuyez sur + pour créer votre première note',
+      'unlinked': 'Sans commande',
+      'actions': 'Actions',
+      'date': 'Date',
+
+      // Onscreen keyboard settings - French
+      'onscreen_keyboard': 'Clavier à l\'écran',
+      'onscreen_keyboard_subtitle': 'Configurer l\'apparence et le comportement du clavier virtuel',
+      'enable_onscreen_keyboard': 'Activer le clavier à l\'écran',
+      'enable_onscreen_keyboard_subtitle': 'Afficher un clavier virtuel lors de la saisie dans les champs de texte',
+      'keyboard_width': 'Largeur du clavier',
+      'keyboard_width_subtitle': 'Définir la largeur du clavier en pourcentage de la largeur de l\'écran',
+      'of_screen_width': 'de la largeur de l\'écran',
     },
   };
 
