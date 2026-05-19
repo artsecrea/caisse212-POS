@@ -121,6 +121,7 @@ class PaymentScreen extends ConsumerStatefulWidget {
 
 class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   final _logger = Logger.instance;
+  bool _isProcessing = false;
 
   @override
   void initState() {
@@ -542,24 +543,6 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                             ),
                         ],
                       ),
-                      // Pay button for unpaid tickets
-                      if (!ticket.isPaid && ticket.items.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: () => _payTicket(index, ticket),
-                            icon: const Icon(Icons.payment_rounded, size: 18),
-                            label: Text('${l10n.translate('pay')} ${currencyFormatter.format(ticket.total)}', style: const TextStyle(fontSize: 14)),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green.shade600,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                            ),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -596,11 +579,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                   ),
                   child: Column(
                     children: [
-                      // Payment method
                       if (!ticket.isPaid)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 6),
-                          child: _buildPaymentMethodSelector(index, ticket),
+                          child: _buildPaymentMethodButtons(index, ticket),
                         ),
 
                       // Total
@@ -816,38 +798,51 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     );
   }
 
-  Widget _buildPaymentMethodSelector(int index, TicketData ticket) {
+  Widget _buildPaymentMethodButtons(int index, TicketData ticket) {
     final theme = Theme.of(context);
-
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: theme.dividerColor),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: DropdownButtonFormField<TransactionType>(
-        initialValue: ticket.paymentMethod,
-        decoration: const InputDecoration(
-          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          border: InputBorder.none,
-        ),
-        items: TransactionType.values.map((method) {
-          return DropdownMenuItem(
-            value: method,
-            child: Row(
-              children: [
-                Icon(_getPaymentIcon(method), size: 20),
-                const SizedBox(width: 8),
-                Text(method.value, style: const TextStyle(fontSize: 14)),
-              ],
+    return Row(
+      children: TransactionType.values.map((method) {
+        final isSelected = ticket.paymentMethod == method;
+        return Expanded(
+          child: GestureDetector(
+            onTap: () => _updatePaymentMethod(index, method),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              margin: const EdgeInsets.symmetric(horizontal: 2),
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: isSelected ? theme.colorScheme.primary : theme.dividerColor,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _getPaymentIcon(method),
+                    size: 18,
+                    color: isSelected ? theme.colorScheme.onPrimary : theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    method.value,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? theme.colorScheme.onPrimary : theme.colorScheme.onSurfaceVariant,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
             ),
-          );
-        }).toList(),
-        onChanged: (value) {
-          if (value != null) {
-            _updatePaymentMethod(index, value);
-          }
-        },
-      ),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -983,105 +978,142 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   Widget _buildActivePaymentPanel(int ticketIndex, TicketData ticket) {
     final calcState = ref.watch(calculatorProvider);
+    final allTickets = ref.watch(ticketsProvider);
     final theme = Theme.of(context);
     final currencyFormatter = ref.watch(currencyFormatterProvider);
     final l10n = AppLocalizations.of(context)!;
 
+    final orderTotal = allTickets.fold<double>(0, (s, t) => s + t.total);
+    final paidTotal = allTickets.where((t) => t.isPaid).fold<double>(0, (s, t) => s + t.total);
+    final progressFraction = orderTotal > 0 ? (paidTotal / orderTotal).clamp(0.0, 1.0) : 0.0;
+    final canPay = ticket.items.isNotEmpty && calcState.enteredAmount >= ticket.total && !_isProcessing;
+    final change = calcState.enteredAmount - ticket.total;
+
     return Column(
       children: [
-        // Ticket summary - Compact
+        // Order progress summary
         Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           decoration: BoxDecoration(
             color: theme.colorScheme.surfaceContainerHighest,
             border: Border(bottom: BorderSide(color: theme.dividerColor)),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '${l10n.translate('ticket')} ${ticketIndex + 1}',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '${l10n.translate('ticket')} ${ticketIndex + 1}  ·  ${currencyFormatter.format(ticket.total)}',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: theme.colorScheme.primary),
+                  ),
+                  Text(
+                    '${allTickets.where((t) => t.isPaid).length}/${allTickets.length} paid',
+                    style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+                  ),
+                ],
               ),
-              Text(
-                currencyFormatter.format(ticket.total),
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.colorScheme.primary),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: progressFraction,
+                  minHeight: 6,
+                  backgroundColor: theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.green.shade600),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Paid: ${currencyFormatter.format(paidTotal)}',
+                    style: TextStyle(fontSize: 11, color: Colors.green.shade700),
+                  ),
+                  Text(
+                    'Remaining: ${currencyFormatter.format(orderTotal - paidTotal)}',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+                  ),
+                ],
               ),
             ],
           ),
         ),
 
-        // Calculator mode toggle - Compact
+        // Mode toggle
         Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: SegmentedButton<CalculatorMode>(
             segments: [
               ButtonSegment(
                 value: CalculatorMode.amount,
-                label: Text(l10n.translate('amount'), style: const TextStyle(fontSize: 14)),
-                icon: const Icon(Icons.dialpad_rounded, size: 20),
+                label: Text(l10n.translate('amount'), style: const TextStyle(fontSize: 13)),
+                icon: const Icon(Icons.dialpad_rounded, size: 18),
               ),
               ButtonSegment(
                 value: CalculatorMode.quick,
-                label: Text(l10n.translate('quick'), style: const TextStyle(fontSize: 14)),
-                icon: const Icon(Icons.flash_on_rounded, size: 20),
+                label: Text(l10n.translate('quick'), style: const TextStyle(fontSize: 13)),
+                icon: const Icon(Icons.flash_on_rounded, size: 18),
               ),
             ],
             selected: {calcState.mode},
-            onSelectionChanged: (Set<CalculatorMode> modes) {
-              _switchCalculatorMode(modes.first);
-            },
+            onSelectionChanged: (modes) => _switchCalculatorMode(modes.first),
           ),
         ),
 
-        // Calculator display - Compact
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 12),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.2)),
-          ),
-          child: Column(
-            children: [
-              Text(
-                currencyFormatter.format(calcState.enteredAmount),
-                style: TextStyle(
-                  fontSize: 40,
-                  fontWeight: FontWeight.bold,
-                  color: calcState.enteredAmount >= ticket.total ? Colors.green.shade700 : theme.colorScheme.primary,
-                ),
-              ),
-              if (calcState.enteredAmount >= ticket.total) ...[
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '${l10n.translate('change')}: ',
-                      style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
-                    ),
-                    Text(
-                      currencyFormatter.format(calcState.enteredAmount - ticket.total),
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 8),
-
-        // Calculator or quick buttons - Use Expanded to fill space
-        Expanded(
+        // Amount display — tap to auto-fill exact amount
+        GestureDetector(
+          onTap: calcState.enteredAmount == 0 ? () => _setExactAmount(ticket.total) : null,
           child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.2)),
+            ),
+            child: Column(
+              children: [
+                if (calcState.enteredAmount == 0)
+                  Text(
+                    'Tap to fill exact amount',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.45)),
+                  ),
+                Text(
+                  currencyFormatter.format(calcState.enteredAmount),
+                  style: TextStyle(
+                    fontSize: 38,
+                    fontWeight: FontWeight.bold,
+                    color: calcState.enteredAmount > 0 && calcState.enteredAmount >= ticket.total
+                        ? Colors.green.shade700
+                        : theme.colorScheme.primary,
+                  ),
+                ),
+                if (change > 0) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('${l10n.translate('change')}: ',
+                          style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
+                      Text(
+                        currencyFormatter.format(change),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green.shade700),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 6),
+
+        Expanded(
+          child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: calcState.mode == CalculatorMode.amount
                 ? _buildCalculatorPad()
@@ -1089,7 +1121,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
         ),
 
-        // Payment action buttons - Always visible at bottom
+        // Action buttons
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -1101,13 +1133,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             children: [
               SizedBox(
                 width: double.infinity,
-                height: 56,
+                height: 52,
                 child: ElevatedButton.icon(
-                  onPressed: ticket.items.isNotEmpty && calcState.enteredAmount >= ticket.total
-                      ? () => _processPayment(ticketIndex, ticket)
-                      : null,
-                  icon: const Icon(Icons.check_circle_rounded, size: 24),
-                  label: Text(l10n.translate('complete_payment'), style: const TextStyle(fontSize: 18)),
+                  onPressed: canPay ? () => _processPayment(ticketIndex, ticket) : null,
+                  icon: _isProcessing
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.check_circle_rounded, size: 22),
+                  label: Text(l10n.translate('complete_payment'), style: const TextStyle(fontSize: 16)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green.shade600,
                     foregroundColor: Colors.white,
@@ -1116,14 +1148,14 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               SizedBox(
                 width: double.infinity,
-                height: 48,
+                height: 42,
                 child: OutlinedButton.icon(
                   onPressed: _clearCalculator,
-                  icon: const Icon(Icons.clear_rounded, size: 20),
-                  label: Text(l10n.translate('clear'), style: const TextStyle(fontSize: 16)),
+                  icon: const Icon(Icons.clear_rounded, size: 18),
+                  label: Text(l10n.translate('clear'), style: const TextStyle(fontSize: 14)),
                   style: OutlinedButton.styleFrom(
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
@@ -1187,48 +1219,63 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   Widget _buildQuickPayButtons(double ticketTotal) {
-    final amounts = [
-      ticketTotal.ceil().toDouble(), // Exact amount
-      20.0,
-      50.0,
-      100.0,
-      200.0,
-      500.0,
-    ];
+    final theme = Theme.of(context);
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+
+    // Dynamic amounts: exact, then round up to next 5/10/20/50/100/200/500
+    final exact = (ticketTotal * 100).ceil() / 100;
+    final amounts = <double>[exact];
+    for (final step in [5, 10, 20, 50, 100, 200, 500]) {
+      final rounded = (ticketTotal / step).ceil() * step.toDouble();
+      if (rounded > exact && amounts.length < 6) amounts.add(rounded);
+    }
 
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: EdgeInsets.zero,
       itemCount: amounts.length,
       itemBuilder: (context, index) {
         final amount = amounts[index];
-        final currencyFormatter = ref.watch(currencyFormatterProvider);
+        final isExact = index == 0;
+        final change = amount - ticketTotal;
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: SizedBox(
-            height: 60,
+            height: 56,
             child: ElevatedButton(
               onPressed: () => _setQuickAmount(amount),
               style: ElevatedButton.styleFrom(
-                backgroundColor: index == 0
-                    ? Theme.of(context).colorScheme.primaryContainer
-                    : Theme.of(context).colorScheme.secondaryContainer,
+                backgroundColor: isExact ? theme.colorScheme.primaryContainer : theme.colorScheme.secondaryContainer,
+                foregroundColor: isExact ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.onSecondaryContainer,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                elevation: isExact ? 2 : 0,
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    index == 0 ? 'Exact Amount' : currencyFormatter.format(amount),
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      if (isExact) ...[
+                        Icon(Icons.done_rounded, size: 16, color: theme.colorScheme.primary),
+                        const SizedBox(width: 6),
+                      ],
+                      Text(
+                        currencyFormatter.format(amount),
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: isExact ? theme.colorScheme.primary : null,
+                        ),
+                      ),
+                    ],
                   ),
-                  if (amount >= ticketTotal)
+                  if (change > 0)
                     Text(
-                      'Change: ${currencyFormatter.format(amount - ticketTotal)}',
+                      '↩ ${currencyFormatter.format(change)}',
                       style: TextStyle(
-                        fontSize: 14,
-                        color: Theme.of(context).colorScheme.onSecondaryContainer.withValues(alpha: 0.7),
+                        fontSize: 13,
+                        color: theme.colorScheme.onSecondaryContainer.withValues(alpha: 0.6),
                       ),
                     ),
                 ],
@@ -1240,103 +1287,90 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     );
   }
 
+  void _setExactAmount(double amount) {
+    ref.read(calculatorProvider.notifier).state = CalculatorState(
+      display: amount.toStringAsFixed(2),
+      enteredAmount: amount,
+      mode: ref.read(calculatorProvider).mode,
+    );
+  }
+
   // Event handlers
   void _selectTicket(int index) {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      ref.read(selectedTicketProvider.notifier).state = index;
-    });
+    ref.read(selectedTicketProvider.notifier).state = index;
   }
 
   void _addNewTicket() {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+    final tickets = ref.read(ticketsProvider);
+    final l10n = AppLocalizations.of(context)!;
 
-      final tickets = ref.read(ticketsProvider);
-      final l10n = AppLocalizations.of(context)!;
-
-      // Block if any unpaid ticket is already empty
-      if (tickets.any((t) => !t.isPaid && t.items.isEmpty)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('fill_empty_ticket_first')),
-            backgroundColor: Colors.orange.shade700,
-          ),
-        );
-        return;
-      }
-
-      final defaultMethod = TransactionType.fromString(
-        ref.read(settingsProvider).defaultPaymentMethod,
-      );
-      final newTickets = [
-        ...tickets,
-        TicketData(
-          items: [],
-          paymentMethod: defaultMethod,
-          discountPercentage: widget.order.discountPercentage,
+    if (tickets.any((t) => !t.isPaid && t.items.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translate('fill_empty_ticket_first')),
+          backgroundColor: Colors.orange.shade700,
         ),
-      ];
-      ref.read(ticketsProvider.notifier).state = newTickets;
-      // Auto-select the new empty ticket so user knows to drag items into it
-      ref.read(selectedTicketProvider.notifier).state = newTickets.length - 1;
-    });
+      );
+      return;
+    }
+
+    final defaultMethod = TransactionType.fromString(ref.read(settingsProvider).defaultPaymentMethod);
+    final newTickets = [
+      ...tickets,
+      TicketData(
+        items: [],
+        paymentMethod: defaultMethod,
+        discountPercentage: widget.order.discountPercentage,
+      ),
+    ];
+    ref.read(ticketsProvider.notifier).state = newTickets;
+    ref.read(selectedTicketProvider.notifier).state = newTickets.length - 1;
   }
 
   void _removeTicket(int index) {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+    final tickets = ref.read(ticketsProvider);
+    final l10n = AppLocalizations.of(context)!;
 
-      final tickets = ref.read(ticketsProvider);
-      final l10n = AppLocalizations.of(context)!;
+    if (tickets.length <= 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.translate('cannot_remove_last_ticket'))),
+      );
+      return;
+    }
 
-      if (tickets.length <= 1) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.translate('cannot_remove_last_ticket'))),
+    if (tickets[index].isPaid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.translate('cannot_remove_paid_ticket'))),
+      );
+      return;
+    }
+
+    final removedItems = tickets[index].items;
+    final updatedTickets = List<TicketData>.from(tickets);
+    updatedTickets.removeAt(index);
+
+    if (removedItems.isNotEmpty) {
+      final destIdx = updatedTickets.indexWhere((t) => !t.isPaid);
+      if (destIdx != -1) {
+        updatedTickets[destIdx] = updatedTickets[destIdx].copyWith(
+          items: [...updatedTickets[destIdx].items, ...removedItems],
         );
-        return;
       }
+    }
 
-      if (tickets[index].isPaid) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.translate('cannot_remove_paid_ticket'))),
-        );
-        return;
-      }
+    final selected = ref.read(selectedTicketProvider);
+    if (selected != null && selected >= updatedTickets.length) {
+      ref.read(selectedTicketProvider.notifier).state = null;
+    }
 
-      final removedItems = tickets[index].items;
-      final updatedTickets = List<TicketData>.from(tickets);
-      updatedTickets.removeAt(index);
-
-      // Move orphaned items to the first unpaid ticket (never a paid ticket)
-      if (removedItems.isNotEmpty) {
-        final destIdx = updatedTickets.indexWhere((t) => !t.isPaid);
-        if (destIdx != -1) {
-          updatedTickets[destIdx] = updatedTickets[destIdx].copyWith(
-            items: [...updatedTickets[destIdx].items, ...removedItems],
-          );
-        }
-      }
-
-      // Reset selected index if it pointed at removed or out-of-bounds ticket
-      final selected = ref.read(selectedTicketProvider);
-      if (selected != null && selected >= updatedTickets.length) {
-        ref.read(selectedTicketProvider.notifier).state = null;
-      }
-
-      ref.read(ticketsProvider.notifier).state = updatedTickets;
-    });
+    ref.read(ticketsProvider.notifier).state = updatedTickets;
   }
 
   void _updatePaymentMethod(int index, TransactionType method) {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      final tickets = ref.read(ticketsProvider);
-      final updatedTickets = List<TicketData>.from(tickets);
-      updatedTickets[index] = tickets[index].copyWith(paymentMethod: method);
-      ref.read(ticketsProvider.notifier).state = updatedTickets;
-    });
+    final tickets = ref.read(ticketsProvider);
+    final updatedTickets = List<TicketData>.from(tickets);
+    updatedTickets[index] = tickets[index].copyWith(paymentMethod: method);
+    ref.read(ticketsProvider.notifier).state = updatedTickets;
   }
 
   Future<void> _moveItemToTicket(Map<String, dynamic> data, int targetTicketIndex) async {
@@ -1395,70 +1429,44 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   void _switchCalculatorMode(CalculatorMode mode) {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      final calcState = ref.read(calculatorProvider);
-      ref.read(calculatorProvider.notifier).state = calcState.copyWith(mode: mode);
-    });
+    ref.read(calculatorProvider.notifier).state = ref.read(calculatorProvider).copyWith(mode: mode);
   }
 
   void _onCalculatorButton(String button) {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+    final calcState = ref.read(calculatorProvider);
+    String newDisplay = calcState.display;
 
-      final calcState = ref.read(calculatorProvider);
-      String newDisplay = calcState.display;
+    if (button == '⌫') {
+      newDisplay = newDisplay.length > 1 ? newDisplay.substring(0, newDisplay.length - 1) : '0';
+    } else if (button == '.') {
+      if (!newDisplay.contains('.')) newDisplay += '.';
+    } else {
+      newDisplay = newDisplay == '0' ? button : newDisplay + button;
+    }
 
-      if (button == '⌫') {
-        if (newDisplay.length > 1) {
-          newDisplay = newDisplay.substring(0, newDisplay.length - 1);
-        } else {
-          newDisplay = '0';
-        }
-      } else if (button == '.') {
-        if (!newDisplay.contains('.')) {
-          newDisplay += '.';
-        }
-      } else {
-        if (newDisplay == '0') {
-          newDisplay = button;
-        } else {
-          newDisplay += button;
-        }
-      }
-
-      final amount = double.tryParse(newDisplay) ?? 0.0;
-      ref.read(calculatorProvider.notifier).state = CalculatorState(
-        display: newDisplay,
-        enteredAmount: amount,
-        mode: calcState.mode,
-      );
-    });
+    final amount = double.tryParse(newDisplay) ?? 0.0;
+    ref.read(calculatorProvider.notifier).state = CalculatorState(
+      display: newDisplay,
+      enteredAmount: amount,
+      mode: calcState.mode,
+    );
   }
 
   void _setQuickAmount(double amount) {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      final calcState = ref.read(calculatorProvider);
-      ref.read(calculatorProvider.notifier).state = CalculatorState(
-        display: amount.toString(),
-        enteredAmount: amount,
-        mode: calcState.mode,
-      );
-    });
+    ref.read(calculatorProvider.notifier).state = CalculatorState(
+      display: amount.toStringAsFixed(2),
+      enteredAmount: amount,
+      mode: ref.read(calculatorProvider).mode,
+    );
   }
 
   void _clearCalculator() {
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      ref.read(calculatorProvider.notifier).state = CalculatorState();
-    });
+    ref.read(calculatorProvider.notifier).state = CalculatorState();
   }
 
   Future<void> _processPayment(int ticketIndex, TicketData ticket) async {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     final database = ref.read(databaseProvider);
     final session = ref.read(currentSessionProvider);
     final printingService = ref.read(printingServiceProvider);
@@ -1581,12 +1589,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
-  }
-
-  /// Pay a single ticket directly
-  Future<void> _payTicket(int ticketIndex, TicketData ticket) async {
-    await _processPayment(ticketIndex, ticket);
   }
 
   /// Pay all unpaid tickets — reads fresh state before each payment to avoid stale-state bugs
@@ -1665,30 +1670,31 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final newId = await _splitInDatabase(item, item.quantity - 1, 1);
     if (newId == null) return;
 
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+    if (!mounted) return;
 
-      final tickets = ref.read(ticketsProvider);
-      final updatedTickets = List<TicketData>.from(
-        tickets.map((ticket) => ticket.copyWith(items: List<OrderItem>.from(ticket.items))),
-      );
+    final tickets = ref.read(ticketsProvider);
+    final updatedTickets = List<TicketData>.from(
+      tickets.map((t) => t.copyWith(items: List<OrderItem>.from(t.items))),
+    );
 
-      // Reduce original by 1 in same ticket
-      updatedTickets[ticketIndex].items[itemIndex] = item.copyWith(quantity: item.quantity - 1);
+    updatedTickets[ticketIndex].items[itemIndex] = item.copyWith(quantity: item.quantity - 1);
 
-      // The split-off qty-1 goes into a brand-new ticket
-      final newItem = item.copyWith(id: newId, quantity: 1);
-      final defaultMethod = TransactionType.fromString(
-        ref.read(settingsProvider).defaultPaymentMethod,
-      );
+    final newItem = item.copyWith(id: newId, quantity: 1);
+
+    // Prefer an existing empty unpaid ticket instead of creating a new one
+    final emptyIdx = updatedTickets.indexWhere((t) => !t.isPaid && t.items.isEmpty);
+    if (emptyIdx != -1) {
+      updatedTickets[emptyIdx].items.add(newItem);
+    } else {
+      final defaultMethod = TransactionType.fromString(ref.read(settingsProvider).defaultPaymentMethod);
       updatedTickets.add(TicketData(
         items: [newItem],
         paymentMethod: defaultMethod,
         discountPercentage: widget.order.discountPercentage,
       ));
+    }
 
-      ref.read(ticketsProvider.notifier).state = updatedTickets;
-    });
+    ref.read(ticketsProvider.notifier).state = updatedTickets;
   }
 
   /// Merge two same-product items when one is dropped onto another
@@ -1721,9 +1727,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
       // Remove the source item
       if (sourceTicketIndex == targetTicketIndex) {
-        // Same ticket – adjust index for removal
-        final removeIdx = sourceItemIndex > targetItemIndex ? sourceItemIndex : sourceItemIndex;
-        updatedTickets[sourceTicketIndex].items.removeAt(removeIdx);
+        // Same ticket — after merge the target was at targetItemIndex.
+        // If source came before target, removing source shifts target by -1 (already handled above).
+        // Remove source by its actual current index (unchanged since we only modified target's quantity).
+        updatedTickets[sourceTicketIndex].items.removeAt(sourceItemIndex);
       } else {
         updatedTickets[sourceTicketIndex].items.removeAt(sourceItemIndex);
       }
@@ -2104,12 +2111,48 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     });
   }
 
-  void _printTicket(TicketData ticket) async {
-    // Similar to _processPayment print logic
-    _logger.info('Reprinting ticket #${ticket.ticketNum}');
+  Future<void> _printTicket(TicketData ticket) async {
+    if (ticket.ticketId == null) return;
+    final printingService = ref.read(printingServiceProvider);
+    final currentUser = ref.read(currentUserProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+
+    try {
+      final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
+      final itemsForPrint = ticket.items.map((item) => {
+        'name': item.displayName,
+        'quantity': item.quantity,
+        'price': item.totalPrice,
+        'components': item.components.map((c) => {'name': c.name, 'quantity': c.quantity}).toList(),
+      }).toList();
+
+      await printingService.printTicketReceipt(
+        ticketId: ticket.ticketId!,
+        ticketNumber: ticket.ticketNum ?? ticket.ticketId.toString(),
+        amount: ticket.total,
+        paymentMethod: ticket.paymentMethod.value,
+        createdAt: DateTime.now(),
+        items: itemsForPrint,
+        orderCode: widget.order.orderCode,
+        cashierName: currentUser?.firstName,
+        storeName: businessName,
+      );
+
+      final database = ref.read(databaseProvider);
+      await database.customStatement(
+        'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
+        [ticket.ticketId!],
+      );
+    } catch (e) {
+      _logger.error('Reprint failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Print failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
-  List<TicketData> get tickets => ref.read(ticketsProvider);
 }
 
 
