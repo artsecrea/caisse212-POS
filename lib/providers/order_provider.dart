@@ -1221,7 +1221,7 @@ class OrderRepository {
     double itemDiscount = 0.0;
     double totalTva = 0.0;
     double totalPaid = 0.0;
-    int? ticketId;
+    final seenTicketIds = <int>{};
 
     final itemDetails = <OrderItemDetails>[];
     for (final product in orderProducts) {
@@ -1256,13 +1256,14 @@ class OrderRepository {
       }
 
       // unitaryPrice = basePrice + tva - preDiscount (all baked in).
-      // Gross subtotal adds back the pre-discount so the split is visible.
+      // Subtract unitaryTva so subtotal is tax-exclusive (HT); totalTva is added
+      // back later in the final total formula to avoid double-counting.
       // productDiscount covers both the pre-discount and any manual discount.
-      // totalPrice = itemSubtotal - productDiscount
-      //            = (unitaryPrice + unitaryDiscount + componentTotal - unitaryDiscount - manualDiscount) * qty
+      // totalPrice = itemSubtotal + totalTva - productDiscount
+      //            = (unitaryPrice - unitaryTva + unitaryDiscount + componentTotal) * qty + tva*qty - (unitaryDiscount + manualDiscount) * qty
       //            = (unitaryPrice + componentTotal - manualDiscount) * qty  ✓
       final productDiscount = (product.unitaryDiscount + product.manualDiscount) * product.quantity;
-      final itemSubtotal = (product.unitaryPrice + product.unitaryDiscount + componentTotal) * product.quantity;
+      final itemSubtotal = (product.unitaryPrice - product.unitaryTva + product.unitaryDiscount + componentTotal) * product.quantity;
       final itemTva = product.unitaryTva * product.quantity;
 
       subtotal += itemSubtotal;
@@ -1275,9 +1276,9 @@ class OrderRepository {
       if (isPaid) {
         final ticket = await (_database.select(_database.tickets)..where((tbl) => tbl.id.equals(product.ticketId!))).getSingleOrNull();
         ticketNum = ticket?.num;
-        if (ticketId == null || ticketId != ticket?.id) {
-          totalPaid += ticket?.amount ?? 0.0;
-          ticketId = ticket?.id;
+        if (ticket != null && !seenTicketIds.contains(ticket.id)) {
+          seenTicketIds.add(ticket.id);
+          totalPaid += ticket.amount;
         }
       }
 

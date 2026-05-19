@@ -17,6 +17,7 @@ import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
 import 'permission_guard.dart';
 import 'order_details_dialog.dart';
+import '../paymen_screen/payment_screen.dart';
 
 class OrdersManagementScreen extends ConsumerStatefulWidget {
   const OrdersManagementScreen({super.key});
@@ -846,10 +847,10 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) => _handleOrderAction(value, order, orderDetails),
-            itemBuilder: (context) => [
+              itemBuilder: (context) => [
               PopupMenuItem(value: 'view', child: Row(children: [const Icon(Icons.visibility, size: 18), const SizedBox(width: 8), Text(l10n.translate('view'))])),
-              if (isZLocked && isUnpaid)
-                const PopupMenuItem(value: 'pay', child: Row(children: [Icon(Icons.payment, size: 18, color: Colors.teal), SizedBox(width: 8), Text('Pay', style: TextStyle(color: Colors.teal))]))
+              if (isUnpaid)
+                PopupMenuItem(value: 'pay', child: Row(children: [const Icon(Icons.payment, size: 18, color: Colors.teal), SizedBox(width: 8), Text(l10n.translate('pay'), style: const TextStyle(color: Colors.teal))]))
               else if (!isZLocked) ...[
                 PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
                 PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
@@ -1001,12 +1002,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
-              if (isZLocked && isUnpaid)
+              if (isUnpaid)
                 Tooltip(
-                  message: 'Pay (Z-locked)',
+                  message: l10n.translate('pay'),
                   child: IconButton(
                     icon: const Icon(Icons.payment, size: 18, color: Colors.teal),
-                    onPressed: () => _editOrder(order),
+                    onPressed: () => _payOrder(order),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                   ),
@@ -1291,8 +1292,10 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         _showOrderDetails(order);
         break;
       case 'edit':
-      case 'pay':
         _editOrder(order);
+        break;
+      case 'pay':
+        _payOrder(order);
         break;
       case 'status':
         _showChangeStatusDialog(order);
@@ -1327,6 +1330,31 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
     if (!mounted) return;
     Navigator.pop(context);
+  }
+
+  /// Open the payment screen dialog directly for an unpaid order without
+  /// navigating away from the management screen.
+  Future<void> _payOrder(Order order) async {
+    final l10n = AppLocalizations.of(context)!;
+    final orderRepo = ref.read(orderRepositoryProvider);
+    final currentOrder = await orderRepo.getOrderById(order.id);
+    if (currentOrder == null) return;
+    if (!mounted) return;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => PaymentScreen(order: currentOrder),
+    );
+
+    if (result == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translate('payment_successful')),
+          backgroundColor: Colors.green,
+        ),
+      );
+      _loadOrders();
+    }
   }
 
   void _deleteOrder(Order order) async {

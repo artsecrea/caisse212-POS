@@ -36,6 +36,10 @@ class SettingsKeys {
 
   static const String orderPanelOnRight = 'order_panel_on_right';
 
+  // On-screen keyboard
+  static const String showOnscreenKeyboard = 'show_onscreen_keyboard';
+  static const String onscreenKeyboardWidthFraction = 'onscreen_keyboard_width_fraction';
+
   // Server settings
   static const String serverPort = 'server_port';
   static const String serverPassword = 'server_password';
@@ -135,6 +139,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       enableCustomerDisplay: _prefs.getBool(SettingsKeys.enableCustomerDisplay) ?? false,
       defaultPaymentMethod: _prefs.getString(SettingsKeys.defaultPaymentMethod) ?? 'CASH',
       agendaTimeStep: _prefs.getInt(SettingsKeys.agendaTimeStep) ?? 60,
+      showOnscreenKeyboard: _prefs.getBool(SettingsKeys.showOnscreenKeyboard) ?? true,
+      onscreenKeyboardWidthFraction: _prefs.getDouble(SettingsKeys.onscreenKeyboardWidthFraction) ?? 0.5,
     );
   }
 
@@ -327,6 +333,17 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(agendaTimeStep: minutes);
   }
 
+  Future<void> setShowOnscreenKeyboard(bool value) async {
+    await _prefs.setBool(SettingsKeys.showOnscreenKeyboard, value);
+    state = state.copyWith(showOnscreenKeyboard: value);
+  }
+
+  Future<void> setOnscreenKeyboardWidthFraction(double value) async {
+    final clamped = value.clamp(0.25, 1.0);
+    await _prefs.setDouble(SettingsKeys.onscreenKeyboardWidthFraction, clamped);
+    state = state.copyWith(onscreenKeyboardWidthFraction: clamped);
+  }
+
   /// Get the last data clear date
   DateTime? getLastDataClearDate() {
     final dateStr = _prefs.getString(SettingsKeys.lastDataClearDate);
@@ -409,5 +426,13 @@ final categoryDisplayModeProvider = Provider<CategoryDisplayMode>((ref) {
 
 final currencyProvider = Provider<String>((ref) {
   return ref.watch(settingsProvider).currency;
+});
+
+final showOnscreenKeyboardProvider = Provider<bool>((ref) {
+  return ref.watch(settingsProvider).showOnscreenKeyboard;
+});
+
+final onscreenKeyboardWidthFractionProvider = Provider<double>((ref) {
+  return ref.watch(settingsProvider).onscreenKeyboardWidthFraction;
 });
 

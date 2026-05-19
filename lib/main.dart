@@ -30,8 +30,7 @@ import 'core/theme/app_theme.dart';
 import 'presentation/login_screen/login_screen.dart';
 import 'presentation/main_screen/main_screen.dart';
 import 'providers/database_providers.dart';
-import 'providers/settings_provider.dart';
-import 'utils/app_localizations.dart';
+import 'providers/settings_provider.dart';import 'utils/app_localizations.dart';
 
 void main() async {
   // Initialize Flutter bindings in the root zone to avoid zone mismatch.
@@ -486,9 +485,15 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
         Widget result;
         try {
-          result = OnscreenKeyboard.builder(
-            width: (context) => MediaQuery.sizeOf(context).width / 2,
-          )(context, child);
+          final showKeyboard = ref.read(showOnscreenKeyboardProvider);
+          final keyboardWidth = ref.read(onscreenKeyboardWidthFractionProvider);
+          if (showKeyboard) {
+            result = OnscreenKeyboard.builder(
+              width: (context) => MediaQuery.sizeOf(context).width * keyboardWidth,
+            )(context, child);
+          } else {
+            result = child ?? const SizedBox.shrink();
+          }
         } catch (e) {
           debugPrint('OnscreenKeyboard builder failed: $e');
           result = child ?? const SizedBox.shrink();

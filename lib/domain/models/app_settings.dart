@@ -58,6 +58,10 @@ class AppSettings {
   // Agenda settings
   final int agendaTimeStep; // Time grid interval in minutes: 60, 30, or 15
 
+  // On-screen keyboard settings
+  final bool showOnscreenKeyboard; // Show/hide the on-screen soft keyboard
+  final double onscreenKeyboardWidthFraction; // Width as fraction of screen width (0.25–1.0)
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -108,6 +112,8 @@ class AppSettings {
     this.enableCustomerDisplay = false,
     this.defaultPaymentMethod = 'CASH',
     this.agendaTimeStep = 60,
+    this.showOnscreenKeyboard = true,
+    this.onscreenKeyboardWidthFraction = 0.5,
   });
 
   AppSettings copyWith({
@@ -146,6 +152,8 @@ class AppSettings {
     bool? enableCustomerDisplay,
     String? defaultPaymentMethod,
     int? agendaTimeStep,
+    bool? showOnscreenKeyboard,
+    double? onscreenKeyboardWidthFraction,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -183,6 +191,8 @@ class AppSettings {
       enableCustomerDisplay: enableCustomerDisplay ?? this.enableCustomerDisplay,
       defaultPaymentMethod: defaultPaymentMethod ?? this.defaultPaymentMethod,
       agendaTimeStep: agendaTimeStep ?? this.agendaTimeStep,
+      showOnscreenKeyboard: showOnscreenKeyboard ?? this.showOnscreenKeyboard,
+      onscreenKeyboardWidthFraction: onscreenKeyboardWidthFraction ?? this.onscreenKeyboardWidthFraction,
     );
   }
 
@@ -223,6 +233,8 @@ class AppSettings {
       'enableCustomerDisplay': enableCustomerDisplay,
       'defaultPaymentMethod': defaultPaymentMethod,
       'agendaTimeStep': agendaTimeStep,
+      'showOnscreenKeyboard': showOnscreenKeyboard,
+      'onscreenKeyboardWidthFraction': onscreenKeyboardWidthFraction,
     };
   }
 
@@ -279,6 +291,8 @@ class AppSettings {
       enableCustomerDisplay: json['enableCustomerDisplay'] as bool? ?? false,
       defaultPaymentMethod: json['defaultPaymentMethod'] as String? ?? 'CASH',
       agendaTimeStep: json['agendaTimeStep'] as int? ?? 60,
+      showOnscreenKeyboard: json['showOnscreenKeyboard'] as bool? ?? true,
+      onscreenKeyboardWidthFraction: (json['onscreenKeyboardWidthFraction'] as num?)?.toDouble() ?? 0.5,
     );
   }
 
