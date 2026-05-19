@@ -1255,9 +1255,14 @@ class OrderRepository {
         }
       }
 
-      final productDiscount = ((product.manualDiscount + product.unitaryDiscount) * product.quantity);
-      print(componentTotal);
-      final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount)+ componentTotal ) * product.quantity ;
+      // unitaryPrice = basePrice + tva - preDiscount (all baked in).
+      // Gross subtotal adds back the pre-discount so the split is visible.
+      // productDiscount covers both the pre-discount and any manual discount.
+      // totalPrice = itemSubtotal - productDiscount
+      //            = (unitaryPrice + unitaryDiscount + componentTotal - unitaryDiscount - manualDiscount) * qty
+      //            = (unitaryPrice + componentTotal - manualDiscount) * qty  ✓
+      final productDiscount = (product.unitaryDiscount + product.manualDiscount) * product.quantity;
+      final itemSubtotal = (product.unitaryPrice + product.unitaryDiscount + componentTotal) * product.quantity;
       final itemTva = product.unitaryTva * product.quantity;
 
       subtotal += itemSubtotal;

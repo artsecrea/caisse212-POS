@@ -251,12 +251,11 @@ class _OrderConfirmationScreenState
       final comps = await (db.select(db.orderProductComponents)
             ..where((tbl) => tbl.orderProductId.equals(item.id)))
           .get();
-      double compTotal =
-          comps.fold(0, (s, c) => s + c.price * c.quantity);
-      total +=
-          (item.unitaryPrice - item.unitaryDiscount - item.manualDiscount + item.unitaryTva) *
-                  item.quantity +
-              compTotal;
+      // unitaryPrice already includes tva and has the pre-discount baked in.
+      // componentTotal is per-unit, so it gets multiplied by quantity.
+      // manualDiscount is per-item, so it also gets multiplied by quantity.
+      final compTotal = comps.fold<double>(0, (s, c) => s + c.price * c.quantity);
+      total += (item.unitaryPrice + compTotal - item.manualDiscount) * item.quantity;
     }
     return total;
   }
@@ -517,10 +516,15 @@ class _OrderConfirmationScreenState
                     final name = item['productName'] as String;
                     final comps =
                         item['components'] as List<Map<String, dynamic>>;
-                    final lineTotal = (op.unitaryPrice -
-                                op.unitaryDiscount -
-                                op.manualDiscount +
-                                op.unitaryTva) *
+                    // unitaryPrice already contains tva and the pre-discount.
+                    // componentTotal and manualDiscount are both per-item,
+                    // so they scale with quantity.
+                    final compLineTotal = comps.fold<double>(
+                      0.0,
+                      (s, c) => s + (c['price'] as double) * (c['quantity'] as int),
+                    );
+                    final lineTotal =
+                        (op.unitaryPrice + compLineTotal - op.manualDiscount) *
                             op.quantity;
 
                     return Card(

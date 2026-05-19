@@ -53,26 +53,22 @@ class OrderItem {
   // Base price per item without tax or any discount (but with components)
   // finalPrice = basePrice + tva - prediscount, so: basePrice = finalPrice - tva + prediscount
   double get subtotalPerItem {
-    print('finalPrice: $finalPrice, tva: $tva, discount: $discount, componentTotal: $componentTotal');
     return ((finalPrice - tva) + discount) + componentTotal;
   }
 
   // Price per item with all discounts applied (including manual discount)
   // finalPrice already has tva and prediscount applied, add components, then subtract manual discount
   double get totalPrice {
-    print('finalPrice: $finalPrice, componentTotal: $componentTotal, manualDiscount: $manualDiscount, quantity: $quantity');
     return ((finalPrice + componentTotal) - manualDiscount) * quantity;
   }
 
   // Total discount per all quantities (pre-discount + manual discount)
   double get totalDiscount {
-    print('discount: $discount, manualDiscount: $manualDiscount, quantity: $quantity');
     return (discount + manualDiscount) * quantity;
   }
 
   // Total TVA for all quantities
   double get totalTva {
-    print('tva: $tva, quantity: $quantity');
     return tva * quantity;
   }
 

@@ -15476,3 +15476,6 @@ In order to resolve this exception you typically have either to verify and fix y
 [2026-05-19T11:30:20.142105] [ERROR]: Failed to check for updates: The connection errored: Connection refused This indicates an error which most likely cannot be solved by the library.
 [2026-05-19T11:33:56.869388] [DEBUG]: Auto-sync on status change: online=true orderCode=FD6E0593 newStatus=PENDING
 [2026-05-19T11:33:57.246943] [ERROR]: Error syncing single order: Exception: Failed to sync order: The connection errored: Connection refused This indicates an error which most likely cannot be solved by the library.
+[2026-05-19T11:43:53.090461] [INFO]: SharedPreferences initialized
+[2026-05-19T11:44:39.541950] [INFO]: Checking for updates: http://localhost:8080/api/pos/update_check?platform=linux
+[2026-05-19T11:44:39.860579] [ERROR]: Failed to check for updates: The connection errored: Connection refused This indicates an error which most likely cannot be solved by the library.
