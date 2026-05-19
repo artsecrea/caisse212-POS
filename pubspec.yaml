@@ -103,6 +103,7 @@ flutter:
   assets:
     - assets/sounds/button_tap.mp3
     - assets/images/logo.svg
+    - assets/images/app_logo.png
     - assets/images/caisse212.svg
     - assets/images/caisse212_icon.svg
     - assets/images/caisse212_icon.png
@@ -140,15 +141,15 @@ flutter_launcher_icons:
   ios: true
   windows:
     generate: true
-    image_path: "assets/images/caisse212_icon.png"
-  image_path: "assets/images/caisse212_icon.png"
+    image_path: "assets/images/app_logo.png"
+  image_path: "assets/images/app_logo.png"
   adaptive_icon_background: "#ffffff"
-  adaptive_icon_foreground: "assets/images/caisse212_icon.png"
+  adaptive_icon_foreground: "assets/images/app_logo.png"
   remove_alpha_ios: true
 # Flutter Native Splash Configuration
 flutter_native_splash:
   color: "#ffffff"
-  image: assets/images/caisse212_icon.png
+  image: assets/images/app_logo.png
   android: true
   ios: true
   web: false

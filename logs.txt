@@ -15479,3 +15479,5 @@ In order to resolve this exception you typically have either to verify and fix y
 [2026-05-19T11:43:53.090461] [INFO]: SharedPreferences initialized
 [2026-05-19T11:44:39.541950] [INFO]: Checking for updates: http://localhost:8080/api/pos/update_check?platform=linux
 [2026-05-19T11:44:39.860579] [ERROR]: Failed to check for updates: The connection errored: Connection refused This indicates an error which most likely cannot be solved by the library.
+[2026-05-19T12:12:36.065776] [INFO]: Starting app...
+[2026-05-19T12:12:36.415167] [INFO]: Sound service initialized
