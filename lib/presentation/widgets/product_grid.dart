@@ -200,10 +200,10 @@ class _ProductCard extends ConsumerWidget {
         if (!hasImage) {
           // No image: text fills the entire card
           return Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.max,
               children: [
                 Expanded(
                   child: Center(
@@ -211,7 +211,7 @@ class _ProductCard extends ConsumerWidget {
                       product.name,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                        fontSize: 15,
                         color: cardColor != null ? textColor : null,
                       ),
                       textAlign: TextAlign.center,
@@ -220,7 +220,7 @@ class _ProductCard extends ConsumerWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
                   currencyFormatter.format(displayPrice),
                   style: TextStyle(
@@ -228,8 +228,10 @@ class _ProductCard extends ConsumerWidget {
                         ? textColor.withValues(alpha: 0.85)
                         : Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.bold,
-                    fontSize: 16,
+                    fontSize: 14,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -250,12 +252,15 @@ class _ProductCard extends ConsumerWidget {
                     return Container(
                       color: Theme.of(context).colorScheme.surfaceContainerHighest,
                       child: Center(
-                        child: Text(
-                          product.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                          textAlign: TextAlign.center,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Text(
+                            product.name,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            textAlign: TextAlign.center,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ),
                     );
@@ -266,20 +271,22 @@ class _ProductCard extends ConsumerWidget {
             Expanded(
               flex: 2,
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  mainAxisSize: MainAxisSize.max,
                   children: [
-                    Text(
-                      product.name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        color: cardColor != null ? textColor : null,
+                    Expanded(
+                      child: Text(
+                        product.name,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: cardColor != null ? textColor : null,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                     ),
                     Text(
                       currencyFormatter.format(displayPrice),
@@ -288,8 +295,10 @@ class _ProductCard extends ConsumerWidget {
                             ? textColor.withValues(alpha: 0.85)
                             : Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                        fontSize: 14,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -300,10 +309,10 @@ class _ProductCard extends ConsumerWidget {
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (_, __) => Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.max,
           children: [
             Expanded(
               child: Center(
@@ -311,9 +320,12 @@ class _ProductCard extends ConsumerWidget {
                   product.name,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
+                    fontSize: 13,
                     color: cardColor != null ? textColor : null,
                   ),
                   textAlign: TextAlign.center,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ),
@@ -324,8 +336,10 @@ class _ProductCard extends ConsumerWidget {
                     ? textColor.withValues(alpha: 0.85)
                     : Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.bold,
-                fontSize: 16,
+                fontSize: 14,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -350,10 +364,10 @@ class _ProductCard extends ConsumerWidget {
         }
 
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.max,
             children: [
               Expanded(
                 child: Align(
@@ -362,7 +376,7 @@ class _ProductCard extends ConsumerWidget {
                     product.name,
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                      fontSize: 13,
                       color: cardColor != null ? textColor : null,
                     ),
                     maxLines: 3,
@@ -377,8 +391,10 @@ class _ProductCard extends ConsumerWidget {
                       ? textColor.withValues(alpha: 0.85)
                       : Theme.of(context).colorScheme.primary,
                   fontWeight: FontWeight.bold,
-                  fontSize: 14,
+                  fontSize: 13,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -389,10 +405,10 @@ class _ProductCard extends ConsumerWidget {
         child: Center(child: CircularProgressIndicator()),
       ),
       error: (_, __) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.max,
           children: [
             Expanded(
               child: Align(
@@ -401,7 +417,7 @@ class _ProductCard extends ConsumerWidget {
                   product.name,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                    fontSize: 13,
                     color: cardColor != null ? textColor : null,
                   ),
                   maxLines: 3,
@@ -416,8 +432,10 @@ class _ProductCard extends ConsumerWidget {
                     ? textColor.withValues(alpha: 0.85)
                     : Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.bold,
-                fontSize: 14,
+                fontSize: 13,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
