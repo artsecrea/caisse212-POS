@@ -97,7 +97,7 @@ class SessionService {
         final pendingOpsService = PendingOperationsService(_database);
         await pendingOpsService.queueSessionUpdate(
           entityId: sessionId,
-          sessionId: sessionId,
+          sessionCode: session.code,
           updateData: {
             'status': 'ended',
             'moneyAtEnd': moneyAtEnd,
@@ -190,7 +190,7 @@ class SessionService {
         final pendingOpsService = PendingOperationsService(_database);
         await pendingOpsService.queueSessionDelete(
           entityId: sessionId,
-          sessionId: sessionId,
+          sessionCode: session.code,
         );
         print('Queued delete operation for synced session code=${session.code}');
       } catch (e) {

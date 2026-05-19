@@ -855,7 +855,7 @@ class OrderRepository {
     return result;
   }
 
-  Future<void> updateOrderStatus(int orderId, String status, {bool queueSyncOperation = true, String? cancellationReason, int? sessionId}) async {
+  Future<void> updateOrderStatus(int orderId, String status, {bool queueSyncOperation = true, String? cancellationReason, int? sessionId, int? userId, int? waiterId}) async {
     // Get current status before updating
     final currentOrder = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
     final oldStatus = currentOrder?.status ?? '';
@@ -877,6 +877,9 @@ class OrderRepository {
         ? Value(sessionId)
         : const Value<int?>.absent();
 
+    // On confirmation (ONHOLD → anything else), stamp the confirming user + optional waiter
+    final isConfirming = oldStatus == 'ONHOLD' && status != 'ONHOLD';
+
     // Build the update companion including cancellationReason
     final updateCompanion = OrdersCompanion(
       status: Value(status),
@@ -886,6 +889,15 @@ class OrderRepository {
       // Set cancellation reason when cancelled, clear it otherwise
       cancellationReason: Value(status == 'CANCELED' ? cancellationReason : null),
       sessionId: sessionIdToStamp,
+      createdBy: isConfirming && userId != null
+          ? Value(userId)
+          : const Value<int?>.absent(),
+      takenBy: isConfirming && userId != null
+          ? Value(userId)
+          : const Value<int?>.absent(),
+      waiterId: isConfirming && waiterId != null
+          ? Value(waiterId)
+          : const Value<int?>.absent(),
     );
 
     await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(updateCompanion);

@@ -20,7 +20,10 @@ class ApiService {
   Dio get dio => _dio;
 
   ApiService(this._prefs) {
-    _dio = Dio();
+    _dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 30),
+    ));
     _setupInterceptors();
   }
 
@@ -54,14 +57,9 @@ class ApiService {
 
         // Add tenant ID header
         final tenantId = getTenantId();
-        print(tenantId);
         if (tenantId != null) {
           options.headers['X-Tenant-ID'] = tenantId.toString();
         }
-
-
-
-        print('Request headers: ${options.headers}');
 
         return handler.next(options);
       },

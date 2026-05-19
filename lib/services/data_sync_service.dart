@@ -468,17 +468,24 @@ class DataSyncService {
     List<OrderProduct> orderProducts,
     double discountPercentage,
   ) async {
-    // First pass: build product data with component totals to calculate effective prices
+    if (orderProducts.isEmpty) return [];
+
+    // Batch-load all components for all products in one query
+    final productIds = orderProducts.map((p) => p.id).toList();
+    final allComponents = await (_database.select(_database.orderProductComponents)
+      ..where((opc) => opc.orderProductId.isIn(productIds)))
+      .get();
+    final componentsByProductId = <int, List<OrderProductComponent>>{};
+    for (final comp in allComponents) {
+      componentsByProductId.putIfAbsent(comp.orderProductId, () => []).add(comp);
+    }
+
     final productDataList = <Map<String, dynamic>>[];
-    final effectivePrices = <double>[]; // effective price per product (before order discount)
+    final effectivePrices = <double>[];
 
     for (final product in orderProducts) {
-      // Get components for this product
-      final productComponents = await (_database.select(_database.orderProductComponents)
-        ..where((opc) => opc.orderProductId.equals(product.id)))
-        .get();
+      final productComponents = componentsByProductId[product.id] ?? [];
 
-      // Build components list
       final componentsList = productComponents.map((comp) => {
         'componentId': comp.componentId,
         'quantity': comp.quantity,
@@ -486,15 +493,12 @@ class DataSyncService {
         'isSpecial': comp.isSpecial,
       }).toList();
 
-      // Calculate component total
       double componentTotal = 0.0;
       for (final comp in productComponents) {
         componentTotal += comp.price * comp.quantity;
       }
 
-      // Effective price per item = (unitaryPrice + componentTotal - unitaryDiscount - manualDiscount)
-      // Then multiply by quantity for total effective price
-      final effectivePerItem = (product.unitaryPrice + componentTotal - product.unitaryDiscount - product.manualDiscount);
+      final effectivePerItem = product.unitaryPrice + componentTotal - product.unitaryDiscount - product.manualDiscount;
       final effectiveTotal = effectivePerItem * product.quantity;
       effectivePrices.add(effectiveTotal > 0 ? effectiveTotal : 0.0);
 
@@ -512,21 +516,15 @@ class DataSyncService {
       });
     }
 
-    // Second pass: if discountPercentage > 0, distribute order-level discount
-    // proportionally into each product's manualDiscount
     if (discountPercentage > 0) {
       final totalEffective = effectivePrices.fold(0.0, (sum, v) => sum + v);
-
       if (totalEffective > 0) {
         final orderDiscountAmount = totalEffective * (discountPercentage / 100.0);
-
         for (int i = 0; i < productDataList.length; i++) {
           final proportion = effectivePrices[i] / totalEffective;
           final productShareOfDiscount = orderDiscountAmount * proportion;
-          // Distribute per-unit: divide by quantity
           final qty = productDataList[i]['quantity'] as int;
           final perUnitShare = qty > 0 ? productShareOfDiscount / qty : 0.0;
-          // Merge into existing manualDiscount
           final existingManualDiscount = productDataList[i]['manualDiscount'] as double;
           productDataList[i]['manualDiscount'] = existingManualDiscount + perUnitShare;
         }
@@ -590,8 +588,8 @@ class DataSyncService {
     final syncedOrderMap = {for (var o in syncedOrders) o.id: o.code};
 
     // Get synced sessions IDs and codes
-    final sessions = await (_database.select(_database.cashSessions)
-      .get());
+    final sessions = await (_database.select(_database.cashSessions)).get();
+    final sessionCodeById = {for (final s in sessions) s.id: s.code};
 
     // Get tickets that belong to synced orders but aren't synced yet
     final tickets = await (_database.select(_database.tickets)
@@ -603,8 +601,7 @@ class DataSyncService {
     for (final t in tickets) {
       if (!syncedOrderMap.containsKey(t.orderId)) continue;
 
-      // Get session code if ticket has a session
-      String? sessionCode = sessions.firstWhere((s) => s.id == t.sessionId).code;
+      final String? sessionCode = t.sessionId != null ? sessionCodeById[t.sessionId] : null;
 
       ticketsList.add({
         'id': t.id,
@@ -661,38 +658,34 @@ class DataSyncService {
 
   /// Mark orders as synced
   Future<void> markOrdersAsSynced(List<int> orderIds) async {
-    for (final id in orderIds) {
-      await (_database.update(_database.orders)
-        ..where((o) => o.id.equals(id)))
-        .write(const OrdersCompanion(isSynced: Value(true)));
-    }
+    if (orderIds.isEmpty) return;
+    await (_database.update(_database.orders)
+      ..where((o) => o.id.isIn(orderIds)))
+      .write(const OrdersCompanion(isSynced: Value(true)));
   }
 
   /// Mark tickets as synced
   Future<void> markTicketsAsSynced(List<int> ticketIds) async {
-    for (final id in ticketIds) {
-      await (_database.update(_database.tickets)
-        ..where((t) => t.id.equals(id)))
-        .write(const TicketsCompanion(isSynced: Value(true)));
-    }
+    if (ticketIds.isEmpty) return;
+    await (_database.update(_database.tickets)
+      ..where((t) => t.id.isIn(ticketIds)))
+      .write(const TicketsCompanion(isSynced: Value(true)));
   }
 
   /// Mark sessions as synced
   Future<void> markSessionsAsSynced(List<int> sessionIds) async {
-    for (final id in sessionIds) {
-      await (_database.update(_database.cashSessions)
-        ..where((s) => s.id.equals(id)))
-        .write(const CashSessionsCompanion(isSynced: Value(true)));
-    }
+    if (sessionIds.isEmpty) return;
+    await (_database.update(_database.cashSessions)
+      ..where((s) => s.id.isIn(sessionIds)))
+      .write(const CashSessionsCompanion(isSynced: Value(true)));
   }
 
   /// Mark customers as synced
   Future<void> markCustomersAsSynced(List<int> customerIds) async {
-    for (final id in customerIds) {
-      await (_database.update(_database.customers)
-        ..where((c) => c.id.equals(id)))
-        .write(const CustomersCompanion(isSynced: Value(true)));
-    }
+    if (customerIds.isEmpty) return;
+    await (_database.update(_database.customers)
+      ..where((c) => c.id.isIn(customerIds)))
+      .write(const CustomersCompanion(isSynced: Value(true)));
   }
 
   /// Sync all local data to server
@@ -1418,10 +1411,10 @@ class DataSyncService {
         _logger.info('Deleted session code=$sessionCode from server immediately');
       } catch (e) {
         _logger.error('Failed to delete session immediately, queuing: $e');
-        await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionId: entityId);
+        await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionCode: sessionCode);
       }
     } else {
-      await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionId: entityId);
+      await _pendingOpsService.queueSessionDelete(entityId: entityId, sessionCode: sessionCode);
     }
   }
 
@@ -1438,10 +1431,10 @@ class DataSyncService {
         _logger.info('Updated session code=$sessionCode on server immediately');
       } catch (e) {
         _logger.error('Failed to update session immediately, queuing: $e');
-        await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionId: entityId, updateData: updateData);
+        await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionCode: sessionCode, updateData: updateData);
       }
     } else {
-      await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionId: entityId, updateData: updateData);
+      await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionCode: sessionCode, updateData: updateData);
     }
   }
 }
