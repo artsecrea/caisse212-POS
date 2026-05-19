@@ -225,8 +225,13 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
               ),
             );
 
-            // Navigate to login screen
-            Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+            FocusManager.instance.primaryFocus?.unfocus();
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                Navigator.of(context)
+                    .pushNamedAndRemoveUntil('/login', (route) => false);
+              }
+            });
           }
         } else {
           await _loadSessions();

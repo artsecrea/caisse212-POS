@@ -598,8 +598,15 @@ class _TopBarState extends ConsumerState<TopBar> {
             backgroundColor: Colors.orange,
           ),
         );
-        // Navigate to tenant login screen
-        Navigator.of(context).pushNamedAndRemoveUntil('/tenant_login', (route) => false);
+        // Navigate to tenant login screen – unfocus first to prevent
+        // AnimatedDefaultTextStyle dirty-widget-in-wrong-scope errors.
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context)
+                .pushNamedAndRemoveUntil('/tenant_login', (route) => false);
+          }
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -831,8 +838,15 @@ class _TopBarState extends ConsumerState<TopBar> {
           ),
         );
 
-        // Navigate to login screen
-        Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+        // Navigate to login screen – unfocus first to prevent
+        // AnimatedDefaultTextStyle dirty-widget-in-wrong-scope errors.
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context)
+                .pushNamedAndRemoveUntil('/login', (route) => false);
+          }
+        });
       }
     } catch (e) {
       if (mounted) {

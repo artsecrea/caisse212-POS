@@ -273,7 +273,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (tenantPasswordHash == null) {
       // No tenant password set, just go back
       if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/tenant');
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context)
+                .pushNamedAndRemoveUntil('/tenant', (route) => false);
+          }
+        });
       }
       return;
     }
@@ -350,7 +356,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await apiService.clearAuthData();
 
       if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/tenant_login');
+        // Unfocus all fields to dismiss on-screen keyboard before navigation.
+        // Without this, AnimatedDefaultTextStyle dirty elements from the keyboard
+        // try to rebuild in the wrong scope when the route is being deactivated.
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context)
+                .pushNamedAndRemoveUntil('/tenant_login', (route) => false);
+          }
+        });
       }
     } else if (result == false) {
       // Password verification failed
@@ -676,7 +691,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
       if (mounted) {
         // Navigate to tenant login screen
-        Navigator.of(context).pushNamedAndRemoveUntil('/tenant', (route) => false);
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pushNamedAndRemoveUntil('/tenant', (route) => false);
+          }
+        });
       }
     } catch (e) {
       if (mounted) {

@@ -175,8 +175,13 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
             ),
           );
 
-          // Navigate to login screen
-          Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+          FocusManager.instance.primaryFocus?.unfocus();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              Navigator.of(context)
+                  .pushNamedAndRemoveUntil('/login', (route) => false);
+            }
+          });
         }
       } catch (e) {
         if (mounted) {
