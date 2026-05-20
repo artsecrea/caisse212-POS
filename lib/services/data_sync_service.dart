@@ -264,6 +264,9 @@ class DataSyncService {
           isPlannable: Value(product['isPlannable'] ?? false),
           planDurationMinutes: Value(product['planDurationMinutes'] as int?),
           color: Value(product['color']),
+          // Scale / weighed-product fields — null when absent in API response.
+          mbwCode: Value(product['mbwCode'] as String?),
+          pricePerKg: Value(product['pricePerKg'] as int?),
         ),
         mode: InsertMode.insertOrReplace,
       );

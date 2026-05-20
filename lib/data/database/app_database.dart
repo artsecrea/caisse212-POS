@@ -66,7 +66,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration {
@@ -214,6 +214,21 @@ class AppDatabase extends _$AppDatabase {
         if (from < 7) {
           // Add notes table
           await m.createTable(notes);
+        }
+        if (from < 8) {
+          // Add MBW code and price-per-kg columns for scale/weighed products.
+          try {
+            await customStatement('ALTER TABLE products ADD COLUMN mbw_code TEXT;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement('ALTER TABLE products ADD COLUMN price_per_kg INTEGER;');
+          } catch (e) {/* may already exist */}
+          // Index for fast PLU lookups during scale barcode scanning.
+          try {
+            await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_products_mbw_code ON products(mbw_code);',
+            );
+          } catch (e) {/* non-fatal */}
         }
       },
     );

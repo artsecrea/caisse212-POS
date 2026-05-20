@@ -31,6 +31,9 @@ import '../../utils/snackbar_helper.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../services/customer_display_service.dart';
+import '../../services/scale_barcode_service.dart';
+import '../../domain/models/scale_config.dart';
+import '../../providers/scale_config_provider.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({Key? key}) : super(key: key);
@@ -179,20 +182,55 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   }
 
   Future<void> _handleProductBarcode(String barcode) async {
+    final scaleConfig = ref.read(scaleConfigProvider);
+    final result = classifyBarcode(barcode, scaleConfig);
+
+    switch (result) {
+      case StaticItem():
+        await _handleStaticBarcode(result.raw);
+      case WeightedItem():
+        await _handleWeightedBarcode(result);
+      case ConfigMismatch():
+        if (mounted) {
+          SnackBarHelper.showWarningSnackBar(
+            context,
+            ref,
+            'Scale config mismatch: expected ${result.expected} chars, got ${result.actual}',
+            duration: const Duration(seconds: 3),
+          );
+        }
+      case MalformedWeightBarcode():
+        if (mounted) {
+          SnackBarHelper.showErrorSnackBar(
+            context,
+            ref,
+            'Malformed scale barcode: ${result.reason}',
+            duration: const Duration(seconds: 3),
+          );
+        }
+    }
+  }
+
+  Future<void> _handleStaticBarcode(String barcode) async {
     final database = ref.read(databaseProvider);
 
     try {
-      // Search for product by barcode
       final product = await (database.select(database.products)
         ..where((tbl) => tbl.barcode.equals(barcode))
         ..where((tbl) => tbl.isActive.equals(true)))
         .getSingleOrNull();
 
-
       if (product != null) {
-        // Add product to current order
         ref.read(orderProvider.notifier).addItem(
-          OrderItem(productId: product.id, productName: product.name, finalPrice: product.price,quantity: 1, tva: product.tvaAmount, discount: product.discountAmount),
+          OrderItem(
+            productId: product.id,
+            productName: product.name,
+            finalPrice: product.finalPrice,
+            quantity: 1,
+            tva: product.tvaAmount,
+            discount: product.discountAmount,
+            imageUrl: product.imageUrl,
+          ),
         );
 
         if (mounted) {
@@ -223,6 +261,91 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           duration: const Duration(seconds: 2),
         );
       }
+    }
+  }
+
+  Future<void> _handleWeightedBarcode(WeightedItem result) async {
+    final l10n = AppLocalizations.of(context);
+    final scaleConfig = ref.read(scaleConfigProvider);
+    final orderRepo = ref.read(orderRepositoryProvider);
+
+    // 5.1 Look up product by MBW/PLU code.
+    final product = await orderRepo.findByMbwCode(result.plu);
+    if (product == null) {
+      if (mounted) {
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          l10n?.translate('scale_item_not_found') ?? 'Scale item not found. PLU: ${result.plu}',
+          duration: const Duration(seconds: 4),
+        );
+      }
+      return;
+    }
+
+    // 5.3 Compute line total.
+    double lineTotal;
+    double? pricePerKgDisplay;
+
+    if (scaleConfig.barcodeType == ScaleBarcodeType.weightEmbedded) {
+      if (product.pricePerKg == null || product.pricePerKg == 0) {
+        if (mounted) {
+          SnackBarHelper.showErrorSnackBar(
+            context,
+            ref,
+            l10n?.translate('scale_no_price_per_kg') ??
+                'Product "${product.name}" has no price per kg configured.',
+            duration: const Duration(seconds: 4),
+          );
+        }
+        return;
+      }
+      // pricePerKg in centimes → convert to currency units, multiply by weight.
+      pricePerKgDisplay = product.pricePerKg! / 100.0;
+      lineTotal = double.parse(
+        (result.extractedValue * pricePerKgDisplay).toStringAsFixed(2),
+      );
+    } else {
+      // PRICE_EMBEDDED — extracted value IS the line total.
+      lineTotal = double.parse(result.extractedValue.toStringAsFixed(2));
+    }
+
+    // 5.4 Hard stop on zero total.
+    if (lineTotal <= 0 || result.extractedValue <= 0) {
+      if (mounted) {
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          l10n?.translate('scale_zero_total') ??
+              'Zero weight or total — item not added.',
+          duration: const Duration(seconds: 3),
+        );
+      }
+      return;
+    }
+
+    // 5.5 Add weighed line item.
+    ref.read(orderProvider.notifier).addWeighedItem(
+      productId: product.id,
+      productName: product.name,
+      imageUrl: product.imageUrl,
+      lineTotal: lineTotal,
+      weightKg: scaleConfig.barcodeType == ScaleBarcodeType.weightEmbedded
+          ? result.extractedValue
+          : 0.0,
+      pricePerKgDisplay: pricePerKgDisplay,
+    );
+
+    if (mounted) {
+      final weightStr = scaleConfig.barcodeType == ScaleBarcodeType.weightEmbedded
+          ? '${result.extractedValue.toStringAsFixed(3)} kg'
+          : '';
+      SnackBarHelper.showSuccessSnackBar(
+        context,
+        ref,
+        '${product.name} $weightStr added',
+        duration: const Duration(seconds: 1),
+      );
     }
   }
 

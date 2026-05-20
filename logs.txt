@@ -24438,3 +24438,10 @@ The status code of 409 has the following meaning: "Client error - the request co
 Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
 In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
 
+[2026-05-20T17:44:17.818063] [INFO]: Starting app...
+[2026-05-20T17:44:40.405630] [INFO]: Checking for updates: https://app.caisse212.com/api/pos/update_check?platform=linux
+[2026-05-20T17:44:40.723498] [ERROR]: Failed to check for updates: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+

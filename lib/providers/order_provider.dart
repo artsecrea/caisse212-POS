@@ -41,6 +41,28 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     }
   }
 
+  /// Adds a weighed (scale) item — always as a distinct line.
+  void addWeighedItem({
+    required int productId,
+    required String productName,
+    String? imageUrl,
+    required double lineTotal,
+    double weightKg = 0.0,
+    double? pricePerKgDisplay,
+  }) {
+    final item = OrderItem(
+      productId: productId,
+      productName: productName,
+      imageUrl: imageUrl,
+      finalPrice: lineTotal,
+      quantity: 1,
+      isWeighedItem: true,
+      weightKg: weightKg,
+      pricePerKgDisplay: pricePerKgDisplay,
+    );
+    state = state.copyWith(items: [...state.items, item]);
+  }
+
   /// Find the index of a duplicate item in the current order
   /// Returns -1 if no duplicate is found
   /// Items are duplicates if they have:
@@ -646,6 +668,14 @@ class OrderRepository {
     if (order == null) return null;
 
     return await loadOrderDetails(order);
+  }
+
+  /// Find an active product by its MBW / PLU code (string comparison only).
+  Future<Product?> findByMbwCode(String plu) async {
+    return (_database.select(_database.products)
+          ..where((t) => t.mbwCode.equals(plu))
+          ..where((t) => t.isActive.equals(true)))
+        .getSingleOrNull();
   }
 
   Future<CurrentOrder?> getOrderByCode(String orderCode) async {

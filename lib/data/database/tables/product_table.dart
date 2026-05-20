@@ -21,6 +21,10 @@ class Products extends Table {
   BoolColumn get isVariant => boolean().withDefault(const Constant(false))();
   BoolColumn get isPlannable => boolean().withDefault(const Constant(false))();
   IntColumn get planDurationMinutes => integer().nullable()(); // Default plan duration in minutes
+  /// MBW / PLU code used for scale-barcode lookup (nullable — only set for weighed products).
+  TextColumn get mbwCode => text().nullable()();
+  /// Price per kg stored in centimes (nullable — only set for weighed products).
+  IntColumn get pricePerKg => integer().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

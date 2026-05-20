@@ -749,6 +749,28 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _mbwCodeMeta = const VerificationMeta(
+    'mbwCode',
+  );
+  @override
+  late final GeneratedColumn<String> mbwCode = GeneratedColumn<String>(
+    'mbw_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _pricePerKgMeta = const VerificationMeta(
+    'pricePerKg',
+  );
+  @override
+  late final GeneratedColumn<int> pricePerKg = GeneratedColumn<int>(
+    'price_per_kg',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -792,6 +814,8 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     isVariant,
     isPlannable,
     planDurationMinutes,
+    mbwCode,
+    pricePerKg,
     createdAt,
     updatedAt,
   ];
@@ -924,6 +948,21 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         ),
       );
     }
+    if (data.containsKey('mbw_code')) {
+      context.handle(
+        _mbwCodeMeta,
+        mbwCode.isAcceptableOrUnknown(data['mbw_code']!, _mbwCodeMeta),
+      );
+    }
+    if (data.containsKey('price_per_kg')) {
+      context.handle(
+        _pricePerKgMeta,
+        pricePerKg.isAcceptableOrUnknown(
+          data['price_per_kg']!,
+          _pricePerKgMeta,
+        ),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -1013,6 +1052,14 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         DriftSqlType.int,
         data['${effectivePrefix}plan_duration_minutes'],
       ),
+      mbwCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}mbw_code'],
+      ),
+      pricePerKg: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}price_per_kg'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -1048,6 +1095,12 @@ class Product extends DataClass implements Insertable<Product> {
   final bool isVariant;
   final bool isPlannable;
   final int? planDurationMinutes;
+
+  /// MBW / PLU code used for scale-barcode lookup (nullable — only set for weighed products).
+  final String? mbwCode;
+
+  /// Price per kg stored in centimes (nullable — only set for weighed products).
+  final int? pricePerKg;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Product({
@@ -1068,6 +1121,8 @@ class Product extends DataClass implements Insertable<Product> {
     required this.isVariant,
     required this.isPlannable,
     this.planDurationMinutes,
+    this.mbwCode,
+    this.pricePerKg,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -1104,6 +1159,12 @@ class Product extends DataClass implements Insertable<Product> {
     map['is_plannable'] = Variable<bool>(isPlannable);
     if (!nullToAbsent || planDurationMinutes != null) {
       map['plan_duration_minutes'] = Variable<int>(planDurationMinutes);
+    }
+    if (!nullToAbsent || mbwCode != null) {
+      map['mbw_code'] = Variable<String>(mbwCode);
+    }
+    if (!nullToAbsent || pricePerKg != null) {
+      map['price_per_kg'] = Variable<int>(pricePerKg);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -1143,6 +1204,12 @@ class Product extends DataClass implements Insertable<Product> {
       planDurationMinutes: planDurationMinutes == null && nullToAbsent
           ? const Value.absent()
           : Value(planDurationMinutes),
+      mbwCode: mbwCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mbwCode),
+      pricePerKg: pricePerKg == null && nullToAbsent
+          ? const Value.absent()
+          : Value(pricePerKg),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -1173,6 +1240,8 @@ class Product extends DataClass implements Insertable<Product> {
       planDurationMinutes: serializer.fromJson<int?>(
         json['planDurationMinutes'],
       ),
+      mbwCode: serializer.fromJson<String?>(json['mbwCode']),
+      pricePerKg: serializer.fromJson<int?>(json['pricePerKg']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -1198,6 +1267,8 @@ class Product extends DataClass implements Insertable<Product> {
       'isVariant': serializer.toJson<bool>(isVariant),
       'isPlannable': serializer.toJson<bool>(isPlannable),
       'planDurationMinutes': serializer.toJson<int?>(planDurationMinutes),
+      'mbwCode': serializer.toJson<String?>(mbwCode),
+      'pricePerKg': serializer.toJson<int?>(pricePerKg),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -1221,6 +1292,8 @@ class Product extends DataClass implements Insertable<Product> {
     bool? isVariant,
     bool? isPlannable,
     Value<int?> planDurationMinutes = const Value.absent(),
+    Value<String?> mbwCode = const Value.absent(),
+    Value<int?> pricePerKg = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Product(
@@ -1243,6 +1316,8 @@ class Product extends DataClass implements Insertable<Product> {
     planDurationMinutes: planDurationMinutes.present
         ? planDurationMinutes.value
         : this.planDurationMinutes,
+    mbwCode: mbwCode.present ? mbwCode.value : this.mbwCode,
+    pricePerKg: pricePerKg.present ? pricePerKg.value : this.pricePerKg,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -1277,6 +1352,10 @@ class Product extends DataClass implements Insertable<Product> {
       planDurationMinutes: data.planDurationMinutes.present
           ? data.planDurationMinutes.value
           : this.planDurationMinutes,
+      mbwCode: data.mbwCode.present ? data.mbwCode.value : this.mbwCode,
+      pricePerKg: data.pricePerKg.present
+          ? data.pricePerKg.value
+          : this.pricePerKg,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -1302,6 +1381,8 @@ class Product extends DataClass implements Insertable<Product> {
           ..write('isVariant: $isVariant, ')
           ..write('isPlannable: $isPlannable, ')
           ..write('planDurationMinutes: $planDurationMinutes, ')
+          ..write('mbwCode: $mbwCode, ')
+          ..write('pricePerKg: $pricePerKg, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -1309,7 +1390,7 @@ class Product extends DataClass implements Insertable<Product> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     name,
     barcode,
@@ -1327,9 +1408,11 @@ class Product extends DataClass implements Insertable<Product> {
     isVariant,
     isPlannable,
     planDurationMinutes,
+    mbwCode,
+    pricePerKg,
     createdAt,
     updatedAt,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1351,6 +1434,8 @@ class Product extends DataClass implements Insertable<Product> {
           other.isVariant == this.isVariant &&
           other.isPlannable == this.isPlannable &&
           other.planDurationMinutes == this.planDurationMinutes &&
+          other.mbwCode == this.mbwCode &&
+          other.pricePerKg == this.pricePerKg &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -1373,6 +1458,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
   final Value<bool> isVariant;
   final Value<bool> isPlannable;
   final Value<int?> planDurationMinutes;
+  final Value<String?> mbwCode;
+  final Value<int?> pricePerKg;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const ProductsCompanion({
@@ -1393,6 +1480,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.isVariant = const Value.absent(),
     this.isPlannable = const Value.absent(),
     this.planDurationMinutes = const Value.absent(),
+    this.mbwCode = const Value.absent(),
+    this.pricePerKg = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -1414,6 +1503,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.isVariant = const Value.absent(),
     this.isPlannable = const Value.absent(),
     this.planDurationMinutes = const Value.absent(),
+    this.mbwCode = const Value.absent(),
+    this.pricePerKg = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : name = Value(name),
@@ -1437,6 +1528,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Expression<bool>? isVariant,
     Expression<bool>? isPlannable,
     Expression<int>? planDurationMinutes,
+    Expression<String>? mbwCode,
+    Expression<int>? pricePerKg,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -1459,6 +1552,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       if (isPlannable != null) 'is_plannable': isPlannable,
       if (planDurationMinutes != null)
         'plan_duration_minutes': planDurationMinutes,
+      if (mbwCode != null) 'mbw_code': mbwCode,
+      if (pricePerKg != null) 'price_per_kg': pricePerKg,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -1482,6 +1577,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Value<bool>? isVariant,
     Value<bool>? isPlannable,
     Value<int?>? planDurationMinutes,
+    Value<String?>? mbwCode,
+    Value<int?>? pricePerKg,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -1503,6 +1600,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       isVariant: isVariant ?? this.isVariant,
       isPlannable: isPlannable ?? this.isPlannable,
       planDurationMinutes: planDurationMinutes ?? this.planDurationMinutes,
+      mbwCode: mbwCode ?? this.mbwCode,
+      pricePerKg: pricePerKg ?? this.pricePerKg,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -1562,6 +1661,12 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     if (planDurationMinutes.present) {
       map['plan_duration_minutes'] = Variable<int>(planDurationMinutes.value);
     }
+    if (mbwCode.present) {
+      map['mbw_code'] = Variable<String>(mbwCode.value);
+    }
+    if (pricePerKg.present) {
+      map['price_per_kg'] = Variable<int>(pricePerKg.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -1591,6 +1696,8 @@ class ProductsCompanion extends UpdateCompanion<Product> {
           ..write('isVariant: $isVariant, ')
           ..write('isPlannable: $isPlannable, ')
           ..write('planDurationMinutes: $planDurationMinutes, ')
+          ..write('mbwCode: $mbwCode, ')
+          ..write('pricePerKg: $pricePerKg, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -16228,6 +16335,8 @@ typedef $$ProductsTableCreateCompanionBuilder =
       Value<bool> isVariant,
       Value<bool> isPlannable,
       Value<int?> planDurationMinutes,
+      Value<String?> mbwCode,
+      Value<int?> pricePerKg,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -16250,6 +16359,8 @@ typedef $$ProductsTableUpdateCompanionBuilder =
       Value<bool> isVariant,
       Value<bool> isPlannable,
       Value<int?> planDurationMinutes,
+      Value<String?> mbwCode,
+      Value<int?> pricePerKg,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -16345,6 +16456,16 @@ class $$ProductsTableFilterComposer
 
   ColumnFilters<int> get planDurationMinutes => $composableBuilder(
     column: $table.planDurationMinutes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mbwCode => $composableBuilder(
+    column: $table.mbwCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get pricePerKg => $composableBuilder(
+    column: $table.pricePerKg,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -16453,6 +16574,16 @@ class $$ProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get mbwCode => $composableBuilder(
+    column: $table.mbwCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get pricePerKg => $composableBuilder(
+    column: $table.pricePerKg,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -16536,6 +16667,14 @@ class $$ProductsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get mbwCode =>
+      $composableBuilder(column: $table.mbwCode, builder: (column) => column);
+
+  GeneratedColumn<int> get pricePerKg => $composableBuilder(
+    column: $table.pricePerKg,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -16588,6 +16727,8 @@ class $$ProductsTableTableManager
                 Value<bool> isVariant = const Value.absent(),
                 Value<bool> isPlannable = const Value.absent(),
                 Value<int?> planDurationMinutes = const Value.absent(),
+                Value<String?> mbwCode = const Value.absent(),
+                Value<int?> pricePerKg = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => ProductsCompanion(
@@ -16608,6 +16749,8 @@ class $$ProductsTableTableManager
                 isVariant: isVariant,
                 isPlannable: isPlannable,
                 planDurationMinutes: planDurationMinutes,
+                mbwCode: mbwCode,
+                pricePerKg: pricePerKg,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -16630,6 +16773,8 @@ class $$ProductsTableTableManager
                 Value<bool> isVariant = const Value.absent(),
                 Value<bool> isPlannable = const Value.absent(),
                 Value<int?> planDurationMinutes = const Value.absent(),
+                Value<String?> mbwCode = const Value.absent(),
+                Value<int?> pricePerKg = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => ProductsCompanion.insert(
@@ -16650,6 +16795,8 @@ class $$ProductsTableTableManager
                 isVariant: isVariant,
                 isPlannable: isPlannable,
                 planDurationMinutes: planDurationMinutes,
+                mbwCode: mbwCode,
+                pricePerKg: pricePerKg,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),

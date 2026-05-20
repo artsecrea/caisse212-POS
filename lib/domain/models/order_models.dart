@@ -21,6 +21,10 @@ class OrderItem {
   final DateTime? planStartAt; // Planning start time
   final DateTime? planEndAt; // Planning end time
   final int? planWaiterId; // Assigned waiter for this booking
+  // Scale / weighed-item fields
+  final bool isWeighedItem;
+  final double? weightKg;
+  final double? pricePerKgDisplay;
 
   OrderItem({
     this.id,
@@ -41,6 +45,9 @@ class OrderItem {
     this.planStartAt,
     this.planEndAt,
     this.planWaiterId,
+    this.isWeighedItem = false,
+    this.weightKg,
+    this.pricePerKgDisplay,
   });
 
   /// Returns the display name - variant name if available, otherwise product name
@@ -91,6 +98,9 @@ class OrderItem {
     DateTime? planStartAt,
     DateTime? planEndAt,
     int? planWaiterId,
+    bool? isWeighedItem,
+    double? weightKg,
+    double? pricePerKgDisplay,
   }) {
     return OrderItem(
       id: id ?? this.id,
@@ -111,6 +121,9 @@ class OrderItem {
       planStartAt: planStartAt ?? this.planStartAt,
       planEndAt: planEndAt ?? this.planEndAt,
       planWaiterId: planWaiterId ?? this.planWaiterId,
+      isWeighedItem: isWeighedItem ?? this.isWeighedItem,
+      weightKg: weightKg ?? this.weightKg,
+      pricePerKgDisplay: pricePerKgDisplay ?? this.pricePerKgDisplay,
     );
   }
 
@@ -140,6 +153,9 @@ class OrderItem {
       'planStartAt': planStartAt?.toIso8601String(),
       'planEndAt': planEndAt?.toIso8601String(),
       'planWaiterId': planWaiterId,
+      'isWeighedItem': isWeighedItem,
+      'weightKg': weightKg,
+      'pricePerKgDisplay': pricePerKgDisplay,
     };
   }
 

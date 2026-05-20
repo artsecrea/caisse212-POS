@@ -443,37 +443,49 @@ class OrderPanel extends ConsumerWidget {
                                                     ),
                                                   ),
                                                 )
-                                              : InkWell(
-                                                  onTap: () {
-                                                    // Directly add one to quantity
-                                                    ref.read(orderProvider.notifier).updateItemQuantity(
-                                                      invertedIndex, 
-                                                      item.quantity + 1
-                                                    );
-                                                  },
-                                                  onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
-                                                  borderRadius: BorderRadius.circular(8),
-                                                  child: Container(
-                                                    width: 48,
-                                                    height: 48,
-                                                    alignment: Alignment.center,
-                                                    decoration: BoxDecoration(
-                                                      color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.7),
+                                              : item.isWeighedItem
+                                                  // Weighed items — show scale icon badge instead of qty tap button.
+                                                  ? Container(
+                                                      width: 48,
+                                                      height: 48,
+                                                      alignment: Alignment.center,
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.teal.withValues(alpha: 0.1),
+                                                        borderRadius: BorderRadius.circular(8),
+                                                        border: Border.all(color: Colors.teal.withValues(alpha: 0.5)),
+                                                      ),
+                                                      child: const Icon(Icons.scale, color: Colors.teal, size: 22),
+                                                    )
+                                                  : InkWell(
+                                                      onTap: () {
+                                                        ref.read(orderProvider.notifier).updateItemQuantity(
+                                                          invertedIndex, 
+                                                          item.quantity + 1
+                                                        );
+                                                      },
+                                                      onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
                                                       borderRadius: BorderRadius.circular(8),
-                                                      border: Border.all(
-                                                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                                                      child: Container(
+                                                        width: 48,
+                                                        height: 48,
+                                                        alignment: Alignment.center,
+                                                        decoration: BoxDecoration(
+                                                          color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.7),
+                                                          borderRadius: BorderRadius.circular(8),
+                                                          border: Border.all(
+                                                            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                                                          ),
+                                                        ),
+                                                        child: Text(
+                                                          '${item.quantity}',
+                                                          style: TextStyle(
+                                                            fontWeight: FontWeight.bold,
+                                                            fontSize: 20,
+                                                            color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                                          ),
+                                                        ),
                                                       ),
                                                     ),
-                                                    child: Text(
-                                                      '${item.quantity}',
-                                                      style: TextStyle(
-                                                        fontWeight: FontWeight.bold,
-                                                        fontSize: 20,
-                                                        color: Theme.of(context).colorScheme.onPrimaryContainer,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
                                         ),
 
                                         const SizedBox(width: 12),
@@ -527,6 +539,31 @@ class OrderPanel extends ConsumerWidget {
                                                       height: 1.1,
                                                     ),
                                                   )).toList(),
+                                                ),
+                                              ],
+
+                                              // Weighed item detail line
+                                              if (item.isWeighedItem && item.weightKg != null && item.weightKg! > 0) ...[
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  children: [
+                                                    Icon(Icons.scale, size: 12, color: Colors.teal[600]),
+                                                    const SizedBox(width: 4),
+                                                    Flexible(
+                                                      child: Text(
+                                                        item.pricePerKgDisplay != null
+                                                            ? '${item.weightKg!.toStringAsFixed(3)} kg × ${item.pricePerKgDisplay!.toStringAsFixed(2)}/kg'
+                                                            : '${item.weightKg!.toStringAsFixed(3)} kg',
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          color: Colors.teal[700],
+                                                          fontWeight: FontWeight.w600,
+                                                          height: 1.1,
+                                                        ),
+                                                        overflow: TextOverflow.ellipsis,
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
                                               ],
 

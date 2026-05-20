@@ -6,6 +6,9 @@ import '../../providers/server_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../utils/app_localizations.dart';
 import '../../services/discovery_service.dart';
+import '../../domain/models/scale_config.dart';
+import '../../providers/scale_config_provider.dart';
+import '../../providers/order_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -25,6 +28,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     NavItem(icon: Icons.touch_app, label: l10n.translate('action_buttons')),
     NavItem(icon: Icons.sync, label: l10n.translate('sync_settings')),
     NavItem(icon: Icons.dns, label: l10n.translate('server_settings')),
+    NavItem(icon: Icons.scale, label: l10n.translate('scale_config')),
   ];
 
   @override
@@ -253,6 +257,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return _buildSyncSettingsContent(settings, settingsNotifier, context);
       case 6:
         return _buildServerSettingsContent(settings, settingsNotifier, context);
+      case 7:
+        return const _ScaleConfigSection();
       default:
         return const SizedBox.shrink();
     }
@@ -1902,4 +1908,428 @@ class NavItem {
   final String label;
 
   const NavItem({required this.icon, required this.label});
+}
+// ---------------------------------------------------------------------------
+// Scale Configuration Section
+// ---------------------------------------------------------------------------
+
+class _ScaleConfigSection extends ConsumerStatefulWidget {
+  const _ScaleConfigSection();
+
+  @override
+  ConsumerState<_ScaleConfigSection> createState() => _ScaleConfigSectionState();
+}
+
+class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
+  late ScaleConfig _draft;
+  final _testBarcodeCtrl = TextEditingController();
+  String? _saveError;
+
+  @override
+  void initState() {
+    super.initState();
+    _draft = ref.read(scaleConfigProvider);
+    _testBarcodeCtrl.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _testBarcodeCtrl.dispose();
+    super.dispose();
+  }
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+
+  bool get _cartHasItems => ref.read(orderProvider).items.isNotEmpty;
+
+  String? _validate() {
+    if (_draft.prefix.isEmpty) return 'Prefix cannot be empty.';
+    final expected = _draft.expectedTotalLength;
+    final test = _testBarcodeCtrl.text.trim();
+    if (test.isNotEmpty && test.length != expected) {
+      return 'Total barcode length should be $expected '
+          '(prefix ${_draft.prefix.length} + PLU ${_draft.pluLength} '
+          '+ value ${_draft.weightLength}'
+          '${_draft.hasCheckDigit ? " + check 1" : ""} = $expected), '
+          'but test barcode has ${test.length} chars.';
+    }
+    return null;
+  }
+
+  // ── live preview ─────────────────────────────────────────────────────────
+
+  Widget _buildPreview(AppLocalizations l10n) {
+    final raw = _testBarcodeCtrl.text.trim();
+    final expected = _draft.expectedTotalLength;
+    final lengthOk = raw.length == expected;
+
+    // Segment colors
+    const cPrefix = Color(0xFF1565C0);
+    const cPlu    = Color(0xFF2E7D32);
+    const cValue  = Color(0xFFE65100);
+    const cCheck  = Color(0xFF6A1B9A);
+
+    // Extracted values (only if length matches)
+    String? plu, valueStr;
+    double? parsedValue;
+    if (raw.length == expected) {
+      final off = _draft.prefix.length;
+      plu      = raw.substring(off, off + _draft.pluLength);
+      valueStr = raw.substring(off + _draft.pluLength, off + _draft.pluLength + _draft.weightLength);
+      final digits = RegExp(r'^\d+$');
+      if (digits.hasMatch(valueStr)) {
+        parsedValue = int.parse(valueStr) / _pow10(_draft.weightDecimalPlaces);
+      }
+    }
+
+    final valueLabel = _draft.barcodeType == ScaleBarcodeType.weightEmbedded
+        ? (parsedValue != null ? '→ ${parsedValue.toStringAsFixed(_draft.weightDecimalPlaces)} kg' : '')
+        : (parsedValue != null ? '→ ${parsedValue.toStringAsFixed(2)} currency' : '');
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Title + total length badge
+            Row(
+              children: [
+                Text(l10n.translate('live_preview'),
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: (raw.isEmpty || lengthOk) ? Colors.green : Colors.red,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${l10n.translate('total_length')}: $expected',
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // Test barcode input
+            TextField(
+              controller: _testBarcodeCtrl,
+              decoration: InputDecoration(
+                labelText: l10n.translate('test_barcode'),
+                hintText: l10n.translate('type_or_scan_barcode'),
+                prefixIcon: const Icon(Icons.qr_code_scanner),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                suffixIcon: _testBarcodeCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () => _testBarcodeCtrl.clear(),
+                      )
+                    : null,
+              ),
+            ),
+            if (raw.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              // Segmented color bar
+              LayoutBuilder(builder: (context, constraints) {
+                final total = _draft.expectedTotalLength;
+                Widget _seg(String label, int len, Color color, String? extracted) {
+                  final frac = len / total;
+                  return Expanded(
+                    flex: (frac * 100).round(),
+                    child: Column(
+                      children: [
+                        Container(
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(label,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold)),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          extracted ?? '—',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: color),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _seg('Prefix', _draft.prefix.length, cPrefix,
+                        raw.length >= _draft.prefix.length
+                            ? raw.substring(0, _draft.prefix.length)
+                            : null),
+                    const SizedBox(width: 4),
+                    _seg('PLU', _draft.pluLength, cPlu, plu),
+                    const SizedBox(width: 4),
+                    _seg('Value', _draft.weightLength, cValue,
+                        valueStr != null ? '$valueStr\n$valueLabel' : valueStr),
+                    if (_draft.hasCheckDigit) ...[
+                      const SizedBox(width: 4),
+                      _seg('Chk', 1, cCheck,
+                          raw.length == expected ? raw[expected - 1] : null),
+                    ],
+                  ],
+                );
+              }),
+              if (!lengthOk)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '${l10n.translate('expected')} $expected ${l10n.translate('chars')}, '
+                    '${l10n.translate('got')} ${raw.length}',
+                    style: const TextStyle(color: Colors.red, fontSize: 12),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(l10n.translate('scale_config'),
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        Text(l10n.translate('scale_config_subtitle'),
+            style: const TextStyle(color: Colors.grey)),
+        const SizedBox(height: 16),
+
+        // Cart-has-items warning
+        if (_cartHasItems)
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber, color: Colors.orange),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(l10n.translate('scale_config_locked'),
+                      style: const TextStyle(color: Colors.orange)),
+                ),
+              ],
+            ),
+          ),
+
+        // ── Prefix ──────────────────────────────────────────────────
+        Text(l10n.translate('scale_prefix'),
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        SizedBox(
+          width: 200,
+          child: TextField(
+            enabled: !_cartHasItems,
+            controller: TextEditingController(text: _draft.prefix)
+              ..selection = TextSelection.collapsed(offset: _draft.prefix.length),
+            decoration: InputDecoration(
+              hintText: '21',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            onChanged: (v) => setState(() => _draft = _draft.copyWith(prefix: v)),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // ── PLU length & Weight/Value length ────────────────────────
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(l10n.translate('plu_length'),
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  DropdownButtonFormField<int>(
+                    value: _draft.pluLength,
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    items: List.generate(
+                      8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
+                    onChanged: _cartHasItems
+                        ? null
+                        : (v) => setState(() => _draft = _draft.copyWith(pluLength: v)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(l10n.translate('value_length'),
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  DropdownButtonFormField<int>(
+                    value: _draft.weightLength,
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    items: List.generate(
+                      8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
+                    onChanged: _cartHasItems
+                        ? null
+                        : (v) => setState(() => _draft = _draft.copyWith(weightLength: v)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(l10n.translate('decimal_places'),
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  DropdownButtonFormField<int>(
+                    value: _draft.weightDecimalPlaces,
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    items: List.generate(
+                      5, (i) => DropdownMenuItem(value: i, child: Text('$i'))),
+                    onChanged: _cartHasItems
+                        ? null
+                        : (v) => setState(() => _draft = _draft.copyWith(weightDecimalPlaces: v)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        // ── Check digit toggle ───────────────────────────────────────
+        SwitchListTile(
+          value: _draft.hasCheckDigit,
+          onChanged: _cartHasItems
+              ? null
+              : (v) => setState(() => _draft = _draft.copyWith(hasCheckDigit: v)),
+          title: Text(l10n.translate('has_check_digit')),
+          subtitle: Text(l10n.translate('has_check_digit_subtitle')),
+          contentPadding: EdgeInsets.zero,
+        ),
+        const SizedBox(height: 8),
+
+        // ── Barcode type ─────────────────────────────────────────────
+        Text(l10n.translate('barcode_type'),
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        SegmentedButton<ScaleBarcodeType>(
+          segments: [
+            ButtonSegment(
+              value: ScaleBarcodeType.weightEmbedded,
+              label: Text(l10n.translate('weight_embedded'), style: const TextStyle(fontSize: 12)),
+              icon: const Icon(Icons.monitor_weight_outlined, size: 16),
+            ),
+            ButtonSegment(
+              value: ScaleBarcodeType.priceEmbedded,
+              label: Text(l10n.translate('price_embedded'), style: const TextStyle(fontSize: 12)),
+              icon: const Icon(Icons.attach_money, size: 16),
+            ),
+          ],
+          selected: {_draft.barcodeType},
+          onSelectionChanged: _cartHasItems
+              ? null
+              : (s) => setState(() => _draft = _draft.copyWith(barcodeType: s.first)),
+        ),
+        const SizedBox(height: 24),
+
+        // ── Live preview ─────────────────────────────────────────────
+        _buildPreview(l10n),
+        const SizedBox(height: 24),
+
+        // ── Error message ────────────────────────────────────────────
+        if (_saveError != null)
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: Colors.red.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.red),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red),
+                const SizedBox(width: 8),
+                Expanded(child: Text(_saveError!, style: const TextStyle(color: Colors.red))),
+              ],
+            ),
+          ),
+
+        // ── Save button ──────────────────────────────────────────────
+        ElevatedButton.icon(
+          onPressed: _cartHasItems
+              ? null
+              : () {
+                  final err = _validate();
+                  if (err != null) {
+                    setState(() => _saveError = err);
+                    return;
+                  }
+                  setState(() => _saveError = null);
+                  ref.read(scaleConfigProvider.notifier).save(_draft);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(AppLocalizations.of(context)!.translate('scale_config_saved')),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                },
+          icon: const Icon(Icons.save),
+          label: Text(l10n.translate('save')),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+double _pow10(int n) {
+  double result = 1.0;
+  for (int i = 0; i < n; i++) result *= 10.0;
+  return result;
 }
