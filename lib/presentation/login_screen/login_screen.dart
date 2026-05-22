@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
+import 'package:loggecrea/loggecrea.dart';
 import 'package:window_manager/window_manager.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
@@ -609,8 +610,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
   }
 
-  /// Check for updates and show dialog if available
+  /// Check for updates and show dialog if available (Android only).
+  /// Desktop is handled by UpdateDialogListener in main.dart via desktop_updater.
   Future<void> _checkForUpdates() async {
+    if (!Platform.isAndroid) return;
     try {
       final updateNotifier = ref.read(updateProvider.notifier);
       final hasUpdate = await updateNotifier.checkForUpdates();
@@ -636,8 +639,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         }
       }
     } catch (e) {
-      print('Error checking for updates: $e');
-      // Don't block login if update check fails
+      Logger.instance.warning('Update check failed (non-blocking): $e');
     }
   }
 

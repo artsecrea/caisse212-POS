@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Project Overview
 
 **caisse212** — Flutter POS (Point-of-Sale) desktop/mobile app. Targets Linux, Windows, macOS, Android, iOS. App runs as both a client (syncs to a central server via REST) and an embedded HTTP server (serves KDS/kiosk devices over LAN via Shelf). Supports multi-language (AR/FR/EN), thermal printing, barcode scanning, table management, cash sessions, and offline-first operation with queued sync.
@@ -19,15 +23,11 @@ Local sibling packages:
 | DB codegen | drift_dev | ^2.20.3 |
 | HTTP client | dio | ^5.4.1 |
 | HTTP server | shelf + shelf_router | ^1.4.1 / ^1.1.4 |
-| Network utils | http | ^1.2.0 |
 | LAN discovery | bonsoir | ^5.0.0 |
 | Connectivity | connectivity_plus | ^6.1.4 |
 | Localization | flutter_localizations + intl | ^0.20.2 |
 | Printing | flutter_thermal_printer + esc_pos_utils_plus | ^2.0.0 / ^2.0.4 |
-| UI extras | flutter_svg, getwidget, data_table_2 | ^2.0.10+1 / ^4.0.0 / ^2.7.1 |
 | Forms | flutter_form_builder + form_builder_validators | ^10.0.1 / ^11.2.0 |
-| Keyboard | flutter_onscreen_keyboard | ^0.4.1+1 |
-| Barcode | flutter_barcode_listener | ^0.1.4 |
 | Auth | bcrypt | ^1.2.0 |
 | Desktop update | desktop_updater | ^1.4.0 |
 | Window mgmt | window_manager | ^0.4.3 |
@@ -37,64 +37,144 @@ Local sibling packages:
 
 ---
 
-# Architecture Map (Where do things live?)
+# Architecture Map
 
 ```
 lib/
 ├── core/
-│   ├── enums.dart              # App-wide enums
+│   ├── enums.dart              # App-wide enums (OrderStatus, OrderType, TableState, TransactionType, …)
 │   └── theme/app_theme.dart    # Material 3 light/dark themes
 │
 ├── data/
 │   └── database/
 │       ├── app_database.dart   # @DriftDatabase root — registers all tables
-│       ├── app_database.g.dart # Generated — DO NOT edit manually
+│       ├── app_database.g.dart # Generated — DO NOT edit
 │       └── tables/             # One file per Drift table (snake_case filenames)
+│                               # Tables: orders, products, categories, users, waiters,
+│                               # payments, tickets, transactions, cash_sessions, areas,
+│                               # area_tables, kds, kiosks, stations, components,
+│                               # component_groups, product_components, product_variants,
+│                               # order_products, order_product_components, customers,
+│                               # commercials, notes, pending_sync_operations, logs
 │
 ├── domain/
-│   └── models/                 # Pure Dart domain models (OrderItem, CurrentOrder, etc.)
-│                               # These are NOT Drift-generated — they are hand-written cart/state models
+│   └── models/                 # Pure Dart models (NOT Drift-generated)
+│       ├── order_models.dart   # CurrentOrder, OrderItem, cart state
+│       ├── socket_models.dart  # WebSocket message payloads
+│       ├── discovery_models.dart # LAN discovery service info
+│       ├── kds-models.dart     # KDS screen data structures
+│       ├── order_events.dart   # Order lifecycle events
+│       ├── app_settings.dart   # Typed settings model
+│       ├── coupon_model.dart
+│       └── scale_config.dart
 │
 ├── presentation/
-│   ├── <screen_name>/          # Full-screen routes (login_screen, main_screen, etc.)
-│   └── widgets/                # Reusable and secondary widgets/dialogs/management screens
+│   ├── login_screen/           # Local user auth
+│   ├── tenant_login_screen/    # Multi-tenant server selection (first boot)
+│   ├── main_screen/            # POS main interface (order entry, product grid)
+│   ├── paymen_screen/          # Payment flow
+│   ├── session_screen/         # Cash session open/close
+│   ├── order_confirmation/     # Post-payment confirmation
+│   ├── profile/                # User profile
+│   ├── settings/ + settings_page/ # App settings UI
+│   └── widgets/                # Management screens and reusable dialogs
+│       # OrdersManagement, UsersManagement, DevicesManagement,
+│       # SessionsManagement, TicketsManagement, PrintersManagement,
+│       # AgendaScreen, DashboardScreen, NotesScreen
 │
-├── providers/                  # ALL Riverpod providers live here
-│   ├── database_providers.dart # DB, ApiService, DataSync, Session, SharedPrefs, data stream providers
-│   ├── order_provider.dart     # OrderNotifier (StateNotifier) + OrderRepository + orderRepositoryProvider
-│   ├── network_provider.dart   # Connectivity + online-status providers
-│   ├── settings_provider.dart  # App settings (language, dark mode, server port, etc.)
-│   └── *.dart                  # One provider file per domain area
+├── providers/                  # ALL Riverpod providers
+│   ├── database_providers.dart # Core: DB, ApiService, DataSync, Session, SyncJob,
+│   │                           # PrintingService, BarcodeScanner + BarcodeScanMode enum
+│   ├── order_provider.dart     # OrderNotifier + OrderRepository
+│   ├── network_provider.dart   # Connectivity, online-status, syncJobServiceWithNetworkProvider
+│   ├── settings_provider.dart  # Language, dark mode, server port, etc.
+│   ├── server_provider.dart    # ServerService lifecycle
+│   ├── socket_order_providers.dart # Real-time order push via SocketService
+│   ├── sync_manager_provider.dart  # Orchestrates sync on connectivity change
+│   ├── user_provider.dart      # Logged-in user state
+│   ├── device_providers.dart   # KDS/kiosk device state
+│   ├── ticket_provider.dart    # Ticket state
+│   ├── stat_provider.dart      # Sales stats / dashboard data
+│   ├── notes_provider.dart     # Notes state
+│   ├── scale_config_provider.dart  # Weighing scale config
+│   ├── localization_provider.dart  # Active locale
+│   ├── desktop_update_provider.dart
+│   └── update_provider.dart
 │
-├── services/                   # Stateful business-logic services (injected via providers)
-│   ├── api_service.dart        # Dio-based REST client — reads baseUrl/token from SharedPrefs
-│   ├── server_service.dart     # Shelf HTTP server (POS as LAN server for KDS/kiosk)
-│   ├── data_sync_service.dart  # Sync local DB → remote server
-│   ├── pending_operations_service.dart  # Queue offline mutations for later sync
-│   ├── printing_service.dart   # Thermal printer integration
-│   ├── session_service.dart    # Cash session lifecycle
-│   └── *.dart
+├── services/                   # Stateful business-logic
+│   ├── api_service.dart        # Dio REST client — baseUrl/token from SharedPrefs
+│   ├── server_service.dart     # Shelf HTTP server for KDS/kiosk (CORS + auth middleware)
+│   ├── server_startup_service.dart # Coordinates ServerService + DiscoveryService startup
+│   ├── discovery_service.dart  # Bonsoir LAN advertisement/discovery
+│   ├── socket_service.dart     # WebSocket client for real-time order push from server
+│   ├── data_sync_service.dart  # Full sync: remote API → local DB (master data + orders)
+│   ├── sync_job_service.dart   # Periodic sync scheduler
+│   ├── pending_operations_service.dart # Queue offline mutations; flush on reconnect
+│   ├── session_service.dart    # Cash session open/close lifecycle
+│   ├── auth_service.dart       # bcrypt login validation
+│   ├── permission_service.dart # Role-based permission checks
+│   ├── printing_service.dart   # Thermal printer (ESC/POS)
+│   ├── order_log_service.dart  # Audit log for order mutations
+│   ├── barcode_scanner_service.dart # USB/HID barcode scanner
+│   ├── scale_barcode_service.dart   # Weighing scale barcode parsing
+│   ├── customer_display_service.dart # Second-screen customer display
+│   ├── sound_service.dart      # Audio feedback (audioplayers)
+│   ├── daily_summary_service.dart   # End-of-day report generation
+│   └── update_service.dart     # desktop_updater integration
 │
-├── utils/
-│   ├── app_localizations.dart  # Custom L10n (AR/FR/EN) — NOT generated
-│   ├── currency_formatter.dart
-│   ├── button_styles.dart
-│   └── snackbar_helper.dart
-│
-└── main.dart                   # Entry point: ProviderScope override for SharedPreferences,
-                                # window_manager init, GlobalSoundWrapper, named-route MaterialApp
+└── utils/
+    ├── app_localizations.dart  # Custom L10n (AR/FR/EN) — hand-written, NOT generated
+    ├── currency_formatter.dart
+    ├── button_styles.dart
+    └── snackbar_helper.dart
 ```
 
-**Routing:** `MaterialApp.routes` with named string routes (`/login`, `/main`, `/orders`, etc.). No go_router.
+---
 
-**Provider patterns in use:**
-- `Provider<T>` — services and repositories (injected deps)
-- `StateNotifierProvider<Notifier, State>` — mutable state (e.g. `orderProvider`)
-- `StreamProvider` — reactive Drift DB queries (`.watch()`)
-- `FutureProvider` — one-shot async data
-- `StateProvider<T>` — simple mutable values (current user, selected category, etc.)
-- `.autoDispose` — used on screen-scoped providers
-- `.family` — parameterized providers (e.g. `productsByCategoryProvider(categoryId)`)
+# Key Flows (Cross-File Architecture)
+
+## Boot Sequence
+`main()` shows `_BootScreen` immediately, then calls `_initializeApp()` which:
+1. Initializes `SharedPreferences` and passes it as a `ProviderScope` override
+2. Inits `window_manager` (desktop only)
+3. Builds the real `MaterialApp` with all routes and `ProviderScope`
+
+Never let init throw — wrap expensive calls in `.timeout()` with fallback.
+
+## Multi-Tenant Auth Flow
+`/tenant` (TenantLoginScreen) → user selects/enters server URL → stored in SharedPrefs → `/login` (LoginScreen) authenticates local user via `AuthService` (bcrypt) → navigates to `/main`.
+
+## Offline-First Mutation Flow
+UI → `OrderRepository` → writes to local Drift DB → `PendingOperationsService.queue*()` adds entry to `pending_sync_operations` table → `SyncJobService` polls and calls `DataSyncService` → `ApiService` flushes to remote. Never call sync directly from UI.
+
+## LAN Server Startup
+`ServerStartupService.start()` calls `ServerService.start()` (Shelf on LAN IP) then `DiscoveryService.advertise()` (Bonsoir mDNS) so KDS/kiosk devices can discover the POS automatically.
+
+## Real-Time Orders
+`SocketService` maintains a WebSocket connection to the remote server. Incoming order events are surfaced via `socket_order_providers.dart` stream providers, consumed by KDS/order screens.
+
+---
+
+# Named Routes
+
+```dart
+'/tenant'       → TenantLoginScreen   // server selection (first boot)
+'/tenant_login' → TenantLoginScreen   // alias
+'/login'        → LoginScreen
+'/main'         → MainScreen          // POS entry point
+'/orders'       → OrdersManagementScreen
+'/devices'      → DevicesManagementScreen
+'/users'        → UsersManagementScreen
+'/tickets'      → TicketsManagementScreen
+'/sessions'     → SessionsManagementScreen
+'/printers'     → PrintersManagementScreen
+'/agenda'       → AgendaScreen
+'/dashboard'    → DashboardScreen
+'/notes'        → NotesScreen
+'/api-tester'   → ApiTesterScreen
+```
+
+Add new routes as named strings in the `routes` map in `main.dart`.
 
 ---
 
@@ -102,89 +182,73 @@ lib/
 
 ## Naming Conventions
 - **Files:** `snake_case.dart`
-- **Classes:** `PascalCase` — screens end in `Screen`, dialogs in `Dialog`, services in `Service`, repositories in `Repository`, notifiers in `Notifier`
-- **Providers:** `camelCase` ending in `Provider` — e.g. `orderProvider`, `orderRepositoryProvider`
-- **Variables/fields/methods:** `camelCase`
-- **Drift tables (class):** `PascalCase` plural — `Orders`, `Products`, `OrderProducts`
-- **Drift data row (class):** `PascalCase` singular — `Order`, `Product`, `OrderProduct`
+- **Classes:** `PascalCase` — screens `*Screen`, dialogs `*Dialog`, services `*Service`, repositories `*Repository`, notifiers `*Notifier`
+- **Providers:** `camelCase` ending in `Provider`
+- **Drift tables (class):** `PascalCase` plural — `Orders`, `Products`
+- **Drift data row:** `PascalCase` singular — `Order`, `Product`
 - **Drift companion:** `PascalCase` + `Companion` — `OrdersCompanion`
 
-## State Management Rules
-- Use `StateNotifier` (not the newer `Notifier`) — existing code uses `StateNotifier<State>` pattern
-- Mutable cart/order state lives in `OrderNotifier` in `providers/order_provider.dart`
-- Reactive DB queries: always use Drift's `.watch()` wrapped in `StreamProvider`
-- `SharedPreferences` must be injected via `sharedPreferencesProvider` (overridden in `ProviderScope` at startup) — never call `SharedPreferences.getInstance()` directly inside a provider
+## State Management
+- Use `StateNotifier` (not the newer `Notifier`) — project-wide pattern
+- Mutable cart/order state lives in `OrderNotifier` (`providers/order_provider.dart`)
+- Reactive DB queries: Drift `.watch()` wrapped in `StreamProvider`
+- `SharedPreferences` injected via `sharedPreferencesProvider` overridden in `ProviderScope` — never call `SharedPreferences.getInstance()` inside a provider
 - Services receive deps via constructor: `ServiceName(this._database)` or `ServiceName(this._ref, ...)`
 
-## Database Rules
-- All tables defined in `lib/data/database/tables/` — one file per table
-- Register new tables in `@DriftDatabase(tables: [...])` in `app_database.dart`
-- After any table/schema change, run codegen: `flutter pub run build_runner build --delete-conflicting-outputs`
+## Database
+- Tables in `lib/data/database/tables/` — one file per table
+- Register in `@DriftDatabase(tables: [...])` in `app_database.dart`
+- After schema changes: `flutter pub run build_runner build --delete-conflicting-outputs`
 - Never edit `app_database.g.dart` manually
-- Use `Value(x)` wrapper for optional fields in Companions; omit field for `DEFAULT` behavior
+- `Value(x)` for optional Companion fields; omit for `DEFAULT`
 
-## Service & Repository Rules
-- `OrderRepository` (in `order_provider.dart`) is the single source of truth for order CRUD — do not bypass it with direct DB calls from UI
-- `ApiService` (Dio) reads `baseUrl`/`accessToken` from `SharedPreferences` via interceptors — do not hardcode URLs
-- `ServerService` (Shelf) runs on LAN for KDS/kiosk — handle CORS and auth via its middleware pipeline
-- Offline mutations: queue via `PendingOperationsService.queueOrderUpdate/Delete()` — do not call sync directly from UI
-- Use `Logger.instance` from `loggecrea` for logging — avoid bare `print()` in new code
+## Services & Repositories
+- `OrderRepository` is sole source of truth for order CRUD — no direct DB calls from UI
+- `ApiService` reads `baseUrl`/`accessToken` from SharedPrefs via Dio interceptors — no hardcoded URLs
+- `ServerService` (Shelf): CORS and auth handled in middleware pipeline
+- Offline mutations: queue via `PendingOperationsService` — do not call sync from UI
+- Use `Logger.instance` from `loggecrea` — no bare `print()` in new code
 
-## UI Rules
-- Material 3 (`useMaterial3: true`) — use `Theme.of(context).colorScheme` for colors
-- Theme defined in `lib/core/theme/app_theme.dart` — do not hardcode colors in widgets
-- SVG assets via `flutter_svg`; PNG assets registered in `pubspec.yaml` under `assets/images/`
-- L10n: use `AppLocalizations.of(context)!.someKey` — translations in `lib/utils/app_localizations.dart`
-- Dialogs/management screens that are not full routes live in `lib/presentation/widgets/`
-- No `go_router` — add new routes as named strings in the `routes` map in `main.dart`
+## UI
+- Material 3 (`useMaterial3: true`) — `Theme.of(context).colorScheme` for colors
+- Theme in `lib/core/theme/app_theme.dart` — no hardcoded colors in widgets
+- L10n: `AppLocalizations.of(context)!.someKey` — add keys in `lib/utils/app_localizations.dart`
+- Management screens that are not full routes go in `lib/presentation/widgets/`
 
 ## Code Style
-- No comments explaining WHAT code does — only WHY for non-obvious constraints
-- `copyWith` pattern for immutable state updates on domain models
-- `WidgetsBinding.instance.addPostFrameCallback` for deferred init after first frame
-- Wrap expensive init in `.timeout()` with graceful fallback — never let init crash the app
+- Comments only for non-obvious WHY — not what
+- `copyWith` for immutable state updates on domain models
+- `WidgetsBinding.instance.addPostFrameCallback` for deferred post-frame init
 
 ---
 
 # Common Commands
 
 ```bash
-# Get dependencies
+# Dependencies
 flutter pub get
 
-# Run code generation (Drift schema + Riverpod + JSON serialization)
+# Code generation (Drift + Riverpod + JSON) — run after any schema/provider/model change
 flutter pub run build_runner build --delete-conflicting-outputs
 
-# Watch mode for code generation
+# Watch mode
 flutter pub run build_runner watch --delete-conflicting-outputs
 
-# Run on Linux desktop (primary dev target)
+# Run (Linux is primary dev target)
 flutter run -d linux
-
-# Run on Windows desktop
-flutter run -d windows
-
-# Run on connected Android device
 flutter run -d android
 
-# Build Linux release
+# Release builds
 flutter build linux --release
-
-# Build Windows release
 flutter build windows --release
-
-# Build Android APK
 flutter build apk --release
 
-# Generate launcher icons
-flutter pub run flutter_launcher_icons
-
-# Generate native splash screen
-flutter pub run flutter_native_splash:create
-
-# Analyze code
+# Static analysis
 flutter analyze
 
-# Run tests
+# Tests
 flutter test
+
+# Run a single test file
+flutter test test/path/to/test_file.dart
 ```

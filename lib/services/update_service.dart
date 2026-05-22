@@ -1,12 +1,12 @@
 import 'dart:io';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Update information model matching LatestUpdateResponse from API
 class UpdateInfo {
   final String appName;
   final String platform;
@@ -39,7 +39,6 @@ class UpdateInfo {
   }
 }
 
-/// Update service for managing app updates
 class UpdateService {
   final _logger = Logger.instance;
   final Dio _dio = Dio();
@@ -50,18 +49,12 @@ class UpdateService {
   static const String _posNameKey = 'pos_name';
   static const String _tenantIdKey = 'tenant_id';
 
-  /// Initialize SharedPreferences
   Future<void> _initPrefs() async {
     _prefs ??= await SharedPreferences.getInstance();
   }
 
-  /// Get access token for authentication
   String? _getAccessToken() => _prefs?.getString(_accessTokenKey);
-
-  /// Get POS name
   String? _getPosName() => _prefs?.getString(_posNameKey);
-
-  /// Get tenant ID
   int? _getTenantId() => _prefs?.getInt(_tenantIdKey);
 
   /// Get current platform string for API
@@ -92,23 +85,13 @@ class UpdateService {
       final url = '$root/api/pos/update_check?platform=$platform';
       _logger.info('Checking for updates: $url');
 
-      // Prepare headers with authentication
       final headers = <String, dynamic>{};
-
       final token = _getAccessToken();
-      if (token != null) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
+      if (token != null) headers['Authorization'] = 'Bearer $token';
       final posName = _getPosName();
-      if (posName != null) {
-        headers['X-POS-Name'] = posName;
-      }
-
+      if (posName != null) headers['X-POS-Name'] = posName;
       final tenantId = _getTenantId();
-      if (tenantId != null) {
-        headers['X-Tenant-ID'] = tenantId.toString();
-      }
+      if (tenantId != null) headers['X-Tenant-ID'] = tenantId.toString();
 
       final response = await _dio.get(
         url,
@@ -116,7 +99,10 @@ class UpdateService {
       );
 
       if (response.statusCode == 200 && response.data != null) {
-        final updateInfo = UpdateInfo.fromJson(response.data);
+        final data = response.data is String
+            ? jsonDecode(response.data as String) as Map<String, dynamic>
+            : response.data as Map<String, dynamic>;
+        final updateInfo = UpdateInfo.fromJson(data);
         _logger.info('Update info received: version ${updateInfo.version}');
         return updateInfo;
       }
@@ -136,68 +122,52 @@ class UpdateService {
     }
   }
 
-  /// Download and install update for Android
+  /// Download and install update (Android only).
+  /// Desktop updates are handled by desktop_updater via UpdateDialogListener.
   Future<bool> downloadAndInstallUpdate(
     UpdateInfo updateInfo, {
     Function(double)? onProgress,
   }) async {
     if (!Platform.isAndroid) {
-      _logger.warning('Update installation only supported on Android');
+      _logger.warning('downloadAndInstallUpdate called on non-Android platform');
       return false;
     }
 
     try {
-      // Request storage permission
-      final status = await Permission.storage.request();
-      if (!status.isGranted) {
-        _logger.error('Storage permission denied');
-        return false;
-      }
-
-      // Get download directory
-      final dir = await getExternalStorageDirectory();
-      if (dir == null) {
-        _logger.error('Could not access external storage');
-        return false;
-      }
-
+      // Use app-specific dir — no storage permission needed on any API level.
+      final dir = await getApplicationSupportDirectory();
       final filePath = '${dir.path}/app-update.apk';
       final file = File(filePath);
 
-      // Delete old APK if exists
-      if (await file.exists()) {
-        await file.delete();
-      }
+      if (await file.exists()) await file.delete();
 
       _logger.info('Downloading update from: ${updateInfo.downloadUrl}');
 
-      // Download the APK
       await _dio.download(
         updateInfo.downloadUrl,
         filePath,
         onReceiveProgress: (received, total) {
           if (total != -1 && onProgress != null) {
-            final progress = received / total;
-            onProgress(progress);
+            onProgress(received / total);
           }
         },
       );
 
       _logger.info('Download completed: $filePath');
 
-      // Verify checksum if provided
       if (updateInfo.checksum.isNotEmpty) {
         _logger.info('Verifying checksum...');
-        // TODO: Implement checksum verification
-        // final fileChecksum = await _calculateChecksum(file);
-        // if (fileChecksum != updateInfo.checksum) {
-        //   _logger.error('Checksum verification failed');
-        //   await file.delete();
-        //   return false;
-        // }
+        final fileBytes = await file.readAsBytes();
+        final fileChecksum = sha256.convert(fileBytes).toString();
+        if (fileChecksum != updateInfo.checksum) {
+          _logger.error(
+              'Checksum mismatch — expected ${updateInfo.checksum}, got $fileChecksum');
+          await file.delete();
+          return false;
+        }
+        _logger.info('Checksum OK');
       }
 
-      // Install the APK
       _logger.info('Opening APK installer...');
       final result = await OpenFilex.open(filePath);
 
@@ -209,26 +179,20 @@ class UpdateService {
         return false;
       }
     } catch (e, stackTrace) {
-      _logger.error('Failed to download/install update: $e', stackTrace: stackTrace);
+      _logger.error('Failed to download/install update: $e',
+          stackTrace: stackTrace);
       return false;
     }
   }
 
-  // NOTE: Windows/macOS/Linux updates are handled entirely by the desktop_updater
-  // package (DesktopUpdaterController + UpdateDialogListener). No manual download
-  // or PowerShell launcher is needed for desktop platforms.
-
-  /// Clean up downloaded files (Android only – desktop is handled by desktop_updater)
   Future<void> cleanup() async {
     try {
       if (Platform.isAndroid) {
-        final dir = await getExternalStorageDirectory();
-        if (dir != null) {
-          final file = File('${dir.path}/app-update.apk');
-          if (await file.exists()) {
-            await file.delete();
-            _logger.info('Cleaned up downloaded APK');
-          }
+        final dir = await getApplicationSupportDirectory();
+        final file = File('${dir.path}/app-update.apk');
+        if (await file.exists()) {
+          await file.delete();
+          _logger.info('Cleaned up downloaded APK');
         }
       }
     } catch (e) {
