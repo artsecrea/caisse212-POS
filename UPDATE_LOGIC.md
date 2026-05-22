@@ -31,6 +31,7 @@ UpdateNotifier.checkForUpdates()
               └── remote ≤ local → up to date, state cleared
 ```
 
+
 ### UpdateInfo JSON shape (from `api/pos/update_check`)
 
 ```json

@@ -113,18 +113,25 @@ class DataSyncService {
     }
   }
 
-  /// Clear all data from the database (for demo mode or full reset)
+  /// Clear all data from the database (full tenant logout / reset).
+  /// Order respects FK constraints — children before parents.
   Future<void> clearAllData() async {
-    // Delete in order to respect foreign key constraints
     await _database.delete(_database.tickets).go();
     await _database.delete(_database.orderProductComponents).go();
     await _database.delete(_database.orderProducts).go();
+    // orderLogs and notes reference orders — must go before orders
+    await _database.delete(_database.orderLogs).go();
+    await _database.delete(_database.notes).go();
     await _database.delete(_database.orders).go();
     await _database.delete(_database.transactions).go();
     await _database.delete(_database.payments).go();
     await _database.delete(_database.cashSessions).go();
     await _database.delete(_database.customers).go();
     await _database.delete(_database.commercials).go();
+    await _database.delete(_database.pendingSyncOperations).go();
+    // waiterAreas references areas (cleared in clearMasterData) — must go first
+    await _database.delete(_database.waiterAreas).go();
+    await _database.delete(_database.waiters).go();
     await clearMasterData();
   }
 
