@@ -85,9 +85,9 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).pop({'id': null, 'name': null});
-                    },
+                  onPressed: () {
+                    Navigator.of(context).pop({'id': null, 'name': null, 'phone': null});
+                  },
                     icon: const Icon(Icons.clear),
                     label: Text(l10n.translate('unselect_customer')),
                     style: AppButtonStyles.outlinedButtonStyle(
@@ -196,6 +196,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                   Navigator.of(context).pop({
                     'id': customer.id,
                     'name': '${customer.firstName} ${customer.lastName}',
+                    'phone': customer.phone,
                   });
                 },
               ),
@@ -371,6 +372,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
           'id': customerId,
           'name':
               '${_firstNameController.text.trim()} ${_lastNameController.text.trim()}',
+          'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
         });
       }
     } catch (e) {

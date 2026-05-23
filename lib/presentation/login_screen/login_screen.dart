@@ -36,6 +36,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _isFullScreen = false;
+  bool _isTogglingFullscreen = false;
   String? _errorMessage;
   List<User> _availableUsers = [];
   String? _selectedUsername;
@@ -77,20 +78,54 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   /// Toggle between fullscreen and windowed mode
   Future<void> _toggleFullScreen() async {
+    // Prevent rapid multiple calls
+    if (_isTogglingFullscreen) return;
+    
+    setState(() => _isTogglingFullscreen = true);
+    
     try {
       final newState = !_isFullScreen;
       if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+        // Ensure window manager is ready before changing fullscreen state
+        await windowManager.waitUntilReadyToShow();
         await windowManager.setFullScreen(newState);
+        
+        // Wait for the window manager to complete the transition
+        await Future.delayed(const Duration(milliseconds: 100));
+        
+        // Update state after frame is rendered to prevent UI blocking
+        if (mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              setState(() {
+                _isFullScreen = newState;
+                _isTogglingFullscreen = false;
+              });
+            }
+          });
+        }
       } else if (Platform.isAndroid || Platform.isIOS) {
         if (newState) {
           await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
         } else {
           await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
         }
+        if (mounted) {
+          setState(() {
+            _isFullScreen = newState;
+            _isTogglingFullscreen = false;
+          });
+        }
       }
-      if (mounted) setState(() => _isFullScreen = newState);
     } catch (e) {
       debugPrint('Error toggling fullscreen: $e');
+      // Revert state on error
+      if (mounted) {
+        setState(() {
+          _isFullScreen = !_isFullScreen;
+          _isTogglingFullscreen = false;
+        });
+      }
     }
   }
 
@@ -936,7 +971,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               color: Theme.of(context).colorScheme.onSurface,
             ),
             items: _availableUsers.map((user) {
-              final displayName = '${user.firstName} ${user.lastName}'.trim();
+              final displayName = (user.displayName != null && user.displayName!.isNotEmpty)
+                  ? user.displayName!
+                  : '${user.firstName} ${user.lastName}'.trim();
               return DropdownMenuItem<String>(
                 value: user.username,
                 child: Row(
@@ -1094,7 +1131,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       children: [
         _buildOverlayIconButton(
           icon: _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-          onTap: _toggleFullScreen,
+          onTap: _isTogglingFullscreen ? null : _toggleFullScreen,
         ),
         const SizedBox(width: 8),
         _buildOverlayIconButton(
@@ -1162,16 +1199,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     required IconData icon,
     VoidCallback? onTap,
   }) {
-    return Material(
-      color: Colors.black38,
-      borderRadius: BorderRadius.circular(14),
-      elevation: 2,
-      child: InkWell(
-        onTap: onTap,
+    final isEnabled = onTap != null;
+    return Opacity(
+      opacity: isEnabled ? 1.0 : 0.5,
+      child: Material(
+        color: Colors.black38,
         borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Icon(icon, size: 26, color: Colors.white),
+        elevation: 2,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Icon(icon, size: 26, color: Colors.white),
+          ),
         ),
       ),
     );

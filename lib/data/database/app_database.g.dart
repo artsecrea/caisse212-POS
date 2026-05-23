@@ -3143,6 +3143,17 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _displayNameMeta = const VerificationMeta(
+    'displayName',
+  );
+  @override
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -3158,6 +3169,7 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     createdAt,
     updatedAt,
     lastLogin,
+    displayName,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3265,6 +3277,15 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
         lastLogin.isAcceptableOrUnknown(data['last_login']!, _lastLoginMeta),
       );
     }
+    if (data.containsKey('display_name')) {
+      context.handle(
+        _displayNameMeta,
+        displayName.isAcceptableOrUnknown(
+          data['display_name']!,
+          _displayNameMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -3326,6 +3347,10 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_login'],
       ),
+      displayName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_name'],
+      ),
     );
   }
 
@@ -3349,6 +3374,7 @@ class User extends DataClass implements Insertable<User> {
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? lastLogin;
+  final String? displayName;
   const User({
     required this.id,
     required this.username,
@@ -3363,6 +3389,7 @@ class User extends DataClass implements Insertable<User> {
     required this.createdAt,
     required this.updatedAt,
     this.lastLogin,
+    this.displayName,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -3389,6 +3416,9 @@ class User extends DataClass implements Insertable<User> {
     map['updated_at'] = Variable<DateTime>(updatedAt);
     if (!nullToAbsent || lastLogin != null) {
       map['last_login'] = Variable<DateTime>(lastLogin);
+    }
+    if (!nullToAbsent || displayName != null) {
+      map['display_name'] = Variable<String>(displayName);
     }
     return map;
   }
@@ -3418,6 +3448,9 @@ class User extends DataClass implements Insertable<User> {
       lastLogin: lastLogin == null && nullToAbsent
           ? const Value.absent()
           : Value(lastLogin),
+      displayName: displayName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(displayName),
     );
   }
 
@@ -3440,6 +3473,7 @@ class User extends DataClass implements Insertable<User> {
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       lastLogin: serializer.fromJson<DateTime?>(json['lastLogin']),
+      displayName: serializer.fromJson<String?>(json['displayName']),
     );
   }
   @override
@@ -3459,6 +3493,7 @@ class User extends DataClass implements Insertable<User> {
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'lastLogin': serializer.toJson<DateTime?>(lastLogin),
+      'displayName': serializer.toJson<String?>(displayName),
     };
   }
 
@@ -3476,6 +3511,7 @@ class User extends DataClass implements Insertable<User> {
     DateTime? createdAt,
     DateTime? updatedAt,
     Value<DateTime?> lastLogin = const Value.absent(),
+    Value<String?> displayName = const Value.absent(),
   }) => User(
     id: id ?? this.id,
     username: username ?? this.username,
@@ -3490,6 +3526,7 @@ class User extends DataClass implements Insertable<User> {
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     lastLogin: lastLogin.present ? lastLogin.value : this.lastLogin,
+    displayName: displayName.present ? displayName.value : this.displayName,
   );
   User copyWithCompanion(UsersCompanion data) {
     return User(
@@ -3512,6 +3549,9 @@ class User extends DataClass implements Insertable<User> {
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       lastLogin: data.lastLogin.present ? data.lastLogin.value : this.lastLogin,
+      displayName: data.displayName.present
+          ? data.displayName.value
+          : this.displayName,
     );
   }
 
@@ -3530,7 +3570,8 @@ class User extends DataClass implements Insertable<User> {
           ..write('permissions: $permissions, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
-          ..write('lastLogin: $lastLogin')
+          ..write('lastLogin: $lastLogin, ')
+          ..write('displayName: $displayName')
           ..write(')'))
         .toString();
   }
@@ -3550,6 +3591,7 @@ class User extends DataClass implements Insertable<User> {
     createdAt,
     updatedAt,
     lastLogin,
+    displayName,
   );
   @override
   bool operator ==(Object other) =>
@@ -3567,7 +3609,8 @@ class User extends DataClass implements Insertable<User> {
           other.permissions == this.permissions &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
-          other.lastLogin == this.lastLogin);
+          other.lastLogin == this.lastLogin &&
+          other.displayName == this.displayName);
 }
 
 class UsersCompanion extends UpdateCompanion<User> {
@@ -3584,6 +3627,7 @@ class UsersCompanion extends UpdateCompanion<User> {
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<DateTime?> lastLogin;
+  final Value<String?> displayName;
   const UsersCompanion({
     this.id = const Value.absent(),
     this.username = const Value.absent(),
@@ -3598,6 +3642,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.lastLogin = const Value.absent(),
+    this.displayName = const Value.absent(),
   });
   UsersCompanion.insert({
     this.id = const Value.absent(),
@@ -3613,6 +3658,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.lastLogin = const Value.absent(),
+    this.displayName = const Value.absent(),
   }) : username = Value(username),
        password = Value(password),
        firstName = Value(firstName),
@@ -3632,6 +3678,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<DateTime>? lastLogin,
+    Expression<String>? displayName,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -3647,6 +3694,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (lastLogin != null) 'last_login': lastLogin,
+      if (displayName != null) 'display_name': displayName,
     });
   }
 
@@ -3664,6 +3712,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<DateTime?>? lastLogin,
+    Value<String?>? displayName,
   }) {
     return UsersCompanion(
       id: id ?? this.id,
@@ -3679,6 +3728,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       lastLogin: lastLogin ?? this.lastLogin,
+      displayName: displayName ?? this.displayName,
     );
   }
 
@@ -3724,6 +3774,9 @@ class UsersCompanion extends UpdateCompanion<User> {
     if (lastLogin.present) {
       map['last_login'] = Variable<DateTime>(lastLogin.value);
     }
+    if (displayName.present) {
+      map['display_name'] = Variable<String>(displayName.value);
+    }
     return map;
   }
 
@@ -3742,7 +3795,8 @@ class UsersCompanion extends UpdateCompanion<User> {
           ..write('permissions: $permissions, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
-          ..write('lastLogin: $lastLogin')
+          ..write('lastLogin: $lastLogin, ')
+          ..write('displayName: $displayName')
           ..write(')'))
         .toString();
   }
@@ -17538,6 +17592,7 @@ typedef $$UsersTableCreateCompanionBuilder =
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<DateTime?> lastLogin,
+      Value<String?> displayName,
     });
 typedef $$UsersTableUpdateCompanionBuilder =
     UsersCompanion Function({
@@ -17554,6 +17609,7 @@ typedef $$UsersTableUpdateCompanionBuilder =
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<DateTime?> lastLogin,
+      Value<String?> displayName,
     });
 
 class $$UsersTableFilterComposer extends Composer<_$AppDatabase, $UsersTable> {
@@ -17626,6 +17682,11 @@ class $$UsersTableFilterComposer extends Composer<_$AppDatabase, $UsersTable> {
 
   ColumnFilters<DateTime> get lastLogin => $composableBuilder(
     column: $table.lastLogin,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get displayName => $composableBuilder(
+    column: $table.displayName,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -17703,6 +17764,11 @@ class $$UsersTableOrderingComposer
     column: $table.lastLogin,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$UsersTableAnnotationComposer
@@ -17758,6 +17824,11 @@ class $$UsersTableAnnotationComposer
 
   GeneratedColumn<DateTime> get lastLogin =>
       $composableBuilder(column: $table.lastLogin, builder: (column) => column);
+
+  GeneratedColumn<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => column,
+  );
 }
 
 class $$UsersTableTableManager
@@ -17801,6 +17872,7 @@ class $$UsersTableTableManager
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<DateTime?> lastLogin = const Value.absent(),
+                Value<String?> displayName = const Value.absent(),
               }) => UsersCompanion(
                 id: id,
                 username: username,
@@ -17815,6 +17887,7 @@ class $$UsersTableTableManager
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 lastLogin: lastLogin,
+                displayName: displayName,
               ),
           createCompanionCallback:
               ({
@@ -17831,6 +17904,7 @@ class $$UsersTableTableManager
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<DateTime?> lastLogin = const Value.absent(),
+                Value<String?> displayName = const Value.absent(),
               }) => UsersCompanion.insert(
                 id: id,
                 username: username,
@@ -17845,6 +17919,7 @@ class $$UsersTableTableManager
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 lastLogin: lastLogin,
+                displayName: displayName,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

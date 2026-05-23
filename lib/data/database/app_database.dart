@@ -66,7 +66,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration {
@@ -234,6 +234,12 @@ class AppDatabase extends _$AppDatabase {
           // Add kds_printed_at column to order_products for KDS printing tracking.
           try {
             await customStatement('ALTER TABLE order_products ADD COLUMN kds_printed_at INTEGER;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 10) {
+          // Add display_name to users for custom display name.
+          try {
+            await customStatement('ALTER TABLE users ADD COLUMN display_name TEXT;');
           } catch (e) {/* may already exist */}
         }
       },

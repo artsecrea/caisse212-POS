@@ -768,7 +768,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   if (result['id'] == null) {
                     ref.read(orderProvider.notifier).clearCustomer();
                   } else {
-                    ref.read(orderProvider.notifier).setCustomer(result['id'], result['name']);
+                    ref.read(orderProvider.notifier).setCustomer(
+                      result['id'],
+                      result['name'],
+                      customerPhone: result['phone'],
+                    );
                   }
                 }
               },

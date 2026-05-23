@@ -995,6 +995,19 @@ class _TicketDetailsDialog extends ConsumerWidget {
           ..where((tbl) => tbl.id.equals(ticket.orderId)))
         .getSingleOrNull();
 
+    // Get customer information from order
+    String? customerName;
+    String? customerPhone;
+    if (orderData?.clientId != null) {
+      final customer = await (database.select(database.customers)
+            ..where((tbl) => tbl.id.equals(orderData!.clientId!)))
+          .getSingleOrNull();
+      if (customer != null) {
+        customerName = '${customer.firstName} ${customer.lastName}';
+        customerPhone = customer.phone;
+      }
+    }
+
     // Build items list for printing with components
     final itemsForPrint = <Map<String, dynamic>>[];
     for (final itemData in items) {
@@ -1046,6 +1059,8 @@ class _TicketDetailsDialog extends ConsumerWidget {
         orderCode: orderData?.code,
         cashierName: currentUser?.firstName,
         storeName: businessName,
+        customerName: customerName,
+        customerPhone: customerPhone,
       );
 
       if (success) {

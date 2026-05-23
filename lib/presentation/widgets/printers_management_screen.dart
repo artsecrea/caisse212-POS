@@ -1,4 +1,5 @@
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/printers_management_screen.dart
+// filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/printers_management_screen.dart
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -9,11 +10,12 @@ import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/settings_provider.dart';
 import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
 
 class PrintersManagementScreen extends ConsumerStatefulWidget {
-  const PrintersManagementScreen({Key? key}) : super(key: key);
+  const PrintersManagementScreen({super.key});
 
   @override
   ConsumerState<PrintersManagementScreen> createState() => _PrintersManagementScreenState();
@@ -24,6 +26,8 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   bool _isScanning = false;
   PrinterConfig _config = const PrinterConfig();
   final TextEditingController _businessNameController = TextEditingController();
+  final TextEditingController _ticketHeaderController = TextEditingController();
+  final TextEditingController _ticketFooterController = TextEditingController();
   Uint8List? _logoBytes;
 
   @override
@@ -31,11 +35,14 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     super.initState();
     _initializePrinting();
     _loadBusinessInfo();
+    _loadTicketSettings();
   }
 
   @override
   void dispose() {
     _businessNameController.dispose();
+    _ticketHeaderController.dispose();
+    _ticketFooterController.dispose();
     super.dispose();
   }
 
@@ -52,6 +59,12 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         debugPrint('Error decoding saved logo: $e');
       }
     }
+  }
+
+  void _loadTicketSettings() {
+    final settings = ref.read(settingsProvider);
+    _ticketHeaderController.text = settings.ticketHeader;
+    _ticketFooterController.text = settings.ticketFooter;
   }
 
   Future<void> _saveBusinessName(String name) async {
@@ -378,6 +391,81 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                           ],
                         ),
                       ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Ticket Header & Footer
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.receipt_long, size: 32),
+                        const SizedBox(width: 16),
+                        Text(
+                          l10n.translate('ticket_settings'),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    // Ticket Header
+                    Text(
+                      l10n.translate('ticket_header'),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      l10n.translate('ticket_header_subtitle'),
+                      style: const TextStyle(color: Colors.grey, fontSize: 15),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _ticketHeaderController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        hintText: l10n.translate('ticket_header_hint'),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.article),
+                      ),
+                      style: const TextStyle(fontSize: 17),
+                      onChanged: (value) {
+                        ref.read(settingsProvider.notifier).setTicketHeader(value);
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    // Ticket Footer
+                    Text(
+                      l10n.translate('ticket_footer'),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      l10n.translate('ticket_footer_subtitle'),
+                      style: const TextStyle(color: Colors.grey, fontSize: 15),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _ticketFooterController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        hintText: l10n.translate('ticket_footer_hint'),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.notes),
+                      ),
+                      style: const TextStyle(fontSize: 17),
+                      onChanged: (value) {
+                        ref.read(settingsProvider.notifier).setTicketFooter(value);
+                      },
                     ),
                   ],
                 ),

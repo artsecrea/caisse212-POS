@@ -88,6 +88,7 @@ class CurrentUser{
   final String password;
   final String firstName;
   final String lastName;
+  final String? displayName;
   final String type;
   final String? imageUrl;
   final String? accessToken;
@@ -102,8 +103,13 @@ class CurrentUser{
   CurrentUser(this.id, this.username, this.password, this.firstName,
       this.lastName, this.type, this.imageUrl, this.accessToken,
       this.refreshToken, this.permissions, this.createdAt, this.updatedAt,
-      this.lastLogin){
+      this.lastLogin, {this.displayName}){
     _perms = permissions.split(",");
+  }
+
+  String get effectiveDisplayName {
+    if (displayName != null && displayName!.isNotEmpty) return displayName!;
+    return '$firstName $lastName'.trim();
   }
 
   static CurrentUser fromUser(db.User user) {
@@ -121,6 +127,7 @@ class CurrentUser{
         user.createdAt,
         user.updatedAt,
         user.lastLogin,
+        displayName: user.displayName,
     );
   }
 
@@ -128,8 +135,13 @@ class CurrentUser{
     return _perms.contains(perm);
   }
 
-
-
+  CurrentUser copyWith({String? displayName}) {
+    return CurrentUser(
+      id, username, password, firstName, lastName, type, imageUrl,
+      accessToken, refreshToken, permissions, createdAt, updatedAt, lastLogin,
+      displayName: displayName ?? this.displayName,
+    );
+  }
 }
 
 

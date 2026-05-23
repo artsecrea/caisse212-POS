@@ -209,6 +209,7 @@ class CurrentOrder {
   final String? tableName;
   final int? customerId;
   final String? customerName;
+  final String? customerPhone;
   final int? commercialId;
   final String? commercialName;
   final int? waiterId;
@@ -228,6 +229,7 @@ class CurrentOrder {
     this.tableName,
     this.customerId,
     this.customerName,
+    this.customerPhone,
     this.commercialId,
     this.commercialName,
     this.waiterId,
@@ -286,11 +288,13 @@ class CurrentOrder {
 
   CurrentOrder copyWith({
     int? orderId,
+    String? orderCode,
     List<OrderItem>? items,
     int? tableId,
     String? tableName,
     int? customerId,
     String? customerName,
+    String? customerPhone,
     int? commercialId,
     String? commercialName,
     int? waiterId,
@@ -303,11 +307,13 @@ class CurrentOrder {
   }) {
     return CurrentOrder(
       orderId: orderId ?? this.orderId,
+      orderCode: orderCode ?? this.orderCode,
       items: items ?? this.items,
       tableId: tableId ?? this.tableId,
       tableName: tableName ?? this.tableName,
       customerId: customerId ?? this.customerId,
       customerName: customerName ?? this.customerName,
+      customerPhone: customerPhone ?? this.customerPhone,
       commercialId: commercialId ?? this.commercialId,
       commercialName: commercialName ?? this.commercialName,
       waiterId: waiterId ?? this.waiterId,
@@ -404,6 +410,7 @@ class OrderFullDetails {
   final String? userName;
   final String? tableName;
   final String? customerName; // Customer name if exists
+  final String? customerPhone; // Customer phone if exists
   final int? customerId; // Customer ID if exists
   final int productCount;
   final double subtotal;
@@ -422,6 +429,7 @@ class OrderFullDetails {
     this.userName,
     this.tableName,
     this.customerName,
+    this.customerPhone,
     this.customerId,
     required this.productCount,
     required this.subtotal,

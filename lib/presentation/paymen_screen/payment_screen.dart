@@ -1564,6 +1564,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           orderCode: widget.order.orderCode,
           cashierName: currentUser?.firstName,
           storeName: businessName,
+          customerName: widget.order.customerName,
+          customerPhone: widget.order.customerPhone,
         );
 
         await database.customStatement(
@@ -2136,6 +2138,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         orderCode: widget.order.orderCode,
         cashierName: currentUser?.firstName,
         storeName: businessName,
+        customerName: widget.order.customerName,
+        customerPhone: widget.order.customerPhone,
       );
 
       final database = ref.read(databaseProvider);

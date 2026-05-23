@@ -979,8 +979,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                         Text(l10n.translate('pay')),
                       ],
                     ),
-                  )
-                else if (!isZLocked) ...[
+                  ),
+                if (!isZLocked) ...[
                   if (canUpdate)
                     PopupMenuItem(
                       value: 'edit',

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:caisse212/providers/database_providers.dart';
+import 'package:caisse212/providers/settings_provider.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -801,6 +802,16 @@ class PrintingService {
           ),
         );
       }
+      if (order.customerPhone != null && order.customerPhone!.isNotEmpty) {
+        bytes += generator.text(
+          '${_text('phone', fallback: 'Phone')}: ${order.customerPhone}',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
       bytes += generator.text(
         '${_text('type', fallback: 'Type')}: ${_getOrderTypeText(order.type)}',
         styles: PosStyles(
@@ -1298,6 +1309,16 @@ class PrintingService {
           ),
         );
       }
+      if (order.customerPhone != null && order.customerPhone!.isNotEmpty) {
+        bytes += generator.text(
+          '${_text('phone', fallback: 'Phone')}: ${order.customerPhone}',
+          styles: PosStyles(
+            align: PosAlign.center,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
 
       bytes += generator.hr(ch: '=');
 
@@ -1397,6 +1418,8 @@ class PrintingService {
     String? orderCode,
     String? cashierName,
     String? storeName,
+    String? customerName,
+    String? customerPhone,
   }) async {
     // Try to ensure printer is connected
     final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
@@ -1479,6 +1502,26 @@ class PrintingService {
       if (cashierName != null) {
         bytes += generator.text(
           '${_translate("cashier")}: $cashierName',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
+      if (customerName != null) {
+        bytes += generator.text(
+          '${_text('customer', fallback: 'Customer')}: $customerName',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
+      if (customerPhone != null && customerPhone.isNotEmpty) {
+        bytes += generator.text(
+          '${_text('phone', fallback: 'Phone')}: $customerPhone',
           styles: PosStyles(
             align: PosAlign.left,
             height: _resolveTextSize(),
@@ -1612,6 +1655,26 @@ class PrintingService {
           height: 80,
           align: PosAlign.center,
         );
+      }
+
+      // Print custom footer text if configured
+      if (_ref != null) {
+        try {
+          final settings = _ref!.read(settingsProvider);
+          if (settings.ticketFooter.isNotEmpty) {
+            bytes += generator.emptyLines(1);
+            bytes += generator.text(
+              settings.ticketFooter,
+              styles: PosStyles(
+                align: PosAlign.center,
+                height: _resolveTextSize(),
+                width: _resolveTextSize(),
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint('Error reading ticket footer from settings: $e');
+        }
       }
 
       bytes += generator.emptyLines(2);

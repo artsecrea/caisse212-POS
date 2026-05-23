@@ -65,6 +65,10 @@ class AppSettings {
   // Product card size: 1=small, 2=medium, 3=large
   final int productCardSize;
 
+  // Ticket printing settings
+  final String ticketHeader; // Header text to print at top of ticket
+  final String ticketFooter; // Footer text to print at bottom of ticket
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -118,6 +122,8 @@ class AppSettings {
     this.showOnscreenKeyboard = true,
     this.onscreenKeyboardWidthFraction = 0.5,
     this.productCardSize = 2,
+    this.ticketHeader = '',
+    this.ticketFooter = '',
   });
 
   AppSettings copyWith({
@@ -159,6 +165,8 @@ class AppSettings {
     bool? showOnscreenKeyboard,
     double? onscreenKeyboardWidthFraction,
     int? productCardSize,
+    String? ticketHeader,
+    String? ticketFooter,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -199,6 +207,8 @@ class AppSettings {
       showOnscreenKeyboard: showOnscreenKeyboard ?? this.showOnscreenKeyboard,
       onscreenKeyboardWidthFraction: onscreenKeyboardWidthFraction ?? this.onscreenKeyboardWidthFraction,
       productCardSize: productCardSize ?? this.productCardSize,
+      ticketHeader: ticketHeader ?? this.ticketHeader,
+      ticketFooter: ticketFooter ?? this.ticketFooter,
     );
   }
 
@@ -242,12 +252,15 @@ class AppSettings {
       'showOnscreenKeyboard': showOnscreenKeyboard,
       'onscreenKeyboardWidthFraction': onscreenKeyboardWidthFraction,
       'productCardSize': productCardSize,
+      'ticketHeader': ticketHeader,
+      'ticketFooter': ticketFooter,
     };
   }
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
     return AppSettings(
       isDarkMode: json['isDarkMode'] as bool? ?? false,
+      language: json['language'] as String? ?? 'en',
       defaultOrderType: json['defaultOrderType'] as String? ?? 'DINE_IN',
       showProductImages: json['showProductImages'] as bool? ?? true,
       defaultOrderStatus: json['defaultOrderStatus'] as String? ?? 'PENDING',
@@ -301,6 +314,8 @@ class AppSettings {
       showOnscreenKeyboard: json['showOnscreenKeyboard'] as bool? ?? true,
       onscreenKeyboardWidthFraction: (json['onscreenKeyboardWidthFraction'] as num?)?.toDouble() ?? 0.5,
       productCardSize: json['productCardSize'] as int? ?? 2,
+      ticketHeader: json['ticketHeader'] as String? ?? '',
+      ticketFooter: json['ticketFooter'] as String? ?? '',
     );
   }
 

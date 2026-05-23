@@ -57,6 +57,10 @@ class SettingsKeys {
 
   // Product card size: 1=small, 2=medium, 3=large
   static const String productCardSize = 'product_card_size';
+
+  // Ticket printing settings
+  static const String ticketHeader = 'ticket_header';
+  static const String ticketFooter = 'ticket_footer';
 }
 
 // Settings Notifier
@@ -145,6 +149,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showOnscreenKeyboard: _prefs.getBool(SettingsKeys.showOnscreenKeyboard) ?? true,
       onscreenKeyboardWidthFraction: _prefs.getDouble(SettingsKeys.onscreenKeyboardWidthFraction) ?? 0.5,
       productCardSize: _prefs.getInt(SettingsKeys.productCardSize) ?? 2,
+      ticketHeader: _prefs.getString(SettingsKeys.ticketHeader) ?? '',
+      ticketFooter: _prefs.getString(SettingsKeys.ticketFooter) ?? '',
     );
   }
 
@@ -352,6 +358,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final clamped = size.clamp(1, 3);
     await _prefs.setInt(SettingsKeys.productCardSize, clamped);
     state = state.copyWith(productCardSize: clamped);
+  }
+
+  Future<void> setTicketHeader(String header) async {
+    await _prefs.setString(SettingsKeys.ticketHeader, header);
+    state = state.copyWith(ticketHeader: header);
+  }
+
+  Future<void> setTicketFooter(String footer) async {
+    await _prefs.setString(SettingsKeys.ticketFooter, footer);
+    state = state.copyWith(ticketFooter: footer);
   }
 
   /// Get the last data clear date

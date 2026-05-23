@@ -187,8 +187,12 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     );
   }
 
-  void setCustomer(int? customerId, String? customerName) {
-    state = state.copyWith(customerId: customerId, customerName: customerName);
+  void setCustomer(int? customerId, String? customerName, {String? customerPhone}) {
+    state = state.copyWith(
+      customerId: customerId,
+      customerName: customerName,
+      customerPhone: customerPhone,
+    );
   }
 
   void clearCustomer() {
@@ -200,6 +204,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       tableName: state.tableName,
       customerId: null,
       customerName: null,
+      customerPhone: null,
       commercialId: state.commercialId,
       commercialName: state.commercialName,
       waiterId: state.waiterId,
@@ -773,11 +778,15 @@ class OrderRepository {
       tableName = table?.name;
     }
 
-    // Get customer name
+    // Get customer name and phone
     String? customerName;
+    String? customerPhone;
     if (order.clientId != null) {
       final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
-      customerName = customer != null ? '${customer.firstName} ${customer.lastName}' : null;
+      if (customer != null) {
+        customerName = '${customer.firstName} ${customer.lastName}';
+        customerPhone = customer.phone;
+      }
     }
 
     // Get commercial name
@@ -807,6 +816,7 @@ class OrderRepository {
       tableName: tableName,
       customerId: order.clientId,
       customerName: customerName,
+      customerPhone: customerPhone,
       commercialId: order.commercialId,
       commercialName: commercialName,
       waiterId: order.waiterId,
@@ -1253,13 +1263,15 @@ class OrderRepository {
       tableName = table?.name;
     }
 
-    // Get customer name
+    // Get customer name and phone
     String? customerName;
+    String? customerPhone;
     int? customerId;
     if (order.clientId != null) {
       final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
       if (customer != null) {
         customerName = '${customer.firstName} ${customer.lastName}';
+        customerPhone = customer.phone;
         customerId = customer.id;
       }
     }
@@ -1363,6 +1375,7 @@ class OrderRepository {
       userName: userName,
       tableName: tableName,
       customerName: customerName,
+      customerPhone: customerPhone,
       customerId: customerId,
       productCount: orderProducts.length,
       subtotal: subtotal,

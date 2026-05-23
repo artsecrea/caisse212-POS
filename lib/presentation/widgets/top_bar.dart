@@ -999,7 +999,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                           radius: isVeryCompact ? 16 : 18,
                           backgroundColor: Colors.white,
                           child: Text(
-                            currentUser?.firstName.substring(0, 1).toUpperCase() ?? 'U',
+                            currentUser?.effectiveDisplayName.substring(0, 1).toUpperCase() ?? 'U',
                             style: TextStyle(
                               color: Theme.of(context).primaryColor,
                               fontWeight: FontWeight.bold,
@@ -1010,7 +1010,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                         if (!isVeryCompact) ...[
                           const SizedBox(width: 6),
                           Text(
-                            currentUser?.firstName ?? (l10n?.translate('user') ?? 'User'),
+                            currentUser?.effectiveDisplayName ?? (l10n?.translate('user') ?? 'User'),
                             style: const TextStyle(color: Colors.white, fontSize: 14),
                           ),
                           const Icon(Icons.arrow_drop_down, color: Colors.white),

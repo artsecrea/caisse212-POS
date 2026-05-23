@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
+import 'package:drift/drift.dart' show Value;
+import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../utils/app_localizations.dart';
 
@@ -16,23 +18,56 @@ class ProfileDialog extends ConsumerStatefulWidget {
 
 class _ProfileDialogState extends ConsumerState<ProfileDialog> {
   bool _isChangingPassword = false;
+  bool _isEditingDisplayName = false;
 
   final _currentPasswordController = TextEditingController();
   final _newPasswordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final _displayNameController = TextEditingController();
 
   bool _obscureCurrent = true;
   bool _obscureNew = true;
   bool _obscureConfirm = true;
   String? _passwordError;
   bool _isSaving = false;
+  bool _isSavingDisplayName = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final currentUser = ref.read(currentUserProvider);
+    _displayNameController.text = currentUser?.displayName ?? '';
+  }
 
   @override
   void dispose() {
     _currentPasswordController.dispose();
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
+    _displayNameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _saveDisplayName() async {
+    final currentUser = ref.read(currentUserProvider);
+    if (currentUser == null) return;
+    setState(() => _isSavingDisplayName = true);
+    try {
+      final db = ref.read(databaseProvider);
+      final newName = _displayNameController.text.trim();
+      await (db.update(db.users)..where((u) => u.id.equals(currentUser.id)))
+          .write(UsersCompanion(displayName: Value(newName.isEmpty ? null : newName)));
+      ref.read(currentUserProvider.notifier).state =
+          currentUser.copyWith(displayName: newName.isEmpty ? null : newName);
+      if (mounted) {
+        setState(() {
+          _isSavingDisplayName = false;
+          _isEditingDisplayName = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isSavingDisplayName = false);
+    }
   }
 
   /// Validate the current password against DB hash OR custom SharedPrefs hash
@@ -233,6 +268,83 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                           : l10n.translate('not_set'),
                       valueColor: hasCustomPassword ? Colors.green : Colors.grey,
                     ),
+
+                    const Divider(height: 32),
+
+                    // Display Name Section
+                    InkWell(
+                      onTap: () => setState(() {
+                        _isEditingDisplayName = !_isEditingDisplayName;
+                      }),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: [
+                            Icon(Icons.badge_outlined, color: theme.primaryColor),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                l10n.translate('display_name'),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: theme.primaryColor,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              _isEditingDisplayName ? Icons.expand_less : Icons.expand_more,
+                              color: theme.primaryColor,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    if (_isEditingDisplayName) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _displayNameController,
+                        decoration: InputDecoration(
+                          labelText: l10n.translate('display_name'),
+                          hintText: currentUser?.effectiveDisplayName,
+                          prefixIcon: const Icon(Icons.edit),
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => setState(() {
+                              _isEditingDisplayName = false;
+                              _displayNameController.text =
+                                  currentUser?.displayName ?? '';
+                            }),
+                            child: Text(l10n.translate('cancel')),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton.icon(
+                            onPressed: _isSavingDisplayName ? null : _saveDisplayName,
+                            icon: _isSavingDisplayName
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.save, size: 18),
+                            label: Text(l10n.translate('save')),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: theme.primaryColor,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
 
                     const Divider(height: 32),
 

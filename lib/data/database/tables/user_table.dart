@@ -17,7 +17,6 @@ class Users extends Table {
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
   DateTimeColumn get lastLogin => dateTime().nullable()();
-
-
+  TextColumn get displayName => text().nullable()();
 }
 
