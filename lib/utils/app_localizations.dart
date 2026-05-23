@@ -41,6 +41,7 @@ class AppLocalizations {
       'for': 'for',
       'showing': 'Showing',
       'general': 'General',
+      'new_items': 'NEW ITEMS',
 
       // Login
       'login': 'Login',
@@ -1084,6 +1085,7 @@ class AppLocalizations {
       'for': 'لـ',
       'showing': 'عرض',
       'general': 'عام',
+      'new_items': 'عناصر جديدة',
 
       // Login
       'login': 'تسجيل الدخول',
@@ -2109,6 +2111,7 @@ class AppLocalizations {
       'for': 'pour',
       'showing': 'Affichage',
       'general': 'Général',
+      'new_items': 'NOUVEAUX ARTICLES',
 
       // Login
       'login': 'Connexion',

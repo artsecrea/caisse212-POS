@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:caisse212/providers/database_providers.dart';
+import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_thermal_printer/utils/printer.dart';
 import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/database/app_database.dart';
 import '../domain/models/order_models.dart';
 import '../utils/app_localizations.dart';
 import '../utils/currency_formatter.dart';
@@ -21,6 +23,12 @@ import 'daily_summary_service.dart';
 enum PrinterPurpose {
   receipt, // For customer receipts
   kds, // For kitchen display/tickets
+}
+
+/// Enum for KDS print mode
+enum KdsPrintMode {
+  full, // Print all items in the order
+  modificationsOnly, // Print only new/unprinted items
 }
 
 /// Model for saved printer configuration
@@ -1027,6 +1035,7 @@ class PrintingService {
   Future<bool> printKdsTicket({
     required CurrentOrder order,
     required String? cashierName,
+    KdsPrintMode mode = KdsPrintMode.modificationsOnly,
   }) async {
     if (!_config.kdsEnabled) {
       debugPrint('KDS printing is disabled in config');
@@ -1048,21 +1057,39 @@ class PrintingService {
       if (_ref == null) {
         debugPrint('Warning: _ref is null, cannot group by stations');
         // Fall back to single ticket printing
+        final itemsToPrint = _filterItemsByMode(order.items, mode);
+        if (itemsToPrint.isEmpty) {
+          debugPrint('No items to print for mode: $mode');
+          _isPrintingInProgress = false;
+          _printingStatusController.add(null);
+          return true;
+        }
         return await _printKdsTicketForStation(
           order: order,
           stationName: _text('general', fallback: 'General'),
-          items: order.items,
+          items: itemsToPrint,
           cashierName: cashierName,
+          mode: mode,
         );
       }
       
       final database = _ref!.read(databaseProvider);
       
+      // Filter items based on print mode
+      final itemsToPrint = _filterItemsByMode(order.items, mode);
+      
+      if (itemsToPrint.isEmpty) {
+        debugPrint('No items to print for mode: $mode');
+        _isPrintingInProgress = false;
+        _printingStatusController.add(null);
+        return true; // Nothing to print is success
+      }
+      
       // Group items by station
       final Map<String, List<OrderItem>> itemsByStation = {};
       final List<OrderItem> itemsWithoutStation = [];
       
-      for (final item in order.items) {
+      for (final item in itemsToPrint) {
         // Fetch product to get station info
         final product = await (database.select(database.products)
           ..where((tbl) => tbl.id.equals(item.productId)))
@@ -1095,18 +1122,22 @@ class PrintingService {
         final stationName = stationEntry.key;
         final stationItems = stationEntry.value;
         
-        debugPrint('Printing KDS ticket $stationCount/${itemsByStation.length} for station: $stationName');
+        debugPrint('Printing KDS ticket $stationCount/${itemsByStation.length} for station: $stationName (mode: $mode)');
         
         final success = await _printKdsTicketForStation(
           order: order,
           stationName: stationName,
           items: stationItems,
           cashierName: cashierName,
+          mode: mode,
         );
         
         if (!success) {
           allSuccessful = false;
           debugPrint('Failed to print ticket for station: $stationName');
+        } else {
+          // Mark items as printed in database
+          await _markItemsAsPrinted(database, stationItems);
         }
         
         // Small delay between prints to avoid printer buffer issues
@@ -1128,12 +1159,44 @@ class PrintingService {
     }
   }
 
+  /// Filter items based on KDS print mode
+  List<OrderItem> _filterItemsByMode(List<OrderItem> items, KdsPrintMode mode) {
+    switch (mode) {
+      case KdsPrintMode.full:
+        // Return all items
+        return items;
+      case KdsPrintMode.modificationsOnly:
+        // Return only items that haven't been printed yet (kdsPrintedAt is null)
+        return items.where((item) => item.kdsPrintedAt == null).toList();
+    }
+  }
+
+  /// Mark items as printed in the database
+  Future<void> _markItemsAsPrinted(AppDatabase database, List<OrderItem> items) async {
+    final now = DateTime.now();
+    for (final item in items) {
+      if (item.id != null) {
+        try {
+          await (database.update(database.orderProducts)
+            ..where((tbl) => tbl.id.equals(item.id!)))
+            .write(OrderProductsCompanion(
+              kdsPrintedAt: Value(now),
+            ));
+          debugPrint('Marked item ${item.id} as printed at $now');
+        } catch (e) {
+          debugPrint('Error marking item ${item.id} as printed: $e');
+        }
+      }
+    }
+  }
+
   /// Print a single KDS ticket for a specific station
   Future<bool> _printKdsTicketForStation({
     required CurrentOrder order,
     required String stationName,
     required List<OrderItem> items,
     required String? cashierName,
+    KdsPrintMode mode = KdsPrintMode.modificationsOnly,
   }) async {
     try {
       final profile = await CapabilityProfile.load();
@@ -1155,6 +1218,21 @@ class PrintingService {
       );
 
       bytes += generator.emptyLines(1);
+
+      // Print mode indicator (only for modifications mode)
+      if (mode == KdsPrintMode.modificationsOnly) {
+        bytes += generator.text(
+          '=== ${_text('new_items', fallback: 'NEW ITEMS')} ===',
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: PosTextSize.size2,
+            width: PosTextSize.size2,
+            reverse: true, // Inverted colors for emphasis
+          ),
+        );
+        bytes += generator.emptyLines(1);
+      }
 
       // Large order number
       bytes += generator.text(

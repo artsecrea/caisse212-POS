@@ -16,5 +16,6 @@ class OrderProducts extends Table {
   DateTimeColumn get planStartAt => dateTime().nullable()(); // Planned start time
   DateTimeColumn get planEndAt => dateTime().nullable()(); // Planned end time
   IntColumn get planWaiterId => integer().nullable()(); // Assigned waiter for this booking
+  DateTimeColumn get kdsPrintedAt => dateTime().nullable()(); // When item was sent to kitchen (KDS ticket printed)
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }

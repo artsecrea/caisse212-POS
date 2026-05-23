@@ -9959,6 +9959,17 @@ class $OrderProductsTable extends OrderProducts
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _kdsPrintedAtMeta = const VerificationMeta(
+    'kdsPrintedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> kdsPrintedAt = GeneratedColumn<DateTime>(
+    'kds_printed_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -9988,6 +9999,7 @@ class $OrderProductsTable extends OrderProducts
     planStartAt,
     planEndAt,
     planWaiterId,
+    kdsPrintedAt,
     updatedAt,
   ];
   @override
@@ -10110,6 +10122,15 @@ class $OrderProductsTable extends OrderProducts
         ),
       );
     }
+    if (data.containsKey('kds_printed_at')) {
+      context.handle(
+        _kdsPrintedAtMeta,
+        kdsPrintedAt.isAcceptableOrUnknown(
+          data['kds_printed_at']!,
+          _kdsPrintedAtMeta,
+        ),
+      );
+    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -10185,6 +10206,10 @@ class $OrderProductsTable extends OrderProducts
         DriftSqlType.int,
         data['${effectivePrefix}plan_waiter_id'],
       ),
+      kdsPrintedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}kds_printed_at'],
+      ),
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
@@ -10214,6 +10239,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
   final DateTime? planStartAt;
   final DateTime? planEndAt;
   final int? planWaiterId;
+  final DateTime? kdsPrintedAt;
   final DateTime updatedAt;
   const OrderProduct({
     required this.id,
@@ -10231,6 +10257,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     this.planStartAt,
     this.planEndAt,
     this.planWaiterId,
+    this.kdsPrintedAt,
     required this.updatedAt,
   });
   @override
@@ -10263,6 +10290,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     if (!nullToAbsent || planWaiterId != null) {
       map['plan_waiter_id'] = Variable<int>(planWaiterId);
     }
+    if (!nullToAbsent || kdsPrintedAt != null) {
+      map['kds_printed_at'] = Variable<DateTime>(kdsPrintedAt);
+    }
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
   }
@@ -10294,6 +10324,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       planWaiterId: planWaiterId == null && nullToAbsent
           ? const Value.absent()
           : Value(planWaiterId),
+      kdsPrintedAt: kdsPrintedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(kdsPrintedAt),
       updatedAt: Value(updatedAt),
     );
   }
@@ -10319,6 +10352,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       planStartAt: serializer.fromJson<DateTime?>(json['planStartAt']),
       planEndAt: serializer.fromJson<DateTime?>(json['planEndAt']),
       planWaiterId: serializer.fromJson<int?>(json['planWaiterId']),
+      kdsPrintedAt: serializer.fromJson<DateTime?>(json['kdsPrintedAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
   }
@@ -10341,6 +10375,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       'planStartAt': serializer.toJson<DateTime?>(planStartAt),
       'planEndAt': serializer.toJson<DateTime?>(planEndAt),
       'planWaiterId': serializer.toJson<int?>(planWaiterId),
+      'kdsPrintedAt': serializer.toJson<DateTime?>(kdsPrintedAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
   }
@@ -10361,6 +10396,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     Value<DateTime?> planStartAt = const Value.absent(),
     Value<DateTime?> planEndAt = const Value.absent(),
     Value<int?> planWaiterId = const Value.absent(),
+    Value<DateTime?> kdsPrintedAt = const Value.absent(),
     DateTime? updatedAt,
   }) => OrderProduct(
     id: id ?? this.id,
@@ -10378,6 +10414,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     planStartAt: planStartAt.present ? planStartAt.value : this.planStartAt,
     planEndAt: planEndAt.present ? planEndAt.value : this.planEndAt,
     planWaiterId: planWaiterId.present ? planWaiterId.value : this.planWaiterId,
+    kdsPrintedAt: kdsPrintedAt.present ? kdsPrintedAt.value : this.kdsPrintedAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
   OrderProduct copyWithCompanion(OrderProductsCompanion data) {
@@ -10409,6 +10446,9 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       planWaiterId: data.planWaiterId.present
           ? data.planWaiterId.value
           : this.planWaiterId,
+      kdsPrintedAt: data.kdsPrintedAt.present
+          ? data.kdsPrintedAt.value
+          : this.kdsPrintedAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
@@ -10431,6 +10471,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           ..write('planStartAt: $planStartAt, ')
           ..write('planEndAt: $planEndAt, ')
           ..write('planWaiterId: $planWaiterId, ')
+          ..write('kdsPrintedAt: $kdsPrintedAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
@@ -10453,6 +10494,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     planStartAt,
     planEndAt,
     planWaiterId,
+    kdsPrintedAt,
     updatedAt,
   );
   @override
@@ -10474,6 +10516,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           other.planStartAt == this.planStartAt &&
           other.planEndAt == this.planEndAt &&
           other.planWaiterId == this.planWaiterId &&
+          other.kdsPrintedAt == this.kdsPrintedAt &&
           other.updatedAt == this.updatedAt);
 }
 
@@ -10493,6 +10536,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
   final Value<DateTime?> planStartAt;
   final Value<DateTime?> planEndAt;
   final Value<int?> planWaiterId;
+  final Value<DateTime?> kdsPrintedAt;
   final Value<DateTime> updatedAt;
   const OrderProductsCompanion({
     this.id = const Value.absent(),
@@ -10510,6 +10554,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     this.planStartAt = const Value.absent(),
     this.planEndAt = const Value.absent(),
     this.planWaiterId = const Value.absent(),
+    this.kdsPrintedAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
   OrderProductsCompanion.insert({
@@ -10528,6 +10573,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     this.planStartAt = const Value.absent(),
     this.planEndAt = const Value.absent(),
     this.planWaiterId = const Value.absent(),
+    this.kdsPrintedAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : orderId = Value(orderId),
        productId = Value(productId),
@@ -10548,6 +10594,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Expression<DateTime>? planStartAt,
     Expression<DateTime>? planEndAt,
     Expression<int>? planWaiterId,
+    Expression<DateTime>? kdsPrintedAt,
     Expression<DateTime>? updatedAt,
   }) {
     return RawValuesInsertable({
@@ -10566,6 +10613,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       if (planStartAt != null) 'plan_start_at': planStartAt,
       if (planEndAt != null) 'plan_end_at': planEndAt,
       if (planWaiterId != null) 'plan_waiter_id': planWaiterId,
+      if (kdsPrintedAt != null) 'kds_printed_at': kdsPrintedAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
   }
@@ -10586,6 +10634,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Value<DateTime?>? planStartAt,
     Value<DateTime?>? planEndAt,
     Value<int?>? planWaiterId,
+    Value<DateTime?>? kdsPrintedAt,
     Value<DateTime>? updatedAt,
   }) {
     return OrderProductsCompanion(
@@ -10604,6 +10653,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       planStartAt: planStartAt ?? this.planStartAt,
       planEndAt: planEndAt ?? this.planEndAt,
       planWaiterId: planWaiterId ?? this.planWaiterId,
+      kdsPrintedAt: kdsPrintedAt ?? this.kdsPrintedAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -10656,6 +10706,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     if (planWaiterId.present) {
       map['plan_waiter_id'] = Variable<int>(planWaiterId.value);
     }
+    if (kdsPrintedAt.present) {
+      map['kds_printed_at'] = Variable<DateTime>(kdsPrintedAt.value);
+    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
@@ -10680,6 +10733,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
           ..write('planStartAt: $planStartAt, ')
           ..write('planEndAt: $planEndAt, ')
           ..write('planWaiterId: $planWaiterId, ')
+          ..write('kdsPrintedAt: $kdsPrintedAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
@@ -21124,6 +21178,7 @@ typedef $$OrderProductsTableCreateCompanionBuilder =
       Value<DateTime?> planStartAt,
       Value<DateTime?> planEndAt,
       Value<int?> planWaiterId,
+      Value<DateTime?> kdsPrintedAt,
       Value<DateTime> updatedAt,
     });
 typedef $$OrderProductsTableUpdateCompanionBuilder =
@@ -21143,6 +21198,7 @@ typedef $$OrderProductsTableUpdateCompanionBuilder =
       Value<DateTime?> planStartAt,
       Value<DateTime?> planEndAt,
       Value<int?> planWaiterId,
+      Value<DateTime?> kdsPrintedAt,
       Value<DateTime> updatedAt,
     });
 
@@ -21227,6 +21283,11 @@ class $$OrderProductsTableFilterComposer
 
   ColumnFilters<int> get planWaiterId => $composableBuilder(
     column: $table.planWaiterId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get kdsPrintedAt => $composableBuilder(
+    column: $table.kdsPrintedAt,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -21320,6 +21381,11 @@ class $$OrderProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get kdsPrintedAt => $composableBuilder(
+    column: $table.kdsPrintedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
@@ -21392,6 +21458,11 @@ class $$OrderProductsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<DateTime> get kdsPrintedAt => $composableBuilder(
+    column: $table.kdsPrintedAt,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
@@ -21442,6 +21513,7 @@ class $$OrderProductsTableTableManager
                 Value<DateTime?> planStartAt = const Value.absent(),
                 Value<DateTime?> planEndAt = const Value.absent(),
                 Value<int?> planWaiterId = const Value.absent(),
+                Value<DateTime?> kdsPrintedAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrderProductsCompanion(
                 id: id,
@@ -21459,6 +21531,7 @@ class $$OrderProductsTableTableManager
                 planStartAt: planStartAt,
                 planEndAt: planEndAt,
                 planWaiterId: planWaiterId,
+                kdsPrintedAt: kdsPrintedAt,
                 updatedAt: updatedAt,
               ),
           createCompanionCallback:
@@ -21478,6 +21551,7 @@ class $$OrderProductsTableTableManager
                 Value<DateTime?> planStartAt = const Value.absent(),
                 Value<DateTime?> planEndAt = const Value.absent(),
                 Value<int?> planWaiterId = const Value.absent(),
+                Value<DateTime?> kdsPrintedAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrderProductsCompanion.insert(
                 id: id,
@@ -21495,6 +21569,7 @@ class $$OrderProductsTableTableManager
                 planStartAt: planStartAt,
                 planEndAt: planEndAt,
                 planWaiterId: planWaiterId,
+                kdsPrintedAt: kdsPrintedAt,
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0

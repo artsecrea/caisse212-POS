@@ -397,6 +397,7 @@ class OrderRepository {
           planStartAt: Value(item.planStartAt),
           planEndAt: Value(item.planEndAt),
           planWaiterId: Value(item.planWaiterId),
+          kdsPrintedAt: Value(item.kdsPrintedAt),
         ),
       );
 
@@ -561,6 +562,7 @@ class OrderRepository {
           planStartAt: Value(item.planStartAt),
           planEndAt: Value(item.planEndAt),
           planWaiterId: Value(item.planWaiterId),
+          kdsPrintedAt: Value(item.kdsPrintedAt),
         ),
       );
 
@@ -745,6 +747,7 @@ class OrderRepository {
         planStartAt: orderProduct.planStartAt,
         planEndAt: orderProduct.planEndAt,
         planWaiterId: orderProduct.planWaiterId,
+        kdsPrintedAt: orderProduct.kdsPrintedAt,
       ));
     }
 

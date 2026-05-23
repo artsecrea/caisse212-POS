@@ -31,6 +31,7 @@ class PrintOptionsDialog extends ConsumerStatefulWidget {
 class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
   bool _printReceipt = true;
   bool _printKds = false; // KDS should only print on direct payment by default
+  KdsPrintMode _kdsPrintMode = KdsPrintMode.modificationsOnly; // Default to modifications only
   bool _isPrinting = false;
   String? _error;
 
@@ -39,6 +40,20 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
     super.initState();
     // KDS should be off by default - it's meant for direct payment
     // User can still manually enable it if needed
+    // Check if order has unprinted items to suggest modifications-only mode
+    _checkUnprintedItems();
+  }
+
+  void _checkUnprintedItems() {
+    final unprintedItems = widget.order.items.where((item) => item.kdsPrintedAt == null).toList();
+    if (unprintedItems.isEmpty) {
+      // All items already printed, default to full mode
+      _kdsPrintMode = KdsPrintMode.full;
+    }
+  }
+
+  int _getUnprintedItemsCount() {
+    return widget.order.items.where((item) => item.kdsPrintedAt == null).length;
   }
 
   Future<void> _handlePrint() async {
@@ -75,6 +90,7 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
         kdsSuccess = await printingService.printKdsTicket(
           order: widget.order,
           cashierName: widget.cashierName,
+          mode: _kdsPrintMode,
         );
       }
 
@@ -237,6 +253,70 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
               ),
               enabled: config.kdsEnabled && config.kdsPrinterName != null,
             ),
+
+            // KDS Print Mode Selection (only show when KDS is enabled and checked)
+            if (_printKds && config.kdsEnabled && config.kdsPrinterName != null) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.only(left: 56, right: 16),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'KDS Print Mode:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: Colors.grey[700],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      RadioListTile<KdsPrintMode>(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: KdsPrintMode.modificationsOnly,
+                        groupValue: _kdsPrintMode,
+                        onChanged: _isPrinting ? null : (value) {
+                          setState(() {
+                            _kdsPrintMode = value ?? KdsPrintMode.modificationsOnly;
+                          });
+                        },
+                        title: const Text('New Items Only', style: TextStyle(fontSize: 13)),
+                        subtitle: Text(
+                          _getUnprintedItemsCount() > 0
+                              ? '${_getUnprintedItemsCount()} new item(s) will be printed'
+                              : 'No new items to print',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                        ),
+                      ),
+                      RadioListTile<KdsPrintMode>(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: KdsPrintMode.full,
+                        groupValue: _kdsPrintMode,
+                        onChanged: _isPrinting ? null : (value) {
+                          setState(() {
+                            _kdsPrintMode = value ?? KdsPrintMode.full;
+                          });
+                        },
+                        title: const Text('Full Order', style: TextStyle(fontSize: 13)),
+                        subtitle: Text(
+                          'All ${widget.order.items.length} item(s) will be printed',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
 
             if (_error != null) ...[
               const SizedBox(height: 16),

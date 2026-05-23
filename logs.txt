@@ -30450,3 +30450,745 @@ Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTT
 In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
 
 [2026-05-23T03:15:13.921286] [INFO]: No pending operations to sync
+[2026-05-23T03:16:13.938804] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:16:13.940720] [INFO]: No pending operations to sync
+[2026-05-23T03:17:13.966813] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:17:13.968430] [INFO]: No pending operations to sync
+[2026-05-23T03:18:13.939125] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:18:13.940521] [INFO]: No pending operations to sync
+[2026-05-23T03:19:13.915547] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:19:13.916793] [INFO]: No pending operations to sync
+[2026-05-23T03:20:13.939178] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:20:13.941273] [INFO]: No pending operations to sync
+[2026-05-23T03:21:13.922573] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:21:13.924341] [INFO]: No pending operations to sync
+[2026-05-23T03:22:13.943695] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:22:13.945168] [INFO]: No pending operations to sync
+[2026-05-23T03:23:13.923648] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:23:13.925655] [INFO]: No pending operations to sync
+[2026-05-23T03:24:13.939199] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:24:13.940764] [INFO]: No pending operations to sync
+[2026-05-23T03:25:13.953721] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:26:13.944636] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:26:13.946073] [INFO]: No pending operations to sync
+[2026-05-23T03:27:13.919370] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:27:13.920975] [INFO]: No pending operations to sync
+[2026-05-23T03:28:13.938260] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:28:13.939340] [INFO]: No pending operations to sync
+[2026-05-23T03:29:13.914446] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:29:13.915891] [INFO]: No pending operations to sync
+[2026-05-23T03:30:13.962419] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:30:13.964845] [INFO]: No pending operations to sync
+[2026-05-23T03:31:13.915383] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:31:13.917029] [INFO]: No pending operations to sync
+[2026-05-23T03:32:13.933205] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:32:13.934172] [INFO]: No pending operations to sync
+[2026-05-23T03:33:13.914715] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:33:13.915821] [INFO]: No pending operations to sync
+[2026-05-23T03:34:13.933648] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:34:13.934953] [INFO]: No pending operations to sync
+[2026-05-23T03:35:13.951040] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:35:13.952327] [INFO]: No pending operations to sync
+[2026-05-23T03:36:13.946505] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:37:13.914476] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:37:13.915734] [INFO]: No pending operations to sync
+[2026-05-23T03:38:13.922204] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:38:13.923566] [INFO]: No pending operations to sync
+[2026-05-23T03:39:13.924406] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:39:13.926120] [INFO]: No pending operations to sync
+[2026-05-23T03:40:13.950661] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:41:13.938265] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:42:13.952561] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:42:13.954575] [INFO]: No pending operations to sync
+[2026-05-23T03:43:13.944541] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:43:13.945706] [INFO]: No pending operations to sync
+[2026-05-23T03:43:31.980885] [INFO]: Starting app...
+[2026-05-23T03:44:18.670371] [ERROR]: new order created
+[2026-05-23T03:44:25.356820] [ERROR]: new order created
+[2026-05-23T03:44:45.124140] [ERROR]: new order created
+[2026-05-23T03:45:16.703296] [ERROR]: order updated
+[2026-05-23T03:45:22.565271] [ERROR]: order updated
+[2026-05-23T03:46:06.429319] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:46:06.470505] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:46:06.514484] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:46:06.536976] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:46:06.552704] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:46:06.557565] [INFO]: No pending operations to sync
+[2026-05-23T03:47:06.220458] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:47:06.252403] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:47:06.269654] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:47:06.286614] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:47:06.301355] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:47:06.303121] [INFO]: No pending operations to sync
+[2026-05-23T03:48:06.218083] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:48:06.248690] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:48:06.264706] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:48:06.280738] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:48:06.296685] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:48:06.298017] [INFO]: No pending operations to sync
+[2026-05-23T03:49:06.379486] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:49:06.461318] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:49:06.538488] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:49:06.587088] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:49:06.651596] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:49:06.654823] [INFO]: No pending operations to sync
+[2026-05-23T03:50:06.177497] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:50:06.207429] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:50:06.224321] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:50:06.244629] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:50:06.265119] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:50:06.267514] [INFO]: No pending operations to sync
+[2026-05-23T03:51:06.204070] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:51:06.230402] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:51:06.243108] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:51:06.257540] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:51:06.272166] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:51:06.274075] [INFO]: No pending operations to sync
+[2026-05-23T03:52:06.181522] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:52:06.200722] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:52:06.212609] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:52:06.226534] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:52:06.238407] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:52:06.239604] [INFO]: No pending operations to sync
+[2026-05-23T03:53:06.173603] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:53:06.195437] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:53:06.207846] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:53:06.220978] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:53:06.234027] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:53:06.235369] [INFO]: No pending operations to sync
+[2026-05-23T03:54:06.260476] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:54:06.314112] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:54:06.353265] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:54:06.382648] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:54:06.419676] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:55:06.169688] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:55:06.190910] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:55:06.207522] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:55:06.220863] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:55:06.234863] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:55:06.235966] [INFO]: No pending operations to sync
+[2026-05-23T03:56:06.170201] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:56:06.190496] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:56:06.203674] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:56:06.218897] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:56:06.233723] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:56:06.236167] [INFO]: No pending operations to sync
+[2026-05-23T03:57:06.174066] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:57:06.197754] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:57:06.213090] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:57:06.235023] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:57:06.253060] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:58:06.178570] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:58:06.197548] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:58:06.210432] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:58:06.224697] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:58:06.238769] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:58:06.239864] [INFO]: No pending operations to sync
+[2026-05-23T03:59:06.188025] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:59:06.211793] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:59:06.225023] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:59:06.239669] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:59:06.264230] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T03:59:06.266413] [INFO]: No pending operations to sync
+[2026-05-23T04:00:06.176390] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:00:06.199618] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:00:06.213436] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:00:06.228012] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:00:06.242929] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:00:06.244228] [INFO]: No pending operations to sync
+[2026-05-23T04:01:06.173356] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:01:06.196299] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:01:06.208826] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:01:06.222726] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:01:06.240523] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:01:06.242012] [INFO]: No pending operations to sync
+[2026-05-23T04:02:06.164200] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:02:06.188435] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:02:06.210259] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:02:06.226761] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:02:06.247330] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:02:06.248947] [INFO]: No pending operations to sync
+[2026-05-23T04:03:06.170241] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:03:06.191946] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:03:06.206927] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:03:06.220588] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:03:06.235286] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:03:06.236510] [INFO]: No pending operations to sync
+[2026-05-23T04:04:06.172003] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:04:06.192155] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:04:06.203400] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:04:06.215852] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:04:06.231215] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:04:06.232532] [INFO]: No pending operations to sync
+[2026-05-23T04:05:06.190617] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:05:06.211037] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:05:06.222298] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:05:06.234601] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:05:06.247841] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:05:06.249181] [INFO]: No pending operations to sync
+[2026-05-23T04:06:06.181827] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:06:06.199050] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:06:06.210018] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:06:06.220973] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:06:06.232631] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:06:06.234966] [INFO]: No pending operations to sync
+[2026-05-23T04:07:06.169396] [WARNING]: Bulk order sync failed, falling back to individual sync: Exception: Failed to sync orders: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:07:06.188165] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:07:06.200591] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:07:06.213776] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:07:06.229036] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 500 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 500 has the following meaning: "Server error - the server failed to fulfil an apparently valid request"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T04:07:06.230306] [INFO]: No pending operations to sync
+[2026-05-23T04:07:39.106156] [INFO]: Starting app...
+s initialized

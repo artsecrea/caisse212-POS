@@ -21,6 +21,7 @@ class OrderItem {
   final DateTime? planStartAt; // Planning start time
   final DateTime? planEndAt; // Planning end time
   final int? planWaiterId; // Assigned waiter for this booking
+  final DateTime? kdsPrintedAt; // When item was sent to kitchen (KDS ticket printed)
   // Scale / weighed-item fields
   final bool isWeighedItem;
   final double? weightKg;
@@ -45,6 +46,7 @@ class OrderItem {
     this.planStartAt,
     this.planEndAt,
     this.planWaiterId,
+    this.kdsPrintedAt,
     this.isWeighedItem = false,
     this.weightKg,
     this.pricePerKgDisplay,
@@ -98,6 +100,7 @@ class OrderItem {
     DateTime? planStartAt,
     DateTime? planEndAt,
     int? planWaiterId,
+    DateTime? kdsPrintedAt,
     bool? isWeighedItem,
     double? weightKg,
     double? pricePerKgDisplay,
@@ -121,6 +124,7 @@ class OrderItem {
       planStartAt: planStartAt ?? this.planStartAt,
       planEndAt: planEndAt ?? this.planEndAt,
       planWaiterId: planWaiterId ?? this.planWaiterId,
+      kdsPrintedAt: kdsPrintedAt ?? this.kdsPrintedAt,
       isWeighedItem: isWeighedItem ?? this.isWeighedItem,
       weightKg: weightKg ?? this.weightKg,
       pricePerKgDisplay: pricePerKgDisplay ?? this.pricePerKgDisplay,
@@ -153,6 +157,7 @@ class OrderItem {
       'planStartAt': planStartAt?.toIso8601String(),
       'planEndAt': planEndAt?.toIso8601String(),
       'planWaiterId': planWaiterId,
+      'kdsPrintedAt': kdsPrintedAt?.toIso8601String(),
       'isWeighedItem': isWeighedItem,
       'weightKg': weightKg,
       'pricePerKgDisplay': pricePerKgDisplay,
