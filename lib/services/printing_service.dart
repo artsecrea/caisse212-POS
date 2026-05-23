@@ -1043,10 +1043,12 @@ class PrintingService {
   }
 
   /// Print KDS ticket (kitchen order)
+  /// [stationIds]: if non-empty, only print tickets for those stations. Empty = all stations.
   Future<bool> printKdsTicket({
     required CurrentOrder order,
     required String? cashierName,
     KdsPrintMode mode = KdsPrintMode.modificationsOnly,
+    List<int> stationIds = const [],
   }) async {
     if (!_config.kdsEnabled) {
       debugPrint('KDS printing is disabled in config');
@@ -1100,25 +1102,31 @@ class PrintingService {
       final Map<String, List<OrderItem>> itemsByStation = {};
       final List<OrderItem> itemsWithoutStation = [];
       
+      final bool filterByStation = stationIds.isNotEmpty;
+
       for (final item in itemsToPrint) {
         // Fetch product to get station info
         final product = await (database.select(database.products)
           ..where((tbl) => tbl.id.equals(item.productId)))
           .getSingleOrNull();
-        
+
         if (product?.stationId != null) {
+          // Skip if station filter active and this station not selected
+          if (filterByStation && !stationIds.contains(product!.stationId)) continue;
+
           // Fetch station name
           final station = await (database.select(database.stations)
             ..where((tbl) => tbl.id.equals(product!.stationId!)))
             .getSingleOrNull();
-          
+
           final stationName = station?.name ?? 'Station ${product!.stationId}';
           itemsByStation.putIfAbsent(stationName, () => []).add(item);
         } else {
-          itemsWithoutStation.add(item);
+          // Items without station only go to General when no specific filter is active
+          if (!filterByStation) itemsWithoutStation.add(item);
         }
       }
-      
+
       // If there are items without station, add them to a default station
       if (itemsWithoutStation.isNotEmpty) {
         itemsByStation.putIfAbsent(_text('general', fallback: 'General'), () => []).addAll(itemsWithoutStation);

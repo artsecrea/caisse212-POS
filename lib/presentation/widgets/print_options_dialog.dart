@@ -1,11 +1,10 @@
-// filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/print_options_dialog.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/device_providers.dart';
 import '../../services/printing_service.dart';
 
-/// Dialog to select what to print for an order
 class PrintOptionsDialog extends ConsumerStatefulWidget {
   final CurrentOrder order;
   final String? cashierName;
@@ -15,14 +14,14 @@ class PrintOptionsDialog extends ConsumerStatefulWidget {
   final VoidCallback? onPrintComplete;
 
   const PrintOptionsDialog({
-    Key? key,
+    super.key,
     required this.order,
     this.cashierName,
     this.storeName,
     this.storeAddress,
     this.storePhone,
     this.onPrintComplete,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<PrintOptionsDialog> createState() => _PrintOptionsDialogState();
@@ -30,40 +29,32 @@ class PrintOptionsDialog extends ConsumerStatefulWidget {
 
 class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
   bool _printReceipt = true;
-  bool _printKds = false; // KDS should only print on direct payment by default
-  KdsPrintMode _kdsPrintMode = KdsPrintMode.modificationsOnly; // Default to modifications only
+  bool _printKds = false;
+  KdsPrintMode _kdsPrintMode = KdsPrintMode.modificationsOnly;
+  // Empty = all stations; non-empty = only selected station IDs
+  final Set<int> _selectedStationIds = {};
   bool _isPrinting = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    // KDS should be off by default - it's meant for direct payment
-    // User can still manually enable it if needed
-    // Check if order has unprinted items to suggest modifications-only mode
     _checkUnprintedItems();
   }
 
   void _checkUnprintedItems() {
-    final unprintedItems = widget.order.items.where((item) => item.kdsPrintedAt == null).toList();
-    if (unprintedItems.isEmpty) {
-      // All items already printed, default to full mode
-      _kdsPrintMode = KdsPrintMode.full;
-    }
+    final hasUnprinted = widget.order.items.any((item) => item.kdsPrintedAt == null);
+    if (!hasUnprinted) _kdsPrintMode = KdsPrintMode.full;
   }
 
-  int _getUnprintedItemsCount() {
-    return widget.order.items.where((item) => item.kdsPrintedAt == null).length;
-  }
+  int get _unprintedCount =>
+      widget.order.items.where((item) => item.kdsPrintedAt == null).length;
 
   Future<void> _handlePrint() async {
     if (!_printReceipt && !_printKds) {
-      setState(() {
-        _error = 'Please select at least one option to print';
-      });
+      setState(() => _error = 'Select at least one print option.');
       return;
     }
-
     setState(() {
       _isPrinting = true;
       _error = null;
@@ -74,7 +65,6 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
     bool kdsSuccess = true;
 
     try {
-      // Print receipt if selected
       if (_printReceipt) {
         receiptSuccess = await printingService.printOrderReceipt(
           order: widget.order,
@@ -85,308 +75,721 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
         );
       }
 
-      // Print KDS if selected and enabled
       if (_printKds && printingService.config.kdsEnabled) {
         kdsSuccess = await printingService.printKdsTicket(
           order: widget.order,
           cashierName: widget.cashierName,
           mode: _kdsPrintMode,
+          stationIds: _selectedStationIds.toList(),
         );
       }
 
       if (mounted) {
         if (receiptSuccess && kdsSuccess) {
-          // Update print count in database
           await _incrementPrintCount();
-
           widget.onPrintComplete?.call();
           Navigator.of(context).pop(true);
-
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Print successful!'),
+              content: Text('Printed successfully'),
               backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
             ),
           );
         } else {
           setState(() {
             _isPrinting = false;
-            if (!receiptSuccess && !kdsSuccess) {
-              _error = 'Failed to print receipt and KDS ticket. Check printer connections.';
-            } else if (!receiptSuccess) {
-              _error = 'Failed to print receipt. Check receipt printer connection.';
-            } else {
-              _error = 'Failed to print KDS ticket. Check KDS printer connection.';
-            }
+            _error = !receiptSuccess && !kdsSuccess
+                ? 'Both receipt and KDS failed. Check connections.'
+                : !receiptSuccess
+                    ? 'Receipt failed. Check receipt printer.'
+                    : 'KDS failed. Check KDS printer.';
           });
         }
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isPrinting = false;
-          _error = 'Print error: $e';
-        });
-      }
+      if (mounted) setState(() { _isPrinting = false; _error = 'Error: $e'; });
     }
   }
 
   Future<void> _incrementPrintCount() async {
     final orderId = widget.order.orderId;
     if (orderId == null) return;
-
     try {
-      final database = ref.read(databaseProvider);
-      // Increment print count in orders table
-      await database.customStatement(
+      final db = ref.read(databaseProvider);
+      await db.customStatement(
         'UPDATE orders SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
         [orderId],
       );
-    } catch (e) {
-      debugPrint('Error incrementing print count: $e');
-    }
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final printingService = ref.watch(printingServiceProvider);
     final config = printingService.config;
+    final stationsAsync = ref.watch(stationListProvider);
 
-    return AlertDialog(
-      title: Row(
-        children: [
-          const Icon(Icons.print, size: 28),
-          const SizedBox(width: 12),
-          Text('Print Order #${widget.order.orderId ?? "New"}'),
-        ],
-      ),
-      content: SizedBox(
-        width: 400,
+    final receiptReady = config.receiptPrinterName != null;
+    final kdsReady = config.kdsEnabled && config.kdsPrinterName != null;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460, maxHeight: 640),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Order summary
+            // ── Header ──────────────────────────────────────────────────
             Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+              color: theme.primaryColor,
+              child: Row(
                 children: [
-                  Text(
-                    'Order Summary',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[700],
+                  const Icon(Icons.print, color: Colors.white, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Order #${widget.order.orderId ?? "New"}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  _buildInfoRow('Items', '${widget.order.items.length}'),
-                  _buildInfoRow('Type', widget.order.type == 'DINE_IN' ? 'Dine In' : 'Take Away'),
-                  if (widget.order.tableName != null)
-                    _buildInfoRow('Table', widget.order.tableName!),
-                  if (widget.order.customerName != null)
-                    _buildInfoRow('Customer', widget.order.customerName!),
-                  _buildInfoRow('Total', '\$${widget.order.total.toStringAsFixed(2)}'),
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined,
+                        color: Colors.white70, size: 20),
+                    tooltip: 'Configure Printers',
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      Navigator.of(context).pushNamed('/printers');
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed:
+                        _isPrinting ? null : () => Navigator.of(context).pop(false),
+                  ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 20),
-
-            const Text(
-              'Select what to print:',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-
-            // Print options
-            CheckboxListTile(
-              value: _printReceipt,
-              onChanged: _isPrinting ? null : (value) {
-                setState(() {
-                  _printReceipt = value ?? false;
-                });
-              },
-              title: const Text('Customer Receipt'),
-              subtitle: Text(
-                config.receiptPrinterName ?? 'No printer configured',
-                style: TextStyle(
-                  color: config.receiptPrinterName != null ? Colors.green : Colors.red,
-                  fontSize: 12,
-                ),
-              ),
-              secondary: Icon(
-                Icons.receipt_long,
-                color: config.receiptPrinterName != null ? Colors.green : Colors.grey,
-              ),
-              enabled: config.receiptPrinterName != null,
-            ),
-
-            CheckboxListTile(
-              value: _printKds && config.kdsEnabled,
-              onChanged: (!_isPrinting && config.kdsEnabled) ? (value) {
-                setState(() {
-                  _printKds = value ?? false;
-                });
-              } : null,
-              title: const Text('Kitchen Ticket (KDS)'),
-              subtitle: Text(
-                !config.kdsEnabled
-                    ? 'KDS printing disabled'
-                    : config.kdsPrinterName ?? 'No printer configured',
-                style: TextStyle(
-                  color: config.kdsEnabled && config.kdsPrinterName != null
-                      ? Colors.green
-                      : Colors.red,
-                  fontSize: 12,
-                ),
-              ),
-              secondary: Icon(
-                Icons.restaurant,
-                color: config.kdsEnabled && config.kdsPrinterName != null
-                    ? Colors.green
-                    : Colors.grey,
-              ),
-              enabled: config.kdsEnabled && config.kdsPrinterName != null,
-            ),
-
-            // KDS Print Mode Selection (only show when KDS is enabled and checked)
-            if (_printKds && config.kdsEnabled && config.kdsPrinterName != null) ...[
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.only(left: 56, right: 16),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'KDS Print Mode:',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      RadioListTile<KdsPrintMode>(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        value: KdsPrintMode.modificationsOnly,
-                        groupValue: _kdsPrintMode,
-                        onChanged: _isPrinting ? null : (value) {
-                          setState(() {
-                            _kdsPrintMode = value ?? KdsPrintMode.modificationsOnly;
-                          });
-                        },
-                        title: const Text('New Items Only', style: TextStyle(fontSize: 13)),
-                        subtitle: Text(
-                          _getUnprintedItemsCount() > 0
-                              ? '${_getUnprintedItemsCount()} new item(s) will be printed'
-                              : 'No new items to print',
-                          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                        ),
-                      ),
-                      RadioListTile<KdsPrintMode>(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        value: KdsPrintMode.full,
-                        groupValue: _kdsPrintMode,
-                        onChanged: _isPrinting ? null : (value) {
-                          setState(() {
-                            _kdsPrintMode = value ?? KdsPrintMode.full;
-                          });
-                        },
-                        title: const Text('Full Order', style: TextStyle(fontSize: 13)),
-                        subtitle: Text(
-                          'All ${widget.order.items.length} item(s) will be printed',
-                          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-
-            if (_error != null) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-color: Colors.red.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-                ),
-                child: Row(
+            // ── Scrollable Body ──────────────────────────────────────────
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.error, color: Colors.red),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(color: Colors.red),
+                    // Order summary card
+                    _OrderSummaryCard(order: widget.order),
+                    const SizedBox(height: 16),
+
+                    Text(
+                      'Print options',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: Colors.grey[600],
+                        letterSpacing: 0.5,
                       ),
                     ),
+                    const SizedBox(height: 10),
+
+                    // Receipt card
+                    _PrintTypeCard(
+                      icon: Icons.receipt_long,
+                      title: 'Customer Receipt',
+                      subtitle: receiptReady
+                          ? config.receiptPrinterName!
+                          : 'No printer configured',
+                      ready: receiptReady,
+                      selected: _printReceipt,
+                      disabled: _isPrinting || !receiptReady,
+                      onTap: receiptReady && !_isPrinting
+                          ? () => setState(() => _printReceipt = !_printReceipt)
+                          : null,
+                    ),
+                    const SizedBox(height: 8),
+
+                    // KDS card
+                    _PrintTypeCard(
+                      icon: Icons.restaurant,
+                      title: 'Kitchen Ticket (KDS)',
+                      subtitle: !config.kdsEnabled
+                          ? 'KDS disabled in settings'
+                          : kdsReady
+                              ? config.kdsPrinterName!
+                              : 'No printer configured',
+                      ready: kdsReady,
+                      selected: _printKds,
+                      disabled: _isPrinting || !kdsReady,
+                      onTap: kdsReady && !_isPrinting
+                          ? () => setState(() => _printKds = !_printKds)
+                          : null,
+                    ),
+
+                    // KDS sub-options
+                    if (_printKds && kdsReady) ...[
+                      const SizedBox(height: 12),
+                      _KdsOptions(
+                        mode: _kdsPrintMode,
+                        unprintedCount: _unprintedCount,
+                        totalCount: widget.order.items.length,
+                        disabled: _isPrinting,
+                        onModeChanged: (m) => setState(() => _kdsPrintMode = m),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Station selector
+                      stationsAsync.when(
+                        data: (stations) {
+                          if (stations.isEmpty) return const SizedBox.shrink();
+                          return _StationSelector(
+                            stations: stations,
+                            selectedIds: _selectedStationIds,
+                            disabled: _isPrinting,
+                            onToggle: (id) => setState(() {
+                              if (_selectedStationIds.contains(id)) {
+                                _selectedStationIds.remove(id);
+                              } else {
+                                _selectedStationIds.add(id);
+                              }
+                            }),
+                            onClear: () =>
+                                setState(() => _selectedStationIds.clear()),
+                          );
+                        },
+                        loading: () => const SizedBox.shrink(),
+                        error: (_, __) => const SizedBox.shrink(),
+                      ),
+                    ],
+
+                    // Error
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      _ErrorBanner(message: _error!),
+                    ],
                   ],
                 ),
               ),
-            ],
+            ),
 
-            const SizedBox(height: 16),
-
-            // Printer settings link
-            Center(
-              child: TextButton.icon(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(context).pushNamed('/printers');
-                },
-                icon: const Icon(Icons.settings, size: 18),
-                label: const Text('Configure Printers'),
+            // ── Footer ──────────────────────────────────────────────────
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed:
+                        _isPrinting ? null : () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: _isPrinting ? null : _handlePrint,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 12),
+                    ),
+                    icon: _isPrinting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.print, size: 18),
+                    label: Text(_isPrinting ? 'Printing…' : 'Print'),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _isPrinting ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton.icon(
-          onPressed: _isPrinting ? null : _handlePrint,
+    );
+  }
+}
 
-          icon: _isPrinting
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                )
-              : const Icon(Icons.print),
-          label: Text(_isPrinting ? 'Printing...' : 'Print'),
+// ── Sub-widgets ────────────────────────────────────────────────────────────────
+
+class _OrderSummaryCard extends StatelessWidget {
+  final CurrentOrder order;
+  const _OrderSummaryCard({required this.order});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.receipt, size: 16, color: Colors.grey[600]),
+              const SizedBox(width: 6),
+              Text(
+                'Order Summary',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: Colors.grey[700],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _SummaryChip(
+                  icon: Icons.shopping_bag_outlined,
+                  label: '${order.items.length} items'),
+              _SummaryChip(
+                  icon: order.type == 'DINE_IN'
+                      ? Icons.restaurant
+                      : Icons.takeout_dining,
+                  label: order.type == 'DINE_IN' ? 'Dine In' : 'Take Away'),
+              if (order.tableName != null)
+                _SummaryChip(
+                    icon: Icons.table_bar, label: order.tableName!),
+              if (order.customerName != null)
+                _SummaryChip(
+                    icon: Icons.person_outline, label: order.customerName!),
+              _SummaryChip(
+                  icon: Icons.attach_money,
+                  label: order.total.toStringAsFixed(2),
+                  highlight: true),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool highlight;
+  const _SummaryChip(
+      {required this.icon, required this.label, this.highlight = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: highlight
+            ? theme.primaryColor.withValues(alpha: 0.1)
+            : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: highlight
+                ? theme.primaryColor.withValues(alpha: 0.3)
+                : Colors.grey.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon,
+              size: 13,
+              color: highlight ? theme.primaryColor : Colors.grey[600]),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight:
+                  highlight ? FontWeight.w600 : FontWeight.normal,
+              color: highlight ? theme.primaryColor : Colors.grey[800],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrintTypeCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool ready;
+  final bool selected;
+  final bool disabled;
+  final VoidCallback? onTap;
+
+  const _PrintTypeCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.ready,
+    required this.selected,
+    required this.disabled,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final activeColor = theme.primaryColor;
+    final borderColor = selected && ready
+        ? activeColor
+        : ready
+            ? Colors.grey.withValues(alpha: 0.3)
+            : Colors.grey.withValues(alpha: 0.15);
+    final bgColor = selected && ready
+        ? activeColor.withValues(alpha: 0.05)
+        : Colors.transparent;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: borderColor, width: selected && ready ? 1.5 : 1),
+      ),
+      child: InkWell(
+        onTap: disabled ? null : onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: ready
+                      ? (selected
+                          ? activeColor.withValues(alpha: 0.12)
+                          : Colors.grey.withValues(alpha: 0.08))
+                      : Colors.grey.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  icon,
+                  size: 20,
+                  color: ready
+                      ? (selected ? activeColor : Colors.grey[600])
+                      : Colors.grey[400],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        color: ready ? null : Colors.grey[400],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: ready ? Colors.green[700] : Colors.red[400],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (ready)
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 150),
+                  child: selected
+                      ? Icon(Icons.check_circle,
+                          key: const ValueKey('checked'),
+                          color: activeColor,
+                          size: 22)
+                      : Icon(Icons.circle_outlined,
+                          key: const ValueKey('unchecked'),
+                          color: Colors.grey[400],
+                          size: 22),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _KdsOptions extends StatelessWidget {
+  final KdsPrintMode mode;
+  final int unprintedCount;
+  final int totalCount;
+  final bool disabled;
+  final ValueChanged<KdsPrintMode> onModeChanged;
+
+  const _KdsOptions({
+    required this.mode,
+    required this.unprintedCount,
+    required this.totalCount,
+    required this.disabled,
+    required this.onModeChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Print mode',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[600],
+            letterSpacing: 0.3,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _ModeButton(
+                label: 'New items only',
+                count: unprintedCount,
+                selected: mode == KdsPrintMode.modificationsOnly,
+                color: theme.primaryColor,
+                onTap: disabled
+                    ? null
+                    : () => onModeChanged(KdsPrintMode.modificationsOnly),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _ModeButton(
+                label: 'Full order',
+                count: totalCount,
+                selected: mode == KdsPrintMode.full,
+                color: theme.primaryColor,
+                onTap: disabled
+                    ? null
+                    : () => onModeChanged(KdsPrintMode.full),
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
+}
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+class _ModeButton extends StatelessWidget {
+  final String label;
+  final int count;
+  final bool selected;
+  final Color color;
+  final VoidCallback? onTap;
+
+  const _ModeButton({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.color,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? color.withValues(alpha: 0.1) : Colors.grey.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? color : Colors.grey.withValues(alpha: 0.2),
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                color: selected ? color : Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '$count item${count != 1 ? 's' : ''}',
+              style: TextStyle(
+                fontSize: 11,
+                color: selected ? color.withValues(alpha: 0.8) : Colors.grey[500],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StationSelector extends StatelessWidget {
+  final List<dynamic> stations;
+  final Set<int> selectedIds;
+  final bool disabled;
+  final ValueChanged<int> onToggle;
+  final VoidCallback onClear;
+
+  const _StationSelector({
+    required this.stations,
+    required this.selectedIds,
+    required this.disabled,
+    required this.onToggle,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final allSelected = selectedIds.isEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Station',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[600],
+            letterSpacing: 0.3,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            // "All" chip
+            _StationChip(
+              label: 'All stations',
+              selected: allSelected,
+              color: theme.primaryColor,
+              onTap: disabled ? null : onClear,
+            ),
+            // Per-station chips
+            ...stations.map((s) {
+              final isSelected = selectedIds.contains(s.id);
+              return _StationChip(
+                label: s.name as String,
+                selected: isSelected && !allSelected,
+                color: theme.primaryColor,
+                onTap: disabled ? null : () => onToggle(s.id as int),
+              );
+            }),
+          ],
+        ),
+        if (!allSelected)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '${selectedIds.length} station${selectedIds.length != 1 ? 's' : ''} selected',
+              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _StationChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback? onTap;
+
+  const _StationChip({
+    required this.label,
+    required this.selected,
+    required this.color,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? color : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? color : Colors.grey.withValues(alpha: 0.3),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+            color: selected ? Colors.white : Colors.grey[700],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  const _ErrorBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.red.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
+      ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: Colors.grey[600])),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
+          const Icon(Icons.error_outline, color: Colors.red, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: Colors.red, fontSize: 13),
+            ),
+          ),
         ],
       ),
     );

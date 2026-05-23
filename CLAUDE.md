@@ -33,6 +33,9 @@ Local sibling packages:
 | Window mgmt | window_manager | ^0.4.3 |
 | Audio | audioplayers | ^6.5.1 |
 | JSON codegen | json_serializable + json_annotation | ^6.7.1 / ^4.8.1 |
+| UI extras | data_table_2, getwidget, flutter_svg, cached_network_image | latest |
+| Image | image | ^4.7.2 (ESC/POS bitmap printing) |
+| On-screen KB | flutter_onscreen_keyboard | ^0.4.1+1 |
 | Misc | shared_preferences, uuid, path_provider, path | latest |
 
 ---
@@ -201,6 +204,7 @@ Add new routes as named strings in the `routes` map in `main.dart`.
 - After schema changes: `flutter pub run build_runner build --delete-conflicting-outputs`
 - Never edit `app_database.g.dart` manually
 - `Value(x)` for optional Companion fields; omit for `DEFAULT`
+- `build.yaml` sets `store_date_time_values_as_text: true` and SQLite dialect — never store datetimes as integers
 
 ## Services & Repositories
 - `OrderRepository` is sole source of truth for order CRUD — no direct DB calls from UI
@@ -208,6 +212,15 @@ Add new routes as named strings in the `routes` map in `main.dart`.
 - `ServerService` (Shelf): CORS and auth handled in middleware pipeline
 - Offline mutations: queue via `PendingOperationsService` — do not call sync from UI
 - Use `Logger.instance` from `loggecrea` — no bare `print()` in new code
+- `PrintingService` manages **two independent printers**: receipt printer (customer copy) and KDS printer (kitchen tickets). Each has its own `PrinterConfig` (address + `ConnectionType`). `KdsPrintMode.modificationsOnly` prints only new/unprinted items to avoid duplicate kitchen tickets.
+
+## Settings
+- `AppSettings` (`domain/models/app_settings.dart`) is the typed settings model; persisted to SharedPrefs via `settingsProvider` in `providers/settings_provider.dart`
+- Controls action button visibility (`showTableButton`, `showPayButton`, …) and `buttonOrder` list for reorderable POS toolbar
+- `CategoryDisplayMode`: `topBar` (default) vs `fullPage` — changes main screen layout significantly
+
+## UI Patterns
+- `PermissionGuard` widget (`presentation/widgets/permission_guard.dart`) gates UI sections by role — wrap protected content rather than duplicating permission checks
 
 ## UI
 - Material 3 (`useMaterial3: true`) — `Theme.of(context).colorScheme` for colors
