@@ -403,9 +403,9 @@ class OrderPanel extends ConsumerWidget {
                                   : isHeld
                                       ? Colors.orange[50]
                                       : Theme.of(context).cardColor,
-                              margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+                              margin: const EdgeInsets.symmetric(vertical: 1.5, horizontal: 3),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(6),
                                 side: BorderSide(
                                   color: isPaid
                                       ? Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)
@@ -417,9 +417,9 @@ class OrderPanel extends ConsumerWidget {
                               ),
                               child: InkWell(
                                 onTap: isPaid ? null : () => _showItemOptions(context, ref, invertedIndex, item),
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(6),
                                 child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                   child: IntrinsicHeight(
                                     child: Row(
                                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -428,7 +428,7 @@ class OrderPanel extends ConsumerWidget {
                                         Center(
                                           child: isPaid
                                               ? Container(
-                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                                                   decoration: BoxDecoration(
                                                     color: Theme.of(context).colorScheme.surfaceContainerHighest,
                                                     borderRadius: BorderRadius.circular(4),
@@ -438,7 +438,7 @@ class OrderPanel extends ConsumerWidget {
                                                     '${item.quantity}',
                                                     style: TextStyle(
                                                       fontWeight: FontWeight.bold,
-                                                      fontSize: 14,
+                                                      fontSize: 12,
                                                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                                                     ),
                                                   ),
@@ -446,15 +446,15 @@ class OrderPanel extends ConsumerWidget {
                                               : item.isWeighedItem
                                                   // Weighed items — show scale icon badge instead of qty tap button.
                                                   ? Container(
-                                                      width: 48,
-                                                      height: 48,
+                                                      width: 36,
+                                                      height: 36,
                                                       alignment: Alignment.center,
                                                       decoration: BoxDecoration(
                                                         color: Colors.teal.withValues(alpha: 0.1),
-                                                        borderRadius: BorderRadius.circular(8),
+                                                        borderRadius: BorderRadius.circular(6),
                                                         border: Border.all(color: Colors.teal.withValues(alpha: 0.5)),
                                                       ),
-                                                      child: const Icon(Icons.scale, color: Colors.teal, size: 22),
+                                                      child: const Icon(Icons.scale, color: Colors.teal, size: 18),
                                                     )
                                                   : InkWell(
                                                       onTap: () {
@@ -464,14 +464,14 @@ class OrderPanel extends ConsumerWidget {
                                                         );
                                                       },
                                                       onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
-                                                      borderRadius: BorderRadius.circular(8),
+                                                      borderRadius: BorderRadius.circular(6),
                                                       child: Container(
-                                                        width: 48,
-                                                        height: 48,
+                                                        width: 36,
+                                                        height: 36,
                                                         alignment: Alignment.center,
                                                         decoration: BoxDecoration(
                                                           color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.7),
-                                                          borderRadius: BorderRadius.circular(8),
+                                                          borderRadius: BorderRadius.circular(6),
                                                           border: Border.all(
                                                             color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
                                                           ),
@@ -480,7 +480,7 @@ class OrderPanel extends ConsumerWidget {
                                                           '${item.quantity}',
                                                           style: TextStyle(
                                                             fontWeight: FontWeight.bold,
-                                                            fontSize: 20,
+                                                            fontSize: 16,
                                                             color: Theme.of(context).colorScheme.onPrimaryContainer,
                                                           ),
                                                         ),
@@ -488,7 +488,7 @@ class OrderPanel extends ConsumerWidget {
                                                     ),
                                         ),
 
-                                        const SizedBox(width: 12),
+                                        const SizedBox(width: 8),
 
                                         // 2. Product Details (Middle)
                                         Expanded(
@@ -502,17 +502,17 @@ class OrderPanel extends ConsumerWidget {
                                                   if (isPaid) ...[
                                                     Icon(
                                                       Icons.lock_outline,
-                                                      size: 14,
+                                                      size: 12,
                                                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                                                     ),
-                                                    const SizedBox(width: 4),
+                                                    const SizedBox(width: 3),
                                                   ],
                                                   Expanded(
                                                     child: Text(
                                                       item.displayName,
                                                       style: TextStyle(
                                                         fontWeight: FontWeight.w600,
-                                                        fontSize: 15,
+                                                        fontSize: 13,
                                                         decoration: isPaid ? TextDecoration.lineThrough : null,
                                                         decorationColor: Theme.of(context).colorScheme.onSurfaceVariant,
                                                         color: isPaid ? Theme.of(context).colorScheme.onSurfaceVariant : null,
@@ -529,12 +529,12 @@ class OrderPanel extends ConsumerWidget {
                                               if (item.components.isNotEmpty) ...[
                                                 const SizedBox(height: 2),
                                                 Wrap(
-                                                  spacing: 6,
+                                                  spacing: 4,
                                                   runSpacing: 2,
                                                   children: item.components.map((comp) => Text(
                                                     '+ ${comp.name} (${comp.quantity})',
                                                     style: TextStyle(
-                                                      fontSize: 11,
+                                                      fontSize: 10,
                                                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                                                       height: 1.1,
                                                     ),
@@ -544,18 +544,18 @@ class OrderPanel extends ConsumerWidget {
 
                                               // Weighed item detail line
                                               if (item.isWeighedItem && item.weightKg != null && item.weightKg! > 0) ...[
-                                                const SizedBox(height: 4),
+                                                const SizedBox(height: 3),
                                                 Row(
                                                   children: [
-                                                    Icon(Icons.scale, size: 12, color: Colors.teal[600]),
-                                                    const SizedBox(width: 4),
+                                                    Icon(Icons.scale, size: 10, color: Colors.teal[600]),
+                                                    const SizedBox(width: 3),
                                                     Flexible(
                                                       child: Text(
                                                         item.pricePerKgDisplay != null
                                                             ? '${item.weightKg!.toStringAsFixed(3)} kg × ${item.pricePerKgDisplay!.toStringAsFixed(2)}/kg'
                                                             : '${item.weightKg!.toStringAsFixed(3)} kg',
                                                         style: TextStyle(
-                                                          fontSize: 11,
+                                                          fontSize: 10,
                                                           color: Colors.teal[700],
                                                           fontWeight: FontWeight.w600,
                                                           height: 1.1,
@@ -569,23 +569,23 @@ class OrderPanel extends ConsumerWidget {
 
                                               // Note (Compact)
                                               if (item.note != null && item.note!.isNotEmpty) ...[
-                                                const SizedBox(height: 4),
+                                                const SizedBox(height: 3),
                                                 Container(
-                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                                                   decoration: BoxDecoration(
-                                                    borderRadius: BorderRadius.circular(4),
+                                                    borderRadius: BorderRadius.circular(3),
                                                     border: Border.all(),
                                                   ),
                                                   child: Row(
                                                     mainAxisSize: MainAxisSize.min,
                                                     children: [
-                                                      Icon(Icons.sticky_note_2, size: 10, color: Colors.amber[800]),
-                                                      const SizedBox(width: 4),
+                                                      Icon(Icons.sticky_note_2, size: 9, color: Colors.amber[800]),
+                                                      const SizedBox(width: 3),
                                                       Flexible(
                                                         child: Text(
                                                           item.note!,
                                                           style: TextStyle(
-                                                            fontSize: 11,
+                                                            fontSize: 10,
                                                             fontStyle: FontStyle.italic,
                                                             height: 1.1,
                                                           ),
@@ -652,7 +652,7 @@ class OrderPanel extends ConsumerWidget {
                                           ),
                                         ),
 
-                                        const SizedBox(width: 8),
+                                        const SizedBox(width: 6),
 
                                         // 3. Price & Actions (Right)
                                         Column(
@@ -664,7 +664,7 @@ class OrderPanel extends ConsumerWidget {
                                               currencyFormatter.format(item.totalPrice),
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
-                                                fontSize: 15,
+                                                fontSize: 13,
                                                 color: isPaid ? Theme.of(context).colorScheme.onSurfaceVariant : null,
                                               ),
                                             ),
@@ -673,7 +673,7 @@ class OrderPanel extends ConsumerWidget {
                                               Text(
                                                 '-${currencyFormatter.format(item.totalDiscount)}',
                                                 style: TextStyle(
-                                                  fontSize: 10,
+                                                  fontSize: 9,
                                                   color: Colors.orange[800],
                                                   fontWeight: FontWeight.w500,
                                                 ),
@@ -681,17 +681,17 @@ class OrderPanel extends ConsumerWidget {
 
                                             // Action Button (Note)
                                             if (!isPaid) ...[
-                                               const SizedBox(height: 8),
+                                               const SizedBox(height: 4),
                                               SizedBox(
-                                                width: 32,
-                                                height: 32,
+                                                width: 26,
+                                                height: 26,
                                                 child: IconButton(
                                                   onPressed: () => _showNoteDialog(context, ref, invertedIndex, item),
                                                   icon: Icon(
                                                     item.note != null && item.note!.isNotEmpty
                                                         ? Icons.sticky_note_2
                                                         : Icons.sticky_note_2_outlined,
-                                                    size: 30,
+                                                    size: 20,
                                                     color: item.note != null && item.note!.isNotEmpty
                                                         ? Colors.amber[700]
                                                         : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),

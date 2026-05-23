@@ -345,7 +345,13 @@ class OrderRepository {
     if (order.orderId != null) {
       throw Exception("Order already has an order code, use updateOrder instead.");
     }
-    _logger.debug('saveOrder: ${order.items.first.toJson()}');
+    
+    // Check if order has items
+    if (order.items.isEmpty) {
+      throw Exception("Cannot save order with no items");
+    }
+    
+    _logger.debug('saveOrder: ${order.items.length} items, first item: ${order.items.first.toJson()}');
     // Generate order code
     final uuid = const Uuid();
     final orderCode = order.orderCode != null ? order.orderCode! : uuid.v4().substring(0, 8).toUpperCase();
@@ -520,6 +526,15 @@ class OrderRepository {
 
     final wasAlreadySynced = existingOrder?.isSynced ?? false;
     final orderCode = existingOrder?.code ?? order.orderCode ?? '';
+    
+    // Count unpaid items to be updated
+    final unpaidItems = order.items.where((item) => item.ticketId == null).toList();
+    _logger.debug('updateOrder: total items=${order.items.length}, unpaid items=${unpaidItems.length}');
+    
+    // If there are no unpaid items and no items at all, something is wrong
+    if (order.items.isEmpty && unpaidItems.isEmpty) {
+      _logger.warning('updateOrder called with zero items - this should not happen');
+    }
 
     // Update order details
     await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(OrdersCompanion(

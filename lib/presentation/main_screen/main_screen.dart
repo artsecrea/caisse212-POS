@@ -902,6 +902,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       int? orderId = currentOrder.orderId;
                       if (!currentOrder.isSaved() && currentUser != null) {
                         try {
+                          _logger.debug('Print: Saving new order with ${currentOrder.items.length} items');
                           orderId = await orderRepo.saveOrder(
                             currentOrder,
                             currentUser.id,
@@ -918,6 +919,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                             ref.read(orderProvider.notifier).loadOrder(reloadedOrder);
                           }
                         } catch (e) {
+                          _logger.error('Error saving order for print: $e');
                           if (context.mounted) {
                             SnackBarHelper.showErrorSnackBar(
                               context,
@@ -1001,7 +1003,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         await orderRepo.updateOrder(currentOrder);
                         orderId = currentOrder.orderId!;
                       } else {
-                        _logger.error("new order created");
+                        _logger.error("new order created with ${currentOrder.items.length} items");
                         orderId = await orderRepo.saveOrder(
                           currentOrder,
                           currentUser.id,
@@ -1035,9 +1037,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         } catch (printError) {
                           _logger.error('Print error on proceed: $printError');
                         }
-
-                        ref.read(orderProvider.notifier).clearOrder();
+                      } else {
+                        _logger.error('Failed to reload order after save - orderId: $orderId');
                       }
+                      
+                      // Always clear order after successful save, regardless of reload/print outcome
+                      ref.read(orderProvider.notifier).clearOrder();
 
                       // Auto-sync if online
                       {
@@ -1100,14 +1105,28 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final prefs = ref.read(sharedPreferencesProvider);
 
     if (currentUser == null) return;
+    
+    // Validate order has items
+    if (currentOrder.items.isEmpty) {
+      if (mounted) {
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          'Cannot save order with no items',
+        );
+      }
+      return;
+    }
 
     try {
       int orderId;
       // Save or update order first
       if (currentOrder.isSaved()) {
+        _logger.debug('Updating existing order with ${currentOrder.items.length} items');
         await orderRepo.updateOrder(currentOrder);
         orderId = currentOrder.orderId!;
       } else {
+        _logger.debug('Creating new order with ${currentOrder.items.length} items');
         orderId = await orderRepo.saveOrder(
           currentOrder,
           currentUser.id,

@@ -66,7 +66,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration {
@@ -229,6 +229,12 @@ class AppDatabase extends _$AppDatabase {
               'CREATE INDEX IF NOT EXISTS idx_products_mbw_code ON products(mbw_code);',
             );
           } catch (e) {/* non-fatal */}
+        }
+        if (from < 9) {
+          // Add kds_printed_at column to order_products for KDS printing tracking.
+          try {
+            await customStatement('ALTER TABLE order_products ADD COLUMN kds_printed_at INTEGER;');
+          } catch (e) {/* may already exist */}
         }
       },
     );

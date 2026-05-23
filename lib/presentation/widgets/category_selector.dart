@@ -14,7 +14,7 @@ class CategorySelector extends ConsumerWidget {
     final displayMode = ref.watch(categoryDisplayModeProvider);
 
     return Container(
-      height: 100,
+      height: 70,
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         boxShadow: [
@@ -29,17 +29,17 @@ class CategorySelector extends ConsumerWidget {
         children: [
           // Calculator button
           Padding(
-            padding: const EdgeInsets.only(left: 16, right: 8, top: 12, bottom: 12),
+            padding: const EdgeInsets.only(left: 12, right: 6, top: 8, bottom: 8),
             child: InkWell(
               onTap: () {
                 _showCalculator(context);
               },
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(8),
               child: Container(
-                width: 76,
+                width: 54,
                 decoration: BoxDecoration(
                   color: Colors.blue[700],
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(8),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.blue.withValues(alpha: 0.3),
@@ -53,15 +53,15 @@ class CategorySelector extends ConsumerWidget {
                   children: [
                     Icon(
                       Icons.calculate,
-                      size: 36,
+                      size: 24,
                       color: Colors.white,
                     ),
-                    SizedBox(height: 4),
+                    SizedBox(height: 2),
                     Text(
                       'Calc',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 12,
+                        fontSize: 10,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -87,7 +87,7 @@ class CategorySelector extends ConsumerWidget {
       data: (categories) {
         return ListView.builder(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.only(right: 16, top: 12, bottom: 12),
+          padding: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
           itemCount: categories.length + 1, // +1 for "All" category
           itemBuilder: (context, index) {
             if (index == 0) {
@@ -290,14 +290,14 @@ class _CategoryChip extends StatelessWidget {
             : Theme.of(context).colorScheme.onSurface;
 
     return Padding(
-      padding: const EdgeInsets.only(right: 12),
+      padding: const EdgeInsets.only(right: 8),
       child: InkWell(
         onTap: onTap,
         child: Container(
-          width: 120,
+          width: 90,
           constraints: const BoxConstraints(
-            minWidth: 100,
-            maxWidth: 120,
+            minWidth: 70,
+            maxWidth: 90,
           ),
           decoration: BoxDecoration(
             color: bgColor,
@@ -305,10 +305,10 @@ class _CategoryChip extends StatelessWidget {
               color: isSelected
                   ? Theme.of(context).primaryColor
                   : chipColor ?? Colors.grey[300]!,
-              width: 2,
+              width: 1.5,
             ),
           ),
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.all(6),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
@@ -318,7 +318,7 @@ class _CategoryChip extends StatelessWidget {
                   name,
                   style: TextStyle(
                     color: textColor,
-                    fontSize: 20,
+                    fontSize: 13,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   ),
                   textAlign: TextAlign.center,

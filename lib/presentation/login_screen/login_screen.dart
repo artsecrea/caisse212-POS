@@ -842,32 +842,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Widget _buildBrandPanel(BuildContext context) {
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(48, 40, 48, 48),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-            const Caisse212Logo(size: 72),
-            const SizedBox(height: 24),
+            const Caisse212Logo(size: 60),
+            const SizedBox(height: 20),
             const Text(
               'CAISSE212',
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 32,
+                fontSize: 28,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 1.5,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               'Point of Sale System',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.75),
-                fontSize: 15,
+                fontSize: 14,
               ),
             ),
-            const SizedBox(height: 56),
+            const SizedBox(height: 40),
             for (final item in <MapEntry<IconData, String>>[
               MapEntry(Icons.speed_outlined, 'Fast order management'),
               MapEntry(Icons.receipt_long_outlined, 'Thermal printing support'),
@@ -875,23 +876,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               MapEntry(Icons.table_restaurant_outlined, 'Table management'),
             ])
               Padding(
-                padding: const EdgeInsets.only(bottom: 20),
+                padding: const EdgeInsets.only(bottom: 16),
                 child: Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(10),
+                      padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      child: Icon(item.key, color: Colors.white, size: 20),
+                      child: Icon(item.key, color: Colors.white, size: 18),
                     ),
-                    const SizedBox(width: 16),
-                    Text(
-                      item.value,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 14,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        item.value,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.9),
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ],
