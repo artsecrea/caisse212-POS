@@ -1,6 +1,3 @@
-import 'dart:math';
-
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -490,58 +487,30 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Show loading screen during data sync
     if (_isLoadingData) {
-      return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Theme.of(context).primaryColor,
-              Theme.of(context).primaryColor.withValues(alpha: 0.7),
-            ],
-          ),
-        ),
-          child: Center(
-            child: Card(
-              elevation: 8,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 400),
-                padding: const EdgeInsets.all(40.0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 24),
-                    Text(
-                      _loadingMessage,
-                      style: Theme.of(context).textTheme.titleMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 16),
-                    LinearProgressIndicator(
-                      value: _loadingProgress,
-                      backgroundColor: Colors.grey[300],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${(_loadingProgress * 100).toInt()}%',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
+      return _buildLoadingScreen(context);
     }
 
+    final isWide = MediaQuery.sizeOf(context).width >= 900;
+
+    return Scaffold(
+      body: Stack(
+        children: [
+          if (isWide)
+            _buildWideLayout(context)
+          else
+            _buildCompactLayout(context),
+          Positioned(
+            top: 16,
+            right: 16,
+            child: _buildTopActions(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingScreen(BuildContext context) {
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -555,316 +524,491 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
           ),
         ),
         child: Center(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(32.0),
-              child: Card(
-                elevation: 8,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 500),
-                  padding: const EdgeInsets.all(40.0),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const Caisse212Logo(size: 70),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Connect to your server or use demo mode',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Colors.grey[600],
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 32),
-
-                        // Server URL (hidden behind config icon)
-                        if (_showServerUrl) ...[
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _serverUrlController,
-                                  decoration: InputDecoration(
-                                    labelText: 'Server URL',
-                                    prefixIcon: const Icon(Icons.dns),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  style: const TextStyle(fontSize: 14),
-                                  validator: (value) {
-                                    if (value == null || value.trim().isEmpty) {
-                                      return 'Server URL is required';
-                                    }
-                                    if (!value.startsWith('http://') && !value.startsWith('https://')) {
-                                      return 'URL must start with http:// or https://';
-                                    }
-                                    return null;
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _showServerUrl = false;
-                                  });
-                                },
-                                icon: const Icon(Icons.visibility_off),
-                                tooltip: 'Hide Server URL',
-                                style: IconButton.styleFrom(
-                                  backgroundColor: Colors.grey[200],
-                                  padding: const EdgeInsets.all(16),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                        ] else ...[
-                          // Config icon to reveal server URL
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[100],
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: Colors.grey[300]!),
-                                ),
-                                child: IconButton(
-                                  onPressed: _showServerSettingsDialog,
-                                  icon: const Icon(Icons.settings),
-                                  tooltip: 'Configure Server (Protected)',
-                                  iconSize: 32,
-                                  style: IconButton.styleFrom(
-                                    padding: const EdgeInsets.all(16),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                        ],
-
-                        // POS Name
-                        OnscreenKeyboardTextField(
-                          controller: _posNameController,
-                          decoration: InputDecoration(
-                            labelText: 'POS Name *',
-                            prefixIcon: const Icon(Icons.point_of_sale),
-
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                        const SizedBox(height: 20),
-
-                        // Username
-                        OnscreenKeyboardTextField(
-                          controller: _usernameController,
-                          decoration: InputDecoration(
-                            labelText: 'Username *',
-                            prefixIcon: const Icon(Icons.person),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                        const SizedBox(height: 20),
-
-                        // Password
-                        OnscreenKeyboardTextField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          decoration: InputDecoration(
-                            labelText: 'Password *',
-                            prefixIcon: const Icon(Icons.lock),
-                            suffixIcon: IconButton(
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility
-                                    : Icons.visibility_off,
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword = !_obscurePassword;
-                                });
-                              },
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          style: const TextStyle(fontSize: 16),
-                        ),
-
-                        if (_errorMessage != null) ...[
-                          const SizedBox(height: 16),
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.red[50],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.red[300]!),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.error_outline, color: Colors.red[700]),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _errorMessage!,
-                                    style: TextStyle(color: Colors.red[700]),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-
-                        const SizedBox(height: 32),
-
-                        // Connect to Server button - BIGGER
-                        SizedBox(
-                          height: 60,
-                          child: ElevatedButton.icon(
-                            onPressed: _isLoading ? null : _handleServerLogin,
-                            icon: _isLoading
-                                ? const SizedBox(
-                              height: 24,
-                              width: 24,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                color: Colors.white,
-                              ),
-                            )
-                                : const Icon(Icons.cloud_done, size: 28),
-                            label: Text(
-                              _isLoading ? 'Connecting...' : 'Connect to Server',
-                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Theme.of(context).primaryColor,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              elevation: 4,
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 24),
-
-                        // Divider with "OR"
-                        Row(
-                          children: [
-                            Expanded(child: Divider(color: Colors.grey[400], thickness: 1.5)),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 20),
-                              child: Text(
-                                'OR',
-                                style: TextStyle(
-                                  color: Colors.grey[700],
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                            Expanded(child: Divider(color: Colors.grey[400], thickness: 1.5)),
-                          ],
-                        ),
-
-                        const SizedBox(height: 24),
-
-                        // Demo Mode button - BIGGER
-                        SizedBox(
-                          height: 60,
-                          child: OutlinedButton.icon(
-                            onPressed: _isLoading ? null : _handleDemoMode,
-                            icon: const Icon(Icons.science, size: 28),
-                            label: const Text(
-                              'Use Demo Mode',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Theme.of(context).primaryColor,
-                              side: BorderSide(
-                                color: Theme.of(context).primaryColor,
-                                width: 2,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        // API Tester button
-                        // SizedBox(
-                        //   height: 50,
-                        //   child: OutlinedButton.icon(
-                        //     onPressed: () {
-                        //       Navigator.of(context).pushNamed('/api-tester');
-                        //     },
-                        //     icon: const Icon(Icons.bug_report, size: 24),
-                        //     label: const Text(
-                        //       'Test API Endpoints',
-                        //       style: TextStyle(fontSize: 16),
-                        //     ),
-                        //     style: OutlinedButton.styleFrom(
-                        //       foregroundColor: Colors.orange[700],
-                        //       side: BorderSide(
-                        //         color: Colors.orange[700]!,
-                        //         width: 1.5,
-                        //       ),
-                        //       shape: RoundedRectangleBorder(
-                        //         borderRadius: BorderRadius.circular(12),
-                        //       ),
-                        //     ),
-                        //   ),
-                        // ),
-
-                        const SizedBox(height: 16),
-
-                        // Report Issue button
-                        SizedBox(
-                          height: 50,
-                          child: TextButton.icon(
-                            onPressed: () {
-                              showDialog(
-                                context: context,
-                                builder: (context) => const ReportIssueDialog(),
-                              );
-                            },
-                            icon: const Icon(Icons.report_problem, size: 24),
-                            label: const Text(
-                              'Report Issue',
-                              style: TextStyle(fontSize: 16),
-                            ),
-                            style: TextButton.styleFrom(
-                              foregroundColor: Colors.grey[700],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+          child: Card(
+            elevation: 8,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 400),
+              padding: const EdgeInsets.all(40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Caisse212Logo(size: 48),
+                  const SizedBox(height: 24),
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 24),
+                  Text(
+                    _loadingMessage,
+                    style: Theme.of(context).textTheme.titleMedium,
+                    textAlign: TextAlign.center,
                   ),
+                  const SizedBox(height: 16),
+                  LinearProgressIndicator(
+                    value: _loadingProgress,
+                    backgroundColor: Colors.grey[300],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${(_loadingProgress * 100).toInt()}%',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWideLayout(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          flex: 4,
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Theme.of(context).primaryColor,
+                  Theme.of(context).primaryColor.withValues(alpha: 0.75),
+                ],
+              ),
+            ),
+            child: _buildBrandPanel(context),
+          ),
+        ),
+        Expanded(
+          flex: 6,
+          child: Container(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 64, vertical: 80),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: _buildFormContent(context, showLogo: false),
                 ),
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompactLayout(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Theme.of(context).primaryColor,
+            Theme.of(context).primaryColor.withValues(alpha: 0.7),
+          ],
+        ),
+      ),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: Card(
+              elevation: 8,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: _buildFormContent(context, showLogo: true),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBrandPanel(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(48, 80, 48, 48),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Caisse212Logo(size: 72),
+            const SizedBox(height: 24),
+            const Text(
+              'CAISSE212',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Point of Sale System',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.75),
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 48),
+            Text(
+              'First-time Setup',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 20),
+            for (final item in <MapEntry<int, String>>[
+              MapEntry(1, 'Connect to server'),
+              MapEntry(2, 'Sign in as admin'),
+              MapEntry(3, 'Set security password'),
+              MapEntry(4, 'Sync all data'),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '${item.key}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Text(
+                      item.value,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFormContent(BuildContext context, {required bool showLogo}) {
+    return Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (showLogo) ...[
+            const Caisse212Logo(size: 56),
+            const SizedBox(height: 16),
+          ],
+          Text(
+            'Server Setup',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Connect to your server or use demo mode',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.grey[600],
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 32),
+
+          // Server URL — hidden behind settings gear by default
+          if (_showServerUrl) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _serverUrlController,
+                    decoration: InputDecoration(
+                      labelText: 'Server URL',
+                      prefixIcon: const Icon(Icons.dns),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    style: const TextStyle(fontSize: 14),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Server URL is required';
+                      }
+                      if (!value.startsWith('http://') &&
+                          !value.startsWith('https://')) {
+                        return 'URL must start with http:// or https://';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: () => setState(() => _showServerUrl = false),
+                  icon: const Icon(Icons.visibility_off),
+                  tooltip: 'Hide Server URL',
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.grey[200],
+                    padding: const EdgeInsets.all(14),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+          ] else ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[300]!),
+                  ),
+                  child: IconButton(
+                    onPressed: _showServerSettingsDialog,
+                    icon: const Icon(Icons.settings),
+                    tooltip: 'Configure Server (Protected)',
+                    iconSize: 28,
+                    style: IconButton.styleFrom(
+                      padding: const EdgeInsets.all(14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          OnscreenKeyboardTextField(
+            controller: _posNameController,
+            decoration: InputDecoration(
+              labelText: 'POS Name *',
+              prefixIcon: const Icon(Icons.point_of_sale),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            style: const TextStyle(fontSize: 16),
+          ),
+          const SizedBox(height: 20),
+          OnscreenKeyboardTextField(
+            controller: _usernameController,
+            decoration: InputDecoration(
+              labelText: 'Username *',
+              prefixIcon: const Icon(Icons.person),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            style: const TextStyle(fontSize: 16),
+          ),
+          const SizedBox(height: 20),
+          OnscreenKeyboardTextField(
+            controller: _passwordController,
+            obscureText: _obscurePassword,
+            decoration: InputDecoration(
+              labelText: 'Password *',
+              prefixIcon: const Icon(Icons.lock),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                ),
+                onPressed: () =>
+                    setState(() => _obscurePassword = !_obscurePassword),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            style: const TextStyle(fontSize: 16),
+          ),
+
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.red[50],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.red[300]!, width: 1.5),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline, color: Colors.red[700], size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _errorMessage!,
+                      style: TextStyle(color: Colors.red[700], fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 32),
+
+          SizedBox(
+            height: 56,
+            child: ElevatedButton.icon(
+              onPressed: _isLoading ? null : _handleServerLogin,
+              icon: _isLoading
+                  ? const SizedBox(
+                      height: 22,
+                      width: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.cloud_done, size: 24),
+              label: Text(
+                _isLoading ? 'Connecting...' : 'Connect to Server',
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 2,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          Row(
+            children: [
+              Expanded(
+                child: Divider(color: Colors.grey[400], thickness: 1),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'OR',
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Divider(color: Colors.grey[400], thickness: 1),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 20),
+
+          SizedBox(
+            height: 56,
+            child: OutlinedButton.icon(
+              onPressed: _isLoading ? null : _handleDemoMode,
+              icon: const Icon(Icons.science, size: 22),
+              label: const Text(
+                'Use Demo Mode',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Theme.of(context).primaryColor,
+                side: BorderSide(
+                  color: Theme.of(context).primaryColor,
+                  width: 1.5,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          Center(
+            child: TextButton.icon(
+              onPressed: () => showDialog(
+                context: context,
+                builder: (_) => const ReportIssueDialog(),
+              ),
+              icon: Icon(Icons.report_problem_outlined,
+                  size: 18, color: Colors.grey[600]),
+              label: Text(
+                'Report Issue',
+                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopActions(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildOverlayIconButton(
+          icon: Icons.bug_report_outlined,
+          onTap: () => showDialog(
+            context: context,
+            builder: (_) => const ReportIssueDialog(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOverlayIconButton({
+    required IconData icon,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: Colors.black38,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 2,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Icon(icon, size: 24, color: Colors.white),
         ),
       ),
     );

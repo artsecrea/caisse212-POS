@@ -718,88 +718,96 @@ class OrderPanel extends ConsumerWidget {
           ),
           // Order Summary
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerLow,
               border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
             ),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Show subtotal before discount if discount is applied
+                // Subtotal row
                 if (currentOrder.discountPercentage > 0) ...[
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(l10n.translate('subtotal')),
+                      Text(l10n.translate('subtotal'),
+                          style: const TextStyle(fontSize: 12)),
                       Text(
                         currencyFormatter.format(currentOrder.subtotal),
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.percent, size: 14, color: Colors.orange[700]),
-                          const SizedBox(width: 4),
+                          Icon(Icons.percent, size: 12, color: Colors.orange[700]),
+                          const SizedBox(width: 3),
                           Text(
                             '${l10n.translate('discount')} (${currentOrder.discountPercentage.toStringAsFixed(0)}%):',
-                            style: TextStyle(color: Colors.orange[700]),
+                            style: TextStyle(color: Colors.orange[700], fontSize: 12),
                           ),
                         ],
                       ),
                       Text(
                         '-${currencyFormatter.format(currentOrder.discountAmount)}',
                         style: TextStyle(
+                          fontSize: 12,
                           fontWeight: FontWeight.bold,
                           color: Colors.orange[700],
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                 ] else ...[
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('${l10n.translate('subtotal')}:'),
+                      Text('${l10n.translate('subtotal')}:',
+                          style: const TextStyle(fontSize: 12)),
                       Text(
                         currencyFormatter.format(currentOrder.subtotal),
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                 ],
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('${l10n.translate('tax')}:'),
+                    Text('${l10n.translate('tax')}:',
+                        style: const TextStyle(fontSize: 12)),
                     Text(
                       currencyFormatter.format(currentOrder.tax),
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
-                const Divider(height: 16),
+                const Divider(height: 14),
+                // Total row — prominent
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
                       '${l10n.translate('total')}:',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                    Text(
-                      currencyFormatter.format(currentOrder.total),
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        currencyFormatter.format(currentOrder.total),
+                        textAlign: TextAlign.end,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
                       ),
                     ),
                   ],

@@ -8,6 +8,7 @@ import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
+import '../../utils/responsive_utils.dart';
 import '../../utils/snackbar_helper.dart';
 import 'product_modification_dialog.dart' as dialog;
 
@@ -18,6 +19,7 @@ class ProductGrid extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final productsAsync = ref.watch(filteredProductsProvider);
     final showImages = ref.watch(showProductImagesProvider);
+    final cardSize = ref.watch(productCardSizeProvider);
     final searchQuery = ref.watch(productSearchQueryProvider);
 
     return Container(
@@ -58,18 +60,58 @@ class ProductGrid extends ConsumerWidget {
             );
           }
 
-          return GridView.builder(
-            padding: const EdgeInsets.all(16),
-            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-              mainAxisExtent: showImages ? 200 : 100,
-              maxCrossAxisExtent: showImages ? 200 : 200,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            itemCount: products.length,
-            itemBuilder: (context, index) {
-              final product = products[index];
-              return _ProductCard(product: product);
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              final isVeryCompact = w < 700;
+              final isCompact = w < kBreakpointCompact;
+              final sizeIdx = (cardSize - 1).clamp(0, 2);
+
+              // cardWidth = maxCrossAxisExtent (drives column count)
+              // cardHeight = mainAxisExtent (taller than wide to fit text)
+              final List<double> cardWidths;
+              final List<double> cardHeights;
+
+              if (showImages) {
+                cardWidths = isVeryCompact
+                    ? [120.0, 145.0, 170.0]
+                    : isCompact
+                        ? [140.0, 170.0, 200.0]
+                        : [160.0, 195.0, 235.0];
+                // images need extra height (image area + text area)
+                cardHeights = isVeryCompact
+                    ? [150.0, 180.0, 215.0]
+                    : isCompact
+                        ? [175.0, 210.0, 250.0]
+                        : [200.0, 240.0, 285.0];
+              } else {
+                // Wider cards = fewer mid-word breaks; height > width to fit 2-3 name lines
+                cardWidths = isVeryCompact
+                    ? [90.0, 110.0, 135.0]
+                    : isCompact
+                        ? [105.0, 130.0, 160.0]
+                        : [120.0, 150.0, 185.0];
+                cardHeights = isVeryCompact
+                    ? [80.0, 95.0, 115.0]
+                    : isCompact
+                        ? [85.0, 100.0, 125.0]
+                        : [90.0, 110.0, 135.0];
+              }
+
+              return GridView.builder(
+                padding: const EdgeInsets.all(8),
+                gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: cardWidths[sizeIdx],
+                  mainAxisExtent: cardHeights[sizeIdx],
+                  crossAxisSpacing: 6,
+                  mainAxisSpacing: 6,
+                ),
+                itemCount: products.length,
+                itemBuilder: (context, index) {
+                  final product = products[index];
+                  return _ProductCard(product: product);
+                },
+              );
             },
           );
         },
@@ -90,7 +132,13 @@ class _ProductCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final showImages = ref.watch(showProductImagesProvider);
+    final cardSize = ref.watch(productCardSizeProvider);
     final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
+
+    // Font sizes scale with card size setting
+    final nameFontSize = cardSize == 1 ? 11.0 : (cardSize == 2 ? 13.0 : 14.0);
+    final priceFontSize = cardSize == 1 ? 10.0 : (cardSize == 2 ? 12.0 : 13.0);
+    final cardPadding = cardSize == 1 ? 6.0 : (cardSize == 2 ? 8.0 : 10.0);
 
     return GestureDetector(
       onTap: () {
@@ -155,7 +203,9 @@ class _ProductCard extends ConsumerWidget {
           borderRadius: BorderRadius.circular(4),
         ),
         color: _parseColor(product.color) ?? Theme.of(context).cardColor,
-        child: showImages ? _buildWithImage(context,ref) : _buildCompact(context, ref),
+        child: showImages
+            ? _buildWithImage(context, ref, nameFontSize, priceFontSize, cardPadding)
+            : _buildCompact(context, ref, nameFontSize, priceFontSize, cardPadding),
       ),
     );
   }
@@ -180,7 +230,8 @@ class _ProductCard extends ConsumerWidget {
     return bg.computeLuminance() > 0.5 ? Colors.black : Colors.white;
   }
 
-  Widget _buildWithImage(BuildContext context, WidgetRef ref) {
+  Widget _buildWithImage(BuildContext context, WidgetRef ref,
+      double nameFontSize, double priceFontSize, double cardPadding) {
     final currencyFormatter = ref.watch(currencyFormatterProvider);
     final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
     final cardColor = _parseColor(product.color);
@@ -200,7 +251,7 @@ class _ProductCard extends ConsumerWidget {
         if (!hasImage) {
           // No image: text fills the entire card
           return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: EdgeInsets.symmetric(horizontal: cardPadding, vertical: cardPadding - 2),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.max,
@@ -211,7 +262,7 @@ class _ProductCard extends ConsumerWidget {
                       product.name,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 15,
+                        fontSize: nameFontSize,
                         color: cardColor != null ? textColor : null,
                       ),
                       textAlign: TextAlign.center,
@@ -220,7 +271,6 @@ class _ProductCard extends ConsumerWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 2),
                 Text(
                   currencyFormatter.format(displayPrice),
                   style: TextStyle(
@@ -228,10 +278,11 @@ class _ProductCard extends ConsumerWidget {
                         ? textColor.withValues(alpha: 0.85)
                         : Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                    fontSize: priceFontSize,
                   ),
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  softWrap: false,
+                  overflow: TextOverflow.fade,
                 ),
               ],
             ),
@@ -253,10 +304,10 @@ class _ProductCard extends ConsumerWidget {
                       color: Theme.of(context).colorScheme.surfaceContainerHighest,
                       child: Center(
                         child: Padding(
-                          padding: const EdgeInsets.all(6),
+                          padding: EdgeInsets.all(cardPadding - 2),
                           child: Text(
                             product.name,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: nameFontSize),
                             textAlign: TextAlign.center,
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
@@ -271,7 +322,7 @@ class _ProductCard extends ConsumerWidget {
             Expanded(
               flex: 2,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                padding: EdgeInsets.symmetric(horizontal: cardPadding, vertical: 4),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.max,
@@ -281,7 +332,7 @@ class _ProductCard extends ConsumerWidget {
                         product.name,
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          fontSize: 13,
+                          fontSize: nameFontSize,
                           color: cardColor != null ? textColor : null,
                         ),
                         maxLines: 2,
@@ -295,10 +346,11 @@ class _ProductCard extends ConsumerWidget {
                             ? textColor.withValues(alpha: 0.85)
                             : Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                        fontSize: priceFontSize,
                       ),
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                      overflow: TextOverflow.fade,
                     ),
                   ],
                 ),
@@ -347,7 +399,8 @@ class _ProductCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildCompact(BuildContext context, WidgetRef ref) {
+  Widget _buildCompact(BuildContext context, WidgetRef ref,
+      double nameFontSize, double priceFontSize, double cardPadding) {
     final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
     final currencyFormatter = ref.watch(currencyFormatterProvider);
     final cardColor = _parseColor(product.color);
@@ -364,24 +417,22 @@ class _ProductCard extends ConsumerWidget {
         }
 
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: EdgeInsets.symmetric(horizontal: cardPadding, vertical: cardPadding - 2),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.max,
             children: [
               Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    product.name,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: cardColor != null ? textColor : null,
-                    ),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
+                child: Text(
+                  product.name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: nameFontSize,
+                    color: cardColor != null ? textColor : null,
+                    height: 1.3,
                   ),
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               Text(
@@ -391,10 +442,11 @@ class _ProductCard extends ConsumerWidget {
                       ? textColor.withValues(alpha: 0.85)
                       : Theme.of(context).colorScheme.primary,
                   fontWeight: FontWeight.bold,
-                  fontSize: 13,
+                  fontSize: priceFontSize,
                 ),
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+                overflow: TextOverflow.fade,
               ),
             ],
           ),
@@ -411,18 +463,16 @@ class _ProductCard extends ConsumerWidget {
           mainAxisSize: MainAxisSize.max,
           children: [
             Expanded(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  product.name,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    color: cardColor != null ? textColor : null,
-                  ),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
+              child: Text(
+                product.name,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: nameFontSize,
+                  color: cardColor != null ? textColor : null,
+                  height: 1.3,
                 ),
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
             Text(
@@ -432,10 +482,11 @@ class _ProductCard extends ConsumerWidget {
                     ? textColor.withValues(alpha: 0.85)
                     : Theme.of(context).colorScheme.primary,
                 fontWeight: FontWeight.bold,
-                fontSize: 13,
+                fontSize: priceFontSize,
               ),
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+              overflow: TextOverflow.fade,
             ),
           ],
         ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../providers/settings_provider.dart';
+import '../../utils/responsive_utils.dart';
 
 /// Model for Web Order Response (from API)
 class WebOrderResponse {
@@ -174,7 +175,7 @@ class OrderDetailsDialog extends ConsumerWidget {
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: 800,
+        width: dialogWidth(context, 800),
         constraints: const BoxConstraints(maxHeight: 700),
         child: Column(
           mainAxisSize: MainAxisSize.min,

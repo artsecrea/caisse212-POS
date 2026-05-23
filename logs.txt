@@ -30075,3 +30075,195 @@ In order to resolve this exception you typically have either to verify and fix y
 [2026-05-23T00:09:25.437770] [INFO]: No pending operations to sync
 [2026-05-23T00:09:39.207174] [INFO]: Starting app...
 s initialized
+[2026-05-23T01:08:21.878032] [INFO]: Starting app...
+s initialized
+[2026-05-23T01:30:14.196039] [INFO]: Starting app...
+s initialized
+[2026-05-23T01:35:49.058858] [INFO]: Starting app...
+[2026-05-23T01:43:29.699400] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:43:29.703039] [INFO]: No pending operations to sync
+[2026-05-23T01:44:29.477836] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:44:29.480468] [INFO]: No pending operations to sync
+[2026-05-23T01:45:29.463402] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:45:29.464691] [INFO]: No pending operations to sync
+[2026-05-23T01:46:29.476061] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:46:29.477410] [INFO]: No pending operations to sync
+[2026-05-23T01:47:29.494300] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:47:29.495978] [INFO]: No pending operations to sync
+[2026-05-23T01:48:29.472164] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:48:29.473525] [INFO]: No pending operations to sync
+[2026-05-23T01:49:29.473429] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:49:29.475024] [INFO]: No pending operations to sync
+[2026-05-23T01:50:29.501732] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:51:29.482677] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:51:29.484120] [INFO]: No pending operations to sync
+[2026-05-23T01:52:29.470481] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:52:29.471846] [INFO]: No pending operations to sync
+[2026-05-23T01:53:29.471627] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:53:29.472897] [INFO]: No pending operations to sync
+[2026-05-23T01:54:29.484437] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:54:29.485701] [INFO]: No pending operations to sync
+[2026-05-23T01:55:29.459606] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:55:29.460860] [INFO]: No pending operations to sync
+[2026-05-23T01:56:29.451820] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:56:29.453480] [INFO]: No pending operations to sync
+[2026-05-23T01:57:29.447828] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:57:29.448935] [INFO]: No pending operations to sync
+[2026-05-23T01:58:29.450871] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:58:29.453254] [INFO]: No pending operations to sync
+[2026-05-23T01:59:29.455130] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T01:59:29.456160] [INFO]: No pending operations to sync
+[2026-05-23T02:00:29.471305] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:01:29.474093] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:01:29.475610] [INFO]: No pending operations to sync
+[2026-05-23T02:02:29.465073] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:03:29.465357] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:03:29.466628] [INFO]: No pending operations to sync
+[2026-05-23T02:04:29.479009] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:04:29.480289] [INFO]: No pending operations to sync
+[2026-05-23T02:05:08.666376] [INFO]: Starting app...
+s initialized
+[2026-05-23T02:05:34.915834] [INFO]: Starting app...
+s initialized
+[2026-05-23T02:09:22.376768] [INFO]: Starting app...
+s initialized
+[2026-05-23T02:24:21.645408] [INFO]: Starting app...
+s initialized
+[2026-05-23T02:32:10.924541] [INFO]: Starting app...
+[2026-05-23T02:33:49.729934] [DEBUG]: saveOrder: {id: null, productId: 1, productName: Classic Burger, variantId: null, variantName: null, imageUrl: https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=300, unitPrice: 8.5, quantity: 1, components: [{componentId: 1, name: Extra Cheese, quantity: 1, price: 1.5, isSpecial: false}, {componentId: 7, name: Ketchup, quantity: 1, price: 0.0, isSpecial: false}], note: null, ticketId: null, discount: 0.0, tva: 1.7, state: PENDING, planStartAt: null, planEndAt: null, planWaiterId: null, isWeighedItem: false, weightKg: null, pricePerKgDisplay: null}
+[2026-05-23T02:33:49.804384] [DEBUG]: Auto-sync on create: online=false orderCode=8FE951CE
+[2026-05-23T02:33:50.175698] [INFO]: Successfully synced order code=8FE951CE
+[2026-05-23T02:33:50.249494] [INFO]: Synced 1 tickets for order code=8FE951CE
+[2026-05-23T02:34:50.001325] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:34:50.006489] [INFO]: No pending operations to sync
+[2026-05-23T02:35:50.134997] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:35:50.137136] [INFO]: No pending operations to sync
+[2026-05-23T02:36:09.963660] [INFO]: Barcode scanned: , (mode: orders)
+[2026-05-23T02:36:49.990722] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:36:49.993715] [INFO]: No pending operations to sync
+[2026-05-23T02:37:50.023872] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:37:50.025286] [INFO]: No pending operations to sync
+[2026-05-23T02:38:50.006008] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:38:50.007105] [INFO]: No pending operations to sync
+[2026-05-23T02:39:49.984552] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:39:49.985676] [INFO]: No pending operations to sync
+[2026-05-23T02:40:50.013803] [ERROR]: Error syncing single order: Exception: Failed to sync order: This exception was thrown because the response has a status code of 409 and RequestOptions.validateStatus was configured to throw for this status code.
+The status code of 409 has the following meaning: "Client error - the request contains bad syntax or cannot be fulfilled"
+Read more about status codes at https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+In order to resolve this exception you typically have either to verify and fix your request code or you have to fix the server code.
+
+[2026-05-23T02:40:50.015226] [INFO]: No pending operations to sync
+[2026-05-23T02:41:17.232322] [INFO]: Starting app...
+s initialized

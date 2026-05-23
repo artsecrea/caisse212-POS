@@ -6,6 +6,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/responsive_utils.dart';
 import '../../data/database/app_database.dart' as db;
 
 class TableSelectionDialog extends ConsumerStatefulWidget {
@@ -48,7 +49,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
       backgroundColor: Theme.of(context).dialogBackgroundColor,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: 800,
+        width: dialogWidth(context, 800),
         height: 650,
         padding: const EdgeInsets.all(24),
         child: Column(

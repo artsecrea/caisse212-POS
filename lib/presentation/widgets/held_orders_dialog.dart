@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/order_provider.dart';
 import '../../data/database/app_database.dart';
+import '../../utils/responsive_utils.dart';
 
 class HeldOrdersDialog extends ConsumerWidget {
   const HeldOrdersDialog({super.key});
@@ -14,7 +15,7 @@ class HeldOrdersDialog extends ConsumerWidget {
 
     return Dialog(
       child: Container(
-        width: 700,
+        width: dialogWidth(context, 700),
         height: 600,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

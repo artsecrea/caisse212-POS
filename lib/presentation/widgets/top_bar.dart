@@ -14,6 +14,7 @@ import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import '../../utils/responsive_utils.dart';
 import '../settings/settings_screen.dart';
 import '../profile/profile_dialog.dart';
 import 'report_issue_dialog.dart';
@@ -80,7 +81,6 @@ class _TopBarState extends ConsumerState<TopBar> {
     }
 
     return Container(
-      width: 300,
       height: 40,
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.2),
@@ -621,7 +621,7 @@ class _TopBarState extends ConsumerState<TopBar> {
   }
 
   /// Build customer display toggle button
-  Widget _buildCustomerDisplayButton(AppLocalizations? l10n) {
+  Widget _buildCustomerDisplayButton(AppLocalizations? l10n, {bool iconOnly = false}) {
     final displayService = ref.read(customerDisplayServiceProvider);
     final isOpen = ref.watch(customerDisplayOpenProvider);
 
@@ -667,17 +667,19 @@ class _TopBarState extends ConsumerState<TopBar> {
                 color: isOpen ? Colors.green : Colors.white70,
                 size: 18,
               ),
-              const SizedBox(width: 6),
-              Text(
-                isOpen
-                    ? (l10n?.translate('display_on') ?? 'Display On')
-                    : (l10n?.translate('display_off') ?? 'Display Off'),
-                style: TextStyle(
-                  color: isOpen ? Colors.green : Colors.white70,
-                  fontSize: 12,
-                  fontWeight: isOpen ? FontWeight.bold : FontWeight.normal,
+              if (!iconOnly) ...[
+                const SizedBox(width: 6),
+                Text(
+                  isOpen
+                      ? (l10n?.translate('display_on') ?? 'Display On')
+                      : (l10n?.translate('display_off') ?? 'Display Off'),
+                  style: TextStyle(
+                    color: isOpen ? Colors.green : Colors.white70,
+                    fontSize: 12,
+                    fontWeight: isOpen ? FontWeight.bold : FontWeight.normal,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -895,169 +897,126 @@ class _TopBarState extends ConsumerState<TopBar> {
     final l10n = AppLocalizations.of(context);
     final currentUser = ref.watch(currentUserProvider);
     final time = ref.watch(timeProvider).value ?? DateTime.now();
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isCompact = screenWidth < kBreakpointCompact;
+    final isVeryCompact = screenWidth < 700;
+
+    final hPad = isVeryCompact ? 8.0 : 16.0;
 
     return Container(
-      height: 60,
       decoration: BoxDecoration(
         color: Theme.of(context).primaryColor,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 6,
             offset: const Offset(0, 2),
           ),
         ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // App title
-          const Icon(Icons.point_of_sale, color: Colors.white, size: 28),
-          const SizedBox(width: 12),
-          const Text(
-            'CAISSE212',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          // show the time
-          const SizedBox(width: 20),
-          Text(
-            _formatTime(time),
-            style: const TextStyle(color: Colors.white, fontSize: 20),
-          ),
-          const SizedBox(width: 20),
-          // Search bar
-          _buildSearchBar(),
-          const SizedBox(width: 16),
-          // Barcode scanner mode toggle
-          _buildBarcodeScanToggle(),
-          // Agenda button
-          const SizedBox(width: 8),
-          Tooltip(
-            message: 'Agenda',
-            child: IconButton(
-              icon: const Icon(Icons.calendar_month_outlined, color: Colors.white),
-              onPressed: () => Navigator.pushNamed(context, '/agenda'),
-            ),
-          ),
-          // Dashboard button
-          Tooltip(
-            message: 'Dashboard',
-            child: IconButton(
-              icon: const Icon(Icons.dashboard_outlined, color: Colors.white),
-              onPressed: () => Navigator.pushNamed(context, '/dashboard'),
-            ),
-          ),
-          // Notes button
-          Tooltip(
-            message: l10n?.translate('notes') ?? 'Notes',
-            child: IconButton(
-              icon: const Icon(Icons.sticky_note_2_outlined, color: Colors.white),
-              onPressed: () => Navigator.pushNamed(context, '/notes'),
-            ),
-          ),
-          const Spacer(),
-          // Session icon - shows current session details
-          IconButton(
-            icon: const Icon(Icons.point_of_sale_outlined, color: Colors.white),
-            tooltip: l10n?.translate('session') ?? 'session',
-            onPressed: _showCurrentSessionDetails,
-          ),
-          const SizedBox(width: 8),
-          // Status indicator
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.access_time,
-                  color: Colors.white,
-                  size: 16,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  l10n?.translate('active') ?? 'Active',
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          // Network state
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: _isOnline
-                  ? Colors.green.withOpacity(0.3)
-                  : Colors.red.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _isOnline ? Icons.wifi : Icons.wifi_off,
-                  color: Colors.white,
-                  size: 16,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  _isOnline ? (l10n?.translate('online') ?? 'Online') : (l10n?.translate('offline') ?? 'Offline'),
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          // Update button
-          ElevatedButton.icon(
-            onPressed: _isOnline ? _handleSync : null,
-            icon: const Icon(Icons.sync, size: 18),
-            label: Text(l10n?.translate('update') ?? 'Update'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: Theme.of(context).primaryColor,
-              disabledBackgroundColor: Colors.grey[300],
-            ),
-          ),
-          const SizedBox(width: 16),
-          // Customer Display toggle button (only shown when enabled in settings)
-          if (ref.watch(settingsProvider).enableCustomerDisplay)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: _buildCustomerDisplayButton(l10n),
-            ),
-          // User profile
-          PopupMenuButton<String>(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircleAvatar(
-                  backgroundColor: Colors.white,
-                  child: Text(
-                    currentUser?.firstName.substring(0, 1).toUpperCase() ?? 'U',
-                    style: TextStyle(
-                      color: Theme.of(context).primaryColor,
-                      fontWeight: FontWeight.bold,
+          // ── Primary bar ────────────────────────────────────────────
+          SizedBox(
+            height: 56,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: hPad),
+              child: Row(
+                children: [
+                  const Icon(Icons.point_of_sale, color: Colors.white, size: 24),
+                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: 360,
+                        minWidth: isVeryCompact ? 80 : 150,
+                      ),
+                      child: _buildSearchBar(),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  currentUser?.firstName ?? (l10n?.translate('user') ?? 'User'),
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                ),
-                const Icon(Icons.arrow_drop_down, color: Colors.white),
-              ],
-            ),
+                  const SizedBox(width: 6),
+                  // Barcode + nav buttons only on non-compact (go to secondary row on compact)
+                  if (!isCompact) ...[
+                    _buildBarcodeScanToggle(),
+                    const SizedBox(width: 4),
+                    Tooltip(
+                      message: 'Agenda',
+                      child: IconButton(
+                        icon: const Icon(Icons.calendar_month_outlined, color: Colors.white),
+                        onPressed: () => Navigator.pushNamed(context, '/agenda'),
+                      ),
+                    ),
+                    Tooltip(
+                      message: 'Dashboard',
+                      child: IconButton(
+                        icon: const Icon(Icons.dashboard_outlined, color: Colors.white),
+                        onPressed: () => Navigator.pushNamed(context, '/dashboard'),
+                      ),
+                    ),
+                    Tooltip(
+                      message: l10n?.translate('notes') ?? 'Notes',
+                      child: IconButton(
+                        icon: const Icon(Icons.sticky_note_2_outlined, color: Colors.white),
+                        onPressed: () => Navigator.pushNamed(context, '/notes'),
+                      ),
+                    ),
+                  ],
+                  const Spacer(),
+                  // Session, network, sync, customer display on non-compact only
+                  if (!isCompact) ...[
+                    IconButton(
+                      icon: const Icon(Icons.point_of_sale_outlined, color: Colors.white, size: 20),
+                      tooltip: l10n?.translate('session') ?? 'session',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      onPressed: _showCurrentSessionDetails,
+                    ),
+                    const SizedBox(width: 6),
+                    ElevatedButton.icon(
+                      onPressed: _isOnline ? _handleSync : null,
+                      icon: const Icon(Icons.sync, size: 18),
+                      label: Text(l10n?.translate('update') ?? 'Update'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Theme.of(context).primaryColor,
+                        disabledBackgroundColor: Colors.grey[300],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (ref.watch(settingsProvider).enableCustomerDisplay) ...[
+                      _buildCustomerDisplayButton(l10n, iconOnly: false),
+                      const SizedBox(width: 8),
+                    ],
+                  ],
+                  // User profile — avatar-only on very compact
+                  PopupMenuButton<String>(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircleAvatar(
+                          radius: isVeryCompact ? 16 : 18,
+                          backgroundColor: Colors.white,
+                          child: Text(
+                            currentUser?.firstName.substring(0, 1).toUpperCase() ?? 'U',
+                            style: TextStyle(
+                              color: Theme.of(context).primaryColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: isVeryCompact ? 13 : 14,
+                            ),
+                          ),
+                        ),
+                        if (!isVeryCompact) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            currentUser?.firstName ?? (l10n?.translate('user') ?? 'User'),
+                            style: const TextStyle(color: Colors.white, fontSize: 14),
+                          ),
+                          const Icon(Icons.arrow_drop_down, color: Colors.white),
+                        ],
+                      ],
+                    ),
             onSelected: (value) async {
               if (value == 'profile') {
                 showDialog(
@@ -1288,9 +1247,71 @@ class _TopBarState extends ConsumerState<TopBar> {
               return items;
             },
           ),
-        ],
-      ),
-    );
+                ],         // primary Row children
+              ),           // primary Row
+            ),             // Padding
+          ),               // SizedBox(56) — primary bar done
+          // ── Secondary bar (compact only) ─────────────────────────
+          if (isCompact)
+            Container(
+              height: 40,
+              color: Theme.of(context).primaryColorDark,
+              padding: EdgeInsets.symmetric(horizontal: hPad),
+              child: Row(
+                children: [
+                  if (!isVeryCompact) ...[
+                    Text(
+                      _formatTime(time),
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontSize: 13,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _buildBarcodeScanToggle(),
+                    const SizedBox(width: 4),
+                  ],
+                  IconButton(
+                    icon: const Icon(Icons.point_of_sale_outlined, color: Colors.white, size: 18),
+                    tooltip: l10n?.translate('session') ?? 'session',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    onPressed: _showCurrentSessionDetails,
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _isOnline
+                          ? Colors.green.withValues(alpha: 0.3)
+                          : Colors.red.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Icon(
+                      _isOnline ? Icons.wifi : Icons.wifi_off,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    icon: const Icon(Icons.sync, color: Colors.white, size: 18),
+                    tooltip: l10n?.translate('update') ?? 'Update',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    onPressed: _isOnline ? _handleSync : null,
+                  ),
+                  if (ref.watch(settingsProvider).enableCustomerDisplay) ...[
+                    const SizedBox(width: 4),
+                    _buildCustomerDisplayButton(l10n, iconOnly: true),
+                  ],
+                ],
+              ),
+            ),
+        ],            // Column children
+      ),              // Column
+    );                // Container
   }
 }
 

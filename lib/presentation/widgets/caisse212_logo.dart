@@ -24,6 +24,11 @@ class Caisse212Logo extends StatelessWidget {
           width: size,
           height: size,
           fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => Icon(
+            Icons.point_of_sale,
+            size: size * 0.8,
+            color: const Color(0xFF7B1FA2),
+          ),
         ),
         SizedBox(height: size * 0.15),
         // CAISSE212 text

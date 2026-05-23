@@ -5,6 +5,7 @@ import '../../providers/settings_provider.dart';
 import '../../providers/server_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/responsive_utils.dart';
 import '../../services/discovery_service.dart';
 import '../../domain/models/scale_config.dart';
 import '../../providers/scale_config_provider.dart';
@@ -41,7 +42,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: 1000,
+        width: dialogWidth(context, 1000),
         height: MediaQuery.of(context).size.height * 0.85,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
@@ -342,6 +343,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           subtitle: l10n.translate('show_product_images_subtitle'),
           value: settings.showProductImages,
           onChanged: (value) => notifier.setShowProductImages(value),
+        ),
+        const SizedBox(height: 12),
+        _buildProductCardSizeSelector(
+          context: context,
+          currentSize: settings.productCardSize,
+          onChanged: (value) => notifier.setProductCardSize(value),
         ),
         const SizedBox(height: 12),
         _buildCategoryDisplayModeSelector(
@@ -1112,6 +1119,101 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   color: Colors.grey,
                   onTap: () => onChanged('OTHER'),
                 ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductCardSizeSelector({
+    required BuildContext context,
+    required int currentSize,
+    required ValueChanged<int> onChanged,
+  }) {
+    final options = [
+      (1, Icons.view_comfy, 'Small'),
+      (2, Icons.grid_view, 'Medium'),
+      (3, Icons.crop_square, 'Large'),
+    ];
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.grid_3x3),
+                const SizedBox(width: 12),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Product Card Size',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                    ),
+                    Text(
+                      'Size of product cards in the grid',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                for (final (size, icon, label) in options) ...[
+                  if (size > 1) const SizedBox(width: 8),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => onChanged(size),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: currentSize == size
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : Theme.of(context).colorScheme.surface,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: currentSize == size
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.outline,
+                            width: currentSize == size ? 2 : 1,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              icon,
+                              color: currentSize == size
+                                  ? Theme.of(context).colorScheme.primary
+                                  : null,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              label,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: currentSize == size
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                                color: currentSize == size
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ],

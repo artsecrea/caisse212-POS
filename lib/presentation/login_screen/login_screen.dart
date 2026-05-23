@@ -715,378 +715,469 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final isWide = MediaQuery.sizeOf(context).width >= 900;
 
     return Scaffold(
-      body: Stack(
+      body: isWide
+          ? _buildWideLayout(context, l10n)
+          : Stack(
+              children: [
+                _buildCompactLayout(context, l10n),
+                Positioned(top: 16, left: 16, child: _buildExitButton()),
+                Positioned(top: 16, right: 16, child: _buildActionBar(context)),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildWideLayout(BuildContext context, AppLocalizations l10n) {
+    final primaryColor = Theme.of(context).primaryColor;
+    final scaffoldColor = Theme.of(context).scaffoldBackgroundColor;
+    final gradientColors = [primaryColor, primaryColor.withValues(alpha: 0.75)];
+
+    return Column(
+      children: [
+        // Action strip — keeps buttons out of the content area
+        SizedBox(
+          height: 60,
+          child: Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: gradientColors,
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  alignment: Alignment.centerLeft,
+                  child: _buildExitButton(),
+                ),
+              ),
+              Expanded(
+                flex: 6,
+                child: Container(
+                  color: scaffoldColor,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  alignment: Alignment.centerRight,
+                  child: _buildActionBar(context),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Content row
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: gradientColors,
+                    ),
+                  ),
+                  child: _buildBrandPanel(context),
+                ),
+              ),
+              Expanded(
+                flex: 6,
+                child: Container(
+                  color: scaffoldColor,
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 64, vertical: 40),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: _buildFormContent(context, l10n, showLogo: false),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompactLayout(BuildContext context, AppLocalizations l10n) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Theme.of(context).primaryColor,
+            Theme.of(context).primaryColor.withValues(alpha: 0.7),
+          ],
+        ),
+      ),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 450),
+            child: Card(
+              elevation: 8,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: _buildFormContent(context, l10n, showLogo: true),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBrandPanel(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(48, 40, 48, 48),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Theme.of(context).primaryColor,
-                  Theme.of(context).primaryColor.withValues(alpha: 0.7),
+            const Caisse212Logo(size: 72),
+            const SizedBox(height: 24),
+            const Text(
+              'CAISSE212',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.5,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Point of Sale System',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.75),
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 56),
+            for (final item in <MapEntry<IconData, String>>[
+              MapEntry(Icons.speed_outlined, 'Fast order management'),
+              MapEntry(Icons.receipt_long_outlined, 'Thermal printing support'),
+              MapEntry(Icons.wifi_off_outlined, 'Works fully offline'),
+              MapEntry(Icons.table_restaurant_outlined, 'Table management'),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 20),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(item.key, color: Colors.white, size: 20),
+                    ),
+                    const SizedBox(width: 16),
+                    Text(
+                      item.value,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFormContent(
+    BuildContext context,
+    AppLocalizations l10n, {
+    required bool showLogo,
+  }) {
+    return Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (showLogo) ...[
+            const Caisse212Logo(size: 60),
+            const SizedBox(height: 16),
+          ],
+          Text(
+            l10n.translate('sign_in'),
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 32),
+          DropdownButtonFormField<String>(
+            initialValue: _selectedUsername,
+            decoration: InputDecoration(
+              labelText: '${l10n.translate('username')} *',
+              prefixIcon: const Icon(Icons.person),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            isExpanded: true,
+            dropdownColor: Theme.of(context).colorScheme.surface,
+            style: TextStyle(
+              fontSize: 16,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+            items: _availableUsers.map((user) {
+              final displayName = '${user.firstName} ${user.lastName}'.trim();
+              return DropdownMenuItem<String>(
+                value: user.username,
+                child: Row(
+                  children: [
+                    Icon(Icons.person, size: 20,
+                        color: Theme.of(context).colorScheme.onSurface),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        displayName.isNotEmpty ? displayName : user.username,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+            onChanged: (value) {
+              setState(() {
+                _selectedUsername = value;
+                _usernameController.text = value ?? '';
+              });
+            },
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return l10n.translate('username_required');
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 20),
+          OnscreenKeyboardTextField(
+            controller: _passwordController,
+            obscureText: _obscurePassword,
+            decoration: InputDecoration(
+              labelText: '${l10n.translate('password')} *',
+              prefixIcon: const Icon(Icons.lock),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                ),
+                onPressed: () =>
+                    setState(() => _obscurePassword = !_obscurePassword),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            style: const TextStyle(fontSize: 16),
+          ),
+          const SizedBox(height: 20),
+          OnscreenKeyboardTextField(
+            controller: _startingBalanceController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: l10n.translate('starting_balance'),
+              prefixIcon: const Icon(Icons.account_balance_wallet),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              hintText: '0.0',
+            ),
+            style: const TextStyle(fontSize: 16),
+          ),
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.red[50],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.red[300]!, width: 1.5),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.error_outline, color: Colors.red[700], size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _errorMessage!,
+                      style: TextStyle(
+                        color: Colors.red[700],
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-            child: Center(
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: const EdgeInsets.all(32.0),
-                  child: Card(
-                    elevation: 8,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Container(
-                      constraints: const BoxConstraints(maxWidth: 450),
-                      padding: const EdgeInsets.all(40.0),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            const Caisse212Logo(size: 80),
-                            const SizedBox(height: 8),
-                            Text(
-                              l10n.translate('sign_in'),
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Colors.grey[600],
-                                  ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 32),
-                            // User dropdown
-                            DropdownButtonFormField<String>(
-                              initialValue: _selectedUsername,
-                              decoration: InputDecoration(
-                                labelText: '${l10n.translate('username')} *',
-                                prefixIcon: const Icon(Icons.person),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              isExpanded: true,
-                              dropdownColor: Theme.of(context).colorScheme.surface,
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Theme.of(context).colorScheme.onSurface,
-                              ),
-                              items: _availableUsers.map((user) {
-                                final displayName =
-                                    '${user.firstName} ${user.lastName}'.trim();
-                                return DropdownMenuItem<String>(
-                                  value: user.username,
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.person, size: 20,
-                                          color: Theme.of(context).colorScheme.onSurface),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Text(
-                                          displayName.isNotEmpty
-                                              ? displayName
-                                              : user.username,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: Theme.of(context).colorScheme.onSurface,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                setState(() {
-                                  _selectedUsername = value;
-                                  _usernameController.text = value ?? '';
-                                });
-                              },
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return l10n.translate('username_required');
-                                }
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 20),
-                            OnscreenKeyboardTextField(
-                              controller: _passwordController,
-                              obscureText: _obscurePassword,
-                              decoration: InputDecoration(
-                                labelText: '${l10n.translate('password')} *',
-                                prefixIcon: const Icon(Icons.lock),
-                                suffixIcon: IconButton(
-                                  icon: Icon(
-                                    _obscurePassword
-                                        ? Icons.visibility
-                                        : Icons.visibility_off,
-                                  ),
-                                  onPressed: () {
-                                    setState(() {
-                                      _obscurePassword = !_obscurePassword;
-                                    });
-                                  },
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              style: const TextStyle(fontSize: 16),
-                            ),
-                            const SizedBox(height: 20),
-                            OnscreenKeyboardTextField(
-                              controller: _startingBalanceController,
-                              keyboardType: TextInputType.number,
-                              decoration: InputDecoration(
-                                labelText: l10n.translate('starting_balance'),
-                                prefixIcon: const Icon(Icons.account_balance_wallet),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                hintText: '0.0',
-                              ),
-                              style: const TextStyle(fontSize: 16),
-                            ),
-                            if (_errorMessage != null) ...[
-                              const SizedBox(height: 20),
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.red[50],
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: Colors.red[300]!, width: 2),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Icon(Icons.error_outline, color: Colors.red[700], size: 24),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        _errorMessage!,
-                                        style: TextStyle(
-                                          color: Colors.red[700],
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 32),
-                            SizedBox(
-                              height: 70,
-                              child: ElevatedButton(
-                                onPressed: _isLoading ? null : _handleLogin,
-                                style: AppButtonStyles.elevatedButtonStyle(
-                                  backgroundColor: Theme.of(context).primaryColor,
-                                  foregroundColor: Colors.white,
-                                  isLarge: true,
-                                ),
-                                child: _isLoading
-                                    ? const SizedBox(
-                                        height: 24,
-                                        width: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2.5,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : Row(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          const Icon(Icons.login, size: 28),
-                                          const SizedBox(width: 12),
-                                          Text(
-                                            l10n.translate('sign_in'),
-                                            style: const TextStyle(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+          ],
+          const SizedBox(height: 32),
+          SizedBox(
+            height: 56,
+            child: ElevatedButton(
+              onPressed: _isLoading ? null : _handleLogin,
+              style: AppButtonStyles.elevatedButtonStyle(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                isLarge: true,
               ),
-            ),
-          ),
-          // Exit button positioned at top-left - BIGGER
-          Positioned(
-            top: 20,
-            left: 20,
-            child: Material(
-              color: Colors.black38,
-              borderRadius: BorderRadius.circular(16),
-              elevation: 4,
-              child: InkWell(
-                onTap: _handleExitToTenant,
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  child: const Icon(
-                    Icons.exit_to_app,
-                    size: 36,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // Report Issue button positioned at top-right - BIGGER
-          Positioned(
-            top: 20,
-            right: 20,
-            child: Row(
-              children: [
-                // Fullscreen toggle button
-                Material(
-                  color: Colors.black38,
-                  borderRadius: BorderRadius.circular(16),
-                  elevation: 4,
-                  child: InkWell(
-                    onTap: _toggleFullScreen,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      child: Icon(
-                        _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                        size: 36,
+              child: _isLoading
+                  ? const SizedBox(
+                      height: 22,
+                      width: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
                         color: Colors.white,
                       ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Sync button
-                Material(
-                  color: Colors.black38,
-                  borderRadius: BorderRadius.circular(16),
-                  elevation: 4,
-                  child: InkWell(
-                    onTap: _isLoading ? null : _handleSync,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      child: const Icon(
-                        Icons.sync,
-                        size: 36,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Language selector button
-                Material(
-                  color: Colors.black38,
-                  borderRadius: BorderRadius.circular(16),
-                  elevation: 4,
-                  child: PopupMenuButton<String>(
-                    onSelected: (languageCode) {
-                      ref.read(settingsProvider.notifier).setLanguage(languageCode);
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        value: 'en',
-                        child: Row(
-                          children: [
-                            const Text('🇬🇧', style: TextStyle(fontSize: 20)),
-                            const SizedBox(width: 8),
-                            const Text('English'),
-                          ],
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.login, size: 24),
+                        const SizedBox(width: 10),
+                        Text(
+                          l10n.translate('sign_in'),
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      PopupMenuItem(
-                        value: 'fr',
-                        child: Row(
-                          children: [
-                            const Text('🇫🇷', style: TextStyle(fontSize: 20)),
-                            const SizedBox(width: 8),
-                            const Text('Français'),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'ar',
-                        child: Row(
-                          children: [
-                            const Text('🇲🇦', style: TextStyle(fontSize: 20)),
-                            const SizedBox(width: 8),
-                            const Text('العربية'),
-                          ],
-                        ),
-                      ),
-                    ],
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      child: const Icon(
-                        Icons.language,
-                        size: 36,
-                        color: Colors.white,
-                      ),
+                      ],
                     ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Config button
-                Material(
-                  color: Colors.black38,
-                  borderRadius: BorderRadius.circular(16),
-                  elevation: 4,
-                  child: InkWell(
-                    onTap: _showServerConfig,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      child: const Icon(
-                        Icons.settings,
-                        size: 36,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Report Issue button
-                Material(
-                  color: Colors.black38,
-                  borderRadius: BorderRadius.circular(16),
-                  elevation: 4,
-                  child: InkWell(
-                    onTap: () {
-                      showDialog(
-                        context: context,
-                        builder: (context) => const ReportIssueDialog(),
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      child: const Icon(
-                        Icons.bug_report,
-                        size: 36,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildExitButton() {
+    return Material(
+      color: Colors.black38,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 2,
+      child: InkWell(
+        onTap: _handleExitToTenant,
+        borderRadius: BorderRadius.circular(14),
+        child: const Padding(
+          padding: EdgeInsets.all(14),
+          child: Icon(Icons.exit_to_app, size: 26, color: Colors.white),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionBar(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildOverlayIconButton(
+          icon: _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+          onTap: _toggleFullScreen,
+        ),
+        const SizedBox(width: 8),
+        _buildOverlayIconButton(
+          icon: Icons.sync,
+          onTap: _isLoading ? null : _handleSync,
+        ),
+        const SizedBox(width: 8),
+        Material(
+          color: Colors.black38,
+          borderRadius: BorderRadius.circular(14),
+          elevation: 2,
+          child: PopupMenuButton<String>(
+            onSelected: (code) =>
+                ref.read(settingsProvider.notifier).setLanguage(code),
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'en',
+                child: Row(children: [
+                  const Text('🇬🇧', style: TextStyle(fontSize: 20)),
+                  const SizedBox(width: 8),
+                  const Text('English'),
+                ]),
+              ),
+              PopupMenuItem(
+                value: 'fr',
+                child: Row(children: [
+                  const Text('🇫🇷', style: TextStyle(fontSize: 20)),
+                  const SizedBox(width: 8),
+                  const Text('Français'),
+                ]),
+              ),
+              PopupMenuItem(
+                value: 'ar',
+                child: Row(children: [
+                  const Text('🇲🇦', style: TextStyle(fontSize: 20)),
+                  const SizedBox(width: 8),
+                  const Text('العربية'),
+                ]),
+              ),
+            ],
+            child: const Padding(
+              padding: EdgeInsets.all(14),
+              child: Icon(Icons.language, size: 26, color: Colors.white),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        _buildOverlayIconButton(
+          icon: Icons.settings,
+          onTap: _showServerConfig,
+        ),
+        const SizedBox(width: 8),
+        _buildOverlayIconButton(
+          icon: Icons.bug_report,
+          onTap: () => showDialog(
+            context: context,
+            builder: (_) => const ReportIssueDialog(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOverlayIconButton({
+    required IconData icon,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: Colors.black38,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 2,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Icon(icon, size: 26, color: Colors.white),
+        ),
       ),
     );
   }

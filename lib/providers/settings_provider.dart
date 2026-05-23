@@ -54,6 +54,9 @@ class SettingsKeys {
 
   // Payment settings
   static const String defaultPaymentMethod = 'default_payment_method';
+
+  // Product card size: 1=small, 2=medium, 3=large
+  static const String productCardSize = 'product_card_size';
 }
 
 // Settings Notifier
@@ -141,6 +144,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       agendaTimeStep: _prefs.getInt(SettingsKeys.agendaTimeStep) ?? 60,
       showOnscreenKeyboard: _prefs.getBool(SettingsKeys.showOnscreenKeyboard) ?? true,
       onscreenKeyboardWidthFraction: _prefs.getDouble(SettingsKeys.onscreenKeyboardWidthFraction) ?? 0.5,
+      productCardSize: _prefs.getInt(SettingsKeys.productCardSize) ?? 2,
     );
   }
 
@@ -344,6 +348,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(onscreenKeyboardWidthFraction: clamped);
   }
 
+  Future<void> setProductCardSize(int size) async {
+    final clamped = size.clamp(1, 3);
+    await _prefs.setInt(SettingsKeys.productCardSize, clamped);
+    state = state.copyWith(productCardSize: clamped);
+  }
+
   /// Get the last data clear date
   DateTime? getLastDataClearDate() {
     final dateStr = _prefs.getString(SettingsKeys.lastDataClearDate);
@@ -434,5 +444,9 @@ final showOnscreenKeyboardProvider = Provider<bool>((ref) {
 
 final onscreenKeyboardWidthFractionProvider = Provider<double>((ref) {
   return ref.watch(settingsProvider).onscreenKeyboardWidthFraction;
+});
+
+final productCardSizeProvider = Provider<int>((ref) {
+  return ref.watch(settingsProvider).productCardSize;
 });
 

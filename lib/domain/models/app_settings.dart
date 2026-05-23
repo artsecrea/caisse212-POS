@@ -62,6 +62,9 @@ class AppSettings {
   final bool showOnscreenKeyboard; // Show/hide the on-screen soft keyboard
   final double onscreenKeyboardWidthFraction; // Width as fraction of screen width (0.25–1.0)
 
+  // Product card size: 1=small, 2=medium, 3=large
+  final int productCardSize;
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -114,6 +117,7 @@ class AppSettings {
     this.agendaTimeStep = 60,
     this.showOnscreenKeyboard = true,
     this.onscreenKeyboardWidthFraction = 0.5,
+    this.productCardSize = 2,
   });
 
   AppSettings copyWith({
@@ -154,6 +158,7 @@ class AppSettings {
     int? agendaTimeStep,
     bool? showOnscreenKeyboard,
     double? onscreenKeyboardWidthFraction,
+    int? productCardSize,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -193,6 +198,7 @@ class AppSettings {
       agendaTimeStep: agendaTimeStep ?? this.agendaTimeStep,
       showOnscreenKeyboard: showOnscreenKeyboard ?? this.showOnscreenKeyboard,
       onscreenKeyboardWidthFraction: onscreenKeyboardWidthFraction ?? this.onscreenKeyboardWidthFraction,
+      productCardSize: productCardSize ?? this.productCardSize,
     );
   }
 
@@ -235,6 +241,7 @@ class AppSettings {
       'agendaTimeStep': agendaTimeStep,
       'showOnscreenKeyboard': showOnscreenKeyboard,
       'onscreenKeyboardWidthFraction': onscreenKeyboardWidthFraction,
+      'productCardSize': productCardSize,
     };
   }
 
@@ -293,6 +300,7 @@ class AppSettings {
       agendaTimeStep: json['agendaTimeStep'] as int? ?? 60,
       showOnscreenKeyboard: json['showOnscreenKeyboard'] as bool? ?? true,
       onscreenKeyboardWidthFraction: (json['onscreenKeyboardWidthFraction'] as num?)?.toDouble() ?? 0.5,
+      productCardSize: json['productCardSize'] as int? ?? 2,
     );
   }
 

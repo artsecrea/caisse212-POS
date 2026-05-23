@@ -28,6 +28,7 @@ import '../widgets/table_selection_dialog.dart';
 import '../widgets/waiter_selection_dialog.dart';
 import '../widgets/top_bar.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../utils/responsive_utils.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../services/customer_display_service.dart';
@@ -46,6 +47,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   final _logger = Logger.instance;
   final _focusNode = FocusNode();
   StreamSubscription<String>? _barcodeSubscription;
+
+  // Responsive sizing — updated in build() from MediaQuery
+  double _btnSize = 130;
+  double _barHeight = 150;
 
   @override
   void initState() {
@@ -389,9 +394,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
     final orderPanelOnRight = settings.orderPanelOnRight;
 
-    final orderPanel = const SizedBox(
-      width: 400,
-      child: OrderPanel(),
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    _btnSize = actionButtonSize(screenWidth);
+    _barHeight = actionBarHeight(screenWidth);
+    final panelWidth = orderPanelWidth(screenWidth);
+
+    final orderPanel = SizedBox(
+      width: panelWidth,
+      child: const OrderPanel(),
     );
 
     final mainContent = Expanded(
@@ -431,7 +441,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 ),
               ),
               Container(
-                height: 150,
+                height: _barHeight,
                 padding: const EdgeInsets.all(8),
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -497,46 +507,54 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     Color? color,
     bool isPrimary = false,
   }) {
+    final iconSize = _btnSize < 90 ? 20.0 : (_btnSize < 110 ? 26.0 : 32.0);
+    final showLabel = _btnSize >= 90;
+
+    final child = Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: iconSize),
+        if (showLabel) ...[
+          const SizedBox(height: 4),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+            style: TextStyle(fontSize: _btnSize < 110 ? 11.0 : 13.0),
+          ),
+        ],
+      ],
+    );
+
     return SizedBox(
-      width: 130,
-      height: 130,
+      width: _btnSize,
+      height: _btnSize,
       child: isPrimary
           ? ElevatedButton(
-        onPressed: onPressed,
-        onLongPress: onLongPress,
-        style: ElevatedButton.styleFrom(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.zero,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 32),
-            const SizedBox(height: 8),
-            Text(label, textAlign: TextAlign.justify,),
-          ],
-        ),
-      )
+              onPressed: onPressed,
+              onLongPress: onLongPress,
+              style: ElevatedButton.styleFrom(
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.zero,
+                ),
+                padding: EdgeInsets.all(_btnSize < 90 ? 4 : 8),
+              ),
+              child: child,
+            )
           : OutlinedButton(
-        onPressed: onPressed,
-        onLongPress: onLongPress,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: color,
-          side: BorderSide(color: color ?? Colors.grey),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.zero,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 32),
-            const SizedBox(height: 8),
-            Text(label, textAlign: TextAlign.justify,),
-          ],
-        ),
-      ),
+              onPressed: onPressed,
+              onLongPress: onLongPress,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: color,
+                side: BorderSide(color: color ?? Colors.grey),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.zero,
+                ),
+                padding: EdgeInsets.all(_btnSize < 90 ? 4 : 8),
+              ),
+              child: child,
+            ),
     );
   }
 
