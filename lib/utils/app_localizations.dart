@@ -40,6 +40,7 @@ class AppLocalizations {
       'of': 'of',
       'for': 'for',
       'showing': 'Showing',
+      'general': 'General',
 
       // Login
       'login': 'Login',
@@ -1082,6 +1083,7 @@ class AppLocalizations {
       'of': 'من',
       'for': 'لـ',
       'showing': 'عرض',
+      'general': 'عام',
 
       // Login
       'login': 'تسجيل الدخول',
@@ -2106,6 +2108,7 @@ class AppLocalizations {
       'of': 'de',
       'for': 'pour',
       'showing': 'Affichage',
+      'general': 'Général',
 
       // Login
       'login': 'Connexion',

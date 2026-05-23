@@ -1041,8 +1041,100 @@ class PrintingService {
     }
 
     _isPrintingInProgress = true;
-    _printingStatusController.add(_translate('printing_kds', fallback: 'Printing KDS ticket...'));
+    _printingStatusController.add(_translate('printing_kds', fallback: 'Printing KDS tickets...'));
 
+    try {
+      // Get database to fetch product station information
+      if (_ref == null) {
+        debugPrint('Warning: _ref is null, cannot group by stations');
+        // Fall back to single ticket printing
+        return await _printKdsTicketForStation(
+          order: order,
+          stationName: _text('general', fallback: 'General'),
+          items: order.items,
+          cashierName: cashierName,
+        );
+      }
+      
+      final database = _ref!.read(databaseProvider);
+      
+      // Group items by station
+      final Map<String, List<OrderItem>> itemsByStation = {};
+      final List<OrderItem> itemsWithoutStation = [];
+      
+      for (final item in order.items) {
+        // Fetch product to get station info
+        final product = await (database.select(database.products)
+          ..where((tbl) => tbl.id.equals(item.productId)))
+          .getSingleOrNull();
+        
+        if (product?.stationId != null) {
+          // Fetch station name
+          final station = await (database.select(database.stations)
+            ..where((tbl) => tbl.id.equals(product!.stationId!)))
+            .getSingleOrNull();
+          
+          final stationName = station?.name ?? 'Station ${product!.stationId}';
+          itemsByStation.putIfAbsent(stationName, () => []).add(item);
+        } else {
+          itemsWithoutStation.add(item);
+        }
+      }
+      
+      // If there are items without station, add them to a default station
+      if (itemsWithoutStation.isNotEmpty) {
+        itemsByStation.putIfAbsent(_text('general', fallback: 'General'), () => []).addAll(itemsWithoutStation);
+      }
+      
+      // Print one ticket per station
+      bool allSuccessful = true;
+      int stationCount = 0;
+      
+      for (final stationEntry in itemsByStation.entries) {
+        stationCount++;
+        final stationName = stationEntry.key;
+        final stationItems = stationEntry.value;
+        
+        debugPrint('Printing KDS ticket $stationCount/${itemsByStation.length} for station: $stationName');
+        
+        final success = await _printKdsTicketForStation(
+          order: order,
+          stationName: stationName,
+          items: stationItems,
+          cashierName: cashierName,
+        );
+        
+        if (!success) {
+          allSuccessful = false;
+          debugPrint('Failed to print ticket for station: $stationName');
+        }
+        
+        // Small delay between prints to avoid printer buffer issues
+        if (stationCount < itemsByStation.length) {
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+      }
+
+      debugPrint('KDS tickets printed: ${allSuccessful ? 'all successful' : 'some failed'}');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return allSuccessful;
+    } catch (e, stackTrace) {
+      debugPrint('Error printing KDS tickets: $e');
+      debugPrint('Stack trace: $stackTrace');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return false;
+    }
+  }
+
+  /// Print a single KDS ticket for a specific station
+  Future<bool> _printKdsTicketForStation({
+    required CurrentOrder order,
+    required String stationName,
+    required List<OrderItem> items,
+    required String? cashierName,
+  }) async {
     try {
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
@@ -1051,13 +1143,26 @@ class PrintingService {
       // Set code table based on current language (supports Arabic, French, English)
       bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
 
+      // STATION NAME - Very prominent at the top
+      bytes += generator.text(
+        '*** ${stationName.toUpperCase()} ***',
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
+      );
+
+      bytes += generator.emptyLines(1);
+
       // Large order number
       bytes += generator.text(
         '${_text('order', fallback: 'ORDER')} #${order.orderCode ?? "N/A"}',
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveHeaderSize(), // Using resolveHeaderSize
+          height: _resolveHeaderSize(),
           width: _resolveHeaderSize(),
         ),
       );
@@ -1090,7 +1195,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveHeaderSize(), // Table name is important
+            height: _resolveHeaderSize(),
             width: _resolveHeaderSize(),
           ),
         );
@@ -1118,14 +1223,14 @@ class PrintingService {
 
       bytes += generator.hr(ch: '=');
 
-      // Items - large and clear for kitchen
-      for (final item in order.items) {
+      // Items - large and clear for kitchen (only items for this station)
+      for (final item in items) {
         bytes += generator.text(
           '${item.quantity}x ${item.displayName}',
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,
-            height: _resolveHeaderSize(), // Items are main content for KDS
+            height: _resolveHeaderSize(),
             width: _resolveHeaderSize(),
           ),
         );
@@ -1184,7 +1289,7 @@ class PrintingService {
       bytes += generator.cut();
 
       debugPrint(
-        'Attempting to print KDS ticket. Bytes length: ${bytes.length}',
+        'Attempting to print KDS ticket for $stationName. Bytes length: ${bytes.length}',
       );
 
       await _thermalPrinter.printData(
@@ -1193,15 +1298,11 @@ class PrintingService {
         longData: true,
       );
 
-      debugPrint('KDS ticket printed successfully');
-      _isPrintingInProgress = false;
-      _printingStatusController.add(null);
+      debugPrint('KDS ticket for $stationName printed successfully');
       return true;
     } catch (e, stackTrace) {
-      debugPrint('Error printing KDS ticket: $e');
+      debugPrint('Error printing KDS ticket for $stationName: $e');
       debugPrint('Stack trace: $stackTrace');
-      _isPrintingInProgress = false;
-      _printingStatusController.add(null);
       return false;
     }
   }
