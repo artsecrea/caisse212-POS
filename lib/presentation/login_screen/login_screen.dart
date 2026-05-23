@@ -457,7 +457,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     try {
       final database = ref.read(databaseProvider);
-      final hasInternet = true; // TODO: Check internet connection
 
       // Check if users exist
       final users = await database.select(database.users).get();
@@ -513,7 +512,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         return;
       }
 
-      if (user != null && (verified || customVerified)) {
+      if (verified || customVerified) {
         // Local authentication successful
         ref.read(currentUserProvider.notifier).state = CurrentUser.fromUser(user);
 
@@ -563,7 +562,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             }
           }
         } catch (e) {
-          print('Session error: $e');
+          Logger.instance.error('Session error: $e');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -585,18 +584,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             );
           }
         }
-      } else if (hasInternet) {
-        // Try API authentication and sync data
-        // TODO: Implement API authentication
-        setState(() {
-          _errorMessage = 'Invalid credentials';
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _errorMessage = 'Invalid credentials and no internet connection';
-          _isLoading = false;
-        });
       }
     } catch (e) {
       setState(() {
@@ -735,8 +722,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final scaffoldColor = Theme.of(context).scaffoldBackgroundColor;
     final gradientColors = [primaryColor, primaryColor.withValues(alpha: 0.75)];
 
-    return Column(
-      children: [
+    return Container(
+      color: scaffoldColor,
+      child: Column(
+        children: [
         // Action strip — keeps buttons out of the content area
         SizedBox(
           height: 60,
@@ -805,6 +794,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
         ),
       ],
+      ),
     );
   }
 
@@ -842,13 +832,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Widget _buildBrandPanel(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(48, 40, 48, 48),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
+    return Container(
+      color: Colors.transparent,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(48, 40, 48, 48),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
             const Caisse212Logo(size: 60),
             const SizedBox(height: 20),
             const Text(
@@ -901,6 +892,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
               ),
         ],
+      ),
       ),
     );
   }
