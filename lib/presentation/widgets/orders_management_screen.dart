@@ -847,17 +847,27 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) => _handleOrderAction(value, order, orderDetails),
-              itemBuilder: (context) => [
-              PopupMenuItem(value: 'view', child: Row(children: [const Icon(Icons.visibility, size: 18), const SizedBox(width: 8), Text(l10n.translate('view'))])),
-              if (isUnpaid)
-                PopupMenuItem(value: 'pay', child: Row(children: [const Icon(Icons.payment, size: 18, color: Colors.teal), SizedBox(width: 8), Text(l10n.translate('pay'), style: const TextStyle(color: Colors.teal))]))
-              else if (!isZLocked) ...[
-                PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
-                PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
-                PopupMenuItem(value: 'cancel', child: Row(children: [const Icon(Icons.cancel, size: 18, color: Colors.orange), const SizedBox(width: 8), Text(l10n.translate('cancel_order'), style: const TextStyle(color: Colors.orange))])),
-                PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_forever, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
-              ],
-            ],
+            itemBuilder: (context) {
+              final permissionService = ref.read(permissionServiceProvider);
+              final canUpdate = permissionService.hasPermission(Permissions.ordersUpdate);
+              final canDelete = permissionService.hasPermission(Permissions.ordersDelete);
+
+              return [
+                PopupMenuItem(value: 'view', child: Row(children: [const Icon(Icons.visibility, size: 18), const SizedBox(width: 8), Text(l10n.translate('view'))])),
+                if (isUnpaid)
+                  PopupMenuItem(value: 'pay', child: Row(children: [const Icon(Icons.payment, size: 18, color: Colors.teal), SizedBox(width: 8), Text(l10n.translate('pay'), style: const TextStyle(color: Colors.teal))]))
+                else if (!isZLocked) ...[
+                  if (canUpdate)
+                    PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
+                  if (canUpdate)
+                    PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
+                  if (canUpdate)
+                    PopupMenuItem(value: 'cancel', child: Row(children: [const Icon(Icons.cancel, size: 18, color: Colors.orange), const SizedBox(width: 8), Text(l10n.translate('cancel_order'), style: const TextStyle(color: Colors.orange))])),
+                  if (canDelete)
+                    PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_forever, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
+                ],
+              ];
+            },
           ),
         ],
       ),
@@ -875,6 +885,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             columnSpacing: 12,
             horizontalMargin: 12,
             minWidth: 1200,
+            fixedLeftColumns: 1,
             scrollController: ScrollController(),
             showCheckboxColumn: false,
             headingRowColor: WidgetStateProperty.all(
@@ -886,6 +897,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             ),
             dataRowHeight: 56,
             columns: [
+              DataColumn2(label: Text(l10n.translate('actions')), size: ColumnSize.S),
               DataColumn2(
                 label: Text(l10n.translate('code')),
                 size: ColumnSize.M,
@@ -910,7 +922,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 size: ColumnSize.M,
                 onSort: (_, __) => _onSort('createdAt'),
               ),
-              DataColumn2(label: Text(l10n.translate('actions')), size: ColumnSize.L),
             ],
             rows: orders.map((orderDetails) => _buildDataRow(orderDetails, currency, l10n)).toList(),
           ),
@@ -931,6 +942,94 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     return DataRow(
       onSelectChanged: (_) => isZLocked ? _showOrderDetails(order) : _editOrder(order),
       cells: [
+        DataCell(
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: l10n.translate('actions'),
+            onSelected: (value) {
+              if (value == 'view') _showOrderDetails(order);
+              else if (value == 'pay') _payOrder(order);
+              else if (value == 'edit') _editOrder(order);
+              else if (value == 'status') _showChangeStatusDialog(order);
+              else if (value == 'cancel') _cancelOrder(order);
+              else if (value == 'delete') _deleteOrder(order);
+            },
+            itemBuilder: (context) {
+              final permissionService = ref.read(permissionServiceProvider);
+              final canUpdate = permissionService.hasPermission(Permissions.ordersUpdate);
+              final canDelete = permissionService.hasPermission(Permissions.ordersDelete);
+              return [
+                PopupMenuItem(
+                  value: 'view',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.visibility, size: 18),
+                      const SizedBox(width: 8),
+                      Text(l10n.translate('view')),
+                    ],
+                  ),
+                ),
+                if (isUnpaid)
+                  PopupMenuItem(
+                    value: 'pay',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.payment, size: 18, color: Colors.teal),
+                        const SizedBox(width: 8),
+                        Text(l10n.translate('pay')),
+                      ],
+                    ),
+                  )
+                else if (!isZLocked) ...[
+                  if (canUpdate)
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.edit, size: 18, color: Colors.green),
+                          const SizedBox(width: 8),
+                          Text(l10n.translate('edit')),
+                        ],
+                      ),
+                    ),
+                  if (canUpdate)
+                    PopupMenuItem(
+                      value: 'status',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.swap_horiz, size: 18, color: Colors.blue),
+                          const SizedBox(width: 8),
+                          Text(l10n.translate('status')),
+                        ],
+                      ),
+                    ),
+                  if (canUpdate)
+                    PopupMenuItem(
+                      value: 'cancel',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.cancel, size: 18, color: Colors.orange),
+                          const SizedBox(width: 8),
+                          Text(l10n.translate('cancel_order')),
+                        ],
+                      ),
+                    ),
+                  if (canDelete)
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.delete_forever, size: 18, color: Colors.red),
+                          const SizedBox(width: 8),
+                          Text(l10n.translate('delete')),
+                        ],
+                      ),
+                    ),
+                ],
+              ];
+            },
+          ),
+        ),
         DataCell(
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -991,66 +1090,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         ),
         DataCell(_buildStatusChip(order.status, l10n)),
         DataCell(Text(_formatDate(order.date), style: const TextStyle(fontSize: 11))),
-        DataCell(
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.visibility, size: 18),
-                onPressed: () => _showOrderDetails(order),
-                tooltip: l10n.translate('view'),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              ),
-              if (isUnpaid)
-                Tooltip(
-                  message: l10n.translate('pay'),
-                  child: IconButton(
-                    icon: const Icon(Icons.payment, size: 18, color: Colors.teal),
-                    onPressed: () => _payOrder(order),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  ),
-                )
-              else if (!isZLocked) ...[
-                PermissionIconButton(
-                  permission: Permissions.ordersUpdate,
-                  icon: const Icon(Icons.edit, size: 18, color: Colors.green),
-                  onPressed: () => _editOrder(order),
-                  tooltip: l10n.translate('edit'),
-                ),
-                PermissionIconButton(
-                  permission: Permissions.ordersUpdate,
-                  icon: const Icon(Icons.swap_horiz, size: 18, color: Colors.blue),
-                  onPressed: () => _showChangeStatusDialog(order),
-                  tooltip: l10n.translate('status'),
-                ),
-                PermissionIconButton(
-                  permission: Permissions.ordersUpdate,
-                  icon: const Icon(Icons.cancel, size: 18, color: Colors.orange),
-                  onPressed: () => _cancelOrder(order),
-                  tooltip: l10n.translate('cancel_order'),
-                ),
-                GestureDetector(
-                  onLongPress: () => _deleteOrder(order),
-                  child: PermissionIconButton(
-                    permission: Permissions.ordersDelete,
-                    icon: const Icon(Icons.delete_forever, size: 18, color: Colors.red),
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(l10n.translate('long_press_to_delete')),
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                    tooltip: l10n.translate('long_press_to_delete'),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
       ],
     );
   }
