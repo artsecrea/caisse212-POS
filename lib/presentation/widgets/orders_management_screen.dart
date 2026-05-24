@@ -17,6 +17,7 @@ import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
 import 'permission_guard.dart';
 import 'order_details_dialog.dart';
+import 'external_orders_tab.dart';
 import '../paymen_screen/payment_screen.dart';
 
 class OrdersManagementScreen extends ConsumerStatefulWidget {
@@ -26,7 +27,9 @@ class OrdersManagementScreen extends ConsumerStatefulWidget {
   ConsumerState<OrdersManagementScreen> createState() => _OrdersManagementScreenState();
 }
 
-class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen> {
+class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   // Filters
   String _statusFilter = 'ALL';
   String _searchQuery = '';
@@ -69,6 +72,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _loadOrders();
   }
 
@@ -105,6 +109,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   @override
   void dispose() {
+    _tabController.dispose();
     _searchController.dispose();
     _customerSearchController.dispose();
     _customerSearchFocusNode.dispose();
@@ -303,21 +308,27 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
     return Scaffold(
       appBar: _buildAppBar(l10n),
-      body: Column(
+      body: TabBarView(
+        controller: _tabController,
         children: [
-          _buildFiltersBar(l10n),
-          _buildSecondaryFiltersBar(l10n),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _errorMessage != null
-                    ? _buildErrorView(_errorMessage!, l10n)
-                    : _paginatedOrders == null || _paginatedOrders!.orders.isEmpty
-                        ? _buildEmptyView(l10n)
-                        : _groupBy == 'none'
-                            ? _buildOrdersTable(currency, l10n)
-                            : _buildGroupedView(currency, l10n),
+          Column(
+            children: [
+              _buildFiltersBar(l10n),
+              _buildSecondaryFiltersBar(l10n),
+              Expanded(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _errorMessage != null
+                        ? _buildErrorView(_errorMessage!, l10n)
+                        : _paginatedOrders == null || _paginatedOrders!.orders.isEmpty
+                            ? _buildEmptyView(l10n)
+                            : _groupBy == 'none'
+                                ? _buildOrdersTable(currency, l10n)
+                                : _buildGroupedView(currency, l10n),
+              ),
+            ],
           ),
+          const ExternalOrdersTab(),
         ],
       ),
     );
@@ -446,6 +457,13 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         ),
         const SizedBox(width: 8),
       ],
+      bottom: TabBar(
+        controller: _tabController,
+        tabs: const [
+          Tab(icon: Icon(Icons.receipt_long, size: 18), text: 'Orders'),
+          Tab(icon: Icon(Icons.chat_bubble_outline, size: 18), text: 'External'),
+        ],
+      ),
     );
   }
 

@@ -467,6 +467,14 @@ class AppLocalizations {
       'connected': 'Connected',
       'disconnected': 'Disconnected',
 
+      'ticket_settings': 'Ticket Settings',
+      'ticket_header': 'Ticket Header',
+      'ticket_header_hint': 'Text to appear at the top of printed tickets',
+      'ticket_footer': 'Ticket Footer',
+      'ticket_footer_hint': 'Text to appear at the bottom of printed tickets',
+      'ticket_header_subtitle': 'Customize the header of printed tickets',
+      'ticket_footer_subtitle': 'Customize the footer of printed tickets',
+
       // Numbers
       'number_of_persons': 'Number of Persons',
       'person': 'Person',
@@ -1533,6 +1541,8 @@ class AppLocalizations {
       'session_resumed': 'تم استئناف الجلسة بنجاح',
       'session_created': 'تم إنشاء جلسة جديدة',
       'welcome_back': 'مرحباً بعودتك',
+
+
 
       // Main Screen
       'new_order': 'طلب جديد',
@@ -3060,6 +3070,7 @@ class AppLocalizations {
       'error_loading_tables': 'Erreur lors du chargement des tables',
       'capacity': 'Capacité',
       'has_active_order': 'A une commande active',
+
       'occupied': 'Occupée',
       'free': 'Libre',
       'clear_table': 'Libérer la table',

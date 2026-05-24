@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/domain/models/external_order_models.dart';
 import 'package:caisse212/providers/database_providers.dart';
+import 'package:caisse212/providers/external_order_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
 import 'package:caisse212/presentation/paymen_screen/payment_screen.dart';
 import 'package:caisse212/utils/app_localizations.dart';
@@ -15,7 +17,8 @@ final _waitersProvider = FutureProvider.autoDispose<List<Waiter>>((ref) async {
 });
 
 class OrderConfirmationScreen extends ConsumerStatefulWidget {
-  const OrderConfirmationScreen({super.key});
+  final int initialTab;
+  const OrderConfirmationScreen({super.key, this.initialTab = 0});
 
   @override
   ConsumerState<OrderConfirmationScreen> createState() =>
@@ -23,18 +26,49 @@ class OrderConfirmationScreen extends ConsumerStatefulWidget {
 }
 
 class _OrderConfirmationScreenState
-    extends ConsumerState<OrderConfirmationScreen> {
+    extends ConsumerState<OrderConfirmationScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+
+  // On-hold order state
   Order? _selectedOrder;
   Waiter? _selectedWaiter;
-  bool _waiterMissing = false; // highlight picker when confirm pressed without waiter
+  bool _waiterMissing = false;
+
+  // External order state
+  ExternalQueueItem? _selectedExternalItem;
+  bool _isConfirmingExternal = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(
+      length: 2,
+      vsync: this,
+      initialIndex: widget.initialTab,
+    );
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) {
+        setState(() {
+          _selectedOrder = null;
+          _selectedExternalItem = null;
+          _selectedWaiter = null;
+          _waiterMissing = false;
+        });
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _tabController.dispose();
     _searchController.dispose();
     super.dispose();
   }
+
+  // ── On-hold helpers ─────────────────────────────────────────────────────────
 
   Future<List<Order>> _getOnHoldOrders() async {
     final database = ref.read(databaseProvider);
@@ -65,30 +99,17 @@ class _OrderConfirmationScreenState
       final sessionId = ref.read(currentSessionProvider)?.id;
       final userId = ref.read(currentUserProvider)?.id;
       final waiterId = _selectedWaiter?.id ?? order.waiterId;
-
-      await orderRepo.updateOrderStatus(
-        order.id,
-        'PENDING',
-        sessionId: sessionId,
-        userId: userId,
-        waiterId: waiterId,
-      );
-
+      await orderRepo.updateOrderStatus(order.id, 'PENDING',
+          sessionId: sessionId, userId: userId, waiterId: waiterId);
       if (mounted) {
         SnackBarHelper.showSuccessSnackBar(
-          context,
-          ref,
-          'Order ${order.code} confirmed and sent to KDS',
-        );
+            context, ref, 'Order ${order.code} confirmed and sent to KDS');
         Navigator.of(context).pop();
       }
     } catch (e) {
       if (mounted) {
         SnackBarHelper.showErrorSnackBar(
-          context,
-          ref,
-          'Error confirming order: $e',
-        );
+            context, ref, 'Error confirming order: $e');
       }
     }
   }
@@ -101,23 +122,14 @@ class _OrderConfirmationScreenState
       final sessionId = ref.read(currentSessionProvider)?.id;
       final userId = ref.read(currentUserProvider)?.id;
       final waiterId = _selectedWaiter?.id ?? order.waiterId;
-
-      await orderRepo.updateOrderStatus(
-        order.id,
-        'PENDING',
-        sessionId: sessionId,
-        userId: userId,
-        waiterId: waiterId,
-      );
-
+      await orderRepo.updateOrderStatus(order.id, 'PENDING',
+          sessionId: sessionId, userId: userId, waiterId: waiterId);
       final fullOrder = await orderRepo.getOrderById(order.id);
       if (fullOrder == null) throw Exception('Order not found');
-
       if (mounted) {
         Navigator.of(context).pop();
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => PaymentScreen(order: fullOrder)),
-        );
+            MaterialPageRoute(builder: (_) => PaymentScreen(order: fullOrder)));
       }
     } catch (e) {
       if (mounted) {
@@ -129,7 +141,6 @@ class _OrderConfirmationScreenState
   Future<void> _cancelOrder(Order order) async {
     final l10n = AppLocalizations.of(context)!;
     final reasonController = TextEditingController();
-
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -166,9 +177,7 @@ class _OrderConfirmationScreenState
         ],
       ),
     );
-
     if (confirmed != true || !mounted) return;
-
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
       final reason = reasonController.text.trim().isEmpty
@@ -183,8 +192,8 @@ class _OrderConfirmationScreenState
       }
     } catch (e) {
       if (mounted) {
-        SnackBarHelper.showErrorSnackBar(
-            context, ref, '${l10n.translate('error_canceling_order')}: $e');
+        SnackBarHelper.showErrorSnackBar(context, ref,
+            '${l10n.translate('error_canceling_order')}: $e');
       }
     } finally {
       reasonController.dispose();
@@ -197,8 +206,8 @@ class _OrderConfirmationScreenState
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(l10n.translate('delete_order')),
-        content:
-            Text('${l10n.translate('confirm_delete_order')} ${order.code}?'),
+        content: Text(
+            '${l10n.translate('confirm_delete_order')} ${order.code}?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -214,9 +223,7 @@ class _OrderConfirmationScreenState
         ],
       ),
     );
-
     if (confirmed != true || !mounted) return;
-
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
       await orderRepo.deleteOrder(order.id);
@@ -251,11 +258,10 @@ class _OrderConfirmationScreenState
       final comps = await (db.select(db.orderProductComponents)
             ..where((tbl) => tbl.orderProductId.equals(item.id)))
           .get();
-      // unitaryPrice already includes tva and has the pre-discount baked in.
-      // componentTotal is per-unit, so it gets multiplied by quantity.
-      // manualDiscount is per-item, so it also gets multiplied by quantity.
-      final compTotal = comps.fold<double>(0, (s, c) => s + c.price * c.quantity);
-      total += (item.unitaryPrice + compTotal - item.manualDiscount) * item.quantity;
+      final compTotal =
+          comps.fold<double>(0, (s, c) => s + c.price * c.quantity);
+      total += (item.unitaryPrice + compTotal - item.manualDiscount) *
+          item.quantity;
     }
     return total;
   }
@@ -266,17 +272,14 @@ class _OrderConfirmationScreenState
     final orderProducts = await (db.select(db.orderProducts)
           ..where((tbl) => tbl.orderId.equals(orderId)))
         .get();
-
     final items = <Map<String, dynamic>>[];
     for (final op in orderProducts) {
       final product = await (db.select(db.products)
             ..where((tbl) => tbl.id.equals(op.productId)))
           .getSingleOrNull();
-
       final orderComps = await (db.select(db.orderProductComponents)
             ..where((tbl) => tbl.orderProductId.equals(op.id)))
           .get();
-
       final components = <Map<String, dynamic>>[];
       for (final oc in orderComps) {
         final comp = await (db.select(db.components)
@@ -291,7 +294,6 @@ class _OrderConfirmationScreenState
           });
         }
       }
-
       items.add({
         'orderProduct': op,
         'productName': product?.name ?? 'Unknown Product',
@@ -301,143 +303,346 @@ class _OrderConfirmationScreenState
     return items;
   }
 
+  // ── External order helpers ──────────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> _resolveExternalItems(
+      ExternalQueueItem item) async {
+    final db = ref.read(databaseProvider);
+    final result = <Map<String, dynamic>>[];
+    for (final qi in item.order.items) {
+      final product = await (db.select(db.products)
+            ..where((p) => p.id.equals(qi.productId)))
+          .getSingleOrNull();
+      final compNames = <String>[];
+      for (final c in qi.components) {
+        final comp = await (db.select(db.components)
+              ..where((cc) => cc.id.equals(c.componentId)))
+            .getSingleOrNull();
+        if (comp != null) compNames.add('${c.quantity}× ${comp.name}');
+      }
+      result.add({
+        'name': product?.name ?? 'Product #${qi.productId}',
+        'quantity': qi.quantity,
+        'note': qi.note,
+        'components': compNames,
+        'price': product?.finalPrice ?? 0.0,
+      });
+    }
+    return result;
+  }
+
+  Future<void> _confirmExternalOrder(ExternalQueueItem item) async {
+    setState(() => _isConfirmingExternal = true);
+    try {
+      final userId = ref.read(currentUserProvider)?.id;
+      final orderId = await ref
+          .read(externalOrderProvider.notifier)
+          .confirm(item.id, userId: userId);
+      if (mounted) {
+        if (orderId != null) {
+          SnackBarHelper.showSuccessSnackBar(context, ref,
+              'Order ${item.orderCode} confirmed and sent to KDS');
+          setState(() {
+            _selectedExternalItem = null;
+            _isConfirmingExternal = false;
+          });
+        } else {
+          final err = ref.read(externalOrderProvider).error ??
+              'Failed to confirm order';
+          SnackBarHelper.showErrorSnackBar(context, ref, err);
+          setState(() => _isConfirmingExternal = false);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
+        setState(() => _isConfirmingExternal = false);
+      }
+    }
+  }
+
+  Future<void> _confirmExternalAndPay(ExternalQueueItem item) async {
+    setState(() => _isConfirmingExternal = true);
+    try {
+      final userId = ref.read(currentUserProvider)?.id;
+      final orderId = await ref
+          .read(externalOrderProvider.notifier)
+          .confirm(item.id, userId: userId);
+      if (!mounted) return;
+      if (orderId == null) {
+        final err =
+            ref.read(externalOrderProvider).error ?? 'Failed to confirm';
+        SnackBarHelper.showErrorSnackBar(context, ref, err);
+        setState(() => _isConfirmingExternal = false);
+        return;
+      }
+      final fullOrder =
+          await ref.read(orderRepositoryProvider).getOrderById(orderId);
+      if (!mounted) return;
+      if (fullOrder == null) {
+        SnackBarHelper.showErrorSnackBar(context, ref, 'Order not found');
+        setState(() => _isConfirmingExternal = false);
+        return;
+      }
+      Navigator.of(context).pop();
+      Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => PaymentScreen(order: fullOrder)));
+    } catch (e) {
+      if (mounted) {
+        SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
+        setState(() => _isConfirmingExternal = false);
+      }
+    }
+  }
+
+  // ── Build ───────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cs = Theme.of(context).colorScheme;
+    final externalState = ref.watch(externalOrderProvider);
+    final externalCount = externalState.items.length;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.translate('confirm_order')),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(60),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: l10n.translate('search_by_code'),
-                prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8)),
-                filled: true,
-                fillColor: isDark ? Colors.grey[800] : Colors.white,
-                isDense: true,
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            Tab(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.pending_actions, size: 18),
+                  const SizedBox(width: 6),
+                  const Text('On Hold'),
+                ],
               ),
-              onChanged: (v) => setState(() => _searchQuery = v),
             ),
-          ),
+            Tab(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_download_outlined, size: 18),
+                  const SizedBox(width: 6),
+                  const Text('External'),
+                  if (externalCount > 0) ...[
+                    const SizedBox(width: 6),
+                    _CountBadge(count: externalCount),
+                  ],
+                ],
+              ),
+            ),
+          ],
         ),
       ),
-      body: Row(
+      body: TabBarView(
+        controller: _tabController,
         children: [
-          // ── Left: order list ──────────────────────────────────────
-          Expanded(
-            flex: 5,
-            child: FutureBuilder<List<Order>>(
-              future: _getOnHoldOrders(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Center(child: Text('Error: ${snapshot.error}'));
-                }
-                final orders = snapshot.data ?? [];
-                if (orders.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.inbox,
-                            size: 64,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.3)),
-                        const SizedBox(height: 12),
-                        Text(
-                          l10n.translate('no_onhold_orders'),
-                          style: TextStyle(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: 0.6)),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  padding: const EdgeInsets.all(8),
-                  itemCount: orders.length,
-                  itemBuilder: (context, i) {
-                    final order = orders[i];
-                    final isSelected = _selectedOrder?.id == order.id;
-                    return FutureBuilder<Map<String, dynamic>>(
-                      future: Future.wait([
-                        _getOrderItemCount(order.id),
-                        _getOrderTotal(order.id),
-                      ]).then((r) =>
-                          {'itemCount': r[0], 'total': r[1]}),
-                      builder: (context, ds) {
-                        final itemCount =
-                            ds.data?['itemCount'] as int? ?? 0;
-                        final total =
-                            ds.data?['total'] as double? ?? 0.0;
-                        return _OrderCard(
-                          order: order,
-                          isSelected: isSelected,
-                          itemCount: itemCount,
-                          total: total,
-                          l10n: l10n,
-                          onTap: () => setState(() {
-                            _selectedOrder = order;
-                            _selectedWaiter = null;
-                            _waiterMissing = false;
-                          }),
-                        );
-                      },
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-
-          // ── Right: details + actions ──────────────────────────────
-          Expanded(
-            flex: 4,
-            child: _selectedOrder == null
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.touch_app,
-                            size: 64,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.3)),
-                        const SizedBox(height: 12),
-                        Text(
-                          l10n.translate('select_order_to_confirm'),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: 0.6)),
-                        ),
-                      ],
-                    ),
-                  )
-                : _buildOrderDetails(_selectedOrder!, l10n),
-          ),
+          // ── Tab 0: On Hold ───────────────────────────────────────────────
+          _buildOnHoldTab(l10n, isDark, cs),
+          // ── Tab 1: External orders ───────────────────────────────────────
+          _buildExternalTab(l10n, cs, externalState),
         ],
       ),
     );
   }
+
+  // ── On-hold tab ─────────────────────────────────────────────────────────────
+
+  Widget _buildOnHoldTab(
+      AppLocalizations l10n, bool isDark, ColorScheme cs) {
+    return Row(
+      children: [
+        // Left: search + list
+        Expanded(
+          flex: 5,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: l10n.translate('search_by_code'),
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    filled: true,
+                    fillColor:
+                        isDark ? Colors.grey[800] : Colors.white,
+                    isDense: true,
+                  ),
+                  onChanged: (v) => setState(() => _searchQuery = v),
+                ),
+              ),
+              Expanded(
+                child: FutureBuilder<List<Order>>(
+                  future: _getOnHoldOrders(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Center(
+                          child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return Center(
+                          child: Text('Error: ${snapshot.error}'));
+                    }
+                    final orders = snapshot.data ?? [];
+                    if (orders.isEmpty) {
+                      return _EmptyPane(
+                        icon: Icons.inbox,
+                        label: l10n.translate('no_onhold_orders'),
+                      );
+                    }
+                    return ListView.builder(
+                      padding: const EdgeInsets.all(8),
+                      itemCount: orders.length,
+                      itemBuilder: (context, i) {
+                        final order = orders[i];
+                        final isSelected =
+                            _selectedOrder?.id == order.id;
+                        return FutureBuilder<Map<String, dynamic>>(
+                          future: Future.wait([
+                            _getOrderItemCount(order.id),
+                            _getOrderTotal(order.id),
+                          ]).then((r) =>
+                              {'itemCount': r[0], 'total': r[1]}),
+                          builder: (context, ds) {
+                            final itemCount =
+                                ds.data?['itemCount'] as int? ?? 0;
+                            final total =
+                                ds.data?['total'] as double? ?? 0.0;
+                            return _OnHoldCard(
+                              order: order,
+                              isSelected: isSelected,
+                              itemCount: itemCount,
+                              total: total,
+                              l10n: l10n,
+                              onTap: () => setState(() {
+                                _selectedOrder = order;
+                                _selectedExternalItem = null;
+                                _selectedWaiter = null;
+                                _waiterMissing = false;
+                              }),
+                            );
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Right: details
+        Expanded(
+          flex: 4,
+          child: _selectedOrder == null
+              ? _EmptyPane(
+                  icon: Icons.touch_app,
+                  label: l10n.translate('select_order_to_confirm'),
+                )
+              : _buildOrderDetails(_selectedOrder!, l10n),
+        ),
+      ],
+    );
+  }
+
+  // ── External tab ─────────────────────────────────────────────────────────────
+
+  Widget _buildExternalTab(
+      AppLocalizations l10n, ColorScheme cs, ExternalOrderState state) {
+    return Row(
+      children: [
+        // Left: external items list
+        Expanded(
+          flex: 5,
+          child: Column(
+            children: [
+              if (state.error != null)
+                _ErrorBanner(
+                  message: state.error!,
+                  onDismiss: () =>
+                      ref.read(externalOrderProvider.notifier).load(),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Row(
+                  children: [
+                    Text(
+                      '${state.items.length} pending',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: cs.onSurface.withValues(alpha: 0.6)),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.refresh, size: 20),
+                      tooltip: l10n.translate('refresh'),
+                      onPressed: state.isLoading
+                          ? null
+                          : () => ref
+                              .read(externalOrderProvider.notifier)
+                              .load(),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: state.isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : state.items.isEmpty
+                        ? const _EmptyPane(
+                            icon: Icons.cloud_off_outlined,
+                            label: 'No pending external orders',
+                            subtitle:
+                                'DealUp / WhatsApp orders will appear here',
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            itemCount: state.items.length,
+                            itemBuilder: (context, i) {
+                              final item = state.items[i];
+                              final isSelected =
+                                  _selectedExternalItem?.id == item.id;
+                              return _ExternalItemCard(
+                                key: ValueKey(item.id),
+                                item: item,
+                                isSelected: isSelected,
+                                onTap: () => setState(() {
+                                  _selectedExternalItem = item;
+                                  _selectedOrder = null;
+                                  _isConfirmingExternal = false;
+                                }),
+                              );
+                            },
+                          ),
+              ),
+            ],
+          ),
+        ),
+        // Right: external order details
+        Expanded(
+          flex: 4,
+          child: _selectedExternalItem == null
+              ? const _EmptyPane(
+                  icon: Icons.touch_app,
+                  label: 'Select an order to review',
+                )
+              : _buildExternalOrderDetails(_selectedExternalItem!, l10n),
+        ),
+      ],
+    );
+  }
+
+  // ── On-hold detail pane ─────────────────────────────────────────────────────
 
   Widget _buildOrderDetails(Order order, AppLocalizations l10n) {
     final cs = Theme.of(context).colorScheme;
@@ -446,17 +651,19 @@ class _OrderConfirmationScreenState
 
     return Container(
       decoration: BoxDecoration(
-        border: Border(left: BorderSide(color: Theme.of(context).dividerColor)),
+        border:
+            Border(left: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       child: Column(
         children: [
-          // ── Header ─────────────────────────────────────────────
+          // Header
           Container(
             padding: const EdgeInsets.all(16),
             color: isDark ? cs.surfaceContainerHigh : Colors.orange.shade50,
             child: Row(
               children: [
-                Icon(Icons.pending_actions, color: Colors.orange[700], size: 28),
+                Icon(Icons.pending_actions,
+                    color: Colors.orange[700], size: 28),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -473,12 +680,15 @@ class _OrderConfirmationScreenState
                           _TypeChip(type: order.type),
                           if (order.persons > 1) ...[
                             const SizedBox(width: 6),
-                            Icon(Icons.people, size: 14, color: cs.onSurface.withValues(alpha: 0.6)),
+                            Icon(Icons.people,
+                                size: 14,
+                                color: cs.onSurface.withValues(alpha: 0.6)),
                             const SizedBox(width: 2),
                             Text('${order.persons}',
                                 style: TextStyle(
                                     fontSize: 12,
-                                    color: cs.onSurface.withValues(alpha: 0.6))),
+                                    color: cs.onSurface
+                                        .withValues(alpha: 0.6))),
                           ],
                         ],
                       ),
@@ -489,7 +699,7 @@ class _OrderConfirmationScreenState
             ),
           ),
 
-          // ── Items list ─────────────────────────────────────────
+          // Items
           Expanded(
             child: FutureBuilder<List<Map<String, dynamic>>>(
               future: _getOrderItemsWithDetails(order.id),
@@ -500,11 +710,9 @@ class _OrderConfirmationScreenState
                 final items = snapshot.data ?? [];
                 if (items.isEmpty) {
                   return Center(
-                    child: Text(
-                      'No items',
-                      style: TextStyle(
-                          color: cs.onSurface.withValues(alpha: 0.5)),
-                    ),
+                    child: Text('No items',
+                        style: TextStyle(
+                            color: cs.onSurface.withValues(alpha: 0.5))),
                   );
                 }
                 return ListView.builder(
@@ -516,92 +724,24 @@ class _OrderConfirmationScreenState
                     final name = item['productName'] as String;
                     final comps =
                         item['components'] as List<Map<String, dynamic>>;
-                    // unitaryPrice already contains tva and the pre-discount.
-                    // componentTotal and manualDiscount are both per-item,
-                    // so they scale with quantity.
-                    final compLineTotal = comps.fold<double>(
-                      0.0,
-                      (s, c) => s + (c['price'] as double) * (c['quantity'] as int),
-                    );
+                    final compLineTotal = comps.fold<double>(0.0,
+                        (s, c) =>
+                            s +
+                            (c['price'] as double) *
+                                (c['quantity'] as int));
                     final lineTotal =
                         (op.unitaryPrice + compLineTotal - op.manualDiscount) *
                             op.quantity;
-
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 6),
-                      elevation: 0,
-                      color: cs.surfaceContainerLow,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 32,
-                                  height: 32,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    color: cs.primaryContainer,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    '${op.quantity}x',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: cs.onPrimaryContainer,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(name,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w600)),
-                                ),
-                                Text(
-                                  currencyFormatter.format(lineTotal),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13),
-                                ),
-                              ],
-                            ),
-                            if (comps.isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Padding(
-                                padding: const EdgeInsets.only(left: 42),
-                                child: Wrap(
-                                  spacing: 6,
-                                  runSpacing: 4,
-                                  children: comps.map((c) {
-                                    final isSpecial = c['isSpecial'] as bool;
-                                    return Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (isSpecial)
-                                          Icon(Icons.star,
-                                              size: 11,
-                                              color: Colors.orange[600]),
-                                        Text(
-                                          '${c['quantity']}x ${c['name']}',
-                                          style: TextStyle(
-                                              fontSize: 11,
-                                              color: cs.onSurface
-                                                  .withValues(alpha: 0.65)),
-                                        ),
-                                      ],
-                                    );
-                                  }).toList(),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
+                    return _ItemCard(
+                      quantityLabel: '${op.quantity}x',
+                      name: name,
+                      trailingLabel: currencyFormatter.format(lineTotal),
+                      chips: comps.map((c) {
+                        return _CompChip(
+                          label: '${c['quantity']}x ${c['name']}',
+                          isSpecial: c['isSpecial'] as bool,
+                        );
+                      }).toList(),
                     );
                   },
                 );
@@ -609,12 +749,11 @@ class _OrderConfirmationScreenState
             ),
           ),
 
-          // ── Waiter picker (DINE_IN only) ───────────────────────
-          if (order.type == 'DINE_IN')
-            _buildWaiterSection(order),
+          // Waiter
+          if (order.type == 'DINE_IN') _buildWaiterSection(order),
 
-          // ── Actions ────────────────────────────────────────────
-          _buildActions(order, l10n),
+          // Actions
+          _buildOnHoldActions(order, l10n),
         ],
       ),
     );
@@ -624,7 +763,6 @@ class _OrderConfirmationScreenState
     final cs = Theme.of(context).colorScheme;
     final waitersAsync = ref.watch(_waitersProvider);
 
-    // Already assigned
     if (order.waiterId != null) {
       return waitersAsync.maybeWhen(
         data: (waiters) {
@@ -632,7 +770,8 @@ class _OrderConfirmationScreenState
               waiters.where((w) => w.id == order.waiterId).firstOrNull;
           return Container(
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: Colors.green.shade50,
               borderRadius: BorderRadius.circular(8),
@@ -647,7 +786,8 @@ class _OrderConfirmationScreenState
                       ? '${w.firstName} ${w.lastName}'.trim()
                       : 'Waiter #${order.waiterId}',
                   style: const TextStyle(
-                      fontWeight: FontWeight.w600, color: Colors.green),
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green),
                 ),
               ],
             ),
@@ -657,7 +797,6 @@ class _OrderConfirmationScreenState
       );
     }
 
-    // Need to pick
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -673,19 +812,17 @@ class _OrderConfirmationScreenState
       ),
       child: waitersAsync.when(
         loading: () => const SizedBox(
-          height: 40,
-          child: Center(
-              child: CircularProgressIndicator(strokeWidth: 2)),
-        ),
-        error: (_, __) =>
-            const Text('Failed to load waiters'),
+            height: 40,
+            child: Center(
+                child: CircularProgressIndicator(strokeWidth: 2))),
+        error: (_, __) => const Text('Failed to load waiters'),
         data: (waiters) => Row(
           children: [
-            Icon(
-              Icons.person_search,
-              size: 18,
-              color: _waiterMissing ? cs.error : cs.onSurface.withValues(alpha: 0.6),
-            ),
+            Icon(Icons.person_search,
+                size: 18,
+                color: _waiterMissing
+                    ? cs.error
+                    : cs.onSurface.withValues(alpha: 0.6)),
             const SizedBox(width: 8),
             Expanded(
               child: DropdownButtonHideUnderline(
@@ -697,22 +834,18 @@ class _OrderConfirmationScreenState
                         ? 'Waiter required *'
                         : 'Assign waiter',
                     style: TextStyle(
-                      fontSize: 13,
-                      color: _waiterMissing
-                          ? cs.error
-                          : cs.onSurface.withValues(alpha: 0.6),
-                    ),
+                        fontSize: 13,
+                        color: _waiterMissing
+                            ? cs.error
+                            : cs.onSurface.withValues(alpha: 0.6)),
                   ),
                   value: _selectedWaiter,
-                  items: waiters.map((w) {
-                    return DropdownMenuItem(
-                      value: w,
-                      child: Text(
-                        '${w.firstName} ${w.lastName}'.trim(),
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    );
-                  }).toList(),
+                  items: waiters.map((w) => DropdownMenuItem(
+                        value: w,
+                        child: Text(
+                            '${w.firstName} ${w.lastName}'.trim(),
+                            style: const TextStyle(fontSize: 13)),
+                      )).toList(),
                   onChanged: (w) => setState(() {
                     _selectedWaiter = w;
                     _waiterMissing = false;
@@ -726,13 +859,12 @@ class _OrderConfirmationScreenState
     );
   }
 
-  Widget _buildActions(Order order, AppLocalizations l10n) {
+  Widget _buildOnHoldActions(Order order, AppLocalizations l10n) {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
       decoration: BoxDecoration(
-        border:
-            Border(top: BorderSide(color: Theme.of(context).dividerColor)),
-      ),
+          border: Border(
+              top: BorderSide(color: Theme.of(context).dividerColor))),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -811,12 +943,384 @@ class _OrderConfirmationScreenState
       ),
     );
   }
+
+  // ── External order detail pane ──────────────────────────────────────────────
+
+  Widget _buildExternalOrderDetails(
+      ExternalQueueItem item, AppLocalizations l10n) {
+    final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final order = item.order;
+
+    return Container(
+      decoration: BoxDecoration(
+        border:
+            Border(left: BorderSide(color: Theme.of(context).dividerColor)),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            color: isDark ? cs.surfaceContainerHigh : Colors.deepPurple.shade50,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SourceIcon(source: item.source),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              item.orderCode,
+                              style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          _TypeChip(type: order.type),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          _SourceLabel(source: item.source),
+                          const SizedBox(width: 8),
+                          Icon(Icons.access_time,
+                              size: 12,
+                              color: cs.onSurface.withValues(alpha: 0.5)),
+                          const SizedBox(width: 3),
+                          Text(
+                            _formatTimeAgo(item.createdAt),
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: cs.onSurface.withValues(alpha: 0.5)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Customer info
+          if (order.customerName != null || order.customerPhone != null)
+            Container(
+              margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: cs.outlineVariant.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.person_outline,
+                      size: 16,
+                      color: cs.onSurface.withValues(alpha: 0.6)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (order.customerName != null)
+                          Text(order.customerName!,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13)),
+                        if (order.customerPhone != null)
+                          Text(order.customerPhone!,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color:
+                                      cs.onSurface.withValues(alpha: 0.6))),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Note
+          if (order.note != null && order.note!.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: Colors.orange.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.notes, size: 14, color: Colors.orange[700]),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      order.note!,
+                      style: TextStyle(
+                          color: Colors.orange[800],
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Items
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: _resolveExternalItems(item),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final items = snapshot.data ?? [];
+                if (items.isEmpty) {
+                  return Center(
+                    child: Text('No items',
+                        style: TextStyle(
+                            color: cs.onSurface.withValues(alpha: 0.5))),
+                  );
+                }
+                return ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                  itemCount: items.length,
+                  itemBuilder: (context, i) {
+                    final it = items[i];
+                    final comps =
+                        (it['components'] as List).cast<String>();
+                    return _ItemCard(
+                      quantityLabel: '${it['quantity']}x',
+                      name: it['name'] as String,
+                      note: it['note'] as String?,
+                      chips: comps
+                          .map((c) => _CompChip(label: c))
+                          .toList(),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+
+          // Actions
+          _buildExternalActions(item, l10n),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExternalActions(
+      ExternalQueueItem item, AppLocalizations l10n) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+      decoration: BoxDecoration(
+          border: Border(
+              top: BorderSide(color: Theme.of(context).dividerColor))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isConfirmingExternal
+                      ? null
+                      : () => _confirmExternalOrder(item),
+                  icon: _isConfirmingExternal
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white))
+                      : const Icon(Icons.check_circle, size: 18),
+                  label: Text(_isConfirmingExternal
+                      ? 'Confirming…'
+                      : 'Accept & Confirm'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[600],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isConfirmingExternal
+                      ? null
+                      : () => _confirmExternalAndPay(item),
+                  icon: const Icon(Icons.payment, size: 18),
+                  label: const Text('Accept & Pay'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[600],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          OutlinedButton.icon(
+            onPressed: _isConfirmingExternal
+                ? null
+                : () => setState(() {
+                      _selectedExternalItem = null;
+                      _isConfirmingExternal = false;
+                    }),
+            icon: const Icon(Icons.arrow_back, size: 18),
+            label: const Text('Back to list'),
+            style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatTimeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
 }
 
-// ── Small helpers ──────────────────────────────────────────────────────────
+// ── Shared sub-widgets ──────────────────────────────────────────────────────
 
-class _OrderCard extends StatelessWidget {
-  const _OrderCard({
+class _ItemCard extends StatelessWidget {
+  final String quantityLabel;
+  final String name;
+  final String? trailingLabel;
+  final String? note;
+  final List<Widget> chips;
+
+  const _ItemCard({
+    required this.quantityLabel,
+    required this.name,
+    this.trailingLabel,
+    this.note,
+    this.chips = const [],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 6),
+      elevation: 0,
+      color: cs.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: cs.primaryContainer,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    quantityLabel,
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onPrimaryContainer),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(name,
+                      style:
+                          const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                if (trailingLabel != null)
+                  Text(trailingLabel!,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 13)),
+              ],
+            ),
+            if (note != null && note!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Padding(
+                padding: const EdgeInsets.only(left: 42),
+                child: Text(
+                  '— $note',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.orange[700],
+                      fontStyle: FontStyle.italic),
+                ),
+              ),
+            ],
+            if (chips.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.only(left: 42),
+                child: Wrap(spacing: 6, runSpacing: 4, children: chips),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CompChip extends StatelessWidget {
+  final String label;
+  final bool isSpecial;
+  const _CompChip({required this.label, this.isSpecial = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isSpecial)
+          Icon(Icons.star, size: 11, color: Colors.orange[600]),
+        Text(
+          label,
+          style: TextStyle(
+              fontSize: 11,
+              color: cs.onSurface.withValues(alpha: 0.65)),
+        ),
+      ],
+    );
+  }
+}
+
+class _OnHoldCard extends StatelessWidget {
+  final Order order;
+  final bool isSelected;
+  final int itemCount;
+  final double total;
+  final AppLocalizations l10n;
+  final VoidCallback onTap;
+
+  const _OnHoldCard({
     required this.order,
     required this.isSelected,
     required this.itemCount,
@@ -824,13 +1328,6 @@ class _OrderCard extends StatelessWidget {
     required this.l10n,
     required this.onTap,
   });
-
-  final Order order;
-  final bool isSelected;
-  final int itemCount;
-  final double total;
-  final AppLocalizations l10n;
-  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -859,8 +1356,8 @@ class _OrderCard extends StatelessWidget {
                   color: Colors.orange[100],
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child:
-                    Icon(Icons.pending_actions, color: Colors.orange[700]),
+                child: Icon(Icons.pending_actions,
+                    color: Colors.orange[700]),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -878,8 +1375,8 @@ class _OrderCard extends StatelessWidget {
                         Text('$itemCount items',
                             style: TextStyle(
                                 fontSize: 11,
-                                color: cs.onSurface
-                                    .withValues(alpha: 0.6))),
+                                color:
+                                    cs.onSurface.withValues(alpha: 0.6))),
                       ],
                     ),
                   ],
@@ -888,11 +1385,9 @@ class _OrderCard extends StatelessWidget {
               Consumer(
                 builder: (context, ref, _) {
                   final fmt = ref.watch(currencyFormatterProvider);
-                  return Text(
-                    fmt.format(total),
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15),
-                  );
+                  return Text(fmt.format(total),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 15));
                 },
               ),
             ],
@@ -900,6 +1395,107 @@ class _OrderCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _ExternalItemCard extends StatelessWidget {
+  final ExternalQueueItem item;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _ExternalItemCard({
+    super.key,
+    required this.item,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final order = item.order;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      elevation: isSelected ? 3 : 1,
+      color: isSelected ? cs.secondaryContainer : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: isSelected
+            ? BorderSide(color: cs.secondary, width: 2)
+            : BorderSide(
+                color: cs.outlineVariant.withValues(alpha: 0.4)),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              _SourceIcon(source: item.source, size: 44),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(item.orderCode,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14)),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        _TypeChip(type: order.type),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${order.items.length} item${order.items.length == 1 ? '' : 's'}',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color:
+                                  cs.onSurface.withValues(alpha: 0.6)),
+                        ),
+                      ],
+                    ),
+                    if (order.customerName != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        order.customerName!,
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: cs.onSurface.withValues(alpha: 0.7)),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _SourceLabel(source: item.source),
+                  const SizedBox(height: 4),
+                  Text(
+                    _formatTimeAgo(item.createdAt),
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: cs.onSurface.withValues(alpha: 0.5)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatTimeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
   }
 }
 
@@ -933,7 +1529,157 @@ class _TypeChip extends StatelessWidget {
       decoration:
           BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
       child: Text(label,
-          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+          style:
+              const TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+class _SourceIcon extends StatelessWidget {
+  final String source;
+  final double size;
+  const _SourceIcon({required this.source, this.size = 40});
+
+  @override
+  Widget build(BuildContext context) {
+    final (color, icon) = switch (source.toUpperCase()) {
+      'DEALUP' => (Colors.deepPurple, Icons.local_offer),
+      'WHATSAPP' => (Colors.green[700]!, Icons.chat),
+      _ => (Colors.blueGrey, Icons.cloud),
+    };
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Icon(icon, color: color, size: size * 0.45),
+    );
+  }
+}
+
+class _SourceLabel extends StatelessWidget {
+  final String source;
+  const _SourceLabel({required this.source});
+
+  @override
+  Widget build(BuildContext context) {
+    final (color, label) = switch (source.toUpperCase()) {
+      'DEALUP' => (Colors.deepPurple, 'DealUp'),
+      'WHATSAPP' => (Colors.green[700]!, 'WhatsApp'),
+      _ => (Colors.blueGrey as Color, source),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: color)),
+    );
+  }
+}
+
+class _CountBadge extends StatelessWidget {
+  final int count;
+  const _CountBadge({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: Colors.red[600],
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '$count',
+        style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: Colors.white),
+      ),
+    );
+  }
+}
+
+class _EmptyPane extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String? subtitle;
+  const _EmptyPane(
+      {required this.icon, required this.label, this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon,
+              size: 64,
+              color: cs.onSurface.withValues(alpha: 0.25)),
+          const SizedBox(height: 12),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: cs.onSurface.withValues(alpha: 0.55)),
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: cs.onSurface.withValues(alpha: 0.4)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback onDismiss;
+  const _ErrorBanner({required this.message, required this.onDismiss});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.red.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, color: Colors.red, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text(message,
+                  style: const TextStyle(color: Colors.red, fontSize: 13))),
+          TextButton(
+            onPressed: onDismiss,
+            child: const Text('Retry',
+                style: TextStyle(color: Colors.red, fontSize: 12)),
+          ),
+        ],
+      ),
     );
   }
 }

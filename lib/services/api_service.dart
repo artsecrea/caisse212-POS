@@ -800,5 +800,55 @@ class ApiService {
       throw Exception('Error updating session: ${e.toString()}');
     }
   }
+
+  // ── External Order Queue ───────────────────────────────────────────────────
+
+  /// Returns all PENDING external queue items for this business.
+  Future<List<Map<String, dynamic>>> fetchPendingQueueItems() async {
+    try {
+      final response = await _dio.get(
+        '/pos/queue/pending',
+        options: Options(headers: {
+          'X-Business-Id': (getTenantId() ?? '').toString(),
+        }),
+      );
+      if (response.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(response.data as List);
+      }
+      throw Exception('Server returned ${response.statusCode}');
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to fetch queue: ${e.message ?? 'Check connection.'}');
+    } catch (e) {
+      throw Exception('Error fetching queue: $e');
+    }
+  }
+
+  /// Acknowledges a queue item. Server saves the order and returns its ID.
+  Future<Map<String, dynamic>> acknowledgeQueueItem(int queueItemId) async {
+    try {
+      final response = await _dio.post(
+        '/pos/queue/$queueItemId/acknowledge',
+        options: Options(headers: {
+          'X-Business-Id': (getTenantId() ?? '').toString(),
+        }),
+      );
+      if (response.statusCode == 200) {
+        return response.data as Map<String, dynamic>;
+      }
+      throw Exception('Server returned ${response.statusCode}');
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 400) {
+        throw Exception('Order already acknowledged');
+      }
+      if (e.response?.statusCode == 404) {
+        throw Exception('Queue item not found');
+      }
+      throw Exception(
+          'Failed to acknowledge: ${e.message ?? 'Check connection.'}');
+    } catch (e) {
+      throw Exception('Error acknowledging order: $e');
+    }
+  }
 }
 

@@ -31,6 +31,7 @@ import '../../utils/snackbar_helper.dart';
 import '../../utils/responsive_utils.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
+import '../../providers/sse_provider.dart';
 import '../../services/customer_display_service.dart';
 import '../../services/scale_barcode_service.dart';
 import '../../domain/models/scale_config.dart';
@@ -369,6 +370,35 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final searchQuery = ref.watch(productSearchQueryProvider);
     final l10n = AppLocalizations.of(context)!;
+
+    // Activate SSE connection while MainScreen is mounted
+    ref.watch(sseLifecycleProvider);
+
+    // Show SnackBar when admin pushes a DISPLAY_ALERT command
+    ref.listen<String?>(sseAlertProvider, (_, message) {
+      if (message == null || !mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.campaign, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(child: Text(message)),
+            ],
+          ),
+          backgroundColor: Colors.deepOrange,
+          duration: const Duration(seconds: 6),
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () =>
+                ref.read(sseAlertProvider.notifier).state = null,
+          ),
+        ),
+      );
+      // Clear after showing so re-watch doesn't retrigger
+      ref.read(sseAlertProvider.notifier).state = null;
+    });
 
     // Push order updates to customer display if enabled
     ref.listen<CurrentOrder>(orderProvider, (previous, next) {
