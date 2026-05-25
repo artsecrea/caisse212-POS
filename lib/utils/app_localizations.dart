@@ -93,6 +93,8 @@ class AppLocalizations {
       'no_users_found': 'No users found',
       'try_adjusting_filters': 'Try adjusting your filters',
       'error_loading_users': 'Error loading users',
+      'select_user_below': 'Select your account below',
+      'loading_users': 'Loading users...',
       'search_by_name': 'Search by name, username...',
 
       // Main Screen
@@ -391,6 +393,8 @@ class AppLocalizations {
       'set_as_kds_printer': 'Set as KDS Printer',
       'disabled': 'Disabled',
       'test_print': 'Test Print',
+      'test_print_success': 'Test page printed successfully',
+      'test_print_failed': 'Test print failed — check printer connection',
       'remove': 'Remove',
       'no_printer_configured': 'No printer configured',
 
@@ -1144,6 +1148,8 @@ class AppLocalizations {
       'no_users_found': 'لم يتم العثور على مستخدمين',
       'try_adjusting_filters': 'حاول تعديل المرشحات',
       'error_loading_users': 'خطأ في تحميل المستخدمين',
+      'select_user_below': 'اختر حسابك أدناه',
+      'loading_users': 'جارٍ تحميل المستخدمين...',
       'search_by_name': 'البحث بالاسم، اسم المستخدم...',
 
       // Main Screen
@@ -1443,6 +1449,8 @@ class AppLocalizations {
       'set_as_kds_printer': 'تعيين كطابعة KDS',
       'disabled': 'معطل',
       'test_print': 'اختبار الطباعة',
+      'test_print_success': 'تمت طباعة صفحة الاختبار بنجاح',
+      'test_print_failed': 'فشل اختبار الطباعة — تحقق من اتصال الطابعة',
       'remove': 'إزالة',
       'no_printer_configured': 'لا توجد طابعة مكونة',
       'ticket_settings': 'إعدادات التذكرة',
@@ -2180,6 +2188,8 @@ class AppLocalizations {
       'no_users_found': 'Aucun utilisateur trouvé',
       'try_adjusting_filters': 'Essayez d\'ajuster vos filtres',
       'error_loading_users': 'Erreur de chargement des utilisateurs',
+      'select_user_below': 'Sélectionnez votre compte ci-dessous',
+      'loading_users': 'Chargement des utilisateurs...',
       'search_by_name': 'Rechercher par nom, nom d\'utilisateur...',
 
       // Main Screen
@@ -2479,6 +2489,8 @@ class AppLocalizations {
       'set_as_kds_printer': 'Définir comme imprimante KDS',
       'disabled': 'Désactivé',
       'test_print': 'Test d\'impression',
+      'test_print_success': 'Page de test imprimée avec succès',
+      'test_print_failed': 'Échec du test — vérifiez la connexion de l\'imprimante',
       'remove': 'Supprimer',
       'no_printer_configured': 'Aucune imprimante configurée',
       'ticket_settings': 'Paramètres du ticket',

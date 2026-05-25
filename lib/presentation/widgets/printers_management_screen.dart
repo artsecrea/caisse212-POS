@@ -244,17 +244,19 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
 
   Future<void> _testPrint(PrinterPurpose purpose) async {
     final l10n = AppLocalizations.of(context)!;
-    final printerType = purpose == PrinterPurpose.receipt
-      ? l10n.translate('receipt_printer')
-      : l10n.translate('kds_printer');
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${l10n.translate('test_print')}: $printerType'),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 3),
-      ),
-    );
+    final printingService = ref.read(printingServiceProvider);
+    final success = await printingService.printTestPage(purpose);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success
+              ? l10n.translate('test_print_success')
+              : l10n.translate('test_print_failed')),
+          backgroundColor: success ? Colors.green : Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   @override
@@ -853,6 +855,33 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                                                 }
                                               : null,
                                         ),
+                                        const Divider(height: 8),
+                                        if (isReceiptPrinter)
+                                          ListTile(
+                                            contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                                            leading: const Icon(Icons.print, size: 32, color: Colors.blue),
+                                            title: Text(
+                                              '${l10n.translate('test_print')} (${l10n.translate('receipt_printer')})',
+                                              style: const TextStyle(fontSize: 18, color: Colors.blue),
+                                            ),
+                                            onTap: () {
+                                              Navigator.pop(context);
+                                              _testPrint(PrinterPurpose.receipt);
+                                            },
+                                          ),
+                                        if (isKdsPrinter)
+                                          ListTile(
+                                            contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                                            leading: const Icon(Icons.print, size: 32, color: Colors.blue),
+                                            title: Text(
+                                              '${l10n.translate('test_print')} (${l10n.translate('kds_printer')})',
+                                              style: const TextStyle(fontSize: 18, color: Colors.blue),
+                                            ),
+                                            onTap: () {
+                                              Navigator.pop(context);
+                                              _testPrint(PrinterPurpose.kds);
+                                            },
+                                          ),
                                       ],
                                     ),
                                   ),

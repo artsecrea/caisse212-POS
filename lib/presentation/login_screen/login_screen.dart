@@ -1,7 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart'
+    show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:loggecrea/loggecrea.dart';
@@ -20,6 +21,7 @@ import '../main_screen/main_screen.dart';
 import '../widgets/report_issue_dialog.dart';
 import '../widgets/update_dialog.dart';
 
+
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -27,7 +29,9 @@ class LoginScreen extends ConsumerStatefulWidget {
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends ConsumerState<LoginScreen> {
+class _LoginScreenState extends ConsumerState<LoginScreen>
+    with TickerProviderStateMixin {
+  // ── Form state ─────────────────────────────────────────────────────────────
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -41,32 +45,152 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   List<User> _availableUsers = [];
   String? _selectedUsername;
 
-  // Generate date-based password (YYYYMMDD format)
+  // ── Animations ─────────────────────────────────────────────────────────────
+  late final AnimationController _entranceCtrl;
+  late final AnimationController _shakeCtrl;
+
+  late final Animation<double> _logoScale;
+  late final Animation<double> _logoFade;
+  late final Animation<Offset> _brandSlide;
+  late final Animation<double> _brandFade;
+  late final Animation<Offset> _formSlide;
+  late final Animation<double> _formFade;
+  late final List<Animation<double>> _featureFades;
+  late final List<Animation<Offset>> _featureSlides;
+  late final Animation<double> _shakeAnim;
+
+  static const _features = [
+    (Icons.speed_outlined, 'Fast order management'),
+    (Icons.receipt_long_outlined, 'Thermal printing'),
+    (Icons.wifi_off_outlined, 'Works fully offline'),
+    (Icons.table_restaurant_outlined, 'Table management'),
+  ];
+
+  // ── Date-based config password ─────────────────────────────────────────────
   String get _configPassword {
     final now = DateTime.now();
     return '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
   }
 
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+
   @override
   void initState() {
     super.initState();
+    _setupAnimations();
     _loadUsers();
     _checkFullScreenStatus();
+    _entranceCtrl.forward();
   }
+
+  void _setupAnimations() {
+    _entranceCtrl = AnimationController(
+      duration: const Duration(milliseconds: 900),
+      vsync: this,
+    );
+    _shakeCtrl = AnimationController(
+      duration: const Duration(milliseconds: 420),
+      vsync: this,
+    );
+
+    _logoScale = Tween<double>(begin: 0.55, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _entranceCtrl,
+        curve: const Interval(0.0, 0.5, curve: Curves.elasticOut),
+      ),
+    );
+    _logoFade = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _entranceCtrl,
+        curve: const Interval(0.0, 0.28, curve: Curves.easeIn),
+      ),
+    );
+    _brandSlide = Tween<Offset>(
+      begin: const Offset(-0.25, 0),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _entranceCtrl,
+        curve: const Interval(0.1, 0.65, curve: Curves.easeOutCubic),
+      ),
+    );
+    _brandFade = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _entranceCtrl,
+        curve: const Interval(0.1, 0.55, curve: Curves.easeIn),
+      ),
+    );
+    _formSlide = Tween<Offset>(
+      begin: const Offset(0, 0.12),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _entranceCtrl,
+        curve: const Interval(0.2, 0.8, curve: Curves.easeOutCubic),
+      ),
+    );
+    _formFade = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _entranceCtrl,
+        curve: const Interval(0.2, 0.7, curve: Curves.easeIn),
+      ),
+    );
+
+    _featureFades = List.generate(
+      _features.length,
+      (i) => Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(
+          parent: _entranceCtrl,
+          curve: Interval(0.35 + i * 0.08, 0.70 + i * 0.06,
+              curve: Curves.easeIn),
+        ),
+      ),
+    );
+    _featureSlides = List.generate(
+      _features.length,
+      (i) => Tween<Offset>(
+        begin: const Offset(-0.18, 0),
+        end: Offset.zero,
+      ).animate(
+        CurvedAnimation(
+          parent: _entranceCtrl,
+          curve: Interval(0.35 + i * 0.08, 0.75 + i * 0.06,
+              curve: Curves.easeOutCubic),
+        ),
+      ),
+    );
+
+    _shakeAnim = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0.0, end: -14.0), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: -14.0, end: 14.0), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: 14.0, end: -10.0), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: -10.0, end: 10.0), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: 10.0, end: 0.0), weight: 1),
+    ]).animate(_shakeCtrl);
+  }
+
+  @override
+  void dispose() {
+    _entranceCtrl.dispose();
+    _shakeCtrl.dispose();
+    _usernameController.dispose();
+    _passwordController.dispose();
+    _startingBalanceController.dispose();
+    super.dispose();
+  }
+
+  // ── Data ───────────────────────────────────────────────────────────────────
 
   Future<void> _loadUsers() async {
     try {
       final database = ref.read(databaseProvider);
       final users = await database.select(database.users).get();
-      setState(() {
-        _availableUsers = users;
-      });
+      setState(() => _availableUsers = users);
     } catch (e) {
       debugPrint('Error loading users: $e');
     }
   }
 
-  /// Check current fullscreen status on startup
   Future<void> _checkFullScreenStatus() async {
     try {
       if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
@@ -76,24 +200,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } catch (_) {}
   }
 
-  /// Toggle between fullscreen and windowed mode
   Future<void> _toggleFullScreen() async {
-    // Prevent rapid multiple calls
     if (_isTogglingFullscreen) return;
-    
     setState(() => _isTogglingFullscreen = true);
-    
     try {
       final newState = !_isFullScreen;
       if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-        // Ensure window manager is ready before changing fullscreen state
         await windowManager.waitUntilReadyToShow();
         await windowManager.setFullScreen(newState);
-        
-        // Wait for the window manager to complete the transition
         await Future.delayed(const Duration(milliseconds: 100));
-        
-        // Update state after frame is rendered to prevent UI blocking
         if (mounted) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
@@ -106,7 +221,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         }
       } else if (Platform.isAndroid || Platform.isIOS) {
         if (newState) {
-          await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+          await SystemChrome.setEnabledSystemUIMode(
+              SystemUiMode.immersiveSticky);
         } else {
           await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
         }
@@ -119,7 +235,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
     } catch (e) {
       debugPrint('Error toggling fullscreen: $e');
-      // Revert state on error
       if (mounted) {
         setState(() {
           _isFullScreen = !_isFullScreen;
@@ -129,19 +244,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _usernameController.dispose();
-    _passwordController.dispose();
-    _startingBalanceController.dispose();
-    super.dispose();
-  }
+  // ── Server config dialog ───────────────────────────────────────────────────
 
-  /// Show server configuration dialog (protected by date password)
   Future<void> _showServerConfig() async {
     final passwordController = TextEditingController();
-
-    // First, verify password
     final verified = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -164,14 +270,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       labelText: l10n.translate('password'),
                       prefixIcon: const Icon(Icons.key),
                       suffixIcon: IconButton(
-                        icon: Icon(
-                          obscurePassword ? Icons.visibility : Icons.visibility_off,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            obscurePassword = !obscurePassword;
-                          });
-                        },
+                        icon: Icon(obscurePassword
+                            ? Icons.visibility
+                            : Icons.visibility_off),
+                        onPressed: () =>
+                            setState(() => obscurePassword = !obscurePassword),
                       ),
                       border: const OutlineInputBorder(),
                     ),
@@ -201,81 +304,76 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         );
       },
     );
-
     passwordController.dispose();
 
     if (verified != true) {
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('invalid_password_date')),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('invalid_password_date')),
+          backgroundColor: Colors.red,
+        ));
       }
       return;
     }
 
-    // Show server URL info
     final l10n = AppLocalizations.of(context)!;
     final prefs = ref.read(sharedPreferencesProvider);
-    final serverUrl = prefs.getString('server_url') ?? l10n.translate('not_set');
+    final serverUrl =
+        prefs.getString('server_url') ?? l10n.translate('not_set');
     final demoMode = prefs.getBool('demo_mode') ?? false;
 
     await showDialog(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(l10n.translate('server_configuration')),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                l10n.translate('current_configuration'),
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+      builder: (context) => AlertDialog(
+        title: Text(l10n.translate('server_configuration')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.translate('current_configuration'),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 16),
+            _buildConfigRow('${l10n.translate('server_url')}:', serverUrl),
+            const SizedBox(height: 8),
+            _buildConfigRow('${l10n.translate('demo_mode')}:',
+                demoMode ? l10n.translate('yes') : l10n.translate('no')),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue[300]!),
               ),
-              const SizedBox(height: 16),
-              _buildConfigRow('${l10n.translate('server_url')}:', serverUrl),
-              const SizedBox(height: 8),
-              _buildConfigRow('${l10n.translate('demo_mode')}:', demoMode ? l10n.translate('yes') : l10n.translate('no')),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue[300]!),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        l10n.translate('to_change_server_logout'),
-                        style: TextStyle(color: Colors.blue[700], fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline,
+                      color: Colors.blue[700], size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(l10n.translate('to_change_server_logout'),
+                        style: TextStyle(
+                            color: Colors.blue[700], fontSize: 12)),
+                  ),
+                ],
               ),
-            ],
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(),
-              style: AppButtonStyles.elevatedButtonStyle(
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
-                isLarge: true,
-              ),
-              child: const Text('OK'),
             ),
           ],
-        );
-      },
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(),
+            style: AppButtonStyles.elevatedButtonStyle(
+              backgroundColor: Theme.of(context).primaryColor,
+              foregroundColor: Colors.white,
+              isLarge: true,
+            ),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -285,29 +383,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       children: [
         SizedBox(
           width: 100,
-          child: Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.grey),
-          ),
+          child: Text(label,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w600, color: Colors.grey)),
         ),
         Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(fontWeight: FontWeight.w500),
-          ),
+          child: Text(value,
+              style: const TextStyle(fontWeight: FontWeight.w500)),
         ),
       ],
     );
   }
 
-  /// Handle exit to tenant screen - requires tenant password verification
+  // ── Exit to tenant ─────────────────────────────────────────────────────────
+
   Future<void> _handleExitToTenant() async {
     final prefs = ref.read(sharedPreferencesProvider);
     final tenantPasswordHash = prefs.getString('tenant_password_hash');
     final l10n = AppLocalizations.of(context)!;
 
     if (tenantPasswordHash == null) {
-      // No tenant password set, just go back
       if (mounted) {
         FocusManager.instance.primaryFocus?.unfocus();
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -320,7 +415,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return;
     }
 
-    // Show password dialog
     final passwordController = TextEditingController();
     final result = await showDialog<bool>(
       context: context,
@@ -328,73 +422,62 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       builder: (context) {
         bool obscurePassword = true;
         return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: Text(l10n.translate('exit_to_tenant')),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(l10n.translate('enter_password')),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: obscurePassword,
-                    decoration: InputDecoration(
-                      labelText: l10n.translate('tenant_password'),
-                      prefixIcon: const Icon(Icons.lock),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          obscurePassword ? Icons.visibility : Icons.visibility_off,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            obscurePassword = !obscurePassword;
-                          });
-                        },
-                      ),
-                      border: const OutlineInputBorder(),
+          builder: (context, setState) => AlertDialog(
+            title: Text(l10n.translate('exit_to_tenant')),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(l10n.translate('enter_password')),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: passwordController,
+                  obscureText: obscurePassword,
+                  decoration: InputDecoration(
+                    labelText: l10n.translate('tenant_password'),
+                    prefixIcon: const Icon(Icons.lock),
+                    suffixIcon: IconButton(
+                      icon: Icon(obscurePassword
+                          ? Icons.visibility
+                          : Icons.visibility_off),
+                      onPressed: () =>
+                          setState(() => obscurePassword = !obscurePassword),
                     ),
-                    autofocus: true,
+                    border: const OutlineInputBorder(),
                   ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  style: AppButtonStyles.textButtonStyle(isLarge: true),
-                  child: Text(l10n.translate('cancel')),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    final password = passwordController.text.trim();
-                    final verified = BCrypt.checkpw(password, tenantPasswordHash);
-                    Navigator.of(context).pop(verified);
-                  },
-                  style: AppButtonStyles.elevatedButtonStyle(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                    isLarge: true,
-                  ),
-                  child: Text(l10n.translate('verify')),
+                  autofocus: true,
                 ),
               ],
-            );
-          },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                style: AppButtonStyles.textButtonStyle(isLarge: true),
+                child: Text(l10n.translate('cancel')),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final password = passwordController.text.trim();
+                  final verified = BCrypt.checkpw(password, tenantPasswordHash);
+                  Navigator.of(context).pop(verified);
+                },
+                style: AppButtonStyles.elevatedButtonStyle(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                  isLarge: true,
+                ),
+                child: Text(l10n.translate('verify')),
+              ),
+            ],
+          ),
         );
       },
     );
-
     passwordController.dispose();
 
     if (result == true) {
-      // Password verified, clear auth data and navigate to tenant screen
       final apiService = ApiService(prefs);
       await apiService.clearAuthData();
-
       if (mounted) {
-        // Unfocus all fields to dismiss on-screen keyboard before navigation.
-        // Without this, AnimatedDefaultTextStyle dirty elements from the keyboard
-        // try to rebuild in the wrong scope when the route is being deactivated.
         FocusManager.instance.primaryFocus?.unfocus();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -404,87 +487,70 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         });
       }
     } else if (result == false) {
-      // Password verification failed
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('invalid_tenant_password')),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('invalid_tenant_password')),
+          backgroundColor: Colors.red,
+        ));
       }
     }
   }
 
-  /// Handle sync data from login screen
+  // ── Sync ───────────────────────────────────────────────────────────────────
+
   Future<void> _handleSync() async {
     final l10n = AppLocalizations.of(context)!;
-
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
-
     try {
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
       final database = ref.read(databaseProvider);
       final syncService = DataSyncService(database, apiService);
-
-      // Show syncing message
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('syncing_data')),
-            duration: const Duration(seconds: 2),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('syncing_data')),
+          duration: const Duration(seconds: 2),
+        ));
       }
-
-      // Perform sync
       await syncService.syncAllData();
-
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('sync_complete')),
-            backgroundColor: Colors.green,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('sync_complete')),
+          backgroundColor: Colors.green,
+        ));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${l10n.translate('sync_error')}: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${l10n.translate('sync_error')}: $e'),
+          backgroundColor: Colors.red,
+        ));
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  // ── Login ──────────────────────────────────────────────────────────────────
+
   Future<void> _handleLogin() async {
-    if (!_formKey.currentState!.validate()) {
+    if (_selectedUsername == null || _selectedUsername!.isEmpty) {
+      setState(() => _errorMessage =
+          AppLocalizations.of(context)!.translate('username_required'));
+      _shakeCtrl.forward(from: 0);
       return;
     }
-
-    // Manual validation for fields using OnscreenKeyboardTextField
     if (_passwordController.text.isEmpty) {
-      setState(() {
-        _errorMessage = AppLocalizations.of(context)!.translate('password_required');
-      });
+      setState(() => _errorMessage =
+          AppLocalizations.of(context)!.translate('password_required'));
+      _shakeCtrl.forward(from: 0);
       return;
     }
 
     final l10n = AppLocalizations.of(context)!;
-
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -492,18 +558,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     try {
       final database = ref.read(databaseProvider);
-
-      // Check if users exist
       final users = await database.select(database.users).get();
-      final isFirstTime = users.isEmpty;
-
-      // If no users exist, this means the database is corrupted or cleared
-      // Logout entirely and go back to tenant login
-      if (isFirstTime) {
+      if (users.isEmpty) {
         if (mounted) {
           await _performFullLogout(
-            'Database is empty. Please reconnect to server or use demo mode.',
-          );
+              'Database is empty. Please reconnect to server or use demo mode.');
         }
         return;
       }
@@ -511,7 +570,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final username = _usernameController.text.trim();
       final password = _passwordController.text.trim();
 
-      // Try local authentication first
       final user = await (database.select(database.users)
             ..where((tbl) => tbl.username.equals(username)))
           .getSingleOrNull();
@@ -521,13 +579,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           _errorMessage = l10n.translate('user_not_found');
           _isLoading = false;
         });
+        _shakeCtrl.forward(from: 0);
         return;
       }
 
       final hash = user.password;
       final verified = BCrypt.checkpw(password, hash);
 
-      // Also check custom password from SharedPreferences
       bool customVerified = false;
       if (!verified) {
         final prefs = ref.read(sharedPreferencesProvider);
@@ -544,80 +602,69 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           _errorMessage = l10n.translate('invalid_password_try_again');
           _isLoading = false;
         });
+        _shakeCtrl.forward(from: 0);
         return;
       }
 
-      if (verified || customVerified) {
-        // Local authentication successful
-        ref.read(currentUserProvider.notifier).state = CurrentUser.fromUser(user);
+      ref.read(currentUserProvider.notifier).state =
+          CurrentUser.fromUser(user);
 
-        // Handle cash session - resume paused or create new
-        try {
-          final sessionService = SessionService(database);
-          final startingBalance = double.tryParse(_startingBalanceController.text) ?? 0.0;
+      try {
+        final sessionService = SessionService(database);
+        final startingBalance =
+            double.tryParse(_startingBalanceController.text) ?? 0.0;
+        final existingSession =
+            await sessionService.getActiveSession(user.id);
 
-          // Check if user has a paused session
-          final existingSession = await sessionService.getActiveSession(user.id);
-
-          if (existingSession != null) {
-            // Resume existing session (either active or paused)
-            if (existingSession.status == 'paused') {
-              await sessionService.resumeSession(existingSession.id);
-              // Reload to get updated status
-              final resumedSession = await sessionService.getSessionById(existingSession.id);
-              ref.read(currentSessionProvider.notifier).state = resumedSession;
-
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(l10n.translate('resumed_session').replaceAll('{0}', existingSession.id.toString())),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-            } else {
-              // Session is already active
-              ref.read(currentSessionProvider.notifier).state = existingSession;
+        if (existingSession != null) {
+          if (existingSession.status == 'paused') {
+            await sessionService.resumeSession(existingSession.id);
+            final resumedSession =
+                await sessionService.getSessionById(existingSession.id);
+            ref.read(currentSessionProvider.notifier).state = resumedSession;
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(l10n
+                    .translate('resumed_session')
+                    .replaceAll('{0}', existingSession.id.toString())),
+                backgroundColor: Colors.green,
+              ));
             }
           } else {
-            // No existing session, create new one
-            final newSession = await sessionService.startSession(
-              cashierId: user.id,
-              moneyAtStart: startingBalance,
-            );
-            ref.read(currentSessionProvider.notifier).state = newSession;
-
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(l10n.translate('started_new_session').replaceAll('{0}', newSession.id.toString())),
-                  backgroundColor: Colors.blue,
-                ),
-              );
-            }
+            ref.read(currentSessionProvider.notifier).state = existingSession;
           }
-        } catch (e) {
-          Logger.instance.error('Session error: $e');
+        } else {
+          final newSession = await sessionService.startSession(
+            cashierId: user.id,
+            moneyAtStart: startingBalance,
+          );
+          ref.read(currentSessionProvider.notifier).state = newSession;
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(l10n.translate('session_error').replaceAll('{0}', e.toString())),
-                backgroundColor: Colors.orange,
-              ),
-            );
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(l10n
+                  .translate('started_new_session')
+                  .replaceAll('{0}', newSession.id.toString())),
+              backgroundColor: Colors.blue,
+            ));
           }
         }
-
+      } catch (e) {
+        Logger.instance.error('Session error: $e');
         if (mounted) {
-          // Check for updates after successful login
-          await _checkForUpdates();
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(l10n
+                .translate('session_error')
+                .replaceAll('{0}', e.toString())),
+            backgroundColor: Colors.orange,
+          ));
+        }
+      }
 
-          // Navigate to main screen (only if not blocked by mandatory update)
-          if (mounted) {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const MainScreen()),
-            );
-          }
+      if (mounted) {
+        await _checkForUpdates();
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const MainScreen()));
         }
       }
     } catch (e) {
@@ -625,33 +672,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _errorMessage = 'Login failed: ${e.toString()}';
         _isLoading = false;
       });
+      _shakeCtrl.forward(from: 0);
     }
 
-    setState(() {
-      _isLoading = false;
-    });
+    setState(() => _isLoading = false);
   }
 
-  /// Check for updates and show dialog if available (Android only).
-  /// Desktop is handled by UpdateDialogListener in main.dart via desktop_updater.
   Future<void> _checkForUpdates() async {
     if (!Platform.isAndroid) return;
     try {
       final updateNotifier = ref.read(updateProvider.notifier);
       final hasUpdate = await updateNotifier.checkForUpdates();
-
       if (hasUpdate && mounted) {
         final updateState = ref.read(updateProvider);
         final isMandatory = updateState.updateRequired;
-
-        // Show update dialog
         final shouldProceed = await showDialog<bool>(
           context: context,
           barrierDismissible: !isMandatory,
           builder: (context) => UpdateDialog(isMandatory: isMandatory),
         );
-
-        // If mandatory update was dismissed without updating, stay on login
         if (isMandatory && shouldProceed != true) {
           setState(() {
             _errorMessage = 'A mandatory update is required to continue.';
@@ -665,10 +704,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  /// Perform full logout - clear all tenant data and redirect to tenant login
   Future<void> _performFullLogout(String message) async {
     try {
-      // Show dialog informing user
       final shouldLogout = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
@@ -688,249 +725,284 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ],
         ),
       );
-
       if (shouldLogout != true) return;
 
-      // Clear current user and session
       ref.read(currentUserProvider.notifier).state = null;
       ref.read(currentSessionProvider.notifier).state = null;
 
-      // Get API service and call logout endpoint
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
-
-      // Call logout API (this won't throw error, just logs if it fails)
       await apiService.logout();
+      await apiService.clearAllAuthData();
 
-      // Clear API service data INCLUDING tenant password hash
-      await apiService.clearAllAuthData(); // Use clearAllAuthData for full logout
-
-      // Dump/backup the database before clearing
       final database = ref.read(databaseProvider);
       final syncService = DataSyncService(database, apiService);
       await syncService.dumpDatabaseBeforeClear();
-
-      // Clear the database
       await syncService.clearAllData();
 
       if (mounted) {
-        // Navigate to tenant login screen
         FocusManager.instance.primaryFocus?.unfocus();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            Navigator.of(context).pushNamedAndRemoveUntil('/tenant', (route) => false);
+            Navigator.of(context)
+                .pushNamedAndRemoveUntil('/tenant', (route) => false);
           }
         });
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Can\'t logout: please check your username and password'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Can\'t logout: please check your username and password'),
+          backgroundColor: Colors.red,
+        ));
       }
     }
   }
 
+  // ── Build ──────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final isWide = MediaQuery.sizeOf(context).width >= 900;
+    final isWide = MediaQuery.sizeOf(context).width >= 860;
 
     return Scaffold(
       body: isWide
           ? _buildWideLayout(context, l10n)
-          : Stack(
-              children: [
-                _buildCompactLayout(context, l10n),
-                Positioned(top: 16, left: 16, child: _buildExitButton()),
-                Positioned(top: 16, right: 16, child: _buildActionBar(context)),
-              ],
-            ),
+          : _buildCompactLayout(context, l10n),
     );
   }
 
-  Widget _buildWideLayout(BuildContext context, AppLocalizations l10n) {
-    final primaryColor = Theme.of(context).primaryColor;
-    final scaffoldColor = Theme.of(context).scaffoldBackgroundColor;
-    final gradientColors = [primaryColor, primaryColor.withValues(alpha: 0.75)];
+  // ── Wide layout (desktop / landscape tablet) ───────────────────────────────
 
-    return Container(
-      color: scaffoldColor,
-      child: Column(
-        children: [
-        // Action strip — keeps buttons out of the content area
-        SizedBox(
-          height: 60,
-          child: Row(
-            children: [
-              Expanded(
-                flex: 4,
+  Widget _buildWideLayout(BuildContext context, AppLocalizations l10n) {
+    final primary = Theme.of(context).primaryColor;
+    final bg = Theme.of(context).scaffoldBackgroundColor;
+
+    return Stack(
+      children: [
+        Row(
+          children: [
+            // Brand panel
+            Expanded(
+              flex: 4,
+              child: _AnimatedPanel(
+                slideAnim: _brandSlide,
+                fadeAnim: _brandFade,
                 child: Container(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: gradientColors,
-                    ),
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  alignment: Alignment.centerLeft,
-                  child: _buildExitButton(),
-                ),
-              ),
-              Expanded(
-                flex: 6,
-                child: Container(
-                  color: scaffoldColor,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  alignment: Alignment.centerRight,
-                  child: _buildActionBar(context),
-                ),
-              ),
-            ],
-          ),
-        ),
-        // Content row
-        Expanded(
-          child: Row(
-            children: [
-              Expanded(
-                flex: 4,
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: gradientColors,
+                      colors: [
+                        primary,
+                        primary.withValues(alpha: 0.78),
+                        primary.withValues(alpha: 0.55),
+                      ],
+                      stops: const [0.0, 0.55, 1.0],
                     ),
                   ),
                   child: _buildBrandPanel(context),
                 ),
               ),
-              Expanded(
-                flex: 6,
+            ),
+            // Form panel
+            Expanded(
+              flex: 6,
+              child: _AnimatedPanel(
+                slideAnim: _formSlide,
+                fadeAnim: _formFade,
                 child: Container(
-                  color: scaffoldColor,
+                  color: bg,
                   child: Center(
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 64, vertical: 40),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 64, vertical: 48),
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 420),
-                        child: _buildFormContent(context, l10n, showLogo: false),
+                        constraints: const BoxConstraints(maxWidth: 440),
+                        child: _buildFormContent(context, l10n,
+                            showLogo: false),
                       ),
                     ),
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
-      ],
-      ),
-    );
-  }
-
-  Widget _buildCompactLayout(BuildContext context, AppLocalizations l10n) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Theme.of(context).primaryColor,
-            Theme.of(context).primaryColor.withValues(alpha: 0.7),
+            ),
           ],
         ),
-      ),
-      child: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 450),
-            child: Card(
-              elevation: 8,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: _buildFormContent(context, l10n, showLogo: true),
+        // Overlay buttons
+        Positioned(
+          top: 12,
+          left: 12,
+          child: _buildExitButton(onBrand: true),
+        ),
+        Positioned(
+          top: 12,
+          right: 12,
+          child: _buildActionBar(context),
+        ),
+      ],
+    );
+  }
+
+  // ── Compact layout (mobile / portrait tablet) ──────────────────────────────
+
+  Widget _buildCompactLayout(BuildContext context, AppLocalizations l10n) {
+    final primary = Theme.of(context).primaryColor;
+
+    return Stack(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                primary,
+                primary.withValues(alpha: 0.68),
+              ],
+            ),
+          ),
+        ),
+        // Decorative circle
+        Positioned(
+          top: -60,
+          right: -60,
+          child: Container(
+            width: 240,
+            height: 240,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: 0.07),
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: -80,
+          left: -40,
+          child: Container(
+            width: 200,
+            height: 200,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: 0.05),
+            ),
+          ),
+        ),
+        _AnimatedPanel(
+          slideAnim: _formSlide,
+          fadeAnim: _formFade,
+          child: SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding:
+                    const EdgeInsets.fromLTRB(20, 72, 20, 32),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: Card(
+                    elevation: 12,
+                    shadowColor: Colors.black26,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20)),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(28, 32, 28, 28),
+                      child: _buildFormContent(context, l10n,
+                          showLogo: true),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
         ),
+        Positioned(
+            top: 12, left: 12, child: _buildExitButton(onBrand: true)),
+        Positioned(
+            top: 12, right: 12, child: _buildActionBar(context)),
+      ],
+    );
+  }
+
+  // ── Brand panel ─────────────────────────────────────────────────────────────
+
+  Widget _buildBrandPanel(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(40, 72, 40, 48),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Animated logo
+          FadeTransition(
+            opacity: _logoFade,
+            child: ScaleTransition(
+              scale: _logoScale,
+              child: const Caisse212Logo(size: 64),
+            ),
+          ),
+          const SizedBox(height: 20),
+          FadeTransition(
+            opacity: _brandFade,
+            child: SlideTransition(
+              position: _brandSlide,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'CAISSE212',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Point of Sale System',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.72),
+                      fontSize: 14,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 48),
+          // Staggered feature list
+          for (int i = 0; i < _features.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 18),
+              child: FadeTransition(
+                opacity: _featureFades[i],
+                child: SlideTransition(
+                  position: _featureSlides[i],
+                  child: _FeatureItem(
+                    icon: _features[i].$1,
+                    label: _features[i].$2,
+                  ),
+                ),
+              ),
+            ),
+          const Spacer(),
+          FadeTransition(
+            opacity: _brandFade,
+            child: Text(
+              '© 2025 Caisse212',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.35),
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildBrandPanel(BuildContext context) {
-    return Container(
-      color: Colors.transparent,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(48, 40, 48, 48),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Caisse212Logo(size: 60),
-            const SizedBox(height: 20),
-            const Text(
-              'CAISSE212',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.5,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Point of Sale System',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.75),
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 40),
-            for (final item in <MapEntry<IconData, String>>[
-              MapEntry(Icons.speed_outlined, 'Fast order management'),
-              MapEntry(Icons.receipt_long_outlined, 'Thermal printing support'),
-              MapEntry(Icons.wifi_off_outlined, 'Works fully offline'),
-              MapEntry(Icons.table_restaurant_outlined, 'Table management'),
-            ])
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(item.key, color: Colors.white, size: 18),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        item.value,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.9),
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-        ],
-      ),
-      ),
-    );
-  }
+  // ── Form content ─────────────────────────────────────────────────────────────
 
   Widget _buildFormContent(
     BuildContext context,
@@ -944,161 +1016,103 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (showLogo) ...[
-            const Caisse212Logo(size: 60),
-            const SizedBox(height: 16),
+            Center(
+              child: FadeTransition(
+                opacity: _logoFade,
+                child: ScaleTransition(
+                  scale: _logoScale,
+                  child: const Caisse212Logo(size: 56),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
           ],
           Text(
             l10n.translate('sign_in'),
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.3,
+                ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 32),
-          DropdownButtonFormField<String>(
-            initialValue: _selectedUsername,
-            decoration: InputDecoration(
-              labelText: '${l10n.translate('username')} *',
-              prefixIcon: const Icon(Icons.person),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+          const SizedBox(height: 28),
+
+          // ── User selector ─────────────────────────────────────────────────
+          _buildUserSelector(l10n),
+
+          const SizedBox(height: 24),
+
+          // ── Password field ────────────────────────────────────────────────
+          AnimatedBuilder(
+            animation: _shakeAnim,
+            builder: (context, child) => Transform.translate(
+              offset: Offset(_shakeAnim.value, 0),
+              child: child,
             ),
-            isExpanded: true,
-            dropdownColor: Theme.of(context).colorScheme.surface,
-            style: TextStyle(
-              fontSize: 16,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-            items: _availableUsers.map((user) {
-              final displayName = (user.displayName != null && user.displayName!.isNotEmpty)
-                  ? user.displayName!
-                  : '${user.firstName} ${user.lastName}'.trim();
-              return DropdownMenuItem<String>(
-                value: user.username,
-                child: Row(
-                  children: [
-                    Icon(Icons.person, size: 20,
-                        color: Theme.of(context).colorScheme.onSurface),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        displayName.isNotEmpty ? displayName : user.username,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }).toList(),
-            onChanged: (value) {
-              setState(() {
-                _selectedUsername = value;
-                _usernameController.text = value ?? '';
-              });
-            },
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return l10n.translate('username_required');
-              }
-              return null;
-            },
+            child: _buildPasswordField(l10n),
           ),
-          const SizedBox(height: 20),
-          OnscreenKeyboardTextField(
-            controller: _passwordController,
-            obscureText: _obscurePassword,
-            decoration: InputDecoration(
-              labelText: '${l10n.translate('password')} *',
-              prefixIcon: const Icon(Icons.lock),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscurePassword ? Icons.visibility : Icons.visibility_off,
-                ),
-                onPressed: () =>
-                    setState(() => _obscurePassword = !_obscurePassword),
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            style: const TextStyle(fontSize: 16),
-          ),
-          const SizedBox(height: 20),
+
+          const SizedBox(height: 16),
+
+          // ── Starting balance ──────────────────────────────────────────────
           OnscreenKeyboardTextField(
             controller: _startingBalanceController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
               labelText: l10n.translate('starting_balance'),
-              prefixIcon: const Icon(Icons.account_balance_wallet),
+              prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+                  borderRadius: BorderRadius.circular(14)),
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 18),
               hintText: '0.0',
             ),
             style: const TextStyle(fontSize: 16),
           ),
+
+          // ── Error banner ──────────────────────────────────────────────────
           if (_errorMessage != null) ...[
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.red[50],
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.red[300]!, width: 1.5),
+            const SizedBox(height: 16),
+            AnimatedBuilder(
+              animation: _shakeAnim,
+              builder: (context, child) => Transform.translate(
+                offset: Offset(_shakeAnim.value, 0),
+                child: child,
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.error_outline, color: Colors.red[700], size: 22),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _errorMessage!,
-                      style: TextStyle(
-                        color: Colors.red[700],
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              child: _ErrorBanner(message: _errorMessage!),
             ),
           ],
-          const SizedBox(height: 32),
+
+          const SizedBox(height: 28),
+
+          // ── Login button ──────────────────────────────────────────────────
           SizedBox(
-            height: 56,
+            height: 60,
             child: ElevatedButton(
               onPressed: _isLoading ? null : _handleLogin,
-              style: AppButtonStyles.elevatedButtonStyle(
+              style: ElevatedButton.styleFrom(
                 backgroundColor: Theme.of(context).primaryColor,
                 foregroundColor: Colors.white,
-                isLarge: true,
+                elevation: 3,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
               child: _isLoading
                   ? const SizedBox(
-                      height: 22,
-                      width: 22,
+                      width: 24,
+                      height: 24,
                       child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: Colors.white,
-                      ),
+                          strokeWidth: 2.5, color: Colors.white),
                     )
                   : Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.login, size: 24),
+                        const Icon(Icons.login_rounded, size: 22),
                         const SizedBox(width: 10),
                         Text(
                           l10n.translate('sign_in'),
                           style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                          ),
+                              fontSize: 17, fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
@@ -1109,19 +1123,71 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Widget _buildExitButton() {
-    return Material(
-      color: Colors.black38,
-      borderRadius: BorderRadius.circular(14),
-      elevation: 2,
-      child: InkWell(
-        onTap: _handleExitToTenant,
-        borderRadius: BorderRadius.circular(14),
-        child: const Padding(
-          padding: EdgeInsets.all(14),
-          child: Icon(Icons.exit_to_app, size: 26, color: Colors.white),
-        ),
+  Widget _buildUserSelector(AppLocalizations l10n) {
+    return DropdownButtonFormField<String>(
+      value: _selectedUsername,
+      decoration: InputDecoration(
+        labelText: '${l10n.translate('username')} *',
+        prefixIcon: const Icon(Icons.person_outline),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       ),
+      hint: _availableUsers.isEmpty
+          ? Text(l10n.translate('loading_users'))
+          : null,
+      items: _availableUsers.map((user) {
+        final dn = (user.displayName?.isNotEmpty == true)
+            ? user.displayName!
+            : '${user.firstName} ${user.lastName}'.trim();
+        final label = dn.isNotEmpty ? dn : user.username;
+        return DropdownMenuItem<String>(
+          value: user.username,
+          child: Text(label),
+        );
+      }).toList(),
+      onChanged: _availableUsers.isEmpty
+          ? null
+          : (val) {
+              if (val != null) {
+                setState(() {
+                  _selectedUsername = val;
+                  _usernameController.text = val;
+                  _errorMessage = null;
+                });
+              }
+            },
+    );
+  }
+
+  Widget _buildPasswordField(AppLocalizations l10n) {
+    return OnscreenKeyboardTextField(
+      controller: _passwordController,
+      obscureText: _obscurePassword,
+      decoration: InputDecoration(
+        labelText: '${l10n.translate('password')} *',
+        prefixIcon: const Icon(Icons.lock_outline),
+        suffixIcon: IconButton(
+          icon: Icon(
+              _obscurePassword ? Icons.visibility : Icons.visibility_off),
+          onPressed: () =>
+              setState(() => _obscurePassword = !_obscurePassword),
+        ),
+        border:
+            OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      ),
+      style: const TextStyle(fontSize: 16),
+    );
+  }
+
+  // ── Overlay buttons ────────────────────────────────────────────────────────
+
+  Widget _buildExitButton({bool onBrand = false}) {
+    return _GlassButton(
+      onTap: _handleExitToTenant,
+      child: const Icon(Icons.exit_to_app, size: 24, color: Colors.white),
     );
   }
 
@@ -1129,93 +1195,185 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _buildOverlayIconButton(
-          icon: _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+        _GlassButton(
           onTap: _isTogglingFullscreen ? null : _toggleFullScreen,
+          child: Icon(
+            _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+            size: 24,
+            color: Colors.white,
+          ),
         ),
-        const SizedBox(width: 8),
-        _buildOverlayIconButton(
-          icon: Icons.sync,
+        const SizedBox(width: 6),
+        _GlassButton(
           onTap: _isLoading ? null : _handleSync,
+          child: const Icon(Icons.sync, size: 24, color: Colors.white),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 6),
         Material(
           color: Colors.black38,
-          borderRadius: BorderRadius.circular(14),
-          elevation: 2,
+          borderRadius: BorderRadius.circular(12),
           child: PopupMenuButton<String>(
             onSelected: (code) =>
                 ref.read(settingsProvider.notifier).setLanguage(code),
             itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'en',
-                child: Row(children: [
-                  const Text('🇬🇧', style: TextStyle(fontSize: 20)),
-                  const SizedBox(width: 8),
-                  const Text('English'),
-                ]),
-              ),
-              PopupMenuItem(
-                value: 'fr',
-                child: Row(children: [
-                  const Text('🇫🇷', style: TextStyle(fontSize: 20)),
-                  const SizedBox(width: 8),
-                  const Text('Français'),
-                ]),
-              ),
-              PopupMenuItem(
-                value: 'ar',
-                child: Row(children: [
-                  const Text('🇲🇦', style: TextStyle(fontSize: 20)),
-                  const SizedBox(width: 8),
-                  const Text('العربية'),
-                ]),
-              ),
+              _langItem('en', '🇬🇧', 'English'),
+              _langItem('fr', '🇫🇷', 'Français'),
+              _langItem('ar', '🇲🇦', 'العربية'),
             ],
             child: const Padding(
-              padding: EdgeInsets.all(14),
-              child: Icon(Icons.language, size: 26, color: Colors.white),
+              padding: EdgeInsets.all(12),
+              child: Icon(Icons.language, size: 24, color: Colors.white),
             ),
           ),
         ),
-        const SizedBox(width: 8),
-        _buildOverlayIconButton(
-          icon: Icons.settings,
+        const SizedBox(width: 6),
+        _GlassButton(
           onTap: _showServerConfig,
+          child: const Icon(Icons.settings, size: 24, color: Colors.white),
         ),
-        const SizedBox(width: 8),
-        _buildOverlayIconButton(
-          icon: Icons.bug_report,
+        const SizedBox(width: 6),
+        _GlassButton(
           onTap: () => showDialog(
             context: context,
             builder: (_) => const ReportIssueDialog(),
           ),
+          child:
+              const Icon(Icons.bug_report, size: 24, color: Colors.white),
         ),
       ],
     );
   }
 
-  Widget _buildOverlayIconButton({
-    required IconData icon,
-    VoidCallback? onTap,
-  }) {
-    final isEnabled = onTap != null;
+  PopupMenuItem<String> _langItem(String code, String flag, String label) {
+    return PopupMenuItem(
+      value: code,
+      child: Row(children: [
+        Text(flag, style: const TextStyle(fontSize: 20)),
+        const SizedBox(width: 10),
+        Text(label),
+      ]),
+    );
+  }
+}
+
+// ── Sub-widgets ──────────────────────────────────────────────────────────────
+
+class _AnimatedPanel extends StatelessWidget {
+  final Animation<Offset> slideAnim;
+  final Animation<double> fadeAnim;
+  final Widget child;
+
+  const _AnimatedPanel({
+    required this.slideAnim,
+    required this.fadeAnim,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: fadeAnim,
+      child: SlideTransition(
+        position: slideAnim,
+        child: child,
+      ),
+    );
+  }
+}
+
+class _FeatureItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _FeatureItem({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: Colors.white, size: 20),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.88),
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  const _ErrorBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.red.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.red.shade300, width: 1.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: Colors.red.shade700,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GlassButton extends StatelessWidget {
+  final VoidCallback? onTap;
+  final Widget child;
+
+  const _GlassButton({required this.onTap, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
     return Opacity(
-      opacity: isEnabled ? 1.0 : 0.5,
+      opacity: onTap != null ? 1.0 : 0.45,
       child: Material(
         color: Colors.black38,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         elevation: 2,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Icon(icon, size: 26, color: Colors.white),
+            padding: const EdgeInsets.all(12),
+            child: child,
           ),
         ),
       ),
     );
   }
 }
-

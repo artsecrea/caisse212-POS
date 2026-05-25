@@ -752,6 +752,25 @@ class PrintingService {
         );
       }
 
+      // Custom ticket header
+      if (_ref != null) {
+        try {
+          final settings = _ref!.read(settingsProvider);
+          if (settings.ticketHeader.isNotEmpty) {
+            bytes += generator.text(
+              settings.ticketHeader,
+              styles: PosStyles(
+                align: PosAlign.center,
+                height: _resolveTextSize(),
+                width: _resolveTextSize(),
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint('Error reading ticket header from settings: $e');
+        }
+      }
+
       bytes += generator.hr();
 
       // Order info
@@ -1016,6 +1035,26 @@ class PrintingService {
           height: 80,
           align: PosAlign.center,
         );
+      }
+
+      // Print custom footer text if configured
+      if (_ref != null) {
+        try {
+          final settings = _ref!.read(settingsProvider);
+          if (settings.ticketFooter.isNotEmpty) {
+            bytes += generator.emptyLines(1);
+            bytes += generator.text(
+              settings.ticketFooter,
+              styles: PosStyles(
+                align: PosAlign.center,
+                height: _resolveTextSize(),
+                width: _resolveTextSize(),
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint('Error reading ticket footer from settings: $e');
+        }
       }
 
       bytes += generator.emptyLines(2);
@@ -1473,6 +1512,26 @@ class PrintingService {
           width: _resolveTextSize(),
         ),
       );
+
+      // Custom ticket header
+      if (_ref != null) {
+        try {
+          final settings = _ref!.read(settingsProvider);
+          if (settings.ticketHeader.isNotEmpty) {
+            bytes += generator.text(
+              settings.ticketHeader,
+              styles: PosStyles(
+                align: PosAlign.center,
+                height: _resolveTextSize(),
+                width: _resolveTextSize(),
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint('Error reading ticket header from settings: $e');
+        }
+      }
+
       bytes += generator.hr();
 
       // Ticket info
@@ -2718,6 +2777,90 @@ class PrintingService {
     } catch (e, stackTrace) {
       debugPrint('Error printing daily orders report: $e');
       debugPrint('Stack trace: $stackTrace');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return false;
+    }
+  }
+
+  /// Print a test page to verify printer is working.
+  Future<bool> printTestPage(PrinterPurpose purpose) async {
+    final printerReady = await _ensurePrinterConnected(purpose);
+    if (!printerReady) {
+      debugPrint('Test print: could not connect ${purpose.name} printer');
+      return false;
+    }
+
+    _isPrintingInProgress = true;
+    _printingStatusController.add('Printing test page...');
+
+    try {
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(_config.paperSize, profile);
+      List<int> bytes = [];
+
+      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
+      bytes += generator.text(
+        '=== TEST PRINT ===',
+        styles: const PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
+      );
+      bytes += generator.emptyLines(1);
+      bytes += generator.text(
+        purpose == PrinterPurpose.receipt ? 'RECEIPT PRINTER' : 'KDS PRINTER',
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.hr();
+      bytes += generator.text(
+        _formatDateTime(DateTime.now()),
+        styles: PosStyles(
+          align: PosAlign.center,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.text(
+        'Paper: ${_config.paperSize == PaperSize.mm58 ? "58mm" : "80mm"}  '
+        'Text: ${_config.textSize == 1 ? "Normal" : _config.textSize == 2 ? "Large" : "XL"}',
+        styles: PosStyles(
+          align: PosAlign.center,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.hr();
+      bytes += generator.text(
+        'Printer OK',
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: _resolveTextSize(),
+          width: _resolveTextSize(),
+        ),
+      );
+      bytes += generator.emptyLines(2);
+      bytes += generator.cut();
+
+      final printer = purpose == PrinterPurpose.receipt
+          ? _connectedReceiptPrinter!
+          : _connectedKdsPrinter!;
+      await _thermalPrinter.printData(printer, bytes, longData: true);
+
+      debugPrint('Test page printed successfully for ${purpose.name}');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return true;
+    } catch (e) {
+      debugPrint('Error printing test page: $e');
       _isPrintingInProgress = false;
       _printingStatusController.add(null);
       return false;
