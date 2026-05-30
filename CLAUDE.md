@@ -68,6 +68,7 @@ lib/
 │       ├── kds-models.dart     # KDS screen data structures
 │       ├── order_events.dart   # Order lifecycle events
 │       ├── app_settings.dart   # Typed settings model
+│       ├── external_order_models.dart # ExternalQueueItem/OrderItem/Component (DealUp/WhatsApp)
 │       ├── coupon_model.dart
 │       └── scale_config.dart
 │
@@ -79,18 +80,22 @@ lib/
 │   ├── session_screen/         # Cash session open/close
 │   ├── order_confirmation/     # Post-payment confirmation
 │   ├── profile/                # User profile
-│   ├── settings/ + settings_page/ # App settings UI
+│   ├── settings/settings_screen.dart  # App settings UI (ACTIVE — used by top_bar.dart)
+│   │   # settings_screen_backup.dart / settings_screen_new.dart are dead files
+│   │   # settings_page/ directory is also unused — do not edit those files
 │   └── widgets/                # Management screens and reusable dialogs
 │       # OrdersManagement, UsersManagement, DevicesManagement,
 │       # SessionsManagement, TicketsManagement, PrintersManagement,
 │       # AgendaScreen, DashboardScreen, NotesScreen
+│       # ExternalOrdersTab — second tab in OrdersManagementScreen (DealUp/WhatsApp)
 │
 ├── providers/                  # ALL Riverpod providers
 │   ├── database_providers.dart # Core: DB, ApiService, DataSync, Session, SyncJob,
 │   │                           # PrintingService, BarcodeScanner + BarcodeScanMode enum
 │   ├── order_provider.dart     # OrderNotifier + OrderRepository
 │   ├── network_provider.dart   # Connectivity, online-status, syncJobServiceWithNetworkProvider
-│   ├── settings_provider.dart  # Language, dark mode, server port, etc.
+│   ├── settings_provider.dart  # Language, dark mode, server port, onscreen keyboard, etc.
+│   │                           # Also exposes: showOnscreenKeyboardProvider, onscreenKeyboardWidthFractionProvider
 │   ├── server_provider.dart    # ServerService lifecycle
 │   ├── socket_order_providers.dart # Real-time order push via SocketService
 │   ├── sync_manager_provider.dart  # Orchestrates sync on connectivity change
@@ -101,6 +106,7 @@ lib/
 │   ├── notes_provider.dart     # Notes state
 │   ├── scale_config_provider.dart  # Weighing scale config
 │   ├── localization_provider.dart  # Active locale
+│   ├── external_order_provider.dart # ExternalOrderState + ExternalOrderNotifier (DealUp/WhatsApp queue)
 │   ├── desktop_update_provider.dart
 │   └── update_provider.dart
 │
@@ -113,6 +119,7 @@ lib/
 │   ├── data_sync_service.dart  # Full sync: remote API → local DB (master data + orders)
 │   ├── sync_job_service.dart   # Periodic sync scheduler
 │   ├── pending_operations_service.dart # Queue offline mutations; flush on reconnect
+│   ├── external_order_queue_service.dart # Poll remote queue for DealUp/WhatsApp orders
 │   ├── session_service.dart    # Cash session open/close lifecycle
 │   ├── auth_service.dart       # bcrypt login validation
 │   ├── permission_service.dart # Role-based permission checks
@@ -155,6 +162,9 @@ UI → `OrderRepository` → writes to local Drift DB → `PendingOperationsServ
 
 ## Real-Time Orders
 `SocketService` maintains a WebSocket connection to the remote server. Incoming order events are surfaced via `socket_order_providers.dart` stream providers, consumed by KDS/order screens.
+
+## External Order Queue (DealUp / WhatsApp)
+`ExternalOrderQueueService` polls the remote server for pending external orders. `ExternalOrderNotifier` (`external_order_provider.dart`) holds `ExternalOrderState` (items, loading, error, confirming set). `ExternalOrdersTab` renders these as the second tab inside `OrdersManagementScreen`. Confirming an item converts it to a local `Order` via `OrderRepository`.
 
 ---
 
@@ -201,10 +211,12 @@ Add new routes as named strings in the `routes` map in `main.dart`.
 ## Database
 - Tables in `lib/data/database/tables/` — one file per table
 - Register in `@DriftDatabase(tables: [...])` in `app_database.dart`
+- Current `schemaVersion` is **10** — bump and add a migration block in `MigrationStrategy.onUpgrade` for every schema change
 - After schema changes: `flutter pub run build_runner build --delete-conflicting-outputs`
 - Never edit `app_database.g.dart` manually
 - `Value(x)` for optional Companion fields; omit for `DEFAULT`
 - `build.yaml` sets `store_date_time_values_as_text: true` and SQLite dialect — never store datetimes as integers
+- Full table list: Categories, Products, ProductVariants, **VariantAttributeValues**, Users, Components, ComponentGroups, ProductComponents, Areas, AreaTables, Stations, Kiosks, KDSs, Commercials, Customers, Orders, OrderProducts, OrderProductComponents, Payments, Transactions, CashSessions, Tickets, PendingSyncOperations, OrderLogs, Waiters, **WaiterAreas**, Notes
 
 ## Services & Repositories
 - `OrderRepository` is sole source of truth for order CRUD — no direct DB calls from UI

@@ -8,6 +8,8 @@ enum CategoryDisplayMode {
 class AppSettings {
   final bool isDarkMode;
   final String language; // 'en', 'ar', 'fr'
+  final String loggingLanguage; // Language used for stored activity-log phrases
+  final List<String> cashierDefaultPermissions; // Auto-granted to users where type == 'cashier'
   final String defaultOrderType; // 'DINE_IN' or 'TAKE_AWAY'
   final bool showProductImages;
   final String defaultOrderStatus; // 'PENDING', 'ONHOLD', etc.
@@ -72,6 +74,8 @@ class AppSettings {
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
+    this.loggingLanguage = 'en',
+    this.cashierDefaultPermissions = const [],
     this.defaultOrderType = 'DINE_IN',
     this.showProductImages = true,
     this.defaultOrderStatus = 'PENDING',
@@ -129,6 +133,8 @@ class AppSettings {
   AppSettings copyWith({
     bool? isDarkMode,
     String? language,
+    String? loggingLanguage,
+    List<String>? cashierDefaultPermissions,
     String? defaultOrderType,
     bool? showProductImages,
     String? defaultOrderStatus,
@@ -171,6 +177,9 @@ class AppSettings {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
       language: language ?? this.language,
+      loggingLanguage: loggingLanguage ?? this.loggingLanguage,
+      cashierDefaultPermissions:
+          cashierDefaultPermissions ?? this.cashierDefaultPermissions,
       defaultOrderType: defaultOrderType ?? this.defaultOrderType,
       showProductImages: showProductImages ?? this.showProductImages,
       defaultOrderStatus: defaultOrderStatus ?? this.defaultOrderStatus,
@@ -216,6 +225,8 @@ class AppSettings {
     return {
       'isDarkMode': isDarkMode,
       'language': language,
+      'loggingLanguage': loggingLanguage,
+      'cashierDefaultPermissions': cashierDefaultPermissions,
       'defaultOrderType': defaultOrderType,
       'showProductImages': showProductImages,
       'defaultOrderStatus': defaultOrderStatus,
@@ -261,6 +272,11 @@ class AppSettings {
     return AppSettings(
       isDarkMode: json['isDarkMode'] as bool? ?? false,
       language: json['language'] as String? ?? 'en',
+      loggingLanguage: json['loggingLanguage'] as String? ?? (json['language'] as String? ?? 'en'),
+      cashierDefaultPermissions: (json['cashierDefaultPermissions'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
       defaultOrderType: json['defaultOrderType'] as String? ?? 'DINE_IN',
       showProductImages: json['showProductImages'] as bool? ?? true,
       defaultOrderStatus: json['defaultOrderStatus'] as String? ?? 'PENDING',

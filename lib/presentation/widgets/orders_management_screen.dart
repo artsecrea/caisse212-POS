@@ -4,9 +4,10 @@ import 'package:drift/drift.dart' show OrderingTerm, OrderingMode, Value;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:bcrypt/bcrypt.dart';
-import '../../utils/currency_formatter.dart';
+import '../../providers/admin_elevation_provider.dart';
+import '../../utils/admin_auth.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/currency_formatter.dart';
 
 import 'package:data_table_2/data_table_2.dart';
 import '../../domain/models/order_models.dart';
@@ -15,6 +16,7 @@ import '../../providers/sync_manager_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
+import 'admin_mode_chip.dart';
 import 'permission_guard.dart';
 import 'order_details_dialog.dart';
 import 'external_orders_tab.dart';
@@ -200,105 +202,38 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   /// Toggle between "my orders" and "all orders".
-  /// Switching to "all orders" requires the tenant password.
+  /// Switching to "all orders" requires admin credentials.
   /// Switching back to "my orders" is always allowed.
   Future<void> _toggleShowAllOrders() async {
     final l10n = AppLocalizations.of(context)!;
 
     if (_showAllOrders) {
-      // Switching back to my orders — no password needed
+      // Switching back to my orders — no auth needed
       setState(() => _showAllOrders = false);
       _currentPage = 0;
       _loadOrders();
       return;
     }
 
-    // Switching to all orders — require tenant password
-    final prefs = ref.read(sharedPreferencesProvider);
-    final tenantPasswordHash = prefs.getString('tenant_password_hash');
-
-    if (tenantPasswordHash == null || tenantPasswordHash.isEmpty) {
-      // No tenant password set — allow directly
+    // Admin already elevated this session — no need to re-prompt.
+    if (ref.read(adminElevationProvider) != null) {
       setState(() => _showAllOrders = true);
       _currentPage = 0;
       _loadOrders();
       return;
     }
 
-    final passwordController = TextEditingController();
-    final verified = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        bool obscure = true;
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: Row(
-                children: [
-                  Icon(Icons.lock_outline, color: Theme.of(context).colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Text(l10n.translate('view_all_orders')),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(l10n.translate('enter_tenant_password_to_view_all')),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: obscure,
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      labelText: l10n.translate('tenant_password'),
-                      prefixIcon: const Icon(Icons.lock),
-                      suffixIcon: IconButton(
-                        icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
-                        onPressed: () => setDialogState(() => obscure = !obscure),
-                      ),
-                      border: const OutlineInputBorder(),
-                    ),
-                    onSubmitted: (_) {
-                      final ok = BCrypt.checkpw(passwordController.text.trim(), tenantPasswordHash);
-                      Navigator.of(context).pop(ok);
-                    },
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: Text(l10n.translate('cancel')),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    final ok = BCrypt.checkpw(passwordController.text.trim(), tenantPasswordHash);
-                    Navigator.of(context).pop(ok);
-                  },
-                  child: Text(l10n.translate('confirm')),
-                ),
-              ],
-            );
-          },
-        );
-      },
+    final admin = await showAdminCredentialDialog(
+      context,
+      ref,
+      title: l10n.translate('view_all_orders'),
+      description: l10n.translate('enter_admin_credentials'),
     );
+    if (admin == null) return;
 
-    passwordController.dispose();
-
-    if (verified == true) {
-      setState(() => _showAllOrders = true);
-      _currentPage = 0;
-      _loadOrders();
-    } else if (verified == false && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translate('invalid_tenant_password')),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
-    }
+    setState(() => _showAllOrders = true);
+    _currentPage = 0;
+    _loadOrders();
   }
 
   @override
@@ -362,6 +297,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         ],
       ),
       actions: [
+        const AdminModeChip(),
         // Sync indicator
         if (_isSyncing || syncState.isSyncing)
           const Padding(
@@ -869,17 +805,18 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               final permissionService = ref.read(permissionServiceProvider);
               final canUpdate = permissionService.hasPermission(Permissions.ordersUpdate);
               final canDelete = permissionService.hasPermission(Permissions.ordersDelete);
-
+              final canCancel = permissionService.hasPermission(Permissions.ordersCancel);
+              final canPay = permissionService.hasPermission(Permissions.ticketsCreate);
               return [
                 PopupMenuItem(value: 'view', child: Row(children: [const Icon(Icons.visibility, size: 18), const SizedBox(width: 8), Text(l10n.translate('view'))])),
-                if (isUnpaid)
+                if (isUnpaid && canPay)
                   PopupMenuItem(value: 'pay', child: Row(children: [const Icon(Icons.payment, size: 18, color: Colors.teal), SizedBox(width: 8), Text(l10n.translate('pay'), style: const TextStyle(color: Colors.teal))]))
                 else if (!isZLocked) ...[
                   if (canUpdate)
                     PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
                   if (canUpdate)
                     PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
-                  if (canUpdate)
+                  if (canCancel)
                     PopupMenuItem(value: 'cancel', child: Row(children: [const Icon(Icons.cancel, size: 18, color: Colors.orange), const SizedBox(width: 8), Text(l10n.translate('cancel_order'), style: const TextStyle(color: Colors.orange))])),
                   if (canDelete)
                     PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_forever, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
@@ -976,6 +913,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               final permissionService = ref.read(permissionServiceProvider);
               final canUpdate = permissionService.hasPermission(Permissions.ordersUpdate);
               final canDelete = permissionService.hasPermission(Permissions.ordersDelete);
+              final canCancel = permissionService.hasPermission(Permissions.ordersCancel);
+              final canPay = permissionService.hasPermission(Permissions.ticketsCreate);
               return [
                 PopupMenuItem(
                   value: 'view',
@@ -987,7 +926,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                     ],
                   ),
                 ),
-                if (isUnpaid)
+                if (isUnpaid && canPay)
                   PopupMenuItem(
                     value: 'pay',
                     child: Row(
@@ -1021,7 +960,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                         ],
                       ),
                     ),
-                  if (canUpdate)
+                  if (canCancel)
                     PopupMenuItem(
                       value: 'cancel',
                       child: Row(
@@ -1416,6 +1355,11 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   void _deleteOrder(Order order) async {
     final l10n = AppLocalizations.of(context)!;
+    if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ordersDelete)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('no_permission')), backgroundColor: Colors.red));
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1457,6 +1401,11 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   void _cancelOrder(Order order) async {
     final l10n = AppLocalizations.of(context)!;
+    if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ordersCancel)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('no_permission')), backgroundColor: Colors.red));
+      return;
+    }
     final reasonController = TextEditingController();
 
     final result = await showDialog<String?>(

@@ -14,6 +14,7 @@ import 'package:flutter_thermal_printer/utils/printer.dart';
 import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/enums.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/order_models.dart';
 import '../utils/app_localizations.dart';
@@ -32,6 +33,53 @@ enum KdsPrintMode {
   modificationsOnly, // Print only new/unprinted items
 }
 
+/// Distinct print outputs whose auto-printing can be configured independently.
+enum PrintOutput { orderTicket, customerReceipt, storeCopy, kds }
+
+/// All known order types — used as the default set in a [PrintRule].
+const Set<String> kAllOrderTypes = {'DINE_IN', 'TAKE_AWAY', 'DELIVERY'};
+
+/// Per-output conditional print rule: whether the output prints at all, for
+/// which order types, and whether a table must be selected.
+class PrintRule {
+  final bool enabled;
+  final Set<String> orderTypes;
+  final bool requireTable;
+
+  const PrintRule({
+    this.enabled = true,
+    this.orderTypes = kAllOrderTypes,
+    this.requireTable = false,
+  });
+
+  PrintRule copyWith({
+    bool? enabled,
+    Set<String>? orderTypes,
+    bool? requireTable,
+  }) {
+    return PrintRule(
+      enabled: enabled ?? this.enabled,
+      orderTypes: orderTypes ?? this.orderTypes,
+      requireTable: requireTable ?? this.requireTable,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'enabled': enabled,
+    'orderTypes': orderTypes.toList(),
+    'requireTable': requireTable,
+  };
+
+  factory PrintRule.fromJson(Map<String, dynamic> json) {
+    return PrintRule(
+      enabled: json['enabled'] ?? true,
+      orderTypes: (json['orderTypes'] as List?)?.map((e) => e.toString()).toSet() ??
+          kAllOrderTypes,
+      requireTable: json['requireTable'] ?? false,
+    );
+  }
+}
+
 /// Model for saved printer configuration
 class PrinterConfig {
   final String? receiptPrinterAddress;
@@ -46,6 +94,21 @@ class PrinterConfig {
   final int textSize; // 1=Normal, 2=Medium, 3=Large
   final String printingLanguage; // 'en' or 'fr'
 
+  // Per-output conditional rules
+  final PrintRule orderTicketRule;
+  final PrintRule customerReceiptRule;
+  final PrintRule storeCopyRule;
+  final PrintRule kdsRule;
+
+  // Pro configuration
+  final bool autoPrintOnPayment; // Master auto-print switch on payment
+  final int customerCopies; // Number of customer receipt copies
+  final bool reprintWatermark; // Stamp DUPLICATA on reprints
+  final bool cashDrawerKick; // Open cash drawer
+  final bool cashDrawerCashOnly; // Only kick drawer for cash payments
+  final bool splitKdsByStation; // Split kitchen tickets per station
+  final KdsPrintMode defaultKdsMode; // Default kitchen print mode
+
   const PrinterConfig({
     this.receiptPrinterAddress,
     this.receiptPrinterName,
@@ -58,6 +121,17 @@ class PrinterConfig {
     this.paperSize = PaperSize.mm80,
     this.textSize = 1,
     this.printingLanguage = 'en',
+    this.orderTicketRule = const PrintRule(),
+    this.customerReceiptRule = const PrintRule(),
+    this.storeCopyRule = const PrintRule(enabled: false),
+    this.kdsRule = const PrintRule(),
+    this.autoPrintOnPayment = true,
+    this.customerCopies = 1,
+    this.reprintWatermark = true,
+    this.cashDrawerKick = false,
+    this.cashDrawerCashOnly = true,
+    this.splitKdsByStation = true,
+    this.defaultKdsMode = KdsPrintMode.modificationsOnly,
   });
 
   PrinterConfig copyWith({
@@ -72,6 +146,17 @@ class PrinterConfig {
     PaperSize? paperSize,
     int? textSize,
     String? printingLanguage,
+    PrintRule? orderTicketRule,
+    PrintRule? customerReceiptRule,
+    PrintRule? storeCopyRule,
+    PrintRule? kdsRule,
+    bool? autoPrintOnPayment,
+    int? customerCopies,
+    bool? reprintWatermark,
+    bool? cashDrawerKick,
+    bool? cashDrawerCashOnly,
+    bool? splitKdsByStation,
+    KdsPrintMode? defaultKdsMode,
   }) {
     return PrinterConfig(
       receiptPrinterAddress:
@@ -87,6 +172,17 @@ class PrinterConfig {
       paperSize: paperSize ?? this.paperSize,
       textSize: textSize ?? this.textSize,
       printingLanguage: printingLanguage ?? this.printingLanguage,
+      orderTicketRule: orderTicketRule ?? this.orderTicketRule,
+      customerReceiptRule: customerReceiptRule ?? this.customerReceiptRule,
+      storeCopyRule: storeCopyRule ?? this.storeCopyRule,
+      kdsRule: kdsRule ?? this.kdsRule,
+      autoPrintOnPayment: autoPrintOnPayment ?? this.autoPrintOnPayment,
+      customerCopies: customerCopies ?? this.customerCopies,
+      reprintWatermark: reprintWatermark ?? this.reprintWatermark,
+      cashDrawerKick: cashDrawerKick ?? this.cashDrawerKick,
+      cashDrawerCashOnly: cashDrawerCashOnly ?? this.cashDrawerCashOnly,
+      splitKdsByStation: splitKdsByStation ?? this.splitKdsByStation,
+      defaultKdsMode: defaultKdsMode ?? this.defaultKdsMode,
     );
   }
 
@@ -102,6 +198,17 @@ class PrinterConfig {
     'paperSize': paperSize.value,
     'textSize': textSize,
     'printingLanguage': printingLanguage,
+    'orderTicketRule': orderTicketRule.toJson(),
+    'customerReceiptRule': customerReceiptRule.toJson(),
+    'storeCopyRule': storeCopyRule.toJson(),
+    'kdsRule': kdsRule.toJson(),
+    'autoPrintOnPayment': autoPrintOnPayment,
+    'customerCopies': customerCopies,
+    'reprintWatermark': reprintWatermark,
+    'cashDrawerKick': cashDrawerKick,
+    'cashDrawerCashOnly': cashDrawerCashOnly,
+    'splitKdsByStation': splitKdsByStation,
+    'defaultKdsMode': defaultKdsMode.index,
   };
 
   factory PrinterConfig.fromJson(Map<String, dynamic> json) {
@@ -121,6 +228,28 @@ class PrinterConfig {
       paperSize: json['paperSize'] == 58 ? PaperSize.mm58 : PaperSize.mm80,
       textSize: json['textSize'] ?? 1,
       printingLanguage: json['printingLanguage'] ?? 'en',
+      orderTicketRule: json['orderTicketRule'] != null
+          ? PrintRule.fromJson(Map<String, dynamic>.from(json['orderTicketRule']))
+          : const PrintRule(),
+      customerReceiptRule: json['customerReceiptRule'] != null
+          ? PrintRule.fromJson(
+              Map<String, dynamic>.from(json['customerReceiptRule']))
+          : const PrintRule(),
+      storeCopyRule: json['storeCopyRule'] != null
+          ? PrintRule.fromJson(Map<String, dynamic>.from(json['storeCopyRule']))
+          : const PrintRule(enabled: false),
+      kdsRule: json['kdsRule'] != null
+          ? PrintRule.fromJson(Map<String, dynamic>.from(json['kdsRule']))
+          : const PrintRule(),
+      autoPrintOnPayment: json['autoPrintOnPayment'] ?? true,
+      customerCopies: json['customerCopies'] ?? 1,
+      reprintWatermark: json['reprintWatermark'] ?? true,
+      cashDrawerKick: json['cashDrawerKick'] ?? false,
+      cashDrawerCashOnly: json['cashDrawerCashOnly'] ?? true,
+      splitKdsByStation: json['splitKdsByStation'] ?? true,
+      defaultKdsMode: json['defaultKdsMode'] != null
+          ? KdsPrintMode.values[json['defaultKdsMode']]
+          : KdsPrintMode.modificationsOnly,
     );
   }
 }
@@ -232,6 +361,20 @@ class PrintingService {
     final textSizeValue = prefs.getInt('printer_text_size') ?? 1;
     final printingLanguage = prefs.getString('printer_language') ?? 'en';
 
+    PrintRule loadRule(String key, {bool defaultEnabled = true}) {
+      final raw = prefs.getString(key);
+      if (raw == null) return PrintRule(enabled: defaultEnabled);
+      try {
+        return PrintRule.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map),
+        );
+      } catch (_) {
+        return PrintRule(enabled: defaultEnabled);
+      }
+    }
+
+    final defaultKdsModeIndex = prefs.getInt('printer_default_kds_mode');
+
     _config = PrinterConfig(
       receiptPrinterAddress: receiptAddress,
       receiptPrinterName: receiptName,
@@ -248,6 +391,23 @@ class PrintingService {
       paperSize: paperSizeValue == 58 ? PaperSize.mm58 : PaperSize.mm80,
       textSize: textSizeValue,
       printingLanguage: printingLanguage,
+      orderTicketRule: loadRule('printer_rule_order_ticket'),
+      customerReceiptRule: loadRule('printer_rule_customer_receipt'),
+      storeCopyRule:
+          loadRule('printer_rule_store_copy', defaultEnabled: false),
+      kdsRule: loadRule('printer_rule_kds'),
+      autoPrintOnPayment:
+          prefs.getBool('printer_auto_print_payment') ?? true,
+      customerCopies: prefs.getInt('printer_customer_copies') ?? 1,
+      reprintWatermark: prefs.getBool('printer_reprint_watermark') ?? true,
+      cashDrawerKick: prefs.getBool('printer_cash_drawer_kick') ?? false,
+      cashDrawerCashOnly:
+          prefs.getBool('printer_cash_drawer_cash_only') ?? true,
+      splitKdsByStation:
+          prefs.getBool('printer_split_kds_by_station') ?? true,
+      defaultKdsMode: defaultKdsModeIndex != null
+          ? KdsPrintMode.values[defaultKdsModeIndex]
+          : KdsPrintMode.modificationsOnly,
     );
     _configController.add(_config);
   }
@@ -315,6 +475,30 @@ class PrintingService {
     await prefs.setInt('printer_paper_size', newConfig.paperSize.value);
     await prefs.setInt('printer_text_size', newConfig.textSize);
     await prefs.setString('printer_language', newConfig.printingLanguage);
+
+    // Per-output conditional rules
+    await prefs.setString(
+        'printer_rule_order_ticket', jsonEncode(newConfig.orderTicketRule.toJson()));
+    await prefs.setString('printer_rule_customer_receipt',
+        jsonEncode(newConfig.customerReceiptRule.toJson()));
+    await prefs.setString(
+        'printer_rule_store_copy', jsonEncode(newConfig.storeCopyRule.toJson()));
+    await prefs.setString(
+        'printer_rule_kds', jsonEncode(newConfig.kdsRule.toJson()));
+
+    // Pro configuration
+    await prefs.setBool(
+        'printer_auto_print_payment', newConfig.autoPrintOnPayment);
+    await prefs.setInt('printer_customer_copies', newConfig.customerCopies);
+    await prefs.setBool(
+        'printer_reprint_watermark', newConfig.reprintWatermark);
+    await prefs.setBool('printer_cash_drawer_kick', newConfig.cashDrawerKick);
+    await prefs.setBool(
+        'printer_cash_drawer_cash_only', newConfig.cashDrawerCashOnly);
+    await prefs.setBool(
+        'printer_split_kds_by_station', newConfig.splitKdsByStation);
+    await prefs.setInt(
+        'printer_default_kds_mode', newConfig.defaultKdsMode.index);
 
     _configController.add(_config);
   }
@@ -466,6 +650,120 @@ class PrintingService {
   Future<void> togglePrinting(SharedPreferences prefs, bool enabled) async {
     final newConfig = _config.copyWith(printingEnabled: enabled);
     await saveConfig(prefs, newConfig);
+  }
+
+  /// Map a [PrintOutput] to its configured [PrintRule].
+  PrintRule _ruleFor(PrintOutput output) {
+    switch (output) {
+      case PrintOutput.orderTicket:
+        return _config.orderTicketRule;
+      case PrintOutput.customerReceipt:
+        return _config.customerReceiptRule;
+      case PrintOutput.storeCopy:
+        return _config.storeCopyRule;
+      case PrintOutput.kds:
+        return _config.kdsRule;
+    }
+  }
+
+  /// Whether a given output should auto-print for the given order context.
+  bool shouldPrint(
+    PrintOutput output, {
+    required String orderType,
+    required bool hasTable,
+  }) {
+    if (!_config.printingEnabled) return false;
+    final rule = _ruleFor(output);
+    if (!rule.enabled) return false;
+    if (!rule.orderTypes.contains(orderType)) return false;
+    if (rule.requireTable && !hasTable) return false;
+    return true;
+  }
+
+  /// Send a cash-drawer open pulse via the receipt printer.
+  Future<bool> kickCashDrawer() async {
+    final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
+    if (!printerReady) return false;
+    try {
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(_config.paperSize, profile);
+      final bytes = generator.drawer();
+      await _thermalPrinter.printData(
+        _connectedReceiptPrinter!,
+        bytes,
+        longData: true,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('Cash drawer kick failed: $e');
+      return false;
+    }
+  }
+
+  /// Orchestrates all payment-time printing according to [PrinterConfig]:
+  /// customer receipt (x copies), store copy, and the cash drawer kick.
+  /// Honors the per-output rules and the [autoPrintOnPayment] master switch.
+  Future<void> printPaymentDocuments({
+    required int ticketId,
+    required String ticketNumber,
+    required double amount,
+    required String paymentMethod,
+    required DateTime createdAt,
+    required List<Map<String, dynamic>> items,
+    required String orderType,
+    required bool hasTable,
+    String? currency,
+    String? orderCode,
+    String? cashierName,
+    String? storeName,
+    String? customerName,
+    String? customerPhone,
+    String? deliveryAddress,
+  }) async {
+    if (!_config.printingEnabled || !_config.autoPrintOnPayment) return;
+
+    Future<void> printOne({required bool storeCopy}) {
+      return printTicketReceipt(
+        ticketId: ticketId,
+        ticketNumber: ticketNumber,
+        amount: amount,
+        paymentMethod: paymentMethod,
+        createdAt: createdAt,
+        items: items,
+        currency: currency,
+        orderCode: orderCode,
+        cashierName: cashierName,
+        storeName: storeName,
+        customerName: customerName,
+        customerPhone: customerPhone,
+        deliveryAddress: orderType == 'DELIVERY' ? deliveryAddress : null,
+        storeCopy: storeCopy,
+      );
+    }
+
+    // Customer receipt(s)
+    if (shouldPrint(PrintOutput.customerReceipt,
+        orderType: orderType, hasTable: hasTable)) {
+      final copies = _config.customerCopies < 1 ? 1 : _config.customerCopies;
+      for (var i = 0; i < copies; i++) {
+        await printOne(storeCopy: false);
+      }
+    }
+
+    // Store copy
+    if (shouldPrint(PrintOutput.storeCopy,
+        orderType: orderType, hasTable: hasTable)) {
+      await printOne(storeCopy: true);
+    }
+
+    // Cash drawer
+    if (_config.cashDrawerKick) {
+      final isCash =
+          paymentMethod.toUpperCase() == TransactionType.cash.value.toUpperCase();
+      if (!_config.cashDrawerCashOnly || isCash) {
+        await kickCashDrawer();
+      }
+    }
   }
 
   /// Set paper size
@@ -839,6 +1137,20 @@ class PrintingService {
           width: _resolveTextSize(),
         ),
       );
+      // Delivery address (delivery orders only)
+      if (order.type == 'DELIVERY' &&
+          order.deliveryAddress != null &&
+          order.deliveryAddress!.trim().isNotEmpty) {
+        bytes += generator.text(
+          '${_text('delivery_address', fallback: 'Delivery address')}: ${order.deliveryAddress}',
+          styles: PosStyles(
+            align: PosAlign.left,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
       bytes += generator.text(
         '${_text('persons', fallback: 'Persons')}: ${order.numberOfPersons}',
         styles: PosStyles(
@@ -1086,13 +1398,16 @@ class PrintingService {
   Future<bool> printKdsTicket({
     required CurrentOrder order,
     required String? cashierName,
-    KdsPrintMode mode = KdsPrintMode.modificationsOnly,
+    KdsPrintMode? mode,
     List<int> stationIds = const [],
   }) async {
     if (!_config.kdsEnabled) {
       debugPrint('KDS printing is disabled in config');
       return true; // KDS disabled, consider success
     }
+
+    // Resolve print mode from the configured default when caller doesn't override
+    final resolvedMode = mode ?? _config.defaultKdsMode;
 
     // Try to ensure printer is connected
     final printerReady = await _ensurePrinterConnected(PrinterPurpose.kds);
@@ -1109,9 +1424,9 @@ class PrintingService {
       if (_ref == null) {
         debugPrint('Warning: _ref is null, cannot group by stations');
         // Fall back to single ticket printing
-        final itemsToPrint = _filterItemsByMode(order.items, mode);
+        final itemsToPrint = _filterItemsByMode(order.items, resolvedMode);
         if (itemsToPrint.isEmpty) {
-          debugPrint('No items to print for mode: $mode');
+          debugPrint('No items to print for mode: $resolvedMode');
           _isPrintingInProgress = false;
           _printingStatusController.add(null);
           return true;
@@ -1121,48 +1436,85 @@ class PrintingService {
           stationName: _text('general', fallback: 'General'),
           items: itemsToPrint,
           cashierName: cashierName,
-          mode: mode,
+          mode: resolvedMode,
         );
       }
-      
+
       final database = _ref!.read(databaseProvider);
-      
+
       // Filter items based on print mode
-      final itemsToPrint = _filterItemsByMode(order.items, mode);
-      
+      final itemsToPrint = _filterItemsByMode(order.items, resolvedMode);
+
       if (itemsToPrint.isEmpty) {
-        debugPrint('No items to print for mode: $mode');
+        debugPrint('No items to print for mode: $resolvedMode');
         _isPrintingInProgress = false;
         _printingStatusController.add(null);
         return true; // Nothing to print is success
       }
-      
+
+      // When per-station splitting is disabled, print a single consolidated
+      // kitchen ticket with all items instead of grouping by station.
+      if (!_config.splitKdsByStation) {
+        final success = await _printKdsTicketForStation(
+          order: order,
+          stationName: _text('general', fallback: 'General'),
+          items: itemsToPrint,
+          cashierName: cashierName,
+          mode: resolvedMode,
+        );
+        if (success) {
+          await _markItemsAsPrinted(database, itemsToPrint);
+        }
+        _isPrintingInProgress = false;
+        _printingStatusController.add(null);
+        return success;
+      }
+
       // Group items by station
       final Map<String, List<OrderItem>> itemsByStation = {};
       final List<OrderItem> itemsWithoutStation = [];
-      
+      final Map<int, String> stationNameCache = {};
+
       final bool filterByStation = stationIds.isNotEmpty;
 
+      Future<String> stationNameFor(int id) async {
+        final cached = stationNameCache[id];
+        if (cached != null) return cached;
+        final station = await (database.select(database.stations)
+              ..where((tbl) => tbl.id.equals(id)))
+            .getSingleOrNull();
+        final name = station?.name ?? 'Station $id';
+        stationNameCache[id] = name;
+        return name;
+      }
+
       for (final item in itemsToPrint) {
-        // Fetch product to get station info
+        // Fetch product to get its primary station
         final product = await (database.select(database.products)
           ..where((tbl) => tbl.id.equals(item.productId)))
           .getSingleOrNull();
 
-        if (product?.stationId != null) {
-          // Skip if station filter active and this station not selected
-          if (filterByStation && !stationIds.contains(product!.stationId)) continue;
+        // Full station set: primary stationId + extra (join) stations.
+        final productStationIds = <int>{
+          if (product?.stationId != null) product!.stationId!,
+        };
+        final extraRows = await (database.select(database.productStations)
+              ..where((tbl) => tbl.productId.equals(item.productId)))
+            .get();
+        productStationIds.addAll(extraRows.map((e) => e.stationId));
 
-          // Fetch station name
-          final station = await (database.select(database.stations)
-            ..where((tbl) => tbl.id.equals(product!.stationId!)))
-            .getSingleOrNull();
-
-          final stationName = station?.name ?? 'Station ${product!.stationId}';
-          itemsByStation.putIfAbsent(stationName, () => []).add(item);
-        } else {
-          // Items without station only go to General when no specific filter is active
+        if (productStationIds.isEmpty) {
+          // Items without any station only go to General when not filtering.
           if (!filterByStation) itemsWithoutStation.add(item);
+          continue;
+        }
+
+        // Add the item to EVERY station it belongs to (so multi-station products
+        // print on each relevant kitchen ticket), respecting the selection filter.
+        for (final sid in productStationIds) {
+          if (filterByStation && !stationIds.contains(sid)) continue;
+          final stationName = await stationNameFor(sid);
+          itemsByStation.putIfAbsent(stationName, () => []).add(item);
         }
       }
 
@@ -1180,14 +1532,14 @@ class PrintingService {
         final stationName = stationEntry.key;
         final stationItems = stationEntry.value;
         
-        debugPrint('Printing KDS ticket $stationCount/${itemsByStation.length} for station: $stationName (mode: $mode)');
-        
+        debugPrint('Printing KDS ticket $stationCount/${itemsByStation.length} for station: $stationName (mode: $resolvedMode)');
+
         final success = await _printKdsTicketForStation(
           order: order,
           stationName: stationName,
           items: stationItems,
           cashierName: cashierName,
-          mode: mode,
+          mode: resolvedMode,
         );
         
         if (!success) {
@@ -1467,6 +1819,9 @@ class PrintingService {
     String? storeName,
     String? customerName,
     String? customerPhone,
+    String? deliveryAddress,
+    bool storeCopy = false,
+    bool isReprint = false,
   }) async {
     // Try to ensure printer is connected
     final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
@@ -1512,6 +1867,30 @@ class PrintingService {
           width: _resolveTextSize(),
         ),
       );
+
+      // Store copy / reprint banners
+      if (storeCopy) {
+        bytes += generator.text(
+          _text('store_copy', fallback: 'STORE COPY'),
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveHeaderSize(),
+            width: _resolveHeaderSize(),
+          ),
+        );
+      }
+      if (isReprint && _config.reprintWatermark) {
+        bytes += generator.text(
+          '*** ${_text('duplicate_ticket', fallback: 'DUPLICATA')} ***',
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
 
       // Custom ticket header
       if (_ref != null) {
@@ -1591,6 +1970,17 @@ class PrintingService {
           '${_text('phone', fallback: 'Phone')}: $customerPhone',
           styles: PosStyles(
             align: PosAlign.left,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
+      if (deliveryAddress != null && deliveryAddress.trim().isNotEmpty) {
+        bytes += generator.text(
+          '${_text('delivery_address', fallback: 'Delivery address')}: $deliveryAddress',
+          styles: PosStyles(
+            align: PosAlign.left,
+            bold: true,
             height: _resolveTextSize(),
             width: _resolveTextSize(),
           ),

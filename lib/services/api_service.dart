@@ -454,7 +454,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> fetchUsers() async {
     try {
       final response = await _dio.get('/pos/users');
-      print(response.data);
+      print ( '>>>>>>>>>>>>é' + response.data.toString());
       if (response.statusCode == 200) {
         return List<Map<String, dynamic>>.from(response.data);
       }

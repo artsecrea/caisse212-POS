@@ -8,6 +8,7 @@ import '../domain/models/order_events.dart';
 import '../services/pending_operations_service.dart';
 import '../services/data_sync_service.dart';
 import '../services/order_log_service.dart';
+import '../services/activity_log_service.dart';
 import 'package:uuid/uuid.dart';
 import 'database_providers.dart';
 import 'network_provider.dart';
@@ -279,6 +280,10 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = state.copyWith(type: type);
   }
 
+  void setDeliveryAddress(String? address) {
+    state = state.copyWith(deliveryAddress: address);
+  }
+
   void setNumberOfPersons(int count) {
     state = state.copyWith(numberOfPersons: count);
   }
@@ -310,6 +315,7 @@ final orderProvider = StateNotifierProvider<OrderNotifier, CurrentOrder>((ref) {
 // Order Repository
 class OrderRepository {
   final AppDatabase _database;
+  final Ref? _ref;
   final _logger = Logger.instance;
   late final OrderLogService _logService;
 
@@ -317,8 +323,20 @@ class OrderRepository {
   DataSyncService? _syncService;
   bool Function()? _isOnlineCallback;
 
-  OrderRepository(this._database) {
+  OrderRepository(this._database, [this._ref]) {
     _logService = OrderLogService(_database);
+  }
+
+  /// Records a user-action audit entry for the current actor (if available).
+  void _audit(void Function(ActivityLogService log, int? userId, String? username) action) {
+    final ref = _ref;
+    if (ref == null) return;
+    try {
+      final actor = ref.read(currentUserProvider);
+      action(ref.read(activityLogServiceProvider), actor?.id, actor?.effectiveDisplayName);
+    } catch (e) {
+      _logger.error('Activity log failed: $e');
+    }
   }
 
   /// Set sync service for auto-syncing completed orders
@@ -374,6 +392,7 @@ class OrderRepository {
         type: Value(order.type),
         priority: Value(0),
         note: Value(order.note),
+        address: Value(order.deliveryAddress),
         tableId: Value(order.tableId),
         source: Value('POS'),
         sourceId: Value(null),
@@ -435,6 +454,7 @@ class OrderRepository {
 
     // Log order creation
     await _logService.logOrderCreated(orderId, 'Order created with code $orderCode, status $status');
+    _audit((log, uid, uname) => log.logOrderCreated(orderCode, userId: uid, username: uname));
 
     // Auto-sync if network is available
     if (_syncService != null && _isOnlineCallback != null) {
@@ -549,8 +569,9 @@ class OrderRepository {
       waiterId: Value(order.waiterId),
       discountPercentage: Value(order.discountPercentage),
       persons: Value(order.numberOfPersons),
-
+      type: Value(order.type),
       note: Value(order.note),
+      address: Value(order.deliveryAddress),
       updatedAt: Value(DateTime.now()),
 
       // Mark as not synced if changes were made to a previously synced order
@@ -638,6 +659,7 @@ class OrderRepository {
 
     // Log order update
     await _logService.logOrderUpdated(orderId, 'Order updated: code=$orderCode');
+    _audit((log, uid, uname) => log.logOrderUpdated(orderCode, userId: uid, username: uname));
   }
 
   /// Helper to queue order update operation
@@ -653,6 +675,8 @@ class OrderRepository {
           'commercialId': order.commercialId,
           'discountPercentage': order.discountPercentage,
           'note': order.note,
+          'type': order.type,
+          'address': order.deliveryAddress,
         },
       );
       _logger.info('Queued update operation for order code=$orderCode');
@@ -757,6 +781,9 @@ class OrderRepository {
         imageUrl: variantImageUrl ?? product.imageUrl,
         finalPrice: orderProduct.unitaryPrice,
         quantity: orderProduct.quantity,
+        // Baseline for the decrement floor — cashier can take back only what
+        // they added on top of this in the current session.
+        savedQuantity: orderProduct.quantity,
         components: components,
         note: orderProduct.note,
         discount: orderProduct.unitaryDiscount,
@@ -824,6 +851,7 @@ class OrderRepository {
       discountPercentage: order.discountPercentage,
       note: order.note,
       type: order.type,
+      deliveryAddress: order.address,
     );
   }
 
@@ -1011,6 +1039,17 @@ class OrderRepository {
 
     // Log order status update
     await _logService.logOrderUpdated(orderId, 'Order status changed from $oldStatus to $status');
+    _audit((log, uid, uname) {
+      if (status == 'CANCELED') {
+        log.logOrderCancelled(orderCode,
+            userId: uid, username: uname, reason: cancellationReason);
+      } else if (isConfirming) {
+        log.logOrderConfirmed(orderCode, userId: uid, username: uname);
+      } else {
+        log.logOrderStatusChanged(orderCode, oldStatus, status,
+            userId: uid, username: uname);
+      }
+    });
   }
 
 
@@ -1042,6 +1081,12 @@ class OrderRepository {
 
     // Log the transfer
     await _logService.logOrderUpdated(orderId, 'Order transferred from table $oldTableId to table $newTableId');
+    final transferred = await (_database.select(_database.orders)
+          ..where((tbl) => tbl.id.equals(orderId)))
+        .getSingleOrNull();
+    final transferCode = transferred?.code ?? '#$orderId';
+    _audit((log, uid, uname) => log.logOrderTransferred(
+        transferCode, '$oldTableId', '$newTableId', userId: uid, username: uname));
   }
 
   // Get all orders with full details including user, products, discounts, TVA, and paid amounts
@@ -1488,7 +1533,7 @@ class OrderRepository {
 
 final orderRepositoryProvider = Provider<OrderRepository>((ref) {
   final database = ref.watch(databaseProvider);
-  final repository = OrderRepository(database);
+  final repository = OrderRepository(database, ref);
 
   // Set up sync service and network status callback.
   // Use ref.read inside the callback so it always returns the CURRENT online state,

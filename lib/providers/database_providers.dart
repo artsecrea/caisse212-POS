@@ -131,8 +131,18 @@ class CurrentUser{
     );
   }
 
+  /// Whether this user has [perm]. Mirrors PermissionService: admin bypass,
+  /// exact match, and prefix wildcards (e.g. "pos:*", "pos:orders:*").
   bool hasPermission(String perm){
-    return _perms.contains(perm);
+    if (type.toLowerCase() == 'admin') return true;
+    final perms = _perms.map((p) => p.trim());
+    if (perms.contains(perm)) return true;
+    for (final p in perms) {
+      if (p.endsWith(':*') && perm.startsWith(p.substring(0, p.length - 1))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   CurrentUser copyWith({String? displayName}) {

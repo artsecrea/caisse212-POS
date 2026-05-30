@@ -29,6 +29,8 @@ import 'tables/logs_table.dart';
 import 'tables/product_variant_table.dart';
 import 'tables/waiter_table.dart';
 import 'tables/note_table.dart';
+import 'tables/activity_log_table.dart';
+import 'tables/product_station_table.dart';
 
 part 'app_database.g.dart';
 
@@ -60,13 +62,15 @@ part 'app_database.g.dart';
   Waiters,
   WaiterAreas,
   Notes,
+  ActivityLogs,
+  ProductStations,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 13;
 
   @override
   MigrationStrategy get migration {
@@ -240,6 +244,20 @@ class AppDatabase extends _$AppDatabase {
           // Add display_name to users for custom display name.
           try {
             await customStatement('ALTER TABLE users ADD COLUMN display_name TEXT;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 11) {
+          // Add activity (audit) log table.
+          await m.createTable(activityLogs);
+        }
+        if (from < 12) {
+          // Add product↔station join table for multi-station products.
+          await m.createTable(productStations);
+        }
+        if (from < 13) {
+          // Add delivery address to orders.
+          try {
+            await customStatement('ALTER TABLE orders ADD COLUMN address TEXT;');
           } catch (e) {/* may already exist */}
         }
       },

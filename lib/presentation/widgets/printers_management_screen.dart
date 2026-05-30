@@ -242,6 +242,39 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     await printingService.setPrintingLanguage(prefs, language);
   }
 
+  /// Persist an updated [PrinterConfig] built via copyWith.
+  Future<void> _updateConfig(PrinterConfig newConfig) async {
+    final printingService = ref.read(printingServiceProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+    await printingService.saveConfig(prefs, newConfig);
+  }
+
+  PrintRule _ruleForOutput(PrintOutput output) {
+    switch (output) {
+      case PrintOutput.orderTicket:
+        return _config.orderTicketRule;
+      case PrintOutput.customerReceipt:
+        return _config.customerReceiptRule;
+      case PrintOutput.storeCopy:
+        return _config.storeCopyRule;
+      case PrintOutput.kds:
+        return _config.kdsRule;
+    }
+  }
+
+  PrinterConfig _configWithRule(PrintOutput output, PrintRule rule) {
+    switch (output) {
+      case PrintOutput.orderTicket:
+        return _config.copyWith(orderTicketRule: rule);
+      case PrintOutput.customerReceipt:
+        return _config.copyWith(customerReceiptRule: rule);
+      case PrintOutput.storeCopy:
+        return _config.copyWith(storeCopyRule: rule);
+      case PrintOutput.kds:
+        return _config.copyWith(kdsRule: rule);
+    }
+  }
+
   Future<void> _testPrint(PrinterPurpose purpose) async {
     final l10n = AppLocalizations.of(context)!;
     final printingService = ref.read(printingServiceProvider);
@@ -687,6 +720,26 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
 
             const SizedBox(height: 24),
 
+            // Auto-print & copies
+            _buildAutoPrintCard(l10n),
+
+            const SizedBox(height: 24),
+
+            // Per-output print rules
+            _buildPrintRulesCard(l10n),
+
+            const SizedBox(height: 24),
+
+            // Cash drawer
+            _buildCashDrawerCard(l10n),
+
+            const SizedBox(height: 24),
+
+            // Kitchen
+            _buildKitchenCard(l10n),
+
+            const SizedBox(height: 24),
+
             // Receipt Printer
             _buildPrinterSection(
               context: context,
@@ -898,6 +951,276 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
           ],
         ),
       ),
+    );
+  }
+
+  Widget _sectionCard({
+    required IconData icon,
+    required String title,
+    required List<Widget> children,
+  }) {
+    return Card(
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 32),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAutoPrintCard(AppLocalizations l10n) {
+    final copies = _config.customerCopies < 1 ? 1 : _config.customerCopies;
+    return _sectionCard(
+      icon: Icons.print,
+      title: l10n.translate('auto_print_settings'),
+      children: [
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('auto_print_on_payment'),
+              style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('auto_print_on_payment_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          value: _config.autoPrintOnPayment,
+          onChanged: (v) => _updateConfig(_config.copyWith(autoPrintOnPayment: v)),
+        ),
+        const Divider(height: 24),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('customer_copies'),
+              style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('customer_copies_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.remove_circle_outline),
+                onPressed: copies > 1
+                    ? () => _updateConfig(
+                        _config.copyWith(customerCopies: copies - 1))
+                    : null,
+              ),
+              Text('$copies',
+                  style: const TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.bold)),
+              IconButton(
+                icon: const Icon(Icons.add_circle_outline),
+                onPressed: copies < 5
+                    ? () => _updateConfig(
+                        _config.copyWith(customerCopies: copies + 1))
+                    : null,
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 24),
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('reprint_watermark'),
+              style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('reprint_watermark_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          value: _config.reprintWatermark,
+          onChanged: (v) => _updateConfig(_config.copyWith(reprintWatermark: v)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPrintRulesCard(AppLocalizations l10n) {
+    return _sectionCard(
+      icon: Icons.rule,
+      title: l10n.translate('print_rules'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(l10n.translate('print_rules_subtitle'),
+              style: const TextStyle(color: Colors.grey, fontSize: 14)),
+        ),
+        const SizedBox(height: 8),
+        _buildRuleEditor(l10n, PrintOutput.orderTicket,
+            l10n.translate('order_ticket'), Icons.receipt),
+        _buildRuleEditor(l10n, PrintOutput.customerReceipt,
+            l10n.translate('customer_receipt'), Icons.receipt_long),
+        _buildRuleEditor(l10n, PrintOutput.storeCopy,
+            l10n.translate('store_copy_rule'), Icons.store),
+        _buildRuleEditor(l10n, PrintOutput.kds,
+            l10n.translate('kitchen_ticket'), Icons.restaurant),
+      ],
+    );
+  }
+
+  Widget _buildRuleEditor(
+      AppLocalizations l10n, PrintOutput output, String title, IconData icon) {
+    final rule = _ruleForOutput(output);
+    const orderTypes = ['DINE_IN', 'TAKE_AWAY', 'DELIVERY'];
+    String typeLabel(String t) {
+      switch (t) {
+        case 'DINE_IN':
+          return l10n.translate('dine_in');
+        case 'TAKE_AWAY':
+          return l10n.translate('take_away');
+        default:
+          return l10n.translate('delivery');
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        children: [
+          SwitchListTile(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            secondary: Icon(icon),
+            title: Text(title,
+                style:
+                    const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            value: rule.enabled,
+            onChanged: (v) => _updateConfig(
+                _configWithRule(output, rule.copyWith(enabled: v))),
+          ),
+          if (rule.enabled) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(l10n.translate('order_types'),
+                    style: const TextStyle(
+                        fontSize: 13, color: Colors.grey)),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Wrap(
+                spacing: 8,
+                children: orderTypes.map((t) {
+                  final selected = rule.orderTypes.contains(t);
+                  return FilterChip(
+                    label: Text(typeLabel(t)),
+                    selected: selected,
+                    onSelected: (sel) {
+                      final next = Set<String>.from(rule.orderTypes);
+                      if (sel) {
+                        next.add(t);
+                      } else {
+                        next.remove(t);
+                      }
+                      _updateConfig(_configWithRule(
+                          output, rule.copyWith(orderTypes: next)));
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+            SwitchListTile(
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              title: Text(l10n.translate('require_table'),
+                  style: const TextStyle(fontSize: 15)),
+              value: rule.requireTable,
+              onChanged: (v) => _updateConfig(
+                  _configWithRule(output, rule.copyWith(requireTable: v))),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCashDrawerCard(AppLocalizations l10n) {
+    return _sectionCard(
+      icon: Icons.point_of_sale,
+      title: l10n.translate('cash_drawer_settings'),
+      children: [
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('open_cash_drawer'),
+              style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('open_cash_drawer_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          value: _config.cashDrawerKick,
+          onChanged: (v) => _updateConfig(_config.copyWith(cashDrawerKick: v)),
+        ),
+        const Divider(height: 24),
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('cash_payments_only'),
+              style: TextStyle(
+                  fontSize: 16,
+                  color: _config.cashDrawerKick ? null : Colors.grey)),
+          value: _config.cashDrawerCashOnly,
+          onChanged: _config.cashDrawerKick
+              ? (v) => _updateConfig(_config.copyWith(cashDrawerCashOnly: v))
+              : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildKitchenCard(AppLocalizations l10n) {
+    return _sectionCard(
+      icon: Icons.restaurant_menu,
+      title: l10n.translate('kitchen_settings'),
+      children: [
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('split_by_station'),
+              style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('split_by_station_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          value: _config.splitKdsByStation,
+          onChanged: (v) =>
+              _updateConfig(_config.copyWith(splitKdsByStation: v)),
+        ),
+        const Divider(height: 24),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('default_print_mode'),
+              style: const TextStyle(fontSize: 18)),
+          trailing: SegmentedButton<KdsPrintMode>(
+            style: SegmentedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              textStyle: const TextStyle(fontSize: 14),
+            ),
+            segments: [
+              ButtonSegment(
+                  value: KdsPrintMode.full,
+                  label: Text(l10n.translate('full_order'))),
+              ButtonSegment(
+                  value: KdsPrintMode.modificationsOnly,
+                  label: Text(l10n.translate('new_items_only'))),
+            ],
+            selected: {_config.defaultKdsMode},
+            onSelectionChanged: (values) =>
+                _updateConfig(_config.copyWith(defaultKdsMode: values.first)),
+          ),
+        ),
+      ],
     );
   }
 

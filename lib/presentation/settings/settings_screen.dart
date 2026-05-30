@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/server_provider.dart';
+import '../../providers/database_providers.dart';
+import '../widgets/users_management_screen.dart' show kPermissionGroups;
 import '../../domain/models/app_settings.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/responsive_utils.dart';
@@ -21,7 +23,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int _selectedNavIndex = 0;
 
-  List<NavItem> _getNavItems(AppLocalizations l10n) => [
+  List<NavItem> _getNavItems(AppLocalizations l10n, {required bool isAdmin}) => [
     NavItem(icon: Icons.palette, label: l10n.translate('appearance')),
     NavItem(icon: Icons.display_settings, label: l10n.translate('display')),
     NavItem(icon: Icons.shopping_cart, label: l10n.translate('order_defaults')),
@@ -30,6 +32,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     NavItem(icon: Icons.sync, label: l10n.translate('sync_settings')),
     NavItem(icon: Icons.dns, label: l10n.translate('server_settings')),
     NavItem(icon: Icons.scale, label: l10n.translate('scale_config')),
+    if (isAdmin)
+      NavItem(icon: Icons.badge, label: l10n.translate('cashier_role_defaults')),
   ];
 
   @override
@@ -37,7 +41,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.watch(settingsProvider);
     final settingsNotifier = ref.read(settingsProvider.notifier);
     final l10n = AppLocalizations.of(context)!;
-    final navItems = _getNavItems(l10n);
+    final currentUser = ref.watch(currentUserProvider);
+    final isAdmin = currentUser?.type.toLowerCase() == 'admin';
+    final navItems = _getNavItems(l10n, isAdmin: isAdmin);
+    // Clamp selection in case the admin-only tab disappears (e.g. on logout).
+    if (_selectedNavIndex >= navItems.length) {
+      _selectedNavIndex = 0;
+    }
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -260,9 +270,91 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return _buildServerSettingsContent(settings, settingsNotifier, context);
       case 7:
         return const _ScaleConfigSection();
+      case 8:
+        return _buildCashierDefaultsContent(settings, settingsNotifier, context);
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildCashierDefaultsContent(
+    AppSettings settings,
+    SettingsNotifier notifier,
+    BuildContext context,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final granted = settings.cashierDefaultPermissions.toSet();
+
+    void toggle(String token, bool selected) {
+      final next = Set<String>.from(granted);
+      if (selected) {
+        next.add(token);
+      } else {
+        next.remove(token);
+      }
+      notifier.setCashierDefaultPermissions(next.toList()..sort());
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.translate('cashier_role_defaults'),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          l10n.translate('cashier_role_defaults_subtitle'),
+          style: const TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.amber.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, color: Colors.amber, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  l10n.translate('cashier_role_defaults_hint'),
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        for (final entry in kPermissionGroups.entries)
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: ExpansionTile(
+              title: Text(entry.key,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                '${entry.value.where(granted.contains).length} / ${entry.value.length}',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              childrenPadding: const EdgeInsets.symmetric(horizontal: 8),
+              children: [
+                for (final token in entry.value)
+                  SwitchListTile(
+                    dense: true,
+                    title: Text(token,
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 13)),
+                    value: granted.contains(token),
+                    onChanged: (v) => toggle(token, v),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _buildAppearanceContent(
@@ -309,6 +401,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           context: context,
           currentLanguage: settings.language,
           onChanged: (value) => notifier.setLanguage(value),
+        ),
+        const SizedBox(height: 12),
+        _buildLanguageSelector(
+          context: context,
+          currentLanguage: settings.loggingLanguage,
+          onChanged: (value) => notifier.setLoggingLanguage(value),
+          titleKey: 'logging_language',
+          subtitleKey: 'select_logging_language',
+          icon: Icons.history_edu,
         ),
       ],
     );
@@ -1460,6 +1561,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required BuildContext context,
     required String currentLanguage,
     required ValueChanged<String> onChanged,
+    String titleKey = 'language',
+    String subtitleKey = 'select_app_language',
+    IconData icon = Icons.language,
   }) {
     final l10n = AppLocalizations.of(context)!;
     final languages = [
@@ -1478,20 +1582,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.language),
+                Icon(icon),
                 const SizedBox(width: 12),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      l10n.translate('language'),
+                      l10n.translate(titleKey),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     Text(
-                      l10n.translate('select_app_language'),
+                      l10n.translate(subtitleKey),
                       style: const TextStyle(
                         fontSize: 12,
                         color: Colors.grey,

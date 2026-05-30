@@ -200,7 +200,21 @@ class DataSyncService {
 
   Future<void> _syncUsers() async {
     final users = await _apiService.fetchUsers();
+
+    // Snapshot existing rows so insertOrReplace doesn't wipe locally-tracked
+    // fields (e.g. lastLogin set at login) when the server doesn't send them.
+    final existing = await _database.select(_database.users).get();
+    final existingById = {for (final u in existing) u.id: u};
+
     for (final user in users) {
+      final int? id = user['id'];
+      final prior = id != null ? existingById[id] : null;
+
+      final createdAt = _parseDateTime(user['createdAt'] ?? user['created_at']);
+      final updatedAt = _parseDateTime(user['updatedAt'] ?? user['updated_at']);
+      final lastLogin =
+          _parseDateTime(user['lastLogin'] ?? user['last_login']) ?? prior?.lastLogin;
+
       await _database.into(_database.users).insert(
         UsersCompanion.insert(
           id: Value(user['id']),
@@ -210,11 +224,56 @@ class DataSyncService {
           lastName: user['lastName'] ?? '',
           type: user['type'] ?? 'cashier',
           imageUrl: Value(user['imageUrl']),
-          permissions: Value(user['permissions']),
+          permissions: Value(_normalizePermissions(user['permissions'])),
+          displayName: Value(user['displayName'] ?? user['display_name']),
+          // Only override the column defaults when the server actually sends a value
+          createdAt: createdAt != null ? Value(createdAt) : const Value.absent(),
+          updatedAt: updatedAt != null ? Value(updatedAt) : const Value.absent(),
+          lastLogin: Value(lastLogin),
         ),
         mode: InsertMode.insertOrReplace,
       );
     }
+  }
+
+  /// Parse a date that may arrive as an ISO-8601 string, epoch millis, or null.
+  DateTime? _parseDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    if (value is String) {
+      if (value.trim().isEmpty) return null;
+      return DateTime.tryParse(value)?.toLocal();
+    }
+    return null;
+  }
+
+  /// Normalise permissions to a comma-separated string regardless of whether the
+  /// server sends a List, a JSON-array string, or an already comma-separated string.
+  String? _normalizePermissions(dynamic value) {
+    if (value == null) return null;
+    if (value is List) {
+      return value.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).join(',');
+    }
+    if (value is String) {
+      final raw = value.trim();
+      if (raw.isEmpty) return '';
+      if (raw.startsWith('[')) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is List) {
+            return decoded.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).join(',');
+          }
+        } catch (_) {
+          // fall through to comma handling
+        }
+      }
+      // Already comma-separated (or a single token)
+      return raw.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).join(',');
+    }
+    return value.toString();
   }
 
   Future<void> _syncCategories() async {
@@ -277,6 +336,24 @@ class DataSyncService {
         ),
         mode: InsertMode.insertOrReplace,
       );
+
+      // Sync extra stations (multi-station products). The primary `stationId`
+      // above keeps single-station behavior; these are additional stations.
+      final productId = product['id'] as int;
+      await (_database.delete(_database.productStations)
+            ..where((t) => t.productId.equals(productId)))
+          .go();
+      final stationIds = (product['stationIds'] as List?)
+              ?.map((e) => e is int ? e : int.tryParse(e.toString()))
+              .whereType<int>()
+              .toList() ??
+          const [];
+      for (final sid in stationIds) {
+        await _database.into(_database.productStations).insert(
+              ProductStationsCompanion.insert(productId: productId, stationId: sid),
+              mode: InsertMode.insertOrIgnore,
+            );
+      }
     }
   }
 
@@ -577,6 +654,7 @@ class DataSyncService {
         'commercialId': order.commercialId,
         'discountPercentage': 0.0,
         'note': order.note,
+        'address': order.address,
         'cancellationReason': order.cancellationReason,
         'createdBy': order.createdBy,
         'servedBy': order.waiterId,
@@ -823,6 +901,7 @@ class DataSyncService {
         'createdBy': order.createdBy,
         'servedBy': order.waiterId,
         'note': order.note,
+        'address': order.address,
         'cancellationReason': order.cancellationReason,
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),

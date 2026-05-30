@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/notes_provider.dart';
+import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
 import 'note_edit_dialog.dart';
 
@@ -160,12 +161,27 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
     );
   }
 
+  bool _requirePermission(BuildContext context, String permission, AppLocalizations l10n) {
+    if (ref.read(permissionServiceProvider).hasPermission(permission)) return true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(l10n.translate('no_permission')),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return false;
+  }
+
   void _openAddNote(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_requirePermission(context, Permissions.notesCreate, l10n)) return;
     showDialog(
         context: context, builder: (_) => const NoteEditDialog());
   }
 
   void _openEditNote(BuildContext context, Note note) {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_requirePermission(context, Permissions.notesUpdate, l10n)) return;
     showDialog(
         context: context,
         builder: (_) => NoteEditDialog(existingNote: note));
@@ -173,6 +189,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
 
   Future<void> _deleteNote(
       BuildContext context, Note note, AppLocalizations l10n) async {
+    if (!_requirePermission(context, Permissions.notesDelete, l10n)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -197,6 +214,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
 
   Future<void> _confirmClearAll(
       BuildContext context, AppLocalizations l10n) async {
+    if (!_requirePermission(context, Permissions.notesDelete, l10n)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(

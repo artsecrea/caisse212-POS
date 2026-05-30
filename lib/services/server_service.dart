@@ -254,12 +254,19 @@ class ServerService {
             .getSingleOrNull();
         if (station == null) return emptyResponse();
 
+        // A product belongs to this station via its primary stationId OR via the
+        // product_stations join table (multi-station products).
+        final extraStationProductIds = database.selectOnly(database.productStations)
+          ..addColumns([database.productStations.productId])
+          ..where(database.productStations.stationId.equals(station.id));
+
         final rows = await (database.select(database.orderProducts).join([
           drift.innerJoin(
             database.products,
             database.products.id.equalsExp(database.orderProducts.productId),
           ),
-        ])..where(database.products.stationId.equals(station.id))).get();
+        ])..where(database.products.stationId.equals(station.id) |
+            database.products.id.isInQuery(extraStationProductIds))).get();
 
         orderIdsForStation =
             rows.map((r) => r.readTable(database.orderProducts).orderId).toSet();
@@ -1817,6 +1824,7 @@ class ServerService {
     products,
     allComponents,
     allStations,
+    allProductStations,
     ] = await Future.wait([
       // Get table
       order.tableId != null
@@ -1842,11 +1850,21 @@ class ServerService {
 
       // Get all stations (for filtering)
       database.select(database.stations).get(),
+
+      // Get extra product↔station links for this order's products
+      (database.select(database.productStations)
+        ..where((tbl) => tbl.productId.isIn(orderProducts.map((p) => p.productId).toList())))
+          .get(),
     ]);
 
     // Create maps for quick lookup
     final productsMap = {for (var p in products as List<dynamic>) p.id: p};
     final stationsMap = {for (var s in allStations as List<dynamic>) s.id: s};
+    // productId -> set of extra station ids
+    final extraStationsByProduct = <int, Set<int>>{};
+    for (final ps in allProductStations as List<dynamic>) {
+      extraStationsByProduct.putIfAbsent(ps.productId, () => <int>{}).add(ps.stationId);
+    }
     final componentsByOrderProduct = <int, List>{};
 
     // Group components by order product ID
@@ -1878,16 +1896,31 @@ class ServerService {
       final product = productsMap[orderProduct.productId];
       if (product == null) continue;
 
-      // Get station name
-      String? stationName;
-      if (product.stationId != null) {
-        final station = stationsMap[product.stationId];
-        stationName = station?.name;
+      // Build the product's full station set: primary stationId + extra (join) stations.
+      final stationIds = <int>{
+        if (product.stationId != null) product.stationId as int,
+        ...?extraStationsByProduct[orderProduct.productId],
+      };
+
+      // Filter by station if specified: keep the item if ANY of its stations matches.
+      if (stationFilter != null) {
+        final matches = stationIds.any(
+            (id) => stationsMap[id]?.name?.toLowerCase() == stationFilter.toLowerCase());
+        if (!matches) continue;
       }
 
-      // Filter by station if specified
-      if (stationFilter != null && stationName?.toLowerCase() != stationFilter.toLowerCase()) {
-        continue;
+      // Station name to surface: the matching station when filtering, else the primary.
+      String? stationName;
+      if (stationFilter != null) {
+        stationName = stationsMap.values
+            .firstWhere(
+              (s) => stationIds.contains(s.id) &&
+                  s.name.toLowerCase() == stationFilter.toLowerCase(),
+              orElse: () => null,
+            )
+            ?.name;
+      } else if (product.stationId != null) {
+        stationName = stationsMap[product.stationId]?.name;
       }
 
       // Get components for this order product

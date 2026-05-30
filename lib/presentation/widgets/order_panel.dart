@@ -18,7 +18,96 @@ import 'product_modification_dialog.dart' show ProductModificationDialog;
 class OrderPanel extends ConsumerWidget {
   const OrderPanel({Key? key}) : super(key: key);
 
+  /// Whether [item] can be removed/modified. Always allowed for a brand-new
+  /// (unsaved) cart, or for an item that hasn't been persisted yet (`item.id ==
+  /// null`) — e.g. just added to a loaded saved order by mistake. Only items that
+  /// are already saved in the order require the granular permission (anti-fraud).
+  bool _canEditItem(WidgetRef ref, OrderItem item, String permission) {
+    final order = ref.read(orderProvider);
+    if (order.orderId == null || item.id == null) return true;
+    return ref.read(permissionServiceProvider).hasPermission(permission);
+  }
+
+  /// Whether [item]'s quantity may be set to [newQty]. Reducing back down to
+  /// the saved baseline (or any unsaved-portion) is always free; going BELOW the
+  /// saved baseline requires `pos:orders:item:modify`.
+  bool _canSetQuantity(WidgetRef ref, OrderItem item, int newQty) {
+    final order = ref.read(orderProvider);
+    // Brand-new cart or freshly-added item -> always free.
+    if (order.orderId == null || item.id == null) return true;
+    final floor = item.savedQuantity ?? 0;
+    if (newQty >= floor) return true;
+    return ref
+        .read(permissionServiceProvider)
+        .hasPermission(Permissions.ordersItemModify);
+  }
+
+  void _showPermissionDenied(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
+    SnackBarHelper.showErrorSnackBar(context, ref, l10n.translate('no_permission'));
+  }
+
+  /// The trash/clear button. Always empties the panel (the working-order view).
+  /// Additionally, for a SAVED order, a manager (with the delete permission) is
+  /// asked whether to also delete the order from the system and free its table.
+  Future<void> _handleClear(BuildContext context, WidgetRef ref) async {
+    final order = ref.read(orderProvider);
+    final orderId = order.orderId;
+    final tableId = order.tableId;
+
+    // Offer to delete the underlying saved order (manager action only).
+    if (orderId != null &&
+        ref.read(permissionServiceProvider).hasPermission(Permissions.ordersDelete)) {
+      final l10n = AppLocalizations.of(context)!;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(l10n.translate('delete_order')),
+          content: Text(l10n.translate('are_you_sure')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(l10n.translate('cancel')),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(l10n.translate('delete')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) {
+        try {
+          final repo = ref.read(orderRepositoryProvider);
+          await repo.deleteOrder(orderId);
+          if (tableId != null) {
+            await repo.clearTableOrder(tableId);
+          }
+          if (context.mounted) {
+            SnackBarHelper.showSuccessSnackBar(
+                context, ref, l10n.translate('delete_order'));
+          }
+        } catch (e) {
+          if (context.mounted) {
+            SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
+          }
+        }
+      }
+    }
+
+    // Always empty the panel.
+    ref.read(orderProvider.notifier).clearOrder();
+  }
+
   void _showItemOptions(BuildContext context, WidgetRef ref, int index, OrderItem item) async {
+    if (!_canEditItem(ref, item, Permissions.ordersItemModify)) {
+      _showPermissionDenied(context, ref);
+      return;
+    }
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => ProductModificationDialog(
@@ -326,12 +415,11 @@ class OrderPanel extends ConsumerWidget {
                 const Spacer(),
                 if (currentOrder.items.isNotEmpty)
                   IconButton(
-                    onPressed: () {
-                      ref.read(orderProvider.notifier).clearOrder();
-                    },
-                    icon: const Icon(Icons.delete_outline,
-                        color: Colors.red,
-                        size: 40,
+                    onPressed: () => _handleClear(context, ref),
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: Colors.red,
+                      size: 40,
                     ),
                     tooltip: l10n.translate('clear'),
                   ),
@@ -378,6 +466,10 @@ class OrderPanel extends ConsumerWidget {
                         confirmDismiss: isPaid
                             ? (_) async => false
                             : (direction) async {
+                          if (!_canEditItem(ref, item, Permissions.ordersItemRemove)) {
+                            _showPermissionDenied(context, ref);
+                            return false;
+                          }
                           return true;
                         },
                         direction: isPaid ? DismissDirection.none : DismissDirection.endToStart,
@@ -458,8 +550,12 @@ class OrderPanel extends ConsumerWidget {
                                                     )
                                                   : InkWell(
                                                       onTap: () {
+                                                        if (!_canEditItem(ref, item, Permissions.ordersItemModify)) {
+                                                          _showPermissionDenied(context, ref);
+                                                          return;
+                                                        }
                                                         ref.read(orderProvider.notifier).updateItemQuantity(
-                                                          invertedIndex, 
+                                                          invertedIndex,
                                                           item.quantity + 1
                                                         );
                                                       },
@@ -822,7 +918,21 @@ class OrderPanel extends ConsumerWidget {
   }
 
   void _showQuantityDialog(BuildContext context, WidgetRef ref, int index, OrderItem item) {
-    final TextEditingController controller = TextEditingController(text: '${item.quantity}');
+    // Note: no up-front _canEditItem gate. The qty dialog opens for any item.
+    // The decrement floor is enforced on submit via _canSetQuantity.
+    final TextEditingController controller =
+        TextEditingController(text: '${item.quantity}');
+
+    void trySubmit() {
+      final qty = int.tryParse(controller.text);
+      if (qty == null || qty <= 0) return;
+      if (!_canSetQuantity(ref, item, qty)) {
+        _showPermissionDenied(context, ref);
+        return;
+      }
+      ref.read(orderProvider.notifier).updateItemQuantity(index, qty);
+      Navigator.pop(context);
+    }
 
     showDialog(
       context: context,
@@ -838,13 +948,7 @@ class OrderPanel extends ConsumerWidget {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             contentPadding: const EdgeInsets.symmetric(vertical: 20),
           ),
-          onSubmitted: (value) {
-            final qty = int.tryParse(value);
-            if (qty != null && qty > 0) {
-              ref.read(orderProvider.notifier).updateItemQuantity(index, qty);
-              Navigator.pop(context);
-            }
-          },
+          onSubmitted: (_) => trySubmit(),
         ),
         actions: [
           TextButton(
@@ -852,13 +956,7 @@ class OrderPanel extends ConsumerWidget {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
-              final qty = int.tryParse(controller.text);
-              if (qty != null && qty > 0) {
-                ref.read(orderProvider.notifier).updateItemQuantity(index, qty);
-                Navigator.pop(context);
-              }
-            },
+            onPressed: trySubmit,
             child: const Text('OK'),
           ),
         ],
@@ -867,6 +965,10 @@ class OrderPanel extends ConsumerWidget {
   }
 
   void _showNoteDialog(BuildContext context, WidgetRef ref, int index, OrderItem item) {
+    if (!_canEditItem(ref, item, Permissions.ordersItemModify)) {
+      _showPermissionDenied(context, ref);
+      return;
+    }
     final TextEditingController controller = TextEditingController(text: item.note ?? '');
 
     showDialog(

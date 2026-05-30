@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
+import '../../services/permission_service.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/app_localizations.dart';
 import 'package:drift/drift.dart' show Value;
@@ -100,9 +101,11 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
                 const SizedBox(width: 8),
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: () {
-                      _showAddCustomerDialog(context, l10n);
-                    },
+                    onPressed: ref.read(permissionServiceProvider).hasPermission(Permissions.customerCreate)
+                        ? () {
+                            _showAddCustomerDialog(context, l10n);
+                          }
+                        : null,
                     icon: const Icon(Icons.add),
                     label: Text(l10n.translate('add_new_customer')),
                     style: AppButtonStyles.elevatedButtonStyle(isLarge: true),

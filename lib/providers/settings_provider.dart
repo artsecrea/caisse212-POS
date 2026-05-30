@@ -7,6 +7,8 @@ import 'database_providers.dart' show sharedPreferencesProvider;
 class SettingsKeys {
   static const String isDarkMode = 'is_dark_mode';
   static const String language = 'language';
+  static const String loggingLanguage = 'logging_language';
+  static const String cashierDefaultPermissions = 'cashier_default_permissions';
   static const String autoSyncOnline = 'auto_sync_online';
   static const String bulkSyncSize = 'bulk_sync_size';
   static const String dataRetentionDays = 'data_retention_days';
@@ -113,6 +115,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = AppSettings(
       isDarkMode: _prefs.getBool(SettingsKeys.isDarkMode) ?? false,
       language: _prefs.getString(SettingsKeys.language) ?? 'en',
+      loggingLanguage: _prefs.getString(SettingsKeys.loggingLanguage) ??
+          _prefs.getString(SettingsKeys.language) ?? 'en',
+      cashierDefaultPermissions:
+          _prefs.getStringList(SettingsKeys.cashierDefaultPermissions) ??
+              const [],
       autoSyncOnline: _prefs.getBool(SettingsKeys.autoSyncOnline) ?? true,
       bulkSyncSize: _prefs.getInt(SettingsKeys.bulkSyncSize) ?? 50,
       dataRetentionDays: _prefs.getInt(SettingsKeys.dataRetentionDays) ?? 7,
@@ -166,6 +173,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setLanguage(String languageCode) async {
     await _prefs.setString(SettingsKeys.language, languageCode);
     state = state.copyWith(language: languageCode);
+  }
+
+  Future<void> setLoggingLanguage(String languageCode) async {
+    await _prefs.setString(SettingsKeys.loggingLanguage, languageCode);
+    state = state.copyWith(loggingLanguage: languageCode);
+  }
+
+  Future<void> setCashierDefaultPermissions(List<String> tokens) async {
+    await _prefs.setStringList(SettingsKeys.cashierDefaultPermissions, tokens);
+    state = state.copyWith(cashierDefaultPermissions: tokens);
   }
 
   Future<void> setOrderPanelOnRight(bool value) async {

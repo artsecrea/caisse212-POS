@@ -13,6 +13,8 @@ import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
+import '../../services/permission_service.dart';
+import '../../services/activity_log_service.dart';
 
 /// Calculator mode enum
 enum CalculatorMode {
@@ -1466,6 +1468,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   Future<void> _processPayment(int ticketIndex, TicketData ticket) async {
     if (_isProcessing) return;
+    if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ticketsCreate)) {
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translate('no_permission')),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     setState(() => _isProcessing = true);
     final database = ref.read(databaseProvider);
     final session = ref.read(currentSessionProvider);
@@ -1554,18 +1566,21 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           };
         }).toList();
 
-        await printingService.printTicketReceipt(
+        await printingService.printPaymentDocuments(
           ticketId: ticketId,
           ticketNumber: ticketNumStr,
           amount: ticket.total,
           paymentMethod: ticket.paymentMethod.value,
           createdAt: DateTime.now(),
           items: itemsForPrint,
+          orderType: widget.order.type,
+          hasTable: widget.order.tableId != null,
           orderCode: widget.order.orderCode,
           cashierName: currentUser?.firstName,
           storeName: businessName,
           customerName: widget.order.customerName,
           customerPhone: widget.order.customerPhone,
+          deliveryAddress: widget.order.deliveryAddress,
         );
 
         await database.customStatement(
@@ -1575,6 +1590,14 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       } catch (e) {
         _logger.error('Print failed: $e');
       }
+
+      // Audit log: payment taken
+      await ref.read(activityLogServiceProvider).logPayment(
+            ticket.total.toStringAsFixed(2),
+            widget.order.orderCode ?? '#${widget.order.orderId ?? ''}',
+            userId: currentUser?.id,
+            username: currentUser?.effectiveDisplayName,
+          );
 
       // Check if all order products are now paid -> mark order as COMPLETED and sync
       if (orderId != null) {
@@ -1598,6 +1621,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   /// Pay all unpaid tickets — reads fresh state before each payment to avoid stale-state bugs
   Future<void> _payAllTickets() async {
+    if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ticketsCreate)) {
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translate('no_permission')),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     // Snapshot the count once; iterate by re-reading state each time so we always
     // operate on the up-to-date ticket list (state is now updated synchronously in _processPayment).
     final initialCount = ref.read(ticketsProvider).length;
@@ -2115,6 +2148,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
   Future<void> _printTicket(TicketData ticket) async {
     if (ticket.ticketId == null) return;
+    if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ticketsPrint)) {
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translate('no_permission')),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
     final prefs = ref.read(sharedPreferencesProvider);
@@ -2140,6 +2183,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         storeName: businessName,
         customerName: widget.order.customerName,
         customerPhone: widget.order.customerPhone,
+        isReprint: true,
       );
 
       final database = ref.read(databaseProvider);

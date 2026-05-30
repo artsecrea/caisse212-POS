@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
-import '../../utils/button_styles.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/responsive_utils.dart';
 import '../../data/database/app_database.dart' as db;
@@ -16,25 +15,11 @@ class TableSelectionDialog extends ConsumerStatefulWidget {
   ConsumerState<TableSelectionDialog> createState() => _TableSelectionDialogState();
 }
 
-class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
   bool _isGridView = true;
   String _searchQuery = '';
   String _filterOption = 'all'; // all, withOrder, withoutOrder
   int? _selectedAreaId; // null means "All Areas"
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -132,19 +117,6 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // Tabs
-            TabBar(
-              controller: _tabController,
-              labelColor: Theme.of(context).primaryColor,
-              unselectedLabelColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              indicatorColor: Theme.of(context).primaryColor,
-              tabs: [
-                Tab(text: l10n.translate('available_tables')),
-                Tab(text: l10n.translate('active_orders')),
               ],
             ),
             const SizedBox(height: 16),
@@ -355,17 +327,11 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog>
 
             // Content
             Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _AvailableTablesTab(
-                    isGridView: _isGridView,
-                    searchQuery: _searchQuery,
-                    filterOption: _filterOption,
-                    selectedAreaId: _selectedAreaId,
-                  ),
-                  _ActiveOrdersTab(),
-                ],
+              child: _AvailableTablesTab(
+                isGridView: _isGridView,
+                searchQuery: _searchQuery,
+                filterOption: _filterOption,
+                selectedAreaId: _selectedAreaId,
               ),
             ),
           ],
@@ -445,11 +411,11 @@ class _AvailableTablesTab extends ConsumerWidget {
         if (isGridView) {
           return GridView.builder(
             padding: const EdgeInsets.all(4),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              childAspectRatio: 1.5,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 180,
+              childAspectRatio: 1.25,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
             ),
             itemCount: filteredTables.length,
             itemBuilder: (context, index) {
@@ -850,306 +816,3 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
       }
     }
   }
-
-
-class _ActiveOrdersTab extends ConsumerWidget {
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final orderRepo = ref.watch(orderRepositoryProvider);
-    final l10n = AppLocalizations.of(context)!;
-
-    return FutureBuilder(
-      future: orderRepo.getTablesWithOrders(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        if (snapshot.hasError) {
-          return Center(child: Text('${l10n.translate('error')}: ${snapshot.error}'));
-        }
-
-        final tablesWithOrders = snapshot.data ?? [];
-
-        if (tablesWithOrders.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.inbox_outlined, size: 64, color: Colors.grey),
-                const SizedBox(height: 16),
-                Text(
-                  l10n.translate('no_active_orders'),
-                  style: const TextStyle(fontSize: 16, color: Colors.grey),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          itemCount: tablesWithOrders.length,
-          itemBuilder: (context, index) {
-            final tableWithOrder = tablesWithOrders[index];
-            final table = tableWithOrder.table;
-
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: Colors.orange[100],
-                          radius: 24,
-                          child: Icon(
-                            Icons.table_restaurant,
-                            color: Colors.orange[700],
-                            size: 28,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                table.name,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${tableWithOrder.orderCount} ${l10n.translate('orders')} • ${l10n.translate('capacity')}: ${table.capacity}',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              '\$${tableWithOrder.total.toStringAsFixed(2)}',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Theme.of(context).primaryColor,
-                              ),
-                            ),
-                            Text(
-                              _formatTime(tableWithOrder.lastUpdated),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.grey[500],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: () async {
-                            // Load order and open payment screen
-                            final orderRepo = ref.read(orderRepositoryProvider);
-                            final order = await orderRepo.getOrderByTable(table.id);
-
-                            if (order != null && context.mounted) {
-                              Navigator.of(context).pop({
-                                'id': table.id,
-                                'name': table.name,
-                                'action': 'pay',
-                                'order': order,
-                              });
-                            }
-                          },
-                          icon: const Icon(Icons.payment, size: 22),
-                          label: Text(l10n.translate('pay')),
-                          style: AppButtonStyles.outlinedButtonStyle(
-                            foregroundColor: Colors.green[700],
-                            borderColor: Colors.green[700]!,
-                            isLarge: true,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            // Load existing order to add more items
-                            final orderRepo = ref.read(orderRepositoryProvider);
-                            final existingOrder = await orderRepo.getOrderByTable(table.id);
-
-                            if (context.mounted) {
-                              Navigator.of(context).pop({
-                                'id': table.id,
-                                'name': table.name,
-                                'action': 'addItems',
-                                'existingOrder': existingOrder,
-                              });
-                            }
-                          },
-                          icon: const Icon(Icons.add, size: 22),
-                          label: Text(l10n.translate('add_items')),
-                          style: AppButtonStyles.elevatedButtonStyle(
-                            backgroundColor: Theme.of(context).primaryColor,
-                            foregroundColor: Colors.white,
-                            isLarge: true,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          onPressed: () async {
-                            try {
-                              final orderRepo = ref.read(orderRepositoryProvider);
-                              final order = await orderRepo.getOrderByTable(table.id);
-
-                              if (order == null || order.orderId == null) return;
-
-                              // Check if there are unpaid items
-                              final hasUnpaidItems = order.items.any((item) => item.ticketId == null);
-
-                              if (hasUnpaidItems) {
-                                // Show dialog with options to pay or clear
-                                final action = await showDialog<String>(
-                                  context: context,
-                                  builder: (context) => AlertDialog(
-                                    title: const Text('Clear Table'),
-                                    content: Text(
-                                      '${table.name} has unpaid items. What would you like to do?',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(context, 'cancel'),
-                                        child: const Text('Cancel'),
-                                      ),
-                                      ElevatedButton(
-                                        onPressed: () => Navigator.pop(context, 'clear'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.orange,
-                                          foregroundColor: Colors.white,
-                                        ),
-                                        child: const Text('Just Clear'),
-                                      ),
-                                      ElevatedButton(
-                                        onPressed: () => Navigator.pop(context, 'pay'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.green,
-                                          foregroundColor: Colors.white,
-                                        ),
-                                        child: const Text('Pay First'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-
-                                if (action == 'pay' && context.mounted) {
-                                  // Navigate back with pay action
-                                  Navigator.of(context).pop({
-                                    'id': table.id,
-                                    'name': table.name,
-                                    'action': 'pay',
-                                    'order': order,
-                                  });
-                                  return;
-                                } else if (action != 'clear') {
-                                  return; // User cancelled
-                                }
-                              } else {
-                                // All items are paid, just confirm
-                                final confirmed = await showDialog<bool>(
-                                  context: context,
-                                  builder: (context) => AlertDialog(
-                                    title: const Text('Clear Table'),
-                                    content: Text(
-                                      'Are you sure you want to clear ${table.name}? The order will remain but the table will be freed.',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(context, false),
-                                        child: const Text('Cancel'),
-                                      ),
-                                      ElevatedButton(
-                                        onPressed: () => Navigator.pop(context, true),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.orange,
-                                          foregroundColor: Colors.white,
-                                        ),
-                                        child: const Text('Clear'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-
-                                if (confirmed != true) return;
-                              }
-
-                              // Clear the table by setting orderId to null
-                              if (context.mounted) {
-                                await orderRepo.clearTableOrder(table.id);
-
-                                // Refresh and close dialog
-                                ref.invalidate(areaTablesProvider);
-
-                                if (context.mounted) {
-                                  Navigator.of(context).pop({
-                                    'action': 'cleared',
-                                    'tableName': table.name,
-                                  });
-                                }
-                              }
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Error clearing table: $e'),
-                                    backgroundColor: Colors.red,
-                                    duration: const Duration(seconds: 3),
-                                  ),
-                                );
-                              }
-                            }
-                          },
-                          icon: const Icon(Icons.clear),
-                          color: Colors.red[700],
-                          tooltip: 'Clear Table',
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  String _formatTime(DateTime dateTime) {
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
-
-    if (difference.inMinutes < 1) {
-      return 'Just now';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
-    } else {
-      return '${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
-    }
-  }
-}
-

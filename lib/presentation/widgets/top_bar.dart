@@ -1,22 +1,26 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:bcrypt/bcrypt.dart';
 import 'package:caisse212/providers/stat_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
 import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/data_sync_service.dart';
 import 'package:caisse212/services/permission_service.dart';
+import 'package:caisse212/services/activity_log_service.dart';
+import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
+import '../../utils/admin_auth.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/responsive_utils.dart';
 import '../settings/settings_screen.dart';
 import '../profile/profile_dialog.dart';
+import 'admin_mode_chip.dart';
 import 'report_issue_dialog.dart';
 
 class TopBar extends ConsumerStatefulWidget {
@@ -30,12 +34,14 @@ class _TopBarState extends ConsumerState<TopBar> {
   bool _isOnline = true;
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
+  StreamSubscription? _connectivitySub;
 
   @override
   void initState() {
     super.initState();
     _checkConnectivity();
-    Connectivity().onConnectivityChanged.listen((result) {
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((result) {
+      if (!mounted) return;
       setState(() {
         _isOnline = result != ConnectivityResult.none;
       });
@@ -66,6 +72,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   @override
   void dispose() {
+    _connectivitySub?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -251,6 +258,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   Future<void> _checkConnectivity() async {
     final result = await Connectivity().checkConnectivity();
+    if (!mounted) return;
     setState(() {
       _isOnline = result != ConnectivityResult.none;
     });
@@ -442,9 +450,19 @@ class _TopBarState extends ConsumerState<TopBar> {
   }
 
   void _doLogout() {
+    // Record the logout before clearing the user.
+    final user = ref.read(currentUserProvider);
+    if (user != null) {
+      ref.read(activityLogServiceProvider).logLogout(
+            userId: user.id,
+            username: user.effectiveDisplayName,
+          );
+    }
     // Clear user and session state
     ref.read(currentUserProvider.notifier).state = null;
     ref.read(currentSessionProvider.notifier).state = null;
+    // Drop any admin-mode elevation so it doesn't survive a user swap.
+    ref.read(adminElevationProvider.notifier).state = null;
     // Clear current order state
     ref.read(orderProvider.notifier).clearOrder();
     if (mounted) {
@@ -455,90 +473,19 @@ class _TopBarState extends ConsumerState<TopBar> {
   /// Full logout - clears tenant data and goes back to server login
   Future<void> _handleFullLogout() async {
     final localizations = AppLocalizations.of(context);
-
-    // First verify tenant password
     final prefs = ref.read(sharedPreferencesProvider);
-    final tenantPasswordHash = prefs.getString('tenant_password_hash');
 
-    if (tenantPasswordHash != null) {
-      // Show password dialog FIRST before any confirmation
-      final passwordController = TextEditingController();
-      final verified = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) {
-          bool obscurePassword = true;
-          return StatefulBuilder(
-            builder: (context, setState) {
-              return AlertDialog(
-                title: Text(localizations?.translate('verify_tenant_password') ?? 'Verify Tenant Password'),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(localizations?.translate('full_logout_warning') ?? 'This will clear ALL data and disconnect from the server.'),
-                    const SizedBox(height: 8),
-                    Text(localizations?.translate('enter_password') ?? 'Enter tenant password to continue:'),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: passwordController,
-                      obscureText: obscurePassword,
-                      decoration: InputDecoration(
-                        labelText: localizations?.translate('tenant_password') ?? 'Tenant Password',
-                        prefixIcon: const Icon(Icons.lock),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            obscurePassword ? Icons.visibility : Icons.visibility_off,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              obscurePassword = !obscurePassword;
-                            });
-                          },
-                        ),
-                        border: const OutlineInputBorder(),
-                      ),
-                      autofocus: true,
-                    ),
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: Text(localizations?.translate('cancel') ?? 'Cancel'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () {
-                      final password = passwordController.text.trim();
-                      final isVerified = BCrypt.checkpw(password, tenantPasswordHash);
-                      Navigator.of(context).pop(isVerified);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: Text(localizations?.translate('verify_logout') ?? 'Verify & Logout'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      );
-
-      passwordController.dispose();
-
-      if (verified != true) {
-        if (mounted && verified == false) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(localizations?.translate('invalid_tenant_password') ?? 'Invalid tenant password'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return; // Exit if password verification failed
-      }
-    }
+    // Require an admin's credentials before wiping local + tenant data.
+    final admin = await showAdminCredentialDialog(
+      context,
+      ref,
+      title: localizations?.translate('full_logout') ?? 'Full Logout',
+      description: localizations?.translate('full_logout_warning') ??
+          'This will clear ALL data and disconnect from the server.',
+      confirmLabel: localizations?.translate('verify_logout') ?? 'Verify & Logout',
+      confirmColor: Colors.red,
+    );
+    if (admin == null) return;
 
     // After password verification (or if no password set), show confirmation dialog
     final confirm = await showDialog<bool>(
@@ -571,6 +518,8 @@ class _TopBarState extends ConsumerState<TopBar> {
       // Clear current user and session
       ref.read(currentUserProvider.notifier).state = null;
       ref.read(currentSessionProvider.notifier).state = null;
+      // Drop any admin-mode elevation so it doesn't survive a user swap.
+      ref.read(adminElevationProvider.notifier).state = null;
       // Clear current order state
       ref.read(orderProvider.notifier).clearOrder();
 
@@ -941,27 +890,30 @@ class _TopBarState extends ConsumerState<TopBar> {
                   if (!isCompact) ...[
                     _buildBarcodeScanToggle(),
                     const SizedBox(width: 4),
-                    Tooltip(
-                      message: 'Agenda',
-                      child: IconButton(
-                        icon: const Icon(Icons.calendar_month_outlined, color: Colors.white),
-                        onPressed: () => Navigator.pushNamed(context, '/agenda'),
+                    if (ref.read(permissionServiceProvider).hasPermission(Permissions.agendaView))
+                      Tooltip(
+                        message: 'Agenda',
+                        child: IconButton(
+                          icon: const Icon(Icons.calendar_month_outlined, color: Colors.white),
+                          onPressed: () => Navigator.pushNamed(context, '/agenda'),
+                        ),
                       ),
-                    ),
-                    Tooltip(
-                      message: 'Dashboard',
-                      child: IconButton(
-                        icon: const Icon(Icons.dashboard_outlined, color: Colors.white),
-                        onPressed: () => Navigator.pushNamed(context, '/dashboard'),
+                    if (ref.read(permissionServiceProvider).hasPermission(Permissions.reportsView))
+                      Tooltip(
+                        message: 'Dashboard',
+                        child: IconButton(
+                          icon: const Icon(Icons.dashboard_outlined, color: Colors.white),
+                          onPressed: () => Navigator.pushNamed(context, '/dashboard'),
+                        ),
                       ),
-                    ),
-                    Tooltip(
-                      message: l10n?.translate('notes') ?? 'Notes',
-                      child: IconButton(
-                        icon: const Icon(Icons.sticky_note_2_outlined, color: Colors.white),
-                        onPressed: () => Navigator.pushNamed(context, '/notes'),
+                    if (ref.read(permissionServiceProvider).hasPermission(Permissions.notesView))
+                      Tooltip(
+                        message: l10n?.translate('notes') ?? 'Notes',
+                        child: IconButton(
+                          icon: const Icon(Icons.sticky_note_2_outlined, color: Colors.white),
+                          onPressed: () => Navigator.pushNamed(context, '/notes'),
+                        ),
                       ),
-                    ),
                   ],
                   const Spacer(),
                   // Session, network, sync, customer display on non-compact only
@@ -990,6 +942,8 @@ class _TopBarState extends ConsumerState<TopBar> {
                       const SizedBox(width: 8),
                     ],
                   ],
+                  // Admin-mode elevation chip (auto-hides for admins).
+                  const AdminModeChip(),
                   // User profile — avatar-only on very compact
                   PopupMenuButton<String>(
                     child: Row(
@@ -1143,20 +1097,22 @@ class _TopBarState extends ConsumerState<TopBar> {
                 ));
               }
 
-              // Agenda (planning view)
-              items.add(PopupMenuItem(
-                value: 'agenda',
-                child: Row(
-                  children: [
-                    const Icon(Icons.calendar_month),
-                    const SizedBox(width: 8),
-                    Text(l10n?.translate('agenda') ?? 'Agenda'),
-                  ],
-                ),
-                onTap: () {
-                  Navigator.pushNamed(context, '/agenda');
-                },
-              ));
+              // Agenda (planning view) - permission protected
+              if (permissionService.hasPermission(Permissions.agendaView)) {
+                items.add(PopupMenuItem(
+                  value: 'agenda',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.calendar_month),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('agenda') ?? 'Agenda'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/agenda');
+                  },
+                ));
+              }
 
               // Printers - permission protected
               if (permissionService.hasPermission(Permissions.devicesView)) {
@@ -1171,6 +1127,23 @@ class _TopBarState extends ConsumerState<TopBar> {
                   ),
                   onTap: () {
                     Navigator.pushNamed(context, '/printers');
+                  },
+                ));
+              }
+
+              // Activity logs - permission protected
+              if (permissionService.hasPermission(Permissions.logsView)) {
+                items.add(PopupMenuItem(
+                  value: 'logs',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.history),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('activity_logs') ?? 'Activity Logs'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/logs');
                   },
                 ));
               }

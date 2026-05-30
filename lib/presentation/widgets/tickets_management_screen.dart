@@ -10,7 +10,9 @@ import '../../providers/network_provider.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/pending_operations_service.dart';
 import '../../services/permission_service.dart';
+import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import 'admin_mode_chip.dart';
 
 class TicketsManagementScreen extends ConsumerStatefulWidget {
   const TicketsManagementScreen({super.key});
@@ -23,6 +25,11 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   // Filters
   String _statusFilter = 'ALL';
   String _searchQuery = '';
+  DateTime? _startDate;
+  DateTime? _endDate;
+
+  // Batch reprint state
+  bool _isReprintingAll = false;
 
   // Pagination
   int _currentPage = 0;
@@ -109,6 +116,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     return AppBar(
       title: const Text('Tickets Management'),
       actions: [
+        const AdminModeChip(),
         // Pending operations indicator
         if (_pendingOperationsCount > 0)
           Builder(
@@ -147,6 +155,30 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                   : isOnline
                       ? 'Sync All Tickets'
                       : 'Offline',
+            );
+          },
+        ),
+        // Batch reprint all filtered tickets
+        Builder(
+          builder: (context) {
+            final l10n = AppLocalizations.of(context)!;
+            final permissionService = ref.watch(permissionServiceProvider);
+            final hasPermission =
+                permissionService.hasPermission(Permissions.ticketsPrint);
+            return IconButton(
+              icon: _isReprintingAll
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.print),
+              onPressed: hasPermission && !_isReprintingAll
+                  ? _reprintAllFiltered
+                  : null,
+              tooltip: hasPermission
+                  ? l10n.translate('reprint_all_tooltip')
+                  : 'Insufficient permissions',
             );
           },
         ),
@@ -308,10 +340,84 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
           Expanded(
             child: _buildStatusDropdown(),
           ),
+          const SizedBox(width: 16),
+          Expanded(
+            flex: 2,
+            child: _buildDateRangeControl(),
+          ),
         ],
       ),
     );
   }
+
+  Widget _buildDateRangeControl() {
+    final l10n = AppLocalizations.of(context)!;
+    final hasRange = _startDate != null || _endDate != null;
+    String label;
+    if (_startDate != null && _endDate != null) {
+      label = '${_formatShortDate(_startDate!)} - ${_formatShortDate(_endDate!)}';
+    } else if (_startDate != null) {
+      label = '${l10n.translate('date_from')} ${_formatShortDate(_startDate!)}';
+    } else if (_endDate != null) {
+      label = '${l10n.translate('date_to')} ${_formatShortDate(_endDate!)}';
+    } else {
+      label = l10n.translate('date_range');
+    }
+
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: l10n.translate('date_range'),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        prefixIcon: const Icon(Icons.date_range),
+        suffixIcon: hasRange
+            ? IconButton(
+                icon: const Icon(Icons.clear),
+                tooltip: l10n.translate('clear_dates'),
+                onPressed: () => setState(() {
+                  _startDate = null;
+                  _endDate = null;
+                  _currentPage = 0;
+                }),
+              )
+            : null,
+      ),
+      child: InkWell(
+        onTap: _pickDateRange,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(label, overflow: TextOverflow.ellipsis),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final initial = (_startDate != null && _endDate != null)
+        ? DateTimeRange(start: _startDate!, end: _endDate!)
+        : DateTimeRange(
+            start: DateTime(now.year, now.month, now.day),
+            end: DateTime(now.year, now.month, now.day),
+          );
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(now.year + 1, 12, 31),
+      initialDateRange: initial,
+    );
+    if (picked != null) {
+      setState(() {
+        _startDate = picked.start;
+        _endDate = picked.end;
+        _currentPage = 0;
+      });
+    }
+  }
+
+  String _formatShortDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}';
 
   Widget _buildStatusDropdown() {
     return DropdownButtonFormField<String>(
@@ -480,16 +586,32 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                 onPressed: () => _showTicketDetails(ticket, ticketDetails.itemCount),
                 tooltip: 'View Details',
               ),
-              if (!ticket.isPaid && !isZLocked)
+              if (!ticket.isPaid &&
+                  !isZLocked &&
+                  ref.read(permissionServiceProvider).hasPermission(Permissions.ticketsUpdate))
                 IconButton(
                   icon: const Icon(Icons.edit, size: 20),
                   onPressed: () => _editTicket(ticket),
                   tooltip: 'Edit Ticket',
                 ),
-              IconButton(
-                icon: Icon(Icons.delete, size: 20, color: isZLocked ? Colors.grey : Colors.red),
-                onPressed: isZLocked ? null : () => _deleteTicket(ticket),
-                tooltip: isZLocked ? 'Z-Report locked' : 'Delete Ticket',
+              Builder(
+                builder: (context) {
+                  final canDelete = ref
+                      .read(permissionServiceProvider)
+                      .hasPermission(Permissions.ticketsDelete);
+                  return IconButton(
+                    icon: Icon(Icons.delete,
+                        size: 20,
+                        color: (isZLocked || !canDelete) ? Colors.grey : Colors.red),
+                    onPressed:
+                        (isZLocked || !canDelete) ? null : () => _deleteTicket(ticket),
+                    tooltip: isZLocked
+                        ? 'Z-Report locked'
+                        : (canDelete
+                            ? 'Delete Ticket'
+                            : 'Insufficient permissions'),
+                  );
+                },
               ),
             ],
           ),
@@ -639,6 +761,17 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       }).toList();
     }
 
+    if (_startDate != null) {
+      final start = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+      filtered = filtered.where((t) => !t.ticket.date.isBefore(start)).toList();
+    }
+    if (_endDate != null) {
+      // Inclusive end-of-day
+      final end = DateTime(
+          _endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59, 999);
+      filtered = filtered.where((t) => !t.ticket.date.isAfter(end)).toList();
+    }
+
     return filtered;
   }
 
@@ -693,6 +826,118 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
   String _formatDate(DateTime date) {
     return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  /// Reprint a single ticket without UI feedback. Returns whether it succeeded.
+  Future<bool> _reprintSingleTicket(Ticket ticket) async {
+    final printingService = ref.read(printingServiceProvider);
+    final currentUser = ref.read(currentUserProvider);
+    final database = ref.read(databaseProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+
+    final orderData = await (database.select(database.orders)
+          ..where((tbl) => tbl.id.equals(ticket.orderId)))
+        .getSingleOrNull();
+
+    String? customerName;
+    String? customerPhone;
+    if (orderData?.clientId != null) {
+      final customer = await (database.select(database.customers)
+            ..where((tbl) => tbl.id.equals(orderData!.clientId!)))
+          .getSingleOrNull();
+      if (customer != null) {
+        customerName = '${customer.firstName} ${customer.lastName}';
+        customerPhone = customer.phone;
+      }
+    }
+
+    final itemsForPrint = await _buildTicketPrintItems(database, ticket.id);
+    final businessName = prefs.getString('business_name') ?? 'POS Store';
+
+    final success = await printingService.printTicketReceipt(
+      ticketId: ticket.id,
+      ticketNumber: ticket.num,
+      amount: ticket.amount,
+      paymentMethod: ticket.paymentMethod,
+      createdAt: ticket.date,
+      items: itemsForPrint,
+      orderCode: orderData?.code,
+      cashierName: currentUser?.firstName,
+      storeName: businessName,
+      customerName: customerName,
+      customerPhone: customerPhone,
+      isReprint: true,
+    );
+
+    if (success) {
+      await database.customStatement(
+        'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
+        [ticket.id],
+      );
+    }
+    return success;
+  }
+
+  /// Reprint every ticket currently matching the active filters, oldest first.
+  Future<void> _reprintAllFiltered() async {
+    final l10n = AppLocalizations.of(context)!;
+    final ticketRepo = ref.read(ticketRepositoryProvider);
+    final all = await ticketRepo.getTicketsWithDetails();
+    final filtered = _applyFilters(all);
+    // Print in the order they were created
+    filtered.sort((a, b) => a.ticket.date.compareTo(b.ticket.date));
+
+    if (filtered.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.translate('no_tickets_found'))),
+        );
+      }
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('reprint_all')),
+        content: Text(l10n
+            .translate('reprint_all_confirm')
+            .replaceAll('{0}', filtered.length.toString())),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.translate('reprint_all')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isReprintingAll = true);
+    var printed = 0;
+    try {
+      for (final t in filtered) {
+        final ok = await _reprintSingleTicket(t.ticket);
+        if (ok) printed++;
+      }
+    } finally {
+      if (mounted) setState(() => _isReprintingAll = false);
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n
+              .translate('reprinted_tickets')
+              .replaceAll('{0}', printed.toString())),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
   }
 
   // CRUD Operations
@@ -954,14 +1199,24 @@ class _TicketDetailsDialog extends ConsumerWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () => _printTicketFromDetails(context, ref, ticket, items),
-                      icon: const Icon(Icons.print),
-                      label: Text('Print ${ticket.isPaid ? "(Paid)" : "(Unpaid)"}'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: ticket.isPaid ? Colors.green : Colors.orange,
-                        foregroundColor: Colors.white,
-                      ),
+                    child: Builder(
+                      builder: (context) {
+                        final canPrint = ref
+                            .read(permissionServiceProvider)
+                            .hasPermission(Permissions.ticketsPrint);
+                        return ElevatedButton.icon(
+                          onPressed: canPrint
+                              ? () => _printTicketFromDetails(context, ref, ticket)
+                              : null,
+                          icon: const Icon(Icons.print),
+                          label: Text('Print ${ticket.isPaid ? "(Paid)" : "(Unpaid)"}'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                ticket.isPaid ? Colors.green : Colors.orange,
+                            foregroundColor: Colors.white,
+                          ),
+                        );
+                      },
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -984,7 +1239,6 @@ class _TicketDetailsDialog extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
     Ticket ticket,
-    List<Map<String, dynamic>> items,
   ) async {
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
@@ -1009,40 +1263,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
     }
 
     // Build items list for printing with components
-    final itemsForPrint = <Map<String, dynamic>>[];
-    for (final itemData in items) {
-      final item = itemData['product'] as OrderProduct;
-      final productName = itemData['productName'] as String;
-
-      // Get components for this order product
-      final orderComponents = await (database.select(database.orderProductComponents)
-            ..where((tbl) => tbl.orderProductId.equals(item.id)))
-          .get();
-
-      // Build components list
-      final componentsForPrint = <Map<String, dynamic>>[];
-      for (final orderComp in orderComponents) {
-        final component = await (database.select(database.components)
-              ..where((tbl) => tbl.id.equals(orderComp.componentId)))
-            .getSingleOrNull();
-
-        if (component != null) {
-          componentsForPrint.add({
-            'name': component.name,
-            'quantity': orderComp.quantity,
-            'price': orderComp.price,
-            'isSpecial': orderComp.isSpecial,
-          });
-        }
-      }
-
-      itemsForPrint.add({
-        'name': productName,
-        'quantity': item.quantity,
-        'price': item.unitaryPrice * item.quantity,
-        'components': componentsForPrint,
-      });
-    }
+    final itemsForPrint = await _buildTicketPrintItems(database, ticket.id);
 
     // Get business name from SharedPreferences
     final prefs = ref.read(sharedPreferencesProvider);
@@ -1061,6 +1282,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
         storeName: businessName,
         customerName: customerName,
         customerPhone: customerPhone,
+        isReprint: true,
       );
 
       if (success) {
@@ -1224,5 +1446,47 @@ class _EditTicketDialogState extends State<_EditTicketDialog> {
       ],
     );
   }
+}
+
+/// Build the items list (with components) for a ticket's order products.
+Future<List<Map<String, dynamic>>> _buildTicketPrintItems(
+    AppDatabase database, int ticketId) async {
+  final products = await (database.select(database.orderProducts)
+        ..where((tbl) => tbl.ticketId.equals(ticketId)))
+      .get();
+
+  final itemsForPrint = <Map<String, dynamic>>[];
+  for (final item in products) {
+    final product = await (database.select(database.products)
+          ..where((tbl) => tbl.id.equals(item.productId)))
+        .getSingleOrNull();
+
+    final orderComponents = await (database.select(database.orderProductComponents)
+          ..where((tbl) => tbl.orderProductId.equals(item.id)))
+        .get();
+
+    final componentsForPrint = <Map<String, dynamic>>[];
+    for (final orderComp in orderComponents) {
+      final component = await (database.select(database.components)
+            ..where((tbl) => tbl.id.equals(orderComp.componentId)))
+          .getSingleOrNull();
+      if (component != null) {
+        componentsForPrint.add({
+          'name': component.name,
+          'quantity': orderComp.quantity,
+          'price': orderComp.price,
+          'isSpecial': orderComp.isSpecial,
+        });
+      }
+    }
+
+    itemsForPrint.add({
+      'name': product?.name ?? 'Unknown Product',
+      'quantity': item.quantity,
+      'price': item.unitaryPrice * item.quantity,
+      'components': componentsForPrint,
+    });
+  }
+  return itemsForPrint;
 }
 

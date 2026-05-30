@@ -8,7 +8,11 @@ import 'package:bcrypt/bcrypt.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:window_manager/window_manager.dart';
 import '../../data/database/app_database.dart';
+import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/user_provider.dart';
+import '../../services/activity_log_service.dart';
+import '../../utils/tenant_auth.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/update_provider.dart';
 import '../widgets/caisse212_logo.dart';
@@ -206,7 +210,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     try {
       final newState = !_isFullScreen;
       if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-        await windowManager.waitUntilReadyToShow();
+        // NOTE: waitUntilReadyToShow() is an init-only API — calling it on every
+        // toggle pokes the window's "ready" lifecycle and is a known cause of
+        // post-fullscreen pointer/layout desync on Windows. Don't call it here.
         await windowManager.setFullScreen(newState);
         await Future.delayed(const Duration(milliseconds: 100));
         if (mounted) {
@@ -457,7 +463,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
               ElevatedButton(
                 onPressed: () {
                   final password = passwordController.text.trim();
-                  final verified = BCrypt.checkpw(password, tenantPasswordHash);
+                  final verified = verifyTenantPassword(password, tenantPasswordHash);
                   Navigator.of(context).pop(verified);
                 },
                 style: AppButtonStyles.elevatedButtonStyle(
@@ -608,6 +614,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
       ref.read(currentUserProvider.notifier).state =
           CurrentUser.fromUser(user);
+      // New session — never inherit a prior user's admin-mode elevation.
+      ref.read(adminElevationProvider.notifier).state = null;
+
+      // Record the login time so the users table shows an accurate last login.
+      try {
+        await ref.read(userRepositoryProvider).updateLastLogin(user.id);
+      } catch (_) {}
+
+      final actorName = '${user.firstName} ${user.lastName}'.trim();
+      await ref.read(activityLogServiceProvider)
+          .logLogin(userId: user.id, username: actorName);
 
       try {
         final sessionService = SessionService(database);
@@ -622,6 +639,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             final resumedSession =
                 await sessionService.getSessionById(existingSession.id);
             ref.read(currentSessionProvider.notifier).state = resumedSession;
+            await ref.read(activityLogServiceProvider)
+                .logSessionResume(userId: user.id, username: actorName);
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(l10n
@@ -639,6 +658,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             moneyAtStart: startingBalance,
           );
           ref.read(currentSessionProvider.notifier).state = newSession;
+          await ref.read(activityLogServiceProvider)
+              .logSessionStart(userId: user.id, username: actorName);
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(l10n

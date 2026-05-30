@@ -11,6 +11,11 @@ class OrderItem {
   final String? imageUrl;
   final double finalPrice; // final price per unit without components
   final int quantity;
+  /// Quantity that was persisted to the DB at load time. `null` for items
+  /// freshly added to the cart in this session. Used as the **decrement floor**:
+  /// cashiers can take back only the quantity they added this session — going
+  /// below this value requires `pos:orders:item:modify`.
+  final int? savedQuantity;
   final List<OrderItemComponent> components;
   final String? note;
   final int? ticketId; // null = not paid, number = ticket ID (paid)
@@ -36,6 +41,7 @@ class OrderItem {
     this.imageUrl,
     required this.finalPrice, // final price per unit without components
     this.quantity = 1,
+    this.savedQuantity,
     this.components = const [],
     this.note,
     this.ticketId,
@@ -90,6 +96,7 @@ class OrderItem {
     String? imageUrl,
     double? unitPrice,
     int? quantity,
+    int? savedQuantity,
     List<OrderItemComponent>? components,
     String? note,
     int? ticketId,
@@ -114,6 +121,7 @@ class OrderItem {
       imageUrl: imageUrl ?? this.imageUrl,
       finalPrice: unitPrice ?? this.finalPrice,
       quantity: quantity ?? this.quantity,
+      savedQuantity: savedQuantity ?? this.savedQuantity,
       components: components ?? this.components,
       note: note ?? this.note,
       ticketId: ticketId ?? this.ticketId,
@@ -218,6 +226,7 @@ class CurrentOrder {
   final double discountPercentage; // Manual discount percentage (0-100)
   final String? note;
   final String type;
+  final String? deliveryAddress; // Delivery address (when type == DELIVERY)
   final int numberOfPersons; // Number of persons for the order
 
 
@@ -238,6 +247,7 @@ class CurrentOrder {
     this.discountPercentage = 0.0,
     this.note,
     this.type = 'DINE_IN',
+    this.deliveryAddress,
     this.numberOfPersons = 1,
   });
 
@@ -303,6 +313,7 @@ class CurrentOrder {
     double? discountPercentage,
     String? note,
     String? type,
+    String? deliveryAddress,
     int? numberOfPersons,
   }) {
     return CurrentOrder(
@@ -322,6 +333,7 @@ class CurrentOrder {
       discountPercentage: discountPercentage ?? this.discountPercentage,
       note: note ?? this.note,
       type: type ?? this.type,
+      deliveryAddress: deliveryAddress ?? this.deliveryAddress,
       numberOfPersons: numberOfPersons ?? this.numberOfPersons,
     );
   }

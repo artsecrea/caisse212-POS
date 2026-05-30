@@ -1,9 +1,51 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/app_localizations.dart';
+import 'admin_mode_chip.dart';
+
+/// Permission catalog grouped by resource (used by the table + details dialog).
+const Map<String, List<String>> kPermissionGroups = <String, List<String>>{
+  'Orders':      ['pos:orders:create', 'pos:orders:view', 'pos:orders:update', 'pos:orders:delete', 'pos:orders:cancel', 'pos:orders:item:add', 'pos:orders:item:remove', 'pos:orders:item:modify'],
+  'Tickets':     ['pos:tickets:create', 'pos:tickets:view', 'pos:tickets:update', 'pos:tickets:print', 'pos:tickets:delete'],
+  'Sessions':    ['pos:sessions:start', 'pos:sessions:end', 'pos:sessions:pause', 'pos:sessions:view', 'pos:sessions:delete'],
+  'Customers':   ['pos:customer:set', 'pos:customer:create', 'pos:customer:view', 'pos:customer:delete'],
+  'Commercials': ['pos:commercial:set', 'pos:commercial:create', 'pos:commercial:view'],
+  'Waiters':     ['pos:waiter:set', 'pos:waiter:view', 'pos:waiter:create', 'pos:waiter:delete'],
+  'Tables':      ['pos:tables:set', 'pos:tables:clear'],
+  'Products':    ['pos:products:view', 'pos:products:modify'],
+  'Devices':     ['pos:devices:use', 'pos:devices:view', 'pos:devices:update', 'pos:devices:delete'],
+  'Users':       ['pos:users:view', 'pos:users:create', 'pos:users:update', 'pos:users:delete'],
+  'Notes':       ['pos:notes:view', 'pos:notes:create', 'pos:notes:update', 'pos:notes:delete'],
+  'Agenda':      ['pos:agenda:view', 'pos:agenda:manage'],
+  'Logs':        ['pos:logs:view'],
+  'Settings':    ['pos:settings:view', 'pos:settings:update'],
+  'Reports':     ['pos:reports:view'],
+  'Sync':        ['pos:sync:orders', 'pos:sync:tickets', 'pos:sync:sessions', 'pos:sync:customers', 'pos:sync:all', 'pos:sync:viewPending', 'pos:sync:managePending'],
+  'Other':       ['pos:manualDiscount', 'pos:printing'],
+};
+
+/// Parse a stored permissions value into a set of permission tokens.
+/// Handles a comma-separated string OR a JSON-array string (e.g. `["pos:orders:view"]`).
+Set<String> parsePermissionSet(String? raw) {
+  if (raw == null) return {};
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return {};
+  if (trimmed.startsWith('[')) {
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is List) {
+        return decoded.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toSet();
+      }
+    } catch (_) {
+      // fall through to comma parsing
+    }
+  }
+  return trimmed.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+}
 
 class UsersManagementScreen extends ConsumerStatefulWidget {
   const UsersManagementScreen({super.key});
@@ -64,6 +106,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
     return AppBar(
       title: Text(l10n.translate('users_management')),
       actions: [
+        const AdminModeChip(),
         IconButton(
           icon: const Icon(Icons.refresh),
           onPressed: () => setState(() {}),
@@ -182,8 +225,9 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
 
   DataRow _buildDataRow(User user) {
     final l10n = AppLocalizations.of(context)!;
-    final permCount = _countPermissions(user.permissions);
-    final hasAll = user.permissions?.contains('pos:*') == true;
+    final granted = parsePermissionSet(user.permissions);
+    final isAdmin = user.type.toLowerCase().replaceAll('pos_', '') == 'admin';
+    final hasAll = isAdmin || granted.contains('pos:*');
 
     return DataRow(
       cells: [
@@ -191,14 +235,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         DataCell(Text(user.username)),
         DataCell(Text('${user.firstName} ${user.lastName}')),
         DataCell(_buildTypeChip(user.type)),
-        DataCell(
-          hasAll
-              ? _miniChip('All permissions', Colors.purple)
-              : permCount == 0
-                  ? Text(l10n.translate('no_permissions'), style: const TextStyle(color: Colors.grey, fontSize: 12))
-                  : Text('$permCount ${l10n.translate('permissions').toLowerCase()}',
-                      style: const TextStyle(fontSize: 12)),
-        ),
+        DataCell(_buildPermissionsCell(granted, hasAll, l10n)),
         DataCell(Text(user.lastLogin != null ? _formatDate(user.lastLogin!) : l10n.translate('never'),
             style: const TextStyle(fontSize: 12))),
         DataCell(
@@ -246,6 +283,38 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         border: Border.all(color: color.withOpacity(0.6)),
       ),
       child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12)),
+    );
+  }
+
+  /// Shows the granted permission areas (group + count) as compact chips.
+  Widget _buildPermissionsCell(Set<String> granted, bool hasAll, AppLocalizations l10n) {
+    if (hasAll) return _miniChip('All permissions', Colors.purple);
+    if (granted.isEmpty) {
+      return Text(l10n.translate('no_permissions'),
+          style: const TextStyle(color: Colors.grey, fontSize: 12));
+    }
+
+    final chips = <Widget>[];
+    kPermissionGroups.forEach((group, perms) {
+      final count = perms.where(granted.contains).length;
+      if (count > 0) {
+        chips.add(Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: _miniChip('$group · $count', Colors.indigo),
+        ));
+      }
+    });
+
+    // Tokens not covered by any known group
+    final known = kPermissionGroups.values.expand((e) => e).toSet();
+    final extra = granted.where((p) => p != 'pos:*' && !known.contains(p)).length;
+    if (extra > 0) {
+      chips.add(_miniChip('+$extra', Colors.grey));
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: chips),
     );
   }
 
@@ -308,11 +377,6 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   // Helpers
-
-  int _countPermissions(String? permissions) {
-    if (permissions == null || permissions.trim().isEmpty) return 0;
-    return permissions.split(',').where((p) => p.trim().isNotEmpty).length;
-  }
 
   List<User> _applyFilters(List<User> users) {
     var filtered = users;
@@ -378,20 +442,7 @@ class _UserDetailsDialog extends StatelessWidget {
   final User user;
   const _UserDetailsDialog({required this.user});
 
-  static const _permissionGroups = <String, List<String>>{
-    'Orders':      ['pos:orders:create', 'pos:orders:view', 'pos:orders:update', 'pos:orders:delete'],
-    'Tickets':     ['pos:tickets:create', 'pos:tickets:view', 'pos:tickets:print', 'pos:tickets:delete'],
-    'Sessions':    ['pos:sessions:start', 'pos:sessions:end', 'pos:sessions:pause', 'pos:sessions:view', 'pos:sessions:delete'],
-    'Customers':   ['pos:customer:set', 'pos:customer:create', 'pos:customer:view', 'pos:customer:delete'],
-    'Commercials': ['pos:commercial:set', 'pos:commercial:create', 'pos:commercial:view'],
-    'Tables':      ['pos:tables:set', 'pos:tables:clear'],
-    'Products':    ['pos:products:view', 'pos:products:modify'],
-    'Devices':     ['pos:devices:use', 'pos:devices:view', 'pos:devices:update', 'pos:devices:delete'],
-    'Settings':    ['pos:settings:view', 'pos:settings:update'],
-    'Reports':     ['pos:reports:view'],
-    'Sync':        ['pos:sync:orders', 'pos:sync:tickets', 'pos:sync:sessions', 'pos:sync:customers', 'pos:sync:all', 'pos:sync:viewPending', 'pos:sync:managePending'],
-    'Other':       ['pos:manualDiscount', 'pos:printing'],
-  };
+  static const _permissionGroups = kPermissionGroups;
 
   @override
   Widget build(BuildContext context) {
@@ -507,9 +558,10 @@ class _UserDetailsDialog extends StatelessWidget {
   }
 
   Widget _buildPermissionsCard(BuildContext context) {
-    final permsRaw = user.permissions?.trim() ?? '';
+    final granted = parsePermissionSet(user.permissions);
+    final isAdmin = user.type.toLowerCase().replaceAll('pos_', '') == 'admin';
 
-    if (permsRaw.isEmpty) {
+    if (granted.isEmpty && !isAdmin) {
       return Card(
         elevation: 1,
         child: const Padding(
@@ -519,8 +571,8 @@ class _UserDetailsDialog extends StatelessWidget {
       );
     }
 
-    // Wildcard — all permissions
-    if (permsRaw.contains('pos:*')) {
+    // Admin or wildcard — all permissions
+    if (isAdmin || granted.contains('pos:*')) {
       return Card(
         elevation: 1,
         color: Colors.purple[50],
@@ -530,15 +582,15 @@ class _UserDetailsDialog extends StatelessWidget {
             children: [
               Icon(Icons.all_inclusive, color: Colors.purple[700]),
               const SizedBox(width: 8),
-              Text('Full access — all permissions granted',
+              Text(isAdmin
+                  ? 'Admin — full access to all permissions'
+                  : 'Full access — all permissions granted',
                   style: TextStyle(color: Colors.purple[700], fontWeight: FontWeight.w600)),
             ],
           ),
         ),
       );
     }
-
-    final granted = permsRaw.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toSet();
 
     return Card(
       elevation: 1,

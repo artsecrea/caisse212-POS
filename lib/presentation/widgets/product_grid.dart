@@ -10,6 +10,8 @@ import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/responsive_utils.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../utils/app_localizations.dart';
+import '../../services/permission_service.dart';
 import 'product_modification_dialog.dart' as dialog;
 
 class ProductGrid extends ConsumerWidget {
@@ -142,6 +144,16 @@ class _ProductCard extends ConsumerWidget {
 
     return GestureDetector(
       onTap: () {
+        // Adding an item to a SAVED order requires the add-item permission.
+        // A brand-new (unsaved) cart is unrestricted.
+        final order = ref.read(orderProvider);
+        if (order.orderId != null &&
+            !ref.read(permissionServiceProvider).hasPermission(Permissions.ordersItemAdd)) {
+          SnackBarHelper.showErrorSnackBar(
+            context, ref, AppLocalizations.of(context)!.translate('no_permission'));
+          return;
+        }
+
         // Check if product is a variant product - must show dialog to select variant
         final isVariantProduct = product.isVariant;
 

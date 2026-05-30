@@ -5,6 +5,7 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../services/session_service.dart';
+import '../../services/activity_log_service.dart';
 import '../../services/permission_service.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/api_service.dart';
@@ -135,6 +136,9 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
       await sessionService.pauseSession(session.id);
+      final actor = ref.read(currentUserProvider);
+      await ref.read(activityLogServiceProvider)
+          .logSessionPause(userId: actor?.id, username: actor?.effectiveDisplayName);
       await _loadSessions();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -159,6 +163,9 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
       await sessionService.resumeSession(session.id);
+      final actor = ref.read(currentUserProvider);
+      await ref.read(activityLogServiceProvider)
+          .logSessionResume(userId: actor?.id, username: actor?.effectiveDisplayName);
       await _loadSessions();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -211,6 +218,10 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         final database = ref.read(databaseProvider);
         final sessionService = SessionService(database);
         await sessionService.endSession(sessionId: session.id);
+        await ref.read(activityLogServiceProvider).logSessionEnd(
+              userId: currentUser?.id,
+              username: currentUser?.effectiveDisplayName,
+            );
 
         if (isCurrentUserSession) {
           // Clear current user and session

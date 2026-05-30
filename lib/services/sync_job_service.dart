@@ -2,12 +2,14 @@ import 'dart:async';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'data_sync_service.dart';
+import 'activity_log_service.dart';
 
 /// Service that runs periodic sync jobs
 class SyncJobService {
   final DataSyncService _syncService;
   final SharedPreferences _prefs;
   final bool Function() _isOnlineCallback;
+  final ActivityLogService? _activityLog;
   final _logger = Logger.instance;
 
   Timer? _syncTimer;
@@ -20,7 +22,8 @@ class SyncJobService {
   static const String _lastDataClearDateKey = 'last_data_clear_date';
   static const String _bulkSyncSizeKey = 'bulk_sync_size';
 
-  SyncJobService(this._syncService, this._prefs, this._isOnlineCallback);
+  SyncJobService(this._syncService, this._prefs, this._isOnlineCallback,
+      [this._activityLog]);
 
   /// Start the periodic sync job
   void start() {
@@ -63,6 +66,9 @@ class SyncJobService {
 
   /// Run the sync job
   Future<void> _runSyncJob() async {
+    // Activity-log retention runs regardless of connectivity (local DB + file work).
+    await _archiveOldLogsIfNeeded();
+
     if (!_isOnlineCallback()) {
       _logger.info('Sync job skipped: offline');
       return;
@@ -145,6 +151,12 @@ class SyncJobService {
         _logger.error('Failed to clear old synced data: $e');
       }
     }
+  }
+
+  /// Roll the activity log: once per day, append entries older than the
+  /// retention window to a Desktop text file and delete them from the table.
+  Future<void> _archiveOldLogsIfNeeded() async {
+    await _activityLog?.purgeIfDue();
   }
 
   /// Get the current sync status

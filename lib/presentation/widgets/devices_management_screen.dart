@@ -12,6 +12,7 @@ import '../../providers/socket_order_providers.dart';
 import '../../data/database/app_database.dart';
 import '../../services/socket_service.dart';
 import '../../providers/database_providers.dart';
+import '../../services/permission_service.dart';
 
 class DevicesManagementScreen extends ConsumerStatefulWidget {
   const DevicesManagementScreen({super.key});
@@ -368,7 +369,20 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
     );
   }
 
+  /// Returns true if the user has [permission]; otherwise shows a snackbar.
+  bool _requirePermission(String permission) {
+    if (ref.read(permissionServiceProvider).hasPermission(permission)) return true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('You do not have permission to perform this action'),
+        backgroundColor: Colors.red,
+      ),
+    );
+    return false;
+  }
+
   void _showAddDeviceDialog() {
+    if (!_requirePermission(Permissions.devicesUpdate)) return;
     showDialog(
       context: context,
       builder: (context) => const _DeviceFormDialog(),
@@ -376,6 +390,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
   }
 
   void _showEditDeviceDialog(DeviceRowData device) {
+    if (!_requirePermission(Permissions.devicesUpdate)) return;
     showDialog(
       context: context,
       builder: (context) => _DeviceFormDialog(device: device),
@@ -390,6 +405,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
   }
 
   void _deleteDevice(DeviceRowData device) async {
+    if (!_requirePermission(Permissions.devicesDelete)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

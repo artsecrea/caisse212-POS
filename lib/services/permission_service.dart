@@ -1,27 +1,51 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/database_providers.dart';
+import '../providers/admin_elevation_provider.dart';
+import '../providers/settings_provider.dart';
 
 /// Permission Service for checking user permissions
 class PermissionService {
   final CurrentUser? currentUser;
 
-  PermissionService(this.currentUser);
+  /// Session-level admin-mode elevation (set by tapping the Admin chip and
+  /// authenticating). While non-null, every permission check passes.
+  final AdminElevation? elevation;
+
+  /// Permission tokens auto-granted to any user with `type == 'cashier'` —
+  /// configured by the admin in Settings → "Cashier role defaults".
+  final List<String> cashierDefaults;
+
+  PermissionService(
+    this.currentUser, {
+    this.elevation,
+    this.cashierDefaults = const [],
+  });
 
   /// Check if user has a specific permission
   bool hasPermission(String permission) {
     if (currentUser == null) return false;
 
+    // Session-level admin-mode elevation: bypass everything.
+    if (elevation != null) return true;
+
     // Admin users have all permissions
     if (currentUser!.type.toLowerCase() == 'admin') return true;
-    return true;
 
     // Parse user permissions (stored as comma-separated string)
-    final userPermissions = currentUser!.permissions.split(',').map((p) => p.trim()).toList();
+    final userPermissions =
+        currentUser!.permissions.split(',').map((p) => p.trim()).toList();
 
     // Check for exact match
     if (userPermissions.contains(permission)) return true;
 
-    // Check for wildcard permissions (e.g., "pos:*" grants all pos permissions)
+    // Cashier role defaults (admin-configured auto-grants).
+    if (currentUser!.type.toLowerCase() == 'cashier' &&
+        cashierDefaults.contains(permission)) {
+      return true;
+    }
+
+    // Check for wildcard permissions (e.g., "pos:*" grants all pos permissions,
+    // "pos:orders:*" grants all order permissions)
     for (final userPerm in userPermissions) {
       if (userPerm.endsWith(':*')) {
         final prefix = userPerm.substring(0, userPerm.length - 1);
@@ -53,13 +77,20 @@ class Permissions {
 
   // Orders
   static const String ordersDelete = 'pos:orders:delete';
-  static const String ordersUpdate = 'pos:orders:update';
+  static const String ordersUpdate = 'pos:orders:update'; // general/lifecycle: status, cancel, transfer, persist
   static const String ordersCreate = 'pos:orders:create';
   static const String ordersView = 'pos:orders:view';
+  // Granular item edits on a SAVED order (anti-fraud: remove/modify are manager-level)
+  static const String ordersItemAdd = 'pos:orders:item:add';
+  static const String ordersItemRemove = 'pos:orders:item:remove';
+  static const String ordersItemModify = 'pos:orders:item:modify';
+  // Cancelling an order (own permission — like delete, it can hide a sale)
+  static const String ordersCancel = 'pos:orders:cancel';
 
   // Tickets
   static const String ticketsDelete = 'pos:tickets:delete';
   static const String ticketsCreate = 'pos:tickets:create';
+  static const String ticketsUpdate = 'pos:tickets:update';
   static const String ticketsView = 'pos:tickets:view';
   static const String ticketsPrint = 'pos:tickets:print';
 
@@ -103,8 +134,31 @@ class Permissions {
   static const String settingsView = 'pos:settings:view';
   static const String settingsUpdate = 'pos:settings:update';
 
-  // Reports
+  // Users
+  static const String usersView = 'pos:users:view';
+  static const String usersCreate = 'pos:users:create';
+  static const String usersUpdate = 'pos:users:update';
+  static const String usersDelete = 'pos:users:delete';
+
+  // Waiters (extra to set/view)
+  static const String waiterCreate = 'pos:waiter:create';
+  static const String waiterDelete = 'pos:waiter:delete';
+
+  // Notes
+  static const String notesView = 'pos:notes:view';
+  static const String notesCreate = 'pos:notes:create';
+  static const String notesUpdate = 'pos:notes:update';
+  static const String notesDelete = 'pos:notes:delete';
+
+  // Agenda / Planning
+  static const String agendaView = 'pos:agenda:view';
+  static const String agendaManage = 'pos:agenda:manage';
+
+  // Reports / Dashboard
   static const String reportsView = 'pos:reports:view';
+
+  // Activity logs
+  static const String logsView = 'pos:logs:view';
 
   // Sync Operations
   static const String syncOrders = 'pos:sync:orders';
@@ -122,6 +176,12 @@ class Permissions {
 /// Provider for Permission Service
 final permissionServiceProvider = Provider<PermissionService>((ref) {
   final currentUser = ref.watch(currentUserProvider);
-  return PermissionService(currentUser);
+  final elevation = ref.watch(adminElevationProvider);
+  final cashierDefaults = ref.watch(settingsProvider).cashierDefaultPermissions;
+  return PermissionService(
+    currentUser,
+    elevation: elevation,
+    cashierDefaults: cashierDefaults,
+  );
 });
 

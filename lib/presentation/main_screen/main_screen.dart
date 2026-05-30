@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:caisse212/domain/models/order_models.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
@@ -12,6 +13,7 @@ import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../services/permission_service.dart';
+import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
 import '../order_confirmation/order_confirmation_screen.dart';
 import '../paymen_screen/payment_screen.dart';
@@ -227,6 +229,16 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         .getSingleOrNull();
 
       if (product != null) {
+        // Adding to a SAVED order requires the add-item permission.
+        final currentOrder = ref.read(orderProvider);
+        if (currentOrder.orderId != null &&
+            !ref.read(permissionServiceProvider).hasPermission(Permissions.ordersItemAdd)) {
+          if (mounted) {
+            SnackBarHelper.showErrorSnackBar(
+              context, ref, AppLocalizations.of(context)!.translate('no_permission'));
+          }
+          return;
+        }
         ref.read(orderProvider.notifier).addItem(
           OrderItem(
             productId: product.id,
@@ -529,6 +541,145 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
 
 
+  IconData _orderTypeIcon(String type) {
+    switch (type) {
+      case 'TAKE_AWAY':
+        return Icons.takeout_dining;
+      case 'DELIVERY':
+        return Icons.delivery_dining;
+      default:
+        return Icons.restaurant;
+    }
+  }
+
+  String _orderTypeLabel(String type, AppLocalizations l10n) {
+    switch (type) {
+      case 'TAKE_AWAY':
+        return l10n.translate('take_away');
+      case 'DELIVERY':
+        return l10n.translate('delivery');
+      default:
+        return l10n.translate('dine_in');
+    }
+  }
+
+  Color _orderTypeColor(String type) {
+    switch (type) {
+      case 'TAKE_AWAY':
+        return Colors.orange;
+      case 'DELIVERY':
+        return Colors.blue;
+      default:
+        return Colors.green;
+    }
+  }
+
+  /// Dialog chooser for the order type — three big, touch-friendly buttons.
+  /// Picking Delivery also prompts for the delivery address.
+  Future<void> _showOrderTypeChooser(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: SizedBox(
+          width: 400,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  l10n.translate('order_type'),
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 24),
+                for (final type in const ['DINE_IN', 'TAKE_AWAY', 'DELIVERY']) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    height: 96,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, type),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _orderTypeColor(type),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(_orderTypeIcon(type), size: 40),
+                          const SizedBox(width: 16),
+                          Text(
+                            _orderTypeLabel(type, l10n),
+                            style: const TextStyle(
+                                fontSize: 22, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(l10n.translate('cancel')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (selected == null) return;
+    ref.read(orderProvider.notifier).setOrderType(selected);
+    if (selected == 'DELIVERY' && context.mounted) {
+      await _showDeliveryAddressDialog(context);
+    }
+  }
+
+  /// Touch-friendly delivery-address entry (uses the on-screen keyboard).
+  Future<void> _showDeliveryAddressDialog(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final controller = TextEditingController(
+        text: ref.read(orderProvider).deliveryAddress ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.delivery_dining, color: Colors.blue),
+            const SizedBox(width: 8),
+            Text(l10n.translate('delivery_address')),
+          ],
+        ),
+        content: OnscreenKeyboardTextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 3,
+          decoration: InputDecoration(
+            hintText: l10n.translate('enter_delivery_address'),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: Text(l10n.translate('save')),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      ref.read(orderProvider.notifier).setDeliveryAddress(result);
+    }
+  }
+
   Widget _buildActionButton({
     required IconData icon,
     required String label,
@@ -641,17 +792,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           shouldShow = settings.showOrderTypeButton;
           if (shouldShow) {
             button = _buildActionButton(
-              icon: currentOrder.type == 'DINE_IN' ? Icons.restaurant : Icons.takeout_dining,
-              label: currentOrder.type == 'DINE_IN' ? l10n.translate('dine_in') : l10n.translate('take_away'),
+              icon: _orderTypeIcon(currentOrder.type),
+              label: _orderTypeLabel(currentOrder.type, l10n),
               color: isTableSelected
                   ? Colors.grey // Disabled look when table is selected
-                  : (currentOrder.type == 'TAKE_AWAY' ? Colors.orange : Colors.green),
+                  : _orderTypeColor(currentOrder.type),
               onPressed: isTableSelected
-                  ? null // Disable when table is selected
-                  : () {
-                      final newType = currentOrder.type == 'DINE_IN' ? 'TAKE_AWAY' : 'DINE_IN';
-                      ref.read(orderProvider.notifier).setOrderType(newType);
-                    },
+                  ? null // Disable when a table is selected (table ⇒ dine-in)
+                  : () => _showOrderTypeChooser(context),
             );
           }
           break;
@@ -675,7 +823,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           break;
 
         case 'table':
-          shouldShow = settings.showTableButton;
+          shouldShow = settings.showTableButton &&
+              permissionService.hasPermission(Permissions.tablesSet);
           if (shouldShow) {
             button = _buildActionButton(
               icon: Icons.table_bar_sharp,
@@ -985,7 +1134,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           break;
 
         case 'dailySummary':
-          shouldShow = settings.showDailySummaryButton;
+          shouldShow = settings.showDailySummaryButton &&
+              permissionService.hasPermission(Permissions.reportsView);
           if (shouldShow) {
             button = _buildActionButton(
               icon: Icons.summarize,
@@ -1002,7 +1152,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           break;
 
         case 'pay':
-          shouldShow = settings.showPayButton;
+          // Taking payment creates a ticket -> tickets:create.
+          shouldShow = settings.showPayButton &&
+              permissionService.hasPermission(Permissions.ticketsCreate);
           if (shouldShow) {
             button = _buildActionButton(
               icon: Icons.payment,
@@ -1015,12 +1167,22 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           break;
 
         case 'proceed':
-          // Proceed button is always shown (primary button)
+          // Proceed button is always shown (primary button).
+          // New order needs orders:create; persisting a saved order is allowed if
+          // the user can make any kind of edit (add/remove/modify) or has update.
+          final canProceed = currentOrder.isSaved()
+              ? permissionService.hasAnyPermission([
+                  Permissions.ordersUpdate,
+                  Permissions.ordersItemAdd,
+                  Permissions.ordersItemRemove,
+                  Permissions.ordersItemModify,
+                ])
+              : permissionService.hasPermission(Permissions.ordersCreate);
           button = _buildActionButton(
             icon: Icons.check_circle,
             label: l10n.translate('proceed'),
             isPrimary: true,
-            onPressed: currentOrder.items.isEmpty
+            onPressed: (currentOrder.items.isEmpty || !canProceed)
                 ? null
                 : () async {
                     final orderRepo = ref.read(orderRepositoryProvider);
@@ -1056,13 +1218,26 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         try {
                           final prefs = ref.read(sharedPreferencesProvider);
                           final businessName = prefs.getString('business_name');
-                          await printingService.printOrderReceipt(
-                            order: reloadedOrder,
-                            cashierName: currentUser.firstName,
-                            storeName: businessName,
-                          );
+                          final hasTable = reloadedOrder.tableId != null;
 
-                          if (printingService.config.kdsEnabled) {
+                          if (printingService.shouldPrint(
+                            PrintOutput.orderTicket,
+                            orderType: reloadedOrder.type,
+                            hasTable: hasTable,
+                          )) {
+                            await printingService.printOrderReceipt(
+                              order: reloadedOrder,
+                              cashierName: currentUser.firstName,
+                              storeName: businessName,
+                            );
+                          }
+
+                          if (printingService.config.kdsEnabled &&
+                              printingService.shouldPrint(
+                                PrintOutput.kds,
+                                orderType: reloadedOrder.type,
+                                hasTable: hasTable,
+                              )) {
                             await printingService.printKdsTicket(
                               order: reloadedOrder,
                               cashierName: currentUser.firstName,
@@ -1241,8 +1416,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           };
         }).toList();
 
+        final hasTable = reloadedOrder.tableId != null;
+
         // Print KDS ticket first (for kitchen)
-        if (printingService.config.kdsEnabled) {
+        if (printingService.config.kdsEnabled &&
+            printingService.shouldPrint(
+              PrintOutput.kds,
+              orderType: reloadedOrder.type,
+              hasTable: hasTable,
+            )) {
           try {
             await printingService.printKdsTicket(
               order: reloadedOrder,
@@ -1254,17 +1436,20 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           }
         }
 
-        // Then print customer receipt
-        await printingService.printTicketReceipt(
+        // Then print customer receipt + store copy + drawer via orchestrator
+        await printingService.printPaymentDocuments(
           ticketId: ticketId,
           ticketNumber: ticketNumStr,
           amount: total,
           paymentMethod: TransactionType.cash.value,
           createdAt: DateTime.now(),
           items: itemsForPrint,
+          orderType: reloadedOrder.type,
+          hasTable: hasTable,
           orderCode: reloadedOrder.orderCode,
           cashierName: currentUser.firstName,
           storeName: businessName,
+          deliveryAddress: reloadedOrder.deliveryAddress,
         );
 
         await database.customStatement(

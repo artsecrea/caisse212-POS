@@ -22,8 +22,10 @@ import 'package:caisse212/presentation/widgets/tickets_management_screen.dart';
 import 'package:caisse212/presentation/widgets/agenda_screen.dart';
 import 'package:caisse212/presentation/widgets/dashboard_screen.dart';
 import 'package:caisse212/presentation/widgets/notes_screen.dart';
+import 'package:caisse212/presentation/widgets/logs_screen.dart';
 import 'package:caisse212/services/session_service.dart';
 import 'package:caisse212/services/server_startup_service.dart';
+import 'package:caisse212/services/activity_log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/theme/app_theme.dart';
@@ -362,6 +364,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       } catch (e) {
         debugPrint('Sound preload failed: $e');
       }
+      // Roll the activity log once per day (export old entries to Desktop, purge).
+      try {
+        await ref.read(activityLogServiceProvider).purgeIfDue();
+      } catch (e) {
+        debugPrint('Activity-log purge failed: $e');
+      }
     });
   }
 
@@ -550,6 +558,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         '/agenda': (context) => const AgendaScreen(),
         '/dashboard': (context) => const DashboardScreen(),
         '/notes': (context) => const NotesScreen(),
+        '/logs': (context) => const LogsScreen(),
       },
     );
 
