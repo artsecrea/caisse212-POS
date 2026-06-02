@@ -28,18 +28,32 @@ class OrderPanel extends ConsumerWidget {
     return ref.read(permissionServiceProvider).hasPermission(permission);
   }
 
-  /// Whether [item]'s quantity may be set to [newQty]. Reducing back down to
-  /// the saved baseline (or any unsaved-portion) is always free; going BELOW the
-  /// saved baseline requires `pos:orders:item:modify`.
+  /// Whether [item]'s quantity may move from its current value to [newQty].
+  ///
+  /// On a SAVED order with `savedQuantity = S` and current displayed `O`, the
+  /// rule is delta-aware:
+  ///   * **Net add** (`newQty > O` AND `newQty > S`) → requires `item:add`.
+  ///     Walking up to the saved baseline (restoring units someone reduced
+  ///     this session) is free.
+  ///   * **Net remove** (`newQty < O` AND `newQty < S`) → requires
+  ///     `item:remove`. Reducing extra units someone added this session,
+  ///     i.e. staying at or above baseline, is free.
+  ///   * Brand-new cart or freshly-added (unsaved) item → always free.
   bool _canSetQuantity(WidgetRef ref, OrderItem item, int newQty) {
     final order = ref.read(orderProvider);
-    // Brand-new cart or freshly-added item -> always free.
     if (order.orderId == null || item.id == null) return true;
-    final floor = item.savedQuantity ?? 0;
-    if (newQty >= floor) return true;
-    return ref
-        .read(permissionServiceProvider)
-        .hasPermission(Permissions.ordersItemModify);
+    final saved = item.savedQuantity ?? 0;
+    final oldQty = item.quantity;
+    final perm = ref.read(permissionServiceProvider);
+    final isAdding = newQty > oldQty && newQty > saved;
+    final isRemoving = newQty < oldQty && newQty < saved;
+    if (isAdding && !perm.hasPermission(Permissions.ordersItemAdd)) {
+      return false;
+    }
+    if (isRemoving && !perm.hasPermission(Permissions.ordersItemRemove)) {
+      return false;
+    }
+    return true;
   }
 
   void _showPermissionDenied(BuildContext context, WidgetRef ref) {
@@ -47,59 +61,10 @@ class OrderPanel extends ConsumerWidget {
     SnackBarHelper.showErrorSnackBar(context, ref, l10n.translate('no_permission'));
   }
 
-  /// The trash/clear button. Always empties the panel (the working-order view).
-  /// Additionally, for a SAVED order, a manager (with the delete permission) is
-  /// asked whether to also delete the order from the system and free its table.
+  /// The trash/clear button. Only empties the in-memory working panel; the
+  /// persisted order (if any) is left intact. Order deletion lives in the
+  /// dedicated orders-management screen.
   Future<void> _handleClear(BuildContext context, WidgetRef ref) async {
-    final order = ref.read(orderProvider);
-    final orderId = order.orderId;
-    final tableId = order.tableId;
-
-    // Offer to delete the underlying saved order (manager action only).
-    if (orderId != null &&
-        ref.read(permissionServiceProvider).hasPermission(Permissions.ordersDelete)) {
-      final l10n = AppLocalizations.of(context)!;
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(l10n.translate('delete_order')),
-          content: Text(l10n.translate('are_you_sure')),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(l10n.translate('cancel')),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(l10n.translate('delete')),
-            ),
-          ],
-        ),
-      );
-      if (confirmed == true) {
-        try {
-          final repo = ref.read(orderRepositoryProvider);
-          await repo.deleteOrder(orderId);
-          if (tableId != null) {
-            await repo.clearTableOrder(tableId);
-          }
-          if (context.mounted) {
-            SnackBarHelper.showSuccessSnackBar(
-                context, ref, l10n.translate('delete_order'));
-          }
-        } catch (e) {
-          if (context.mounted) {
-            SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
-          }
-        }
-      }
-    }
-
-    // Always empty the panel.
     ref.read(orderProvider.notifier).clearOrder();
   }
 
@@ -117,6 +82,15 @@ class OrderPanel extends ConsumerWidget {
     );
 
     if (result != null) {
+      // Closing the dialog's qty-edit loophole: a cashier with item:modify
+      // but not item:remove could otherwise type a smaller qty here and slip
+      // a below-baseline reduction past the gate.
+      final newQty = result['quantity'] as int? ?? item.quantity;
+      if (newQty != item.quantity &&
+          !_canSetQuantity(ref, item, newQty)) {
+        if (context.mounted) _showPermissionDenied(context, ref);
+        return;
+      }
       // Update the item with new modifications
       final updatedItem = item.copyWith(
         components: result['components'] as List<OrderItemComponent>?,
@@ -328,6 +302,10 @@ class OrderPanel extends ConsumerWidget {
                       productName: product.name,
                       finalPrice: orderProduct.unitaryPrice,
                       quantity: orderProduct.quantity,
+                      // Re-establish the decrement floor — without this the
+                      // floor check in [_canSetQuantity] treats `saved` as 0
+                      // and skips the `item:remove` gate entirely.
+                      savedQuantity: orderProduct.quantity,
                       discount: orderProduct.unitaryDiscount,
                       manualDiscount: orderProduct.manualDiscount,
                       tva: orderProduct.unitaryTva,
@@ -550,7 +528,7 @@ class OrderPanel extends ConsumerWidget {
                                                     )
                                                   : InkWell(
                                                       onTap: () {
-                                                        if (!_canEditItem(ref, item, Permissions.ordersItemModify)) {
+                                                        if (!_canSetQuantity(ref, item, item.quantity + 1)) {
                                                           _showPermissionDenied(context, ref);
                                                           return;
                                                         }

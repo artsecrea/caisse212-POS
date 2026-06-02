@@ -41,15 +41,16 @@ class ActivityLogService {
         phrase = phrase.replaceAll('{$i}', args[i]?.toString() ?? '');
       }
 
+      // Activity logs intentionally capture the legal full name (not the
+      // cashier-set displayName/nickname) so the audit trail can't be
+      // rewritten by someone changing their display label later.
       var name = username;
       if (name == null && userId != null) {
         final user = await (_db.select(_db.users)
               ..where((u) => u.id.equals(userId)))
             .getSingleOrNull();
         if (user != null) {
-          name = user.displayName?.isNotEmpty == true
-              ? user.displayName!
-              : '${user.firstName} ${user.lastName}'.trim();
+          name = '${user.firstName} ${user.lastName}'.trim();
         }
       }
 

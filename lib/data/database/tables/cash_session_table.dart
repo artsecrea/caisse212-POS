@@ -15,5 +15,13 @@ class CashSessions extends Table {
   TextColumn get status => text().withDefault(const Constant('active'))(); // 'active', 'paused', 'ended'
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server (only ended sessions sync)
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  // Z-report / cash-count fields (schema v11). Filled in at session close
+  // when the cashier types a counted-cash figure; null on sessions closed
+  // before the feature shipped, or closed without counting.
+  RealColumn get countedCash => real().nullable()();
+  RealColumn get variance => real().nullable()();
+  DateTimeColumn get countedAt => dateTime().nullable()();
+  TextColumn get countNotes => text().nullable()();
 }
 

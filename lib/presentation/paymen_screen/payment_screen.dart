@@ -1676,6 +1676,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         await orderRepo.updateOrderStatus(orderId, paidStatus, queueSyncOperation: false);
         _logger.info('Order #$orderId marked as $paidStatus (all products paid)');
 
+        // Optional: free the table now that the whole order is paid.
+        if (settings.autoClearTableAfterPaying &&
+            widget.order.tableId != null) {
+          try {
+            await orderRepo.clearTableOrder(widget.order.tableId!);
+          } catch (e) {
+            _logger.error('Auto-clear table failed for order #$orderId: $e');
+          }
+        }
+
         // Auto-sync if online
         final isOnline = ref.read(lastKnownOnlineStatusProvider);
         if (isOnline) {

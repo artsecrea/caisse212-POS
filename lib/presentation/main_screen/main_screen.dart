@@ -29,6 +29,7 @@ import '../widgets/order_panel.dart';
 import '../widgets/table_selection_dialog.dart';
 import '../widgets/waiter_selection_dialog.dart';
 import '../widgets/top_bar.dart';
+import '../../utils/order_validation.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/responsive_utils.dart';
 import '../../providers/sync_manager_provider.dart';
@@ -54,6 +55,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   // Responsive sizing — updated in build() from MediaQuery
   double _btnSize = 130;
   double _barHeight = 150;
+
+  /// True while a Proceed/Pay handler has a save (insert or update) in
+  /// flight. Used to disable the Proceed/Pay buttons so a slow DB write
+  /// can't be triggered twice by an impatient double-tap (root cause of
+  /// duplicate-order inserts).
+  bool _isSavingOrder = false;
 
   @override
   void initState() {
@@ -868,6 +875,21 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     return;
                   }
 
+                  // "Switch" — saved order stays where it is; just empty the
+                  // working panel and move the cashier to the new table.
+                  if (action == 'switch') {
+                    ref.read(orderProvider.notifier).clearOrder();
+                    if (tableId != null) {
+                      ref
+                          .read(orderProvider.notifier)
+                          .setTable(tableId, tableName);
+                      ref
+                          .read(orderProvider.notifier)
+                          .setOrderType('DINE_IN');
+                    }
+                    return;
+                  }
+
                   // Handle different actions
                   if (action == 'pay' && result['order'] != null) {
                     final order = result['order'];
@@ -910,7 +932,25 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     return;
                   }
 
+                  final hasItems =
+                      ref.read(orderProvider).items.isNotEmpty;
+
                   if (existingOrder != null) {
+                    // Table already has an open order. If the cashier has
+                    // their own items in the cart, ask before discarding
+                    // them.
+                    if (hasItems) {
+                      final confirmed =
+                          await _confirmDiscardCurrentForTableOrder(
+                        context,
+                        tableName: tableName,
+                        existingOrder: existingOrder,
+                        l10n: l10n,
+                      );
+                      if (confirmed != true) {
+                        return; // cart preserved, no table attached
+                      }
+                    }
                     ref.read(orderProvider.notifier).loadOrder(existingOrder);
                     if (context.mounted) {
                       SnackBarHelper.showInfoSnackBar(
@@ -920,8 +960,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       );
                     }
                   } else {
-                    // Set the table and auto-set order type to DINE_IN
-                    ref.read(orderProvider.notifier).setTable(tableId, tableName);
+                    // Empty table — preserve the cashier's current cart and
+                    // just attach the table. setTable() clears items, so we
+                    // only use it when there's nothing to lose.
+                    if (hasItems) {
+                      ref
+                          .read(orderProvider.notifier)
+                          .updateTable(tableId, tableName);
+                    } else {
+                      ref
+                          .read(orderProvider.notifier)
+                          .setTable(tableId, tableName);
+                    }
                     ref.read(orderProvider.notifier).setOrderType('DINE_IN');
                   }
                 }
@@ -1160,8 +1210,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               icon: Icons.payment,
               label: l10n.translate('pay'),
               color: Colors.green[700],
-              onPressed: currentOrder.items.isEmpty ? null : () => _payDirectly(),
-              onLongPress: currentOrder.items.isEmpty ? null : () => _showPaymentDialog(),
+              onPressed: (currentOrder.items.isEmpty || _isSavingOrder)
+                  ? null
+                  : () => _payDirectly(),
+              onLongPress: (currentOrder.items.isEmpty || _isSavingOrder)
+                  ? null
+                  : () => _showPaymentDialog(),
             );
           }
           break;
@@ -1182,9 +1236,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             icon: Icons.check_circle,
             label: l10n.translate('proceed'),
             isPrimary: true,
-            onPressed: (currentOrder.items.isEmpty || !canProceed)
-                ? null
-                : () async {
+            onPressed:
+                (currentOrder.items.isEmpty || !canProceed || _isSavingOrder)
+                    ? null
+                    : () async {
+                    if (_isSavingOrder) return;
                     final orderRepo = ref.read(orderRepositoryProvider);
                     final currentUser = ref.read(currentUserProvider);
                     final settings = ref.read(settingsProvider);
@@ -1192,6 +1248,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                     if (currentUser == null) return;
 
+                    final ok = await _resolveRuleViolations();
+                    if (!ok) return;
+                    // Refresh in case the cashier just attached a table /
+                    // waiter / customer via the inline fix dialog.
+                    currentOrder = ref.read(orderProvider);
+
+                    setState(() => _isSavingOrder = true);
                     try {
                       int orderId;
                       if (currentOrder.isSaved()) {
@@ -1282,6 +1345,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           'Error: $e',
                         );
                       }
+                    } finally {
+                      if (mounted) {
+                        setState(() => _isSavingOrder = false);
+                      }
                     }
                   },
           );
@@ -1304,7 +1371,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
   /// Pay directly with a single ticket (no dialog)
   Future<void> _payDirectly() async {
-    final currentOrder = ref.read(orderProvider);
+    if (_isSavingOrder) return;
+    var currentOrder = ref.read(orderProvider);
     final orderRepo = ref.read(orderRepositoryProvider);
     final currentUser = ref.read(currentUserProvider);
     final settings = ref.read(settingsProvider);
@@ -1314,7 +1382,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final prefs = ref.read(sharedPreferencesProvider);
 
     if (currentUser == null) return;
-    
+
     // Validate order has items
     if (currentOrder.items.isEmpty) {
       if (mounted) {
@@ -1327,6 +1395,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       return;
     }
 
+    final ok = await _resolveRuleViolations();
+    if (!ok) return;
+    currentOrder = ref.read(orderProvider);
+
+    setState(() => _isSavingOrder = true);
     try {
       int orderId;
       // Save or update order first
@@ -1469,6 +1542,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         final paidStatus = settings.paidOrderDefaultStatus;
         await orderRepo.updateOrderStatus(orderId, paidStatus, queueSyncOperation: false);
 
+        // Optional: free the table now that the whole order is paid.
+        if (settings.autoClearTableAfterPaying &&
+            currentOrder.tableId != null) {
+          try {
+            await orderRepo.clearTableOrder(currentOrder.tableId!);
+            ref.invalidate(areaTablesProvider);
+          } catch (e) {
+            _logger.error('Auto-clear table failed: $e');
+          }
+        }
+
         // Auto-sync if online
         final isOnline = ref.read(lastKnownOnlineStatusProvider);
         if (isOnline) {
@@ -1501,18 +1585,28 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           'Payment failed: $e',
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() => _isSavingOrder = false);
+      }
     }
   }
 
   /// Show payment dialog for split payment
   Future<void> _showPaymentDialog() async {
-    final currentOrder = ref.read(orderProvider);
+    if (_isSavingOrder) return;
+    var currentOrder = ref.read(orderProvider);
     final orderRepo = ref.read(orderRepositoryProvider);
     final currentUser = ref.read(currentUserProvider);
     final settings = ref.read(settingsProvider);
 
     if (currentUser == null) return;
 
+    final ok = await _resolveRuleViolations();
+    if (!ok) return;
+    currentOrder = ref.read(orderProvider);
+
+    setState(() => _isSavingOrder = true);
     try {
       int orderId;
       // Save or update order first
@@ -1570,9 +1664,172 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           'Error: $e',
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() => _isSavingOrder = false);
+      }
     }
   }
 
+  /// Walk the cashier through any rule violations by **directly opening the
+  /// matching sub-dialog** (table / waiter / customer / address) — no
+  /// intermediate "missing required field" alert. After each pick we
+  /// re-validate; we bail out only if the cashier cancels a picker without
+  /// supplying a value, so they never get trapped in an infinite re-prompt.
+  Future<bool> _resolveRuleViolations() async {
+    final settings = ref.read(settingsProvider);
+    while (true) {
+      final order = ref.read(orderProvider);
+      final violation = validateOrderRules(order, settings);
+      if (violation == null) return true;
+      final picked = await _runRuleFix(violation.fix);
+      if (!picked) return false; // cancelled the picker — abort save/pay
+    }
+  }
+
+  /// Opens the fix dialog for [fix] and returns `true` only if the cashier
+  /// actually picked / typed a value. Closing the picker without a selection
+  /// returns `false`, which lets the outer loop bail out instead of looping
+  /// forever on the same violated rule.
+  Future<bool> _runRuleFix(OrderRuleFix fix) {
+    switch (fix) {
+      case OrderRuleFix.setTable:
+        return _openTablePickerForFix();
+      case OrderRuleFix.setWaiter:
+        return _openWaiterPickerForFix();
+      case OrderRuleFix.setCustomer:
+        return _openCustomerPickerForFix();
+      case OrderRuleFix.setDeliveryAddress:
+        return _runDeliveryAddressFix();
+    }
+  }
+
+  Future<bool> _openTablePickerForFix() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => const TableSelectionDialog(),
+    );
+    if (result == null || result['id'] == null) return false;
+    final tableId = result['id'] as int;
+    final tableName = result['name'] as String;
+    final existingOrder = result['existingOrder'] as CurrentOrder?;
+
+    if (existingOrder != null) {
+      // Reuse the same conflict prompt the normal table-pick flow uses.
+      final hasItems = ref.read(orderProvider).items.isNotEmpty;
+      if (hasItems && context.mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        final confirmed = await _confirmDiscardCurrentForTableOrder(
+          context,
+          tableName: tableName,
+          existingOrder: existingOrder,
+          l10n: l10n,
+        );
+        if (confirmed != true) return false;
+      }
+      ref.read(orderProvider.notifier).loadOrder(existingOrder);
+    } else {
+      final hasItems = ref.read(orderProvider).items.isNotEmpty;
+      if (hasItems) {
+        ref.read(orderProvider.notifier).updateTable(tableId, tableName);
+      } else {
+        ref.read(orderProvider.notifier).setTable(tableId, tableName);
+      }
+      ref.read(orderProvider.notifier).setOrderType('DINE_IN');
+    }
+    return true;
+  }
+
+  Future<bool> _openWaiterPickerForFix() async {
+    final currentOrder = ref.read(orderProvider);
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => WaiterSelectionDialog(
+        currentTableId: currentOrder.tableId,
+        currentWaiterId: currentOrder.waiterId,
+      ),
+    );
+    if (result == null) return false;
+    if (result['action'] == 'select') {
+      ref.read(orderProvider.notifier).setWaiter(
+            result['waiterId'],
+            result['waiterName'],
+          );
+      return true;
+    }
+    return false;
+  }
+
+  Future<bool> _openCustomerPickerForFix() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => const CustomerSelectionDialog(),
+    );
+    if (result == null || result['id'] == null) return false;
+    ref.read(orderProvider.notifier).setCustomer(
+          result['id'],
+          result['name'],
+          customerPhone: result['phone'],
+        );
+    return true;
+  }
+
+  /// Wrap [_showDeliveryAddressDialog] to report whether the cashier saved a
+  /// non-empty address. The existing method only mutates state on Save, so we
+  /// snapshot the address before and after to detect a real change.
+  Future<bool> _runDeliveryAddressFix() async {
+    final before = ref.read(orderProvider).deliveryAddress ?? '';
+    await _showDeliveryAddressDialog(context);
+    final after = ref.read(orderProvider).deliveryAddress ?? '';
+    return after.trim().isNotEmpty && after != before
+        ? true
+        : after.trim().isNotEmpty;
+  }
+
+  /// Prompt the cashier before throwing away their current cart to load a
+  /// table's existing order. Returns `true` only if the user confirms.
+  Future<bool?> _confirmDiscardCurrentForTableOrder(
+    BuildContext context, {
+    required String tableName,
+    required CurrentOrder existingOrder,
+    required AppLocalizations l10n,
+  }) {
+    final code = existingOrder.orderCode ??
+        (existingOrder.orderId != null ? '#${existingOrder.orderId}' : '?');
+    final body = l10n
+        .translate('table_has_open_order_body')
+        .replaceAll('{table}', tableName)
+        .replaceAll('{code}', code)
+        .replaceAll('{count}', '${existingOrder.items.length}');
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber, color: Colors.orange),
+            const SizedBox(width: 8),
+            Expanded(
+                child: Text(l10n.translate('table_has_open_order_title'))),
+          ],
+        ),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(l10n.translate('continue_with_table_order')),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // Dialog for selecting number of persons

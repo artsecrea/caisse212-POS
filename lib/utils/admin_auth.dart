@@ -7,7 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database/app_database.dart';
 import '../providers/admin_elevation_provider.dart';
 import '../providers/database_providers.dart';
+import '../providers/user_provider.dart';
 import 'app_localizations.dart';
+import 'user_display.dart';
 
 /// Verifies admin credentials against the local user database.
 ///
@@ -26,36 +28,44 @@ Future<AdminElevation?> verifyAdminCredentials(
   required String username,
   required String password,
 }) async {
-  final trimmedUser = username.trim();
-  final trimmedPw = password;
-  if (trimmedUser.isEmpty || trimmedPw.isEmpty) return null;
-
-  // Find any user with this username — then check it's an admin.
-  final user = await (db.select(db.users)
-        ..where((u) => u.username.equals(trimmedUser))
-        ..limit(1))
-      .getSingleOrNull();
-  if (user == null) return null;
-  if (user.type.toLowerCase() != 'admin') return null;
-
-  // 1) bcrypt against the synced/DB password.
+  // Defensive: this runs on any text the user types, including weird inputs
+  // that have historically broken BCrypt / drift queries. Treat *any* failure
+  // as "invalid credentials" rather than letting it bubble into a red screen.
   try {
-    if (BCrypt.checkpw(trimmedPw, user.password)) {
-      return AdminElevation(adminId: user.id, adminUsername: user.username);
-    }
-  } catch (_) {}
+    final trimmedUser = username.trim();
+    final trimmedPw = password;
+    if (trimmedUser.isEmpty || trimmedPw.isEmpty) return null;
 
-  // 2) bcrypt against the per-device custom hash.
-  final customHash = prefs.getString('custom_password_${user.id}');
-  if (customHash != null && customHash.isNotEmpty) {
+    // Find any user with this username — then check it's an admin.
+    final user = await (db.select(db.users)
+          ..where((u) => u.username.equals(trimmedUser))
+          ..limit(1))
+        .getSingleOrNull();
+    if (user == null) return null;
+    if (user.type.toLowerCase() != 'admin') return null;
+
+    // 1) bcrypt against the synced/DB password.
     try {
-      if (BCrypt.checkpw(trimmedPw, customHash)) {
+      if (BCrypt.checkpw(trimmedPw, user.password)) {
         return AdminElevation(adminId: user.id, adminUsername: user.username);
       }
-    } catch (_) {}
-  }
+    } catch (_) {/* malformed hash — fall through */}
 
-  return null;
+    // 2) bcrypt against the per-device custom hash.
+    final customHash = prefs.getString('custom_password_${user.id}');
+    if (customHash != null && customHash.isNotEmpty) {
+      try {
+        if (BCrypt.checkpw(trimmedPw, customHash)) {
+          return AdminElevation(adminId: user.id, adminUsername: user.username);
+        }
+      } catch (_) {/* malformed hash — fall through */}
+    }
+
+    return null;
+  } catch (e, st) {
+    debugPrint('verifyAdminCredentials failed: $e\n$st');
+    return null;
+  }
 }
 
 /// Show a modal that asks for an admin username + password and verifies them.
@@ -76,43 +86,74 @@ Future<AdminElevation?> showAdminCredentialDialog(
   Color? confirmColor,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final usernameCtrl = TextEditingController();
   final passwordCtrl = TextEditingController();
   bool obscure = true;
   String? errorMessage;
   bool busy = false;
   AdminElevation? result;
 
+  // Load the admin pool once up front. The dropdown auto-selects when there
+  // is exactly one admin, so the cashier only types a password in that case.
+  List<User> admins = const [];
+  try {
+    admins = await ref.read(userRepositoryProvider).getUsersByType('admin');
+  } catch (e, st) {
+    debugPrint('Admin user list load failed: $e\n$st');
+  }
+  int? selectedUserId =
+      admins.length == 1 ? admins.first.id : null;
+
+  if (!context.mounted) return null;
   await showDialog<void>(
     context: context,
     barrierDismissible: false,
     builder: (ctx) {
       return StatefulBuilder(
         builder: (ctx, setLocal) {
+          final selectedUser = selectedUserId == null
+              ? null
+              : admins.firstWhere(
+                  (u) => u.id == selectedUserId,
+                  orElse: () => admins.first,
+                );
+
           Future<void> trySubmit() async {
             if (busy) return;
+            if (selectedUser == null) return;
             setLocal(() {
               busy = true;
               errorMessage = null;
             });
-            final db = ref.read(databaseProvider);
-            final prefs = ref.read(sharedPreferencesProvider);
-            final r = await verifyAdminCredentials(
-              db,
-              prefs,
-              username: usernameCtrl.text,
-              password: passwordCtrl.text,
-            );
+            AdminElevation? r;
+            try {
+              final db = ref.read(databaseProvider);
+              final prefs = ref.read(sharedPreferencesProvider);
+              r = await verifyAdminCredentials(
+                db,
+                prefs,
+                username: selectedUser.username,
+                password: passwordCtrl.text,
+              );
+            } catch (e, st) {
+              debugPrint('Admin verify error: $e\n$st');
+              r = null;
+            }
             if (r == null) {
-              setLocal(() {
-                busy = false;
-                errorMessage = l10n.translate('invalid_admin_credentials');
-              });
+              if (ctx.mounted) {
+                setLocal(() {
+                  busy = false;
+                  errorMessage = l10n.translate('invalid_admin_credentials');
+                });
+              }
               return;
             }
             result = r;
+            FocusManager.instance.primaryFocus?.unfocus();
             if (ctx.mounted) Navigator.of(ctx).pop();
           }
+
+          final noAdmins = admins.isEmpty;
+          final dropdownDisabled = noAdmins || admins.length == 1;
 
           return AlertDialog(
             title: Row(
@@ -133,14 +174,52 @@ Future<AdminElevation?> showAdminCredentialDialog(
                     style: const TextStyle(fontSize: 13, color: Colors.grey),
                   ),
                   const SizedBox(height: 16),
-                  OnscreenKeyboardTextField(
-                    controller: usernameCtrl,
-                    decoration: InputDecoration(
-                      labelText: l10n.translate('admin_username'),
-                      prefixIcon: const Icon(Icons.person_outline),
-                      border: const OutlineInputBorder(),
+                  if (noAdmins)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: Colors.red.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.warning_amber,
+                              color: Colors.red, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              l10n.translate('no_admin_users'),
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    DropdownButtonFormField<int>(
+                      initialValue: selectedUserId,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: l10n.translate('admin_username'),
+                        prefixIcon: const Icon(Icons.person_outline),
+                        border: const OutlineInputBorder(),
+                      ),
+                      items: admins
+                          .map((u) => DropdownMenuItem<int>(
+                                value: u.id,
+                                child: Text(
+                                  u.displayLabel,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ))
+                          .toList(),
+                      onChanged: dropdownDisabled || busy
+                          ? null
+                          : (v) => setLocal(() => selectedUserId = v),
                     ),
-                  ),
                   const SizedBox(height: 12),
                   OnscreenKeyboardTextField(
                     controller: passwordCtrl,
@@ -169,11 +248,18 @@ Future<AdminElevation?> showAdminCredentialDialog(
             ),
             actions: [
               TextButton(
-                onPressed: busy ? null : () => Navigator.of(ctx).pop(),
+                onPressed: busy
+                    ? null
+                    : () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        Navigator.of(ctx).pop();
+                      },
                 child: Text(l10n.translate('cancel')),
               ),
               ElevatedButton(
-                onPressed: busy ? null : trySubmit,
+                onPressed: (busy || noAdmins || selectedUser == null)
+                    ? null
+                    : trySubmit,
                 style: confirmColor != null
                     ? ElevatedButton.styleFrom(
                         backgroundColor: confirmColor,
@@ -189,7 +275,6 @@ Future<AdminElevation?> showAdminCredentialDialog(
     },
   );
 
-  usernameCtrl.dispose();
   passwordCtrl.dispose();
   return result;
 }

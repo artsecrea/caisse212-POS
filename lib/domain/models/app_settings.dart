@@ -54,6 +54,17 @@ class AppSettings {
   // Customer Display settings
   final bool enableCustomerDisplay; // Enable/disable customer-facing second screen
 
+  // Order validation rules — admin-configurable gates that block save/pay
+  // until the required field is filled. Default OFF preserves legacy behavior.
+  final bool requireTableForDineIn;
+  final bool requireWaiterForDineIn;
+  final bool requireCustomerForDelivery;
+  final bool requireDeliveryAddress;
+
+  /// When enabled, the table assignment is cleared as soon as every product
+  /// on the order is marked PAID. Default OFF.
+  final bool autoClearTableAfterPaying;
+
   // Payment settings
   final String defaultPaymentMethod; // Default payment method: 'CASH', 'CARD', 'MOBILE', 'OTHER'
 
@@ -121,6 +132,11 @@ class AppSettings {
     this.autoStartServer = true,
     this.enableSnackBars = false,
     this.enableCustomerDisplay = false,
+    this.requireTableForDineIn = false,
+    this.requireWaiterForDineIn = false,
+    this.requireCustomerForDelivery = false,
+    this.requireDeliveryAddress = false,
+    this.autoClearTableAfterPaying = false,
     this.defaultPaymentMethod = 'CASH',
     this.agendaTimeStep = 60,
     this.showOnscreenKeyboard = true,
@@ -166,6 +182,11 @@ class AppSettings {
     bool? autoStartServer,
     bool? enableSnackBars,
     bool? enableCustomerDisplay,
+    bool? requireTableForDineIn,
+    bool? requireWaiterForDineIn,
+    bool? requireCustomerForDelivery,
+    bool? requireDeliveryAddress,
+    bool? autoClearTableAfterPaying,
     String? defaultPaymentMethod,
     int? agendaTimeStep,
     bool? showOnscreenKeyboard,
@@ -211,6 +232,16 @@ class AppSettings {
       autoStartServer: autoStartServer ?? this.autoStartServer,
       enableSnackBars: enableSnackBars ?? this.enableSnackBars,
       enableCustomerDisplay: enableCustomerDisplay ?? this.enableCustomerDisplay,
+      requireTableForDineIn:
+          requireTableForDineIn ?? this.requireTableForDineIn,
+      requireWaiterForDineIn:
+          requireWaiterForDineIn ?? this.requireWaiterForDineIn,
+      requireCustomerForDelivery:
+          requireCustomerForDelivery ?? this.requireCustomerForDelivery,
+      requireDeliveryAddress:
+          requireDeliveryAddress ?? this.requireDeliveryAddress,
+      autoClearTableAfterPaying:
+          autoClearTableAfterPaying ?? this.autoClearTableAfterPaying,
       defaultPaymentMethod: defaultPaymentMethod ?? this.defaultPaymentMethod,
       agendaTimeStep: agendaTimeStep ?? this.agendaTimeStep,
       showOnscreenKeyboard: showOnscreenKeyboard ?? this.showOnscreenKeyboard,
@@ -258,6 +289,11 @@ class AppSettings {
       'autoStartServer': autoStartServer,
       'enableSnackBars': enableSnackBars,
       'enableCustomerDisplay': enableCustomerDisplay,
+      'requireTableForDineIn': requireTableForDineIn,
+      'requireWaiterForDineIn': requireWaiterForDineIn,
+      'requireCustomerForDelivery': requireCustomerForDelivery,
+      'requireDeliveryAddress': requireDeliveryAddress,
+      'autoClearTableAfterPaying': autoClearTableAfterPaying,
       'defaultPaymentMethod': defaultPaymentMethod,
       'agendaTimeStep': agendaTimeStep,
       'showOnscreenKeyboard': showOnscreenKeyboard,
@@ -325,6 +361,16 @@ class AppSettings {
       autoStartServer: json['autoStartServer'] as bool? ?? true,
       enableSnackBars: json['enableSnackBars'] as bool? ?? true,
       enableCustomerDisplay: json['enableCustomerDisplay'] as bool? ?? false,
+      requireTableForDineIn:
+          json['requireTableForDineIn'] as bool? ?? false,
+      requireWaiterForDineIn:
+          json['requireWaiterForDineIn'] as bool? ?? false,
+      requireCustomerForDelivery:
+          json['requireCustomerForDelivery'] as bool? ?? false,
+      requireDeliveryAddress:
+          json['requireDeliveryAddress'] as bool? ?? false,
+      autoClearTableAfterPaying:
+          json['autoClearTableAfterPaying'] as bool? ?? false,
       defaultPaymentMethod: json['defaultPaymentMethod'] as String? ?? 'CASH',
       agendaTimeStep: json['agendaTimeStep'] as int? ?? 60,
       showOnscreenKeyboard: json['showOnscreenKeyboard'] as bool? ?? true,

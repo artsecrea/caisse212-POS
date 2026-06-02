@@ -13,10 +13,14 @@ class UserRepository {
     return await _database.select(_database.users).get();
   }
 
-  // Get users by type
+  // Get users by type. Case-tolerant: the DB may store the user type in any
+  // casing ("Admin", "ADMIN", "admin"…) depending on which seed/sync ran,
+  // and the rest of the codebase normalises via `.toLowerCase()` — so this
+  // method matches that convention with a `LOWER(type) = ?` predicate.
   Future<List<User>> getUsersByType(String type) async {
+    final needle = type.toLowerCase();
     return await (_database.select(_database.users)
-          ..where((tbl) => tbl.type.equals(type)))
+          ..where((tbl) => tbl.type.lower().equals(needle)))
         .get();
   }
 

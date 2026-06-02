@@ -1,5 +1,6 @@
-import '../data/database/app_database.dart';
 import 'package:drift/drift.dart';
+import '../data/database/app_database.dart';
+import '../utils/user_display.dart';
 
 /// Model for session summary data
 class SessionSummaryReport {
@@ -24,6 +25,11 @@ class SessionSummaryReport {
   final double paidByOther;
   final int cancelledTickets;
   final double cancelledAmount;
+  // Z-report fields (null when the session was closed without a cash count).
+  final double? countedCash;
+  final double? variance;
+  final DateTime? countedAt;
+  final String? countNotes;
 
   SessionSummaryReport({
     required this.sessionId,
@@ -47,6 +53,10 @@ class SessionSummaryReport {
     required this.paidByOther,
     this.cancelledTickets = 0,
     this.cancelledAmount = 0,
+    this.countedCash,
+    this.variance,
+    this.countedAt,
+    this.countNotes,
   });
 
   double get totalPaid => paidByCash + paidByCard + paidByPhone + paidByOther;
@@ -313,7 +323,7 @@ class DailySummaryService {
       sessionId: session.id,
       sessionCode: session.code,
       cashierId: session.cashierId,
-      cashierName: user != null ? '${user.firstName} ${user.lastName}' : null,
+      cashierName: user?.displayLabel,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
       status: session.status,
@@ -331,6 +341,31 @@ class DailySummaryService {
       paidByOther: paidByOther,
       cancelledTickets: cancelledTicketCount,
       cancelledAmount: cancelledAmount,
+      countedCash: session.countedCash,
+      variance: session.variance,
+      countedAt: session.countedAt,
+      countNotes: session.countNotes,
+    );
+  }
+
+  /// Produce a single-session report — the data shape used for a Z-report.
+  /// Reuses [generateReport] verbatim so totals/payments/unpaid math stays in
+  /// one place. The returned [DailySummaryReport] has `sessions.length == 1`,
+  /// which is what `printDailySummaryReport` checks to decide whether to print
+  /// the variance block at the bottom.
+  Future<DailySummaryReport> generateSessionReport(int sessionId) async {
+    final session = await (_db.select(_db.cashSessions)
+          ..where((s) => s.id.equals(sessionId)))
+        .getSingleOrNull();
+    if (session == null) {
+      throw Exception('Session $sessionId not found');
+    }
+    final start = session.startedAt;
+    final end = session.endedAt ?? DateTime.now();
+    return generateReport(
+      startDate: start,
+      endDate: end,
+      sessionIds: [sessionId],
     );
   }
 }

@@ -70,7 +70,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration {
@@ -258,6 +258,40 @@ class AppDatabase extends _$AppDatabase {
           // Add delivery address to orders.
           try {
             await customStatement('ALTER TABLE orders ADD COLUMN address TEXT;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 14) {
+          // Z-report / cash-count columns on cash_sessions.
+          try {
+            await customStatement(
+                'ALTER TABLE cash_sessions ADD COLUMN counted_cash REAL;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+                'ALTER TABLE cash_sessions ADD COLUMN variance REAL;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+                'ALTER TABLE cash_sessions ADD COLUMN counted_at DATETIME;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+                'ALTER TABLE cash_sessions ADD COLUMN count_notes TEXT;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 15) {
+          // Explicit indexes for fast user lookups (admin-credential dialog
+          // and any type-filtered fetch). username already has an implicit
+          // unique index; we restate it for clarity + speedup on type.
+          try {
+            await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);',
+            );
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_users_type ON users(type);',
+            );
           } catch (e) {/* may already exist */}
         }
       },

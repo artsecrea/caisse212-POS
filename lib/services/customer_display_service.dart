@@ -371,7 +371,7 @@ body {
 .item-name { font-size: 16px; font-weight: 500; }
 .item-comp { font-size: 12px; color: $subtextColor; margin-top: 4px; }
 .item-note { font-size: 12px; font-style: italic; color: $subtextColor; margin-top: 4px; }
-.item-price { font-size: 16px; font-weight: 600; text-align: end; flex-shrink: 0; }
+.item-price { font-size: 16px; font-weight: 600; text-align: end; flex-shrink: 0; min-width: 0; white-space: nowrap; }
 .summary {
   background: $cardColor;
   border-radius: 16px;
@@ -418,6 +418,74 @@ body {
 .discount-row span { color: #E17055 !important; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .fade-in { animation: fadeIn 0.4s ease; }
+
+/* === Responsive: tablets & big phones in portrait === */
+@media (max-width: 720px) {
+  .container { padding: 14px; gap: 10px; }
+  .header { padding: 12px 14px; flex-direction: column; align-items: stretch; gap: 8px; }
+  .header-left { gap: 12px; }
+  .header-icon { font-size: 24px; }
+  .header-title { font-size: 18px; }
+  .header-code { font-size: 12px; }
+  .order-type { padding: 6px 12px; font-size: 12px; align-self: flex-start; }
+  .items-header { padding: 10px 12px; font-size: 12px; }
+  .item { padding: 8px 12px; }
+  .item-qty, .col-qty { width: 36px; }
+  .item-qty span { min-width: 28px; font-size: 14px; padding: 3px 6px; }
+  .item-details { margin: 0 10px; }
+  .item-name { font-size: 14px; }
+  .item-comp, .item-note { font-size: 11px; }
+  .item-price, .col-price { min-width: 68px; font-size: 14px; }
+  .summary { padding: 14px; }
+  .summary-row { font-size: 14px; }
+  .total-box { padding: 12px 14px; }
+  .total-label { font-size: 18px; }
+  .total-value { font-size: 22px; }
+  .welcome { gap: 14px; }
+  .welcome-icon { font-size: 80px; }
+  .welcome-title { font-size: 28px; letter-spacing: 0.6px; }
+  .welcome-sub { font-size: 14px; }
+}
+
+/* === Responsive: phones in portrait / split-screen === */
+@media (max-width: 420px) {
+  .container { padding: 10px; gap: 8px; }
+  .header { padding: 10px 12px; gap: 6px; }
+  .header-left { gap: 10px; }
+  .header-icon { font-size: 22px; }
+  .header-title { font-size: 16px; }
+  .header-code { font-size: 11px; }
+  .order-type { padding: 4px 10px; font-size: 11px; }
+  .items-header { padding: 8px 10px; font-size: 11px; }
+  .item { padding: 8px 10px; }
+  .item-qty, .col-qty { width: 30px; }
+  .item-qty span { min-width: 28px; font-size: 12px; padding: 2px 5px; }
+  .item-details { margin: 0 8px; }
+  .item-name { font-size: 13px; }
+  .item-comp, .item-note { font-size: 10px; }
+  .item-price, .col-price { min-width: 56px; font-size: 13px; }
+  .summary { padding: 12px; }
+  .summary-row { font-size: 13px; }
+  .summary-divider { margin: 8px 0; }
+  .total-box { padding: 10px 12px; }
+  .total-label { font-size: 16px; }
+  .total-value { font-size: 20px; }
+  .welcome-icon { font-size: 56px; }
+  .welcome-title { font-size: 22px; letter-spacing: 0.4px; }
+  .welcome-sub { font-size: 12px; }
+}
+
+/* === Responsive: landscape phones — trim vertical space only === */
+@media (max-height: 480px) {
+  .container { padding-top: 10px; padding-bottom: 10px; gap: 8px; }
+  .header { padding-top: 10px; padding-bottom: 10px; }
+  .summary { padding-top: 10px; padding-bottom: 10px; }
+  .total-box { padding-top: 8px; padding-bottom: 8px; }
+  .welcome { gap: 12px; }
+  .welcome-icon { font-size: 56px; }
+  .welcome-title { font-size: 24px; }
+  .welcome-sub { font-size: 13px; }
+}
 </style>
 </head>
 <body>

@@ -1186,6 +1186,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             child: Icon(Icons.lock, size: 18, color: disabledColor),
           ),
         ] else ...[
+          // Bumped tap targets to 48×48 (Material touch-target spec) — the
+          // previous EdgeInsets.zero + empty constraints shrank these to the
+          // icon's intrinsic 30px, which is fiddly on a touchscreen.
           IconButton(
             onPressed: _quantity > 1
                 ? () => setState(() {
@@ -1198,25 +1201,25 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               color: _quantity > 1
                   ? Theme.of(context).colorScheme.error
                   : disabledColor,
-              size: 30,
+              size: 34,
             ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
+            iconSize: 34,
+            visualDensity: VisualDensity.comfortable,
           ),
           SizedBox(
-            width: 70,
+            width: 80,
             child: OnscreenKeyboardTextField(
               controller: _quantityController,
               keyboardType: TextInputType.number,
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 20,
                 fontWeight: FontWeight.bold,
                 color: onSurface,
               ),
               decoration: InputDecoration(
                 contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                 border:
                     OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                 isDense: true,
@@ -1235,9 +1238,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               _quantityController.text = _quantity.toString();
             }),
             icon: Icon(Icons.add_circle,
-                color: Theme.of(context).primaryColor, size: 30),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
+                color: Theme.of(context).primaryColor, size: 34),
+            iconSize: 34,
+            visualDensity: VisualDensity.comfortable,
           ),
         ],
       ],
@@ -1311,132 +1314,136 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         // Pre-compute compatible values for each attribute using variant data
         final variantsData = variantsAsync?.valueOrNull ?? [];
 
+        final theme = Theme.of(context);
+        // Cap how much vertical space the variant block can claim so a product
+        // with many attributes/values can't push the body (components, etc.)
+        // off-screen. Past the cap the section scrolls internally.
+        final dialogMaxH = MediaQuery.of(context).size.height * 0.9;
+        final variantMaxH = (dialogMaxH * 0.45).clamp(180.0, 360.0);
+
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-            border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+            border: Border(bottom: BorderSide(color: theme.dividerColor)),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: variantMaxH),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.style, size: 18, color: Theme.of(context).colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Text(
-                    l10n.translate('select_variant'),
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                  if (_selectedVariant == null) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.error.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        l10n.translate('required'),
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(context).colorScheme.error,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 10),
-              ...attributes.map<Widget>((attr) {
-                final attributeId = attr['attributeId'] as int;
-                final attributeName = attr['attributeName'] as String;
-                final values = attr['values'] as List<Map<String, dynamic>>;
-                final selectedValue = _selectedAttributeValues[attributeId];
-
-                // Compute which values are compatible given current selections
-                final compatibleIds = variantsData.isNotEmpty
-                    ? _getCompatibleValueIds(attributeId, variantsData)
-                    : values.map((v) => v['valueId'] as int).toSet();
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  // Title row uses Wrap so the "required" badge drops to a new
+                  // line on narrow widths instead of overflowing the dialog.
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Text(
-                        attributeName,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.style,
+                              size: 20, color: theme.colorScheme.primary),
+                          const SizedBox(width: 6),
+                          Text(
+                            l10n.translate('select_variant'),
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 6),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: values.map((v) {
-                            final valueId = v['valueId'] as int;
-                            final valueName = v['value'] as String;
-                            final isSelected = selectedValue == valueId;
-                            final isCompatible = compatibleIds.contains(valueId);
+                      if (_selectedVariant == null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.error.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            l10n.translate('required'),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: theme.colorScheme.error,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ...attributes.map<Widget>((attr) {
+                    final attributeId = attr['attributeId'] as int;
+                    final attributeName = attr['attributeName'] as String;
+                    final values = attr['values'] as List<Map<String, dynamic>>;
+                    final selectedValue =
+                        _selectedAttributeValues[attributeId];
 
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text(valueName),
+                    final compatibleIds = variantsData.isNotEmpty
+                        ? _getCompatibleValueIds(attributeId, variantsData)
+                        : values.map((v) => v['valueId'] as int).toSet();
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            attributeName,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.8),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          // Wrap (vs horizontal scroll) lets all values stay
+                          // visible without needing a swipe gesture, which
+                          // is the touch-screen win.
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: values.map((v) {
+                              final valueId = v['valueId'] as int;
+                              final valueName = v['value'] as String;
+                              final isSelected = selectedValue == valueId;
+                              final isCompatible =
+                                  compatibleIds.contains(valueId);
+
+                              return _VariantValueChip(
+                                label: valueName,
                                 selected: isSelected,
-                                onSelected: isCompatible
-                                    ? (_) {
-                                        setState(() => _selectedAttributeValues[attributeId] = valueId);
+                                compatible: isCompatible,
+                                onTap: isCompatible
+                                    ? () {
+                                        setState(() =>
+                                            _selectedAttributeValues[
+                                                attributeId] = valueId);
                                         _updateSelectedVariant(variantsAsync!);
                                       }
                                     : null,
-                                selectedColor: Theme.of(context).colorScheme.primaryContainer,
-                                disabledColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                                labelStyle: TextStyle(
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                  color: !isCompatible
-                                      ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3)
-                                      : isSelected
-                                          ? Theme.of(context).colorScheme.onPrimaryContainer
-                                          : Theme.of(context).colorScheme.onSurface,
-                                  decoration: !isCompatible ? TextDecoration.lineThrough : null,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  side: BorderSide(
-                                    color: !isCompatible
-                                        ? Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)
-                                        : isSelected
-                                            ? Theme.of(context).colorScheme.primary
-                                            : Theme.of(context).colorScheme.outline.withValues(alpha: 0.5),
-                                  ),
-                                ),
-                                showCheckmark: false,
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            );
-                          }).toList(),
-                        ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              }),
-            ],
+                    );
+                  }),
+                ],
+              ),
+            ),
           ),
         );
       },
-      loading: () =>
-      const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator())),
+      loading: () => const Padding(
+          padding: EdgeInsets.all(16),
+          child: Center(child: CircularProgressIndicator())),
       error: (_, __) => const SizedBox.shrink(),
     );
   }
@@ -1740,5 +1747,79 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       ),
     );
   }
+}
 
+/// Large, finger-friendly choice button for a variant attribute value.
+/// Replaces the old Material `ChoiceChip` (which was too small for touch and
+/// forced a horizontal scroll); these wrap naturally in a [Wrap].
+class _VariantValueChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final bool compatible;
+  final VoidCallback? onTap;
+
+  const _VariantValueChip({
+    required this.label,
+    required this.selected,
+    required this.compatible,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final Color borderColor;
+    final Color bgColor;
+    final Color fgColor;
+    if (!compatible) {
+      borderColor = theme.colorScheme.outline.withValues(alpha: 0.25);
+      bgColor = theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4);
+      fgColor = theme.colorScheme.onSurface.withValues(alpha: 0.35);
+    } else if (selected) {
+      borderColor = theme.colorScheme.primary;
+      bgColor = theme.colorScheme.primaryContainer;
+      fgColor = theme.colorScheme.onPrimaryContainer;
+    } else {
+      borderColor = theme.colorScheme.outline.withValues(alpha: 0.5);
+      bgColor = theme.colorScheme.surface;
+      fgColor = theme.colorScheme.onSurface;
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 64),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: borderColor, width: selected ? 2 : 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (selected) ...[
+                Icon(Icons.check_circle, size: 18, color: fgColor),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: fgColor,
+                  decoration:
+                      compatible ? null : TextDecoration.lineThrough,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

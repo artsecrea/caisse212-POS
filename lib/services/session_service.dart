@@ -63,10 +63,18 @@ class SessionService {
       .getSingle();
   }
 
-  /// End a cash session - calculates money at end from tickets
+  /// End a cash session - calculates money at end from tickets.
+  ///
+  /// If [countedCash] is provided, it represents the physical cash the cashier
+  /// counted in the drawer. We compute `variance = countedCash - expectedCash`
+  /// and store both. `moneyAtEnd` becomes the counted amount (the number an
+  /// accountant cares about); otherwise it falls back to the expected amount,
+  /// preserving the old single-arg behaviour.
   Future<void> endSession({
     required int sessionId,
     bool queueSyncOperation = true,
+    double? countedCash,
+    String? countNotes,
   }) async {
     // Check if session was synced before ending
     final session = await getSessionById(sessionId);
@@ -77,8 +85,11 @@ class SessionService {
 
     // Calculate total cash from session tickets
     final summary = await getSessionSummary(sessionId);
-    final moneyAtEnd = summary.expectedCashAtEnd;
+    final expectedCash = summary.expectedCashAtEnd;
     final endedAt = DateTime.now();
+    final moneyAtEnd = countedCash ?? expectedCash;
+    final variance =
+        countedCash == null ? null : countedCash - expectedCash;
 
     await (_database.update(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(sessionId)))
@@ -87,6 +98,10 @@ class SessionService {
           endedAt: Value(endedAt),
           moneyAtEnd: Value(moneyAtEnd),
           status: const Value('ended'),
+          countedCash: Value(countedCash),
+          variance: Value(variance),
+          countedAt: Value(countedCash == null ? null : endedAt),
+          countNotes: Value(countNotes),
           updatedAt: Value(DateTime.now()),
         ),
       );
@@ -102,6 +117,10 @@ class SessionService {
             'status': 'ended',
             'moneyAtEnd': moneyAtEnd,
             'endedAt': endedAt.toIso8601String(),
+            if (countedCash != null) 'countedCash': countedCash,
+            if (variance != null) 'variance': variance,
+            if (countNotes != null && countNotes.isNotEmpty)
+              'countNotes': countNotes,
           },
         );
         print('Queued update operation for ended session code=${session.code}');

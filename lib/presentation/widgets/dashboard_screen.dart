@@ -332,7 +332,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             const SizedBox(width: 8),
             Text(
               currentUser != null
-                  ? 'Dashboard — ${currentUser.firstName} ${currentUser.lastName}'
+                  ? 'Dashboard — ${currentUser.effectiveDisplayName}'
                   : 'Dashboard',
               style: TextStyle(
                   fontSize: 18,

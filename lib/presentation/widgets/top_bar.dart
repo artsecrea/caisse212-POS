@@ -21,6 +21,7 @@ import '../../utils/responsive_utils.dart';
 import '../settings/settings_screen.dart';
 import '../profile/profile_dialog.dart';
 import 'admin_mode_chip.dart';
+import 'close_session_dialog.dart';
 import 'report_issue_dialog.dart';
 
 class TopBar extends ConsumerStatefulWidget {
@@ -422,8 +423,13 @@ class _TopBarState extends ConsumerState<TopBar> {
         await Future.delayed(const Duration(milliseconds: 500));
         _doLogout();
       } else if (choice == 'end') {
-        // End session
-        await sessionService.endSession(sessionId: session.id);
+        // End session via cash-count + Z-report dialog.
+        final result = await showCloseSessionDialog(
+          context: context,
+          ref: ref,
+          sessionId: session.id,
+        );
+        if (!result.closed) return; // user backed out — keep them logged in
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -749,34 +755,16 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   Future<void> _endCurrentSession(int sessionId) async {
     final l10n = AppLocalizations.of(context);
-    final confirm = await showDialog<bool>(
+    // Cash-count + Z-report dialog. endSession runs inside the dialog flow
+    // so we don't double-call it here.
+    final result = await showCloseSessionDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n?.translate('end_session') ?? 'End Session'),
-        content: Text(
-          l10n?.translate('end_session_confirm_logout') ?? 'Are you sure you want to end this session?\n\nYou will be logged out automatically.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(l10n?.translate('cancel') ?? 'Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text(l10n?.translate('end_session') ?? 'End Session'),
-          ),
-        ],
-      ),
+      ref: ref,
+      sessionId: sessionId,
     );
-
-    if (confirm != true) return;
+    if (!result.closed) return;
 
     try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
-      await sessionService.endSession(sessionId: sessionId);
-
       // Clear current user and session
       ref.read(currentUserProvider.notifier).state = null;
       ref.read(currentSessionProvider.notifier).state = null;

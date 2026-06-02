@@ -12,6 +12,7 @@ import '../../services/api_service.dart';
 import '../../services/pending_operations_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import 'close_session_dialog.dart';
 import 'permission_guard.dart';
 
 class SessionsManagementScreen extends ConsumerStatefulWidget {
@@ -191,33 +192,16 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     final isCurrentUserSession = currentUser != null && session.cashierId == currentUser.id &&
                                   (session.status == 'active' || session.status == 'paused');
 
-    final confirm = await showDialog<bool>(
+    // Cash-count + Z-report dialog. endSession runs inside the dialog flow
+    // so we don't double-call it here.
+    final result = await showCloseSessionDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.translate('end_session_action')),
-        content: Text(
-          isCurrentUserSession
-              ? '${l10n.translate('end_session_question').replaceAll('#{0}', session.code)}\n${l10n.translate('ending_balance_calculated')}\n\n${l10n.translate('will_logout_warning')}'
-              : '${l10n.translate('end_session_question').replaceAll('#{0}', session.code)}\n${l10n.translate('ending_balance_calculated')}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(l10n.translate('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(l10n.translate('end_session_action')),
-          ),
-        ],
-      ),
+      ref: ref,
+      sessionId: session.id,
     );
 
-    if (confirm == true) {
+    if (result.closed) {
       try {
-        final database = ref.read(databaseProvider);
-        final sessionService = SessionService(database);
-        await sessionService.endSession(sessionId: session.id);
         await ref.read(activityLogServiceProvider).logSessionEnd(
               userId: currentUser?.id,
               username: currentUser?.effectiveDisplayName,

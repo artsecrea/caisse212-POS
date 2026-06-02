@@ -641,35 +641,46 @@ Future<void> _handleTableSelection(BuildContext context, WidgetRef ref, db.AreaT
       return;
     }
 
-    // Check if target table has an existing order
+    // Target table already has an open order → don't block. Fall through to
+    // the busy-table result; main_screen will prompt the cashier to confirm
+    // discarding the panel and load that table's order. The saved order on
+    // the source table is left alone.
     if (existingOrder != null) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('table_has_order')),
-            backgroundColor: Colors.red,
-          ),
-        );
+        Navigator.of(context).pop({
+          'id': table.id,
+          'name': table.name,
+          'existingOrder': existingOrder,
+        });
       }
       return;
     }
 
-    // Show confirmation dialog for transfer
+    // Empty target table — offer the cashier a choice: transfer the saved
+    // order across, or just switch to that table and start fresh (the saved
+    // order stays where it is).
     if (context.mounted) {
-      final confirmed = await showDialog<bool>(
+      final choice = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text(l10n.translate('transfer_order')),
+          title: Text(l10n.translate('transfer_or_switch_title')),
           content: Text(
-            '${l10n.translate('transfer_order_confirm')} ${currentOrder.tableName} ${l10n.translate('to')} ${table.name}?',
+            l10n
+                .translate('transfer_or_switch_body')
+                .replaceAll('{oldTable}', currentOrder.tableName ?? '')
+                .replaceAll('{newTable}', table.name),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(context, 'cancel'),
               child: Text(l10n.translate('cancel')),
             ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'switch'),
+              child: Text(l10n.translate('switch_table')),
+            ),
             ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () => Navigator.pop(context, 'transfer'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
@@ -680,12 +691,18 @@ Future<void> _handleTableSelection(BuildContext context, WidgetRef ref, db.AreaT
         ),
       );
 
-      if (confirmed == true && context.mounted) {
+      if (choice == 'transfer' && context.mounted) {
         Navigator.of(context).pop({
           'id': table.id,
           'name': table.name,
           'action': 'transfer',
           'oldTableId': currentOrder.tableId,
+        });
+      } else if (choice == 'switch' && context.mounted) {
+        Navigator.of(context).pop({
+          'id': table.id,
+          'name': table.name,
+          'action': 'switch',
         });
       }
     }

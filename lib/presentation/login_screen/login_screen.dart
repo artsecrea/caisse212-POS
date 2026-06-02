@@ -21,6 +21,7 @@ import '../../services/data_sync_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/button_styles.dart';
+import '../../utils/user_display.dart';
 import '../main_screen/main_screen.dart';
 import '../widgets/report_issue_dialog.dart';
 import '../widgets/update_dialog.dart';
@@ -622,6 +623,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         await ref.read(userRepositoryProvider).updateLastLogin(user.id);
       } catch (_) {}
 
+      // Audit log uses the legal full name; the dropdown above and the
+      // rest of the UI use displayLabel for friendliness.
       final actorName = '${user.firstName} ${user.lastName}'.trim();
       await ref.read(activityLogServiceProvider)
           .logLogin(userId: user.id, username: actorName);
@@ -1158,13 +1161,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           ? Text(l10n.translate('loading_users'))
           : null,
       items: _availableUsers.map((user) {
-        final dn = (user.displayName?.isNotEmpty == true)
-            ? user.displayName!
-            : '${user.firstName} ${user.lastName}'.trim();
-        final label = dn.isNotEmpty ? dn : user.username;
         return DropdownMenuItem<String>(
           value: user.username,
-          child: Text(label),
+          child: Text(user.displayLabel),
         );
       }).toList(),
       onChanged: _availableUsers.isEmpty

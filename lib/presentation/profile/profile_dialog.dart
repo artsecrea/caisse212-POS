@@ -206,7 +206,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${currentUser?.firstName ?? ''} ${currentUser?.lastName ?? ''}',
+                          currentUser?.effectiveDisplayName ?? '',
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,

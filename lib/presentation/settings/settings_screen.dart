@@ -7,6 +7,7 @@ import '../../providers/database_providers.dart';
 import '../widgets/users_management_screen.dart' show kPermissionGroups;
 import '../../domain/models/app_settings.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/permission_descriptions.dart';
 import '../../utils/responsive_utils.dart';
 import '../../services/discovery_service.dart';
 import '../../domain/models/scale_config.dart';
@@ -342,14 +343,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               childrenPadding: const EdgeInsets.symmetric(horizontal: 8),
               children: [
                 for (final token in entry.value)
-                  SwitchListTile(
-                    dense: true,
-                    title: Text(token,
-                        style: const TextStyle(
-                            fontFamily: 'monospace', fontSize: 13)),
-                    value: granted.contains(token),
-                    onChanged: (v) => toggle(token, v),
-                  ),
+                  Builder(builder: (context) {
+                    final desc = describePermission(token, l10n);
+                    return SwitchListTile(
+                      dense: true,
+                      title: Text(desc.title,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: desc.subtitle.isEmpty
+                          ? null
+                          : Text(desc.subtitle,
+                              style: TextStyle(
+                                  fontSize: 12, color: Colors.grey[600])),
+                      value: granted.contains(token),
+                      onChanged: (v) => toggle(token, v),
+                    );
+                  }),
               ],
             ),
           ),
@@ -539,6 +548,58 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           context: context,
           currentMethod: settings.defaultPaymentMethod,
           onChanged: (value) => notifier.setDefaultPaymentMethod(value),
+        ),
+
+        // ── Validation rules ──────────────────────────────────────────────
+        const SizedBox(height: 28),
+        Text(
+          l10n.translate('validation_rules'),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.table_restaurant,
+          title: l10n.translate('rule_require_table_dine_in_title'),
+          subtitle: l10n.translate('rule_require_table_dine_in_subtitle'),
+          value: settings.requireTableForDineIn,
+          onChanged: (v) => notifier.setRequireTableForDineIn(v),
+        ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.room_service,
+          title: l10n.translate('rule_require_waiter_dine_in_title'),
+          subtitle: l10n.translate('rule_require_waiter_dine_in_subtitle'),
+          value: settings.requireWaiterForDineIn,
+          onChanged: (v) => notifier.setRequireWaiterForDineIn(v),
+        ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.person_pin_circle,
+          title: l10n.translate('rule_require_customer_delivery_title'),
+          subtitle: l10n.translate('rule_require_customer_delivery_subtitle'),
+          value: settings.requireCustomerForDelivery,
+          onChanged: (v) => notifier.setRequireCustomerForDelivery(v),
+        ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.location_on,
+          title: l10n.translate('rule_require_delivery_address_title'),
+          subtitle: l10n.translate('rule_require_delivery_address_subtitle'),
+          value: settings.requireDeliveryAddress,
+          onChanged: (v) => notifier.setRequireDeliveryAddress(v),
+        ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.table_restaurant,
+          title: l10n.translate('auto_clear_table_after_paying_title'),
+          subtitle: l10n.translate('auto_clear_table_after_paying_subtitle'),
+          value: settings.autoClearTableAfterPaying,
+          onChanged: (v) => notifier.setAutoClearTableAfterPaying(v),
         ),
       ],
     );

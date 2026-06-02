@@ -112,6 +112,11 @@ class CurrentUser{
     return '$firstName $lastName'.trim();
   }
 
+  /// Legal full name (firstName + lastName). Used by activity log entries so
+  /// the audit trail keeps the legal identity even when the cashier sets a
+  /// nickname via [displayName].
+  String get fullName => '$firstName $lastName'.trim();
+
   static CurrentUser fromUser(db.User user) {
     return CurrentUser(
         user.id,

@@ -12460,6 +12460,50 @@ class $CashSessionsTable extends CashSessions
     requiredDuringInsert: false,
     defaultValue: currentDateAndTime,
   );
+  static const VerificationMeta _countedCashMeta = const VerificationMeta(
+    'countedCash',
+  );
+  @override
+  late final GeneratedColumn<double> countedCash = GeneratedColumn<double>(
+    'counted_cash',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _varianceMeta = const VerificationMeta(
+    'variance',
+  );
+  @override
+  late final GeneratedColumn<double> variance = GeneratedColumn<double>(
+    'variance',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _countedAtMeta = const VerificationMeta(
+    'countedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> countedAt = GeneratedColumn<DateTime>(
+    'counted_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _countNotesMeta = const VerificationMeta(
+    'countNotes',
+  );
+  @override
+  late final GeneratedColumn<String> countNotes = GeneratedColumn<String>(
+    'count_notes',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -12473,6 +12517,10 @@ class $CashSessionsTable extends CashSessions
     status,
     isSynced,
     updatedAt,
+    countedCash,
+    variance,
+    countedAt,
+    countNotes,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -12561,6 +12609,33 @@ class $CashSessionsTable extends CashSessions
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
     }
+    if (data.containsKey('counted_cash')) {
+      context.handle(
+        _countedCashMeta,
+        countedCash.isAcceptableOrUnknown(
+          data['counted_cash']!,
+          _countedCashMeta,
+        ),
+      );
+    }
+    if (data.containsKey('variance')) {
+      context.handle(
+        _varianceMeta,
+        variance.isAcceptableOrUnknown(data['variance']!, _varianceMeta),
+      );
+    }
+    if (data.containsKey('counted_at')) {
+      context.handle(
+        _countedAtMeta,
+        countedAt.isAcceptableOrUnknown(data['counted_at']!, _countedAtMeta),
+      );
+    }
+    if (data.containsKey('count_notes')) {
+      context.handle(
+        _countNotesMeta,
+        countNotes.isAcceptableOrUnknown(data['count_notes']!, _countNotesMeta),
+      );
+    }
     return context;
   }
 
@@ -12614,6 +12689,22 @@ class $CashSessionsTable extends CashSessions
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
       )!,
+      countedCash: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}counted_cash'],
+      ),
+      variance: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}variance'],
+      ),
+      countedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}counted_at'],
+      ),
+      countNotes: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}count_notes'],
+      ),
     );
   }
 
@@ -12635,6 +12726,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
   final String status;
   final bool isSynced;
   final DateTime updatedAt;
+  final double? countedCash;
+  final double? variance;
+  final DateTime? countedAt;
+  final String? countNotes;
   const CashSession({
     required this.id,
     required this.code,
@@ -12647,6 +12742,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     required this.status,
     required this.isSynced,
     required this.updatedAt,
+    this.countedCash,
+    this.variance,
+    this.countedAt,
+    this.countNotes,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -12668,6 +12767,18 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     map['status'] = Variable<String>(status);
     map['is_synced'] = Variable<bool>(isSynced);
     map['updated_at'] = Variable<DateTime>(updatedAt);
+    if (!nullToAbsent || countedCash != null) {
+      map['counted_cash'] = Variable<double>(countedCash);
+    }
+    if (!nullToAbsent || variance != null) {
+      map['variance'] = Variable<double>(variance);
+    }
+    if (!nullToAbsent || countedAt != null) {
+      map['counted_at'] = Variable<DateTime>(countedAt);
+    }
+    if (!nullToAbsent || countNotes != null) {
+      map['count_notes'] = Variable<String>(countNotes);
+    }
     return map;
   }
 
@@ -12690,6 +12801,18 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       status: Value(status),
       isSynced: Value(isSynced),
       updatedAt: Value(updatedAt),
+      countedCash: countedCash == null && nullToAbsent
+          ? const Value.absent()
+          : Value(countedCash),
+      variance: variance == null && nullToAbsent
+          ? const Value.absent()
+          : Value(variance),
+      countedAt: countedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(countedAt),
+      countNotes: countNotes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(countNotes),
     );
   }
 
@@ -12710,6 +12833,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       status: serializer.fromJson<String>(json['status']),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      countedCash: serializer.fromJson<double?>(json['countedCash']),
+      variance: serializer.fromJson<double?>(json['variance']),
+      countedAt: serializer.fromJson<DateTime?>(json['countedAt']),
+      countNotes: serializer.fromJson<String?>(json['countNotes']),
     );
   }
   @override
@@ -12727,6 +12854,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       'status': serializer.toJson<String>(status),
       'isSynced': serializer.toJson<bool>(isSynced),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'countedCash': serializer.toJson<double?>(countedCash),
+      'variance': serializer.toJson<double?>(variance),
+      'countedAt': serializer.toJson<DateTime?>(countedAt),
+      'countNotes': serializer.toJson<String?>(countNotes),
     };
   }
 
@@ -12742,6 +12873,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     String? status,
     bool? isSynced,
     DateTime? updatedAt,
+    Value<double?> countedCash = const Value.absent(),
+    Value<double?> variance = const Value.absent(),
+    Value<DateTime?> countedAt = const Value.absent(),
+    Value<String?> countNotes = const Value.absent(),
   }) => CashSession(
     id: id ?? this.id,
     code: code ?? this.code,
@@ -12754,6 +12889,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     status: status ?? this.status,
     isSynced: isSynced ?? this.isSynced,
     updatedAt: updatedAt ?? this.updatedAt,
+    countedCash: countedCash.present ? countedCash.value : this.countedCash,
+    variance: variance.present ? variance.value : this.variance,
+    countedAt: countedAt.present ? countedAt.value : this.countedAt,
+    countNotes: countNotes.present ? countNotes.value : this.countNotes,
   );
   CashSession copyWithCompanion(CashSessionsCompanion data) {
     return CashSession(
@@ -12772,6 +12911,14 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       status: data.status.present ? data.status.value : this.status,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      countedCash: data.countedCash.present
+          ? data.countedCash.value
+          : this.countedCash,
+      variance: data.variance.present ? data.variance.value : this.variance,
+      countedAt: data.countedAt.present ? data.countedAt.value : this.countedAt,
+      countNotes: data.countNotes.present
+          ? data.countNotes.value
+          : this.countNotes,
     );
   }
 
@@ -12788,7 +12935,11 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           ..write('moneyAtEnd: $moneyAtEnd, ')
           ..write('status: $status, ')
           ..write('isSynced: $isSynced, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('countedCash: $countedCash, ')
+          ..write('variance: $variance, ')
+          ..write('countedAt: $countedAt, ')
+          ..write('countNotes: $countNotes')
           ..write(')'))
         .toString();
   }
@@ -12806,6 +12957,10 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     status,
     isSynced,
     updatedAt,
+    countedCash,
+    variance,
+    countedAt,
+    countNotes,
   );
   @override
   bool operator ==(Object other) =>
@@ -12821,7 +12976,11 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           other.moneyAtEnd == this.moneyAtEnd &&
           other.status == this.status &&
           other.isSynced == this.isSynced &&
-          other.updatedAt == this.updatedAt);
+          other.updatedAt == this.updatedAt &&
+          other.countedCash == this.countedCash &&
+          other.variance == this.variance &&
+          other.countedAt == this.countedAt &&
+          other.countNotes == this.countNotes);
 }
 
 class CashSessionsCompanion extends UpdateCompanion<CashSession> {
@@ -12836,6 +12995,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
   final Value<String> status;
   final Value<bool> isSynced;
   final Value<DateTime> updatedAt;
+  final Value<double?> countedCash;
+  final Value<double?> variance;
+  final Value<DateTime?> countedAt;
+  final Value<String?> countNotes;
   const CashSessionsCompanion({
     this.id = const Value.absent(),
     this.code = const Value.absent(),
@@ -12848,6 +13011,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     this.status = const Value.absent(),
     this.isSynced = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.countedCash = const Value.absent(),
+    this.variance = const Value.absent(),
+    this.countedAt = const Value.absent(),
+    this.countNotes = const Value.absent(),
   });
   CashSessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -12861,6 +13028,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     this.status = const Value.absent(),
     this.isSynced = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.countedCash = const Value.absent(),
+    this.variance = const Value.absent(),
+    this.countedAt = const Value.absent(),
+    this.countNotes = const Value.absent(),
   }) : code = Value(code),
        cashierId = Value(cashierId),
        moneyAtStart = Value(moneyAtStart);
@@ -12876,6 +13047,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     Expression<String>? status,
     Expression<bool>? isSynced,
     Expression<DateTime>? updatedAt,
+    Expression<double>? countedCash,
+    Expression<double>? variance,
+    Expression<DateTime>? countedAt,
+    Expression<String>? countNotes,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -12889,6 +13064,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
       if (status != null) 'status': status,
       if (isSynced != null) 'is_synced': isSynced,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (countedCash != null) 'counted_cash': countedCash,
+      if (variance != null) 'variance': variance,
+      if (countedAt != null) 'counted_at': countedAt,
+      if (countNotes != null) 'count_notes': countNotes,
     });
   }
 
@@ -12904,6 +13083,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     Value<String>? status,
     Value<bool>? isSynced,
     Value<DateTime>? updatedAt,
+    Value<double?>? countedCash,
+    Value<double?>? variance,
+    Value<DateTime?>? countedAt,
+    Value<String?>? countNotes,
   }) {
     return CashSessionsCompanion(
       id: id ?? this.id,
@@ -12917,6 +13100,10 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
       status: status ?? this.status,
       isSynced: isSynced ?? this.isSynced,
       updatedAt: updatedAt ?? this.updatedAt,
+      countedCash: countedCash ?? this.countedCash,
+      variance: variance ?? this.variance,
+      countedAt: countedAt ?? this.countedAt,
+      countNotes: countNotes ?? this.countNotes,
     );
   }
 
@@ -12956,6 +13143,18 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
+    if (countedCash.present) {
+      map['counted_cash'] = Variable<double>(countedCash.value);
+    }
+    if (variance.present) {
+      map['variance'] = Variable<double>(variance.value);
+    }
+    if (countedAt.present) {
+      map['counted_at'] = Variable<DateTime>(countedAt.value);
+    }
+    if (countNotes.present) {
+      map['count_notes'] = Variable<String>(countNotes.value);
+    }
     return map;
   }
 
@@ -12972,7 +13171,11 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
           ..write('moneyAtEnd: $moneyAtEnd, ')
           ..write('status: $status, ')
           ..write('isSynced: $isSynced, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('countedCash: $countedCash, ')
+          ..write('variance: $variance, ')
+          ..write('countedAt: $countedAt, ')
+          ..write('countNotes: $countNotes')
           ..write(')'))
         .toString();
   }
@@ -23150,6 +23353,10 @@ typedef $$CashSessionsTableCreateCompanionBuilder =
       Value<String> status,
       Value<bool> isSynced,
       Value<DateTime> updatedAt,
+      Value<double?> countedCash,
+      Value<double?> variance,
+      Value<DateTime?> countedAt,
+      Value<String?> countNotes,
     });
 typedef $$CashSessionsTableUpdateCompanionBuilder =
     CashSessionsCompanion Function({
@@ -23164,6 +23371,10 @@ typedef $$CashSessionsTableUpdateCompanionBuilder =
       Value<String> status,
       Value<bool> isSynced,
       Value<DateTime> updatedAt,
+      Value<double?> countedCash,
+      Value<double?> variance,
+      Value<DateTime?> countedAt,
+      Value<String?> countNotes,
     });
 
 class $$CashSessionsTableFilterComposer
@@ -23227,6 +23438,26 @@ class $$CashSessionsTableFilterComposer
 
   ColumnFilters<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get countedCash => $composableBuilder(
+    column: $table.countedCash,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get variance => $composableBuilder(
+    column: $table.variance,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get countedAt => $composableBuilder(
+    column: $table.countedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get countNotes => $composableBuilder(
+    column: $table.countNotes,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -23294,6 +23525,26 @@ class $$CashSessionsTableOrderingComposer
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<double> get countedCash => $composableBuilder(
+    column: $table.countedCash,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get variance => $composableBuilder(
+    column: $table.variance,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get countedAt => $composableBuilder(
+    column: $table.countedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get countNotes => $composableBuilder(
+    column: $table.countNotes,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$CashSessionsTableAnnotationComposer
@@ -23341,6 +23592,22 @@ class $$CashSessionsTableAnnotationComposer
 
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<double> get countedCash => $composableBuilder(
+    column: $table.countedCash,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get variance =>
+      $composableBuilder(column: $table.variance, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get countedAt =>
+      $composableBuilder(column: $table.countedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get countNotes => $composableBuilder(
+    column: $table.countNotes,
+    builder: (column) => column,
+  );
 }
 
 class $$CashSessionsTableTableManager
@@ -23385,6 +23652,10 @@ class $$CashSessionsTableTableManager
                 Value<String> status = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
+                Value<double?> countedCash = const Value.absent(),
+                Value<double?> variance = const Value.absent(),
+                Value<DateTime?> countedAt = const Value.absent(),
+                Value<String?> countNotes = const Value.absent(),
               }) => CashSessionsCompanion(
                 id: id,
                 code: code,
@@ -23397,6 +23668,10 @@ class $$CashSessionsTableTableManager
                 status: status,
                 isSynced: isSynced,
                 updatedAt: updatedAt,
+                countedCash: countedCash,
+                variance: variance,
+                countedAt: countedAt,
+                countNotes: countNotes,
               ),
           createCompanionCallback:
               ({
@@ -23411,6 +23686,10 @@ class $$CashSessionsTableTableManager
                 Value<String> status = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
+                Value<double?> countedCash = const Value.absent(),
+                Value<double?> variance = const Value.absent(),
+                Value<DateTime?> countedAt = const Value.absent(),
+                Value<String?> countNotes = const Value.absent(),
               }) => CashSessionsCompanion.insert(
                 id: id,
                 code: code,
@@ -23423,6 +23702,10 @@ class $$CashSessionsTableTableManager
                 status: status,
                 isSynced: isSynced,
                 updatedAt: updatedAt,
+                countedCash: countedCash,
+                variance: variance,
+                countedAt: countedAt,
+                countNotes: countNotes,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

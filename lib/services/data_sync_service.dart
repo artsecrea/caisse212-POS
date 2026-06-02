@@ -215,6 +215,17 @@ class DataSyncService {
       final lastLogin =
           _parseDateTime(user['lastLogin'] ?? user['last_login']) ?? prior?.lastLogin;
 
+      // Preserve a locally-set displayName when the server doesn't send one
+      // (typical case: the cashier edits their nickname in Profile, and the
+      // backend has no concept of display names yet). Same pattern as
+      // `lastLogin` above.
+      final serverDisplayName =
+          user['displayName'] ?? user['display_name'];
+      final displayName = (serverDisplayName is String &&
+              serverDisplayName.isNotEmpty)
+          ? serverDisplayName
+          : prior?.displayName;
+
       await _database.into(_database.users).insert(
         UsersCompanion.insert(
           id: Value(user['id']),
@@ -225,7 +236,7 @@ class DataSyncService {
           type: user['type'] ?? 'cashier',
           imageUrl: Value(user['imageUrl']),
           permissions: Value(_normalizePermissions(user['permissions'])),
-          displayName: Value(user['displayName'] ?? user['display_name']),
+          displayName: Value(displayName),
           // Only override the column defaults when the server actually sends a value
           createdAt: createdAt != null ? Value(createdAt) : const Value.absent(),
           updatedAt: updatedAt != null ? Value(updatedAt) : const Value.absent(),

@@ -361,6 +361,26 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                         foregroundColor: Colors.white,
                       ),
                     ),
+                    // "Reprint Z" surfaces when the selection narrows to a
+                    // single session that has a counted-cash figure. The
+                    // printer pipeline already appends the variance block for
+                    // that shape, so this button just re-fires the same call
+                    // with a clearer label.
+                    if (_report!.sessions.length == 1 &&
+                        _report!.sessions.first.countedCash != null) ...[
+                      const SizedBox(width: 12),
+                      ElevatedButton.icon(
+                        onPressed: _printReport,
+                        icon: const Icon(Icons.receipt_long),
+                        label: Text(l10n?.translate('z_report') ?? 'Z report'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                          minimumSize: const Size(150, 50),
+                          backgroundColor: Colors.indigo,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
                   ],
                 ],
               ),
@@ -700,6 +720,97 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
               _buildDetailItem(l10n?.translate('paid_by_other') ?? 'Other', currencyFormatter.format(session.paidByOther), Colors.grey),
             ],
           ),
+          if (session.countedCash != null)
+            _buildZReportBlock(session, l10n, currencyFormatter),
+        ],
+      ),
+    );
+  }
+
+  /// Z-report reconciliation block — shown only for sessions whose cashier
+  /// entered a counted-cash figure on close. Mirrors the variance block the
+  /// printer appends to the receipt; this is the on-screen twin.
+  Widget _buildZReportBlock(
+    SessionSummaryReport session,
+    AppLocalizations? l10n,
+    CurrencyFormatter currencyFormatter,
+  ) {
+    final expected = session.startingBalance + session.paidByCash;
+    final counted = session.countedCash ?? expected;
+    final variance = session.variance ?? (counted - expected);
+    final varianceColor = variance.abs() < 0.005
+        ? Colors.green
+        : (variance < 0 ? Colors.red : Colors.orange);
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.indigo.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.indigo.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.receipt_long, color: Colors.indigo, size: 18),
+              const SizedBox(width: 6),
+              Text(
+                l10n?.translate('z_report') ?? 'Z report',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.indigo,
+                    fontSize: 14),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                l10n?.translate('z_report_subtitle') ?? 'Session reconciliation',
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 24,
+            runSpacing: 8,
+            children: [
+              _buildDetailItem(
+                l10n?.translate('expected_cash') ?? 'Expected cash',
+                currencyFormatter.format(expected),
+              ),
+              _buildDetailItem(
+                l10n?.translate('counted_cash') ?? 'Counted cash',
+                currencyFormatter.format(counted),
+              ),
+              _buildDetailItem(
+                l10n?.translate('variance') ?? 'Variance',
+                '${variance >= 0 ? '+' : ''}${currencyFormatter.format(variance)}',
+                varianceColor,
+              ),
+              if (session.countedAt != null)
+                _buildDetailItem(
+                  l10n?.translate('printed_at') ?? 'Counted at',
+                  _formatDateTime(session.countedAt!),
+                ),
+            ],
+          ),
+          if (session.countNotes != null &&
+              session.countNotes!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              l10n?.translate('count_notes') ?? 'Notes',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              session.countNotes!,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ],
         ],
       ),
     );

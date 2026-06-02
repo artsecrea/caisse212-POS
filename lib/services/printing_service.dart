@@ -1,6 +1,7 @@
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/services/printing_service.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Socket;
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -537,12 +538,34 @@ class PrintingService {
     }
   }
 
-  /// Connect to a printer for a specific purpose
+  /// Connect to a printer for a specific purpose.
+  ///
+  /// For [ConnectionType.NETWORK] we bypass `flutter_thermal_printer` entirely
+  /// (it has no NETWORK implementation in 2.0.0) and do a one-shot reachability
+  /// check via [_sendBytesOverTcp]. Subsequent prints open a fresh socket.
   Future<bool> connectPrinter(Printer printer, PrinterPurpose purpose) async {
     try {
       debugPrint(
         'Attempting to connect to ${purpose.name} printer: ${printer.name} (${printer.address})',
       );
+
+      if (printer.connectionType == ConnectionType.NETWORK) {
+        final reachable = await _sendBytesOverTcp(
+          printer.address ?? '',
+          const <int>[],
+          timeout: const Duration(seconds: 2),
+        );
+        if (!reachable) {
+          debugPrint('Network printer ${printer.address} not reachable');
+          return false;
+        }
+        if (purpose == PrinterPurpose.receipt) {
+          _connectedReceiptPrinter = printer;
+        } else {
+          _connectedKdsPrinter = printer;
+        }
+        return true;
+      }
 
       final result = await _thermalPrinter.connect(printer);
 
@@ -569,17 +592,96 @@ class PrintingService {
     try {
       if (purpose == PrinterPurpose.receipt &&
           _connectedReceiptPrinter != null) {
-        await _thermalPrinter.disconnect(_connectedReceiptPrinter!);
+        if (_connectedReceiptPrinter!.connectionType !=
+            ConnectionType.NETWORK) {
+          await _thermalPrinter.disconnect(_connectedReceiptPrinter!);
+        }
         _connectedReceiptPrinter = null;
       } else if (purpose == PrinterPurpose.kds &&
           _connectedKdsPrinter != null) {
-        await _thermalPrinter.disconnect(_connectedKdsPrinter!);
+        if (_connectedKdsPrinter!.connectionType != ConnectionType.NETWORK) {
+          await _thermalPrinter.disconnect(_connectedKdsPrinter!);
+        }
         _connectedKdsPrinter = null;
       }
     } catch (e) {
       debugPrint('Error disconnecting printer: $e');
     }
   }
+
+  /// Open a one-shot TCP connection to `host:port` (port defaults to 9100) and
+  /// write [bytes]. Returns `true` on a clean send. Used for any printer slot
+  /// whose [ConnectionType] is [ConnectionType.NETWORK].
+  Future<bool> _sendBytesOverTcp(
+    String address,
+    List<int> bytes, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if (address.isEmpty) return false;
+    final parts = address.split(':');
+    final host = parts[0];
+    final port = parts.length > 1
+        ? int.tryParse(parts[1]) ?? 9100
+        : 9100;
+    Socket? sock;
+    try {
+      sock = await Socket.connect(host, port, timeout: timeout);
+      if (bytes.isNotEmpty) {
+        sock.add(bytes);
+        await sock.flush();
+      }
+      await sock.close();
+      return true;
+    } catch (e) {
+      debugPrint('TCP send failed for $host:$port: $e');
+      try {
+        await sock?.close();
+      } catch (_) {}
+      return false;
+    }
+  }
+
+  /// Single dispatch point for byte sends — branches on the slot's connection
+  /// type so callers don't have to know whether the printer is USB/BLE
+  /// (plugin-managed) or NETWORK (TCP socket).
+  Future<bool> _dispatchBytes(
+      PrinterPurpose purpose, List<int> bytes) async {
+    final address = purpose == PrinterPurpose.receipt
+        ? _config.receiptPrinterAddress
+        : _config.kdsPrinterAddress;
+    final type = purpose == PrinterPurpose.receipt
+        ? _config.receiptConnectionType
+        : _config.kdsConnectionType;
+    if (address == null || type == null) {
+      debugPrint('Dispatch: no printer configured for ${purpose.name}');
+      return false;
+    }
+    if (type == ConnectionType.NETWORK) {
+      return _sendBytesOverTcp(address, bytes);
+    }
+    final printer = purpose == PrinterPurpose.receipt
+        ? _connectedReceiptPrinter
+        : _connectedKdsPrinter;
+    if (printer == null) {
+      debugPrint('Dispatch: ${purpose.name} printer not connected');
+      return false;
+    }
+    await _thermalPrinter.printData(printer, bytes, longData: true);
+    return true;
+  }
+
+  /// Send arbitrary ESC/POS bytes to the receipt or KDS printer. Used by the
+  /// "Send raw ESC/POS" debugging dialog in printers management.
+  Future<bool> sendRawBytes(PrinterPurpose purpose, List<int> bytes) async {
+    if (bytes.isEmpty) return false;
+    return _dispatchBytes(purpose, bytes);
+  }
+
+  /// Probe whether a network printer at `host:port` accepts TCP connections.
+  /// Used by the manual-entry dialog to validate an address before saving.
+  Future<bool> testNetworkReachable(String address) =>
+      _sendBytesOverTcp(address, const <int>[],
+          timeout: const Duration(seconds: 3));
 
   /// Set printer for a purpose (saves to config)
   Future<void> setPrinter(
@@ -688,12 +790,7 @@ class PrintingService {
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
       final bytes = generator.drawer();
-      await _thermalPrinter.printData(
-        _connectedReceiptPrinter!,
-        bytes,
-        longData: true,
-      );
-      return true;
+      return await _dispatchBytes(PrinterPurpose.receipt, bytes);
     } catch (e) {
       debugPrint('Cash drawer kick failed: $e');
       return false;
@@ -822,6 +919,8 @@ class PrintingService {
     final isReceipt = purpose == PrinterPurpose.receipt;
     final currentPrinter = isReceipt ? _connectedReceiptPrinter : _connectedKdsPrinter;
     final savedAddress = isReceipt ? _config.receiptPrinterAddress : _config.kdsPrinterAddress;
+    final savedType = isReceipt ? _config.receiptConnectionType : _config.kdsConnectionType;
+    final savedName = isReceipt ? _config.receiptPrinterName : _config.kdsPrinterName;
 
     // If printer already connected, we're good
     if (currentPrinter != null) {
@@ -833,6 +932,18 @@ class PrintingService {
     if (savedAddress == null) {
       debugPrint('No saved ${purpose.name} printer configuration found');
       return false;
+    }
+
+    // NETWORK printers are never in the scan list — reconstruct directly from
+    // saved config and probe reachability via [connectPrinter].
+    if (savedType == ConnectionType.NETWORK) {
+      final manual = Printer(
+        name: savedName ?? 'Network printer',
+        address: savedAddress,
+        connectionType: ConnectionType.NETWORK,
+        isConnected: false,
+      );
+      return await connectPrinter(manual, purpose);
     }
 
     // Emit "connecting" status so the UI can show a loading overlay
@@ -1374,11 +1485,7 @@ class PrintingService {
 
       debugPrint('Attempting to print receipt. Bytes length: ${bytes.length}');
 
-      await _thermalPrinter.printData(
-        _connectedReceiptPrinter!,
-        bytes,
-        longData: true,
-      );
+      await _dispatchBytes(PrinterPurpose.receipt, bytes);
 
       debugPrint('Receipt printed successfully');
       _isPrintingInProgress = false;
@@ -1790,11 +1897,7 @@ class PrintingService {
         'Attempting to print KDS ticket for $stationName. Bytes length: ${bytes.length}',
       );
 
-      await _thermalPrinter.printData(
-        _connectedKdsPrinter!,
-        bytes,
-        longData: true,
-      );
+      await _dispatchBytes(PrinterPurpose.kds, bytes);
 
       debugPrint('KDS ticket for $stationName printed successfully');
       return true;
@@ -2141,11 +2244,7 @@ class PrintingService {
         'Attempting to print ticket receipt. Bytes length: ${bytes.length}',
       );
 
-      await _thermalPrinter.printData(
-        _connectedReceiptPrinter!,
-        bytes,
-        longData: true,
-      );
+      await _dispatchBytes(PrinterPurpose.receipt, bytes);
 
       debugPrint('Ticket receipt printed successfully');
       _isPrintingInProgress = false;
@@ -2890,6 +2989,99 @@ class PrintingService {
         styles: const PosStyles(align: PosAlign.center),
       );
 
+      // Z-report block — only when the report is scoped to a single session
+      // AND the cashier actually entered a counted-cash figure on close. This
+      // turns the daily-summary print into a session reconciliation slip
+      // without changing how regular multi-session daily summaries render.
+      if (report.sessions.length == 1 &&
+          report.sessions.first.countedCash != null) {
+        final s = report.sessions.first;
+        // Mirrors SessionSummary.expectedCashAtEnd.
+        final expected = s.startingBalance + s.paidByCash;
+        final counted = s.countedCash ?? expected;
+        final variance = s.variance ?? (counted - expected);
+        final cur = _getCurrency(null);
+
+        List<int> twoCol(String left, String right, {bool bold = false}) {
+          return generator.row([
+            PosColumn(
+              text: left,
+              width: 7,
+              styles: PosStyles(
+                align: PosAlign.left,
+                bold: bold,
+                height: _resolveTextSize(),
+                width: _resolveTextSize(),
+              ),
+            ),
+            PosColumn(
+              text: right,
+              width: 5,
+              styles: PosStyles(
+                align: PosAlign.right,
+                bold: bold,
+                height: _resolveTextSize(),
+                width: _resolveTextSize(),
+              ),
+            ),
+          ]);
+        }
+
+        bytes += generator.emptyLines(1);
+        bytes += generator.text(
+          doubleSeparator,
+          styles: const PosStyles(align: PosAlign.center),
+        );
+        bytes += generator.text(
+          printL10n.translate('z_report'),
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveTextSize(),
+            width: _resolveTextSize(),
+          ),
+        );
+        bytes += generator.text(
+          doubleSeparator,
+          styles: const PosStyles(align: PosAlign.center),
+        );
+        bytes += twoCol(
+          '${printL10n.translate('expected_cash')}:',
+          CurrencyFormatter.formatWithCurrency(expected, cur),
+        );
+        bytes += twoCol(
+          '${printL10n.translate('counted_cash')}:',
+          CurrencyFormatter.formatWithCurrency(counted, cur),
+        );
+        bytes += twoCol(
+          '${printL10n.translate('variance')}:',
+          '${variance >= 0 ? '+' : ''}${CurrencyFormatter.formatWithCurrency(variance, cur)}',
+          bold: true,
+        );
+        if (s.countNotes != null && s.countNotes!.trim().isNotEmpty) {
+          bytes += generator.emptyLines(1);
+          bytes += generator.text(
+            '${printL10n.translate('count_notes')}:',
+            styles: PosStyles(
+              bold: true,
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          );
+          bytes += generator.text(
+            s.countNotes!,
+            styles: PosStyles(
+              height: _resolveTextSize(),
+              width: _resolveTextSize(),
+            ),
+          );
+        }
+        bytes += generator.text(
+          doubleSeparator,
+          styles: const PosStyles(align: PosAlign.center),
+        );
+      }
+
       // Footer
       bytes += generator.emptyLines(1);
       bytes += generator.text(
@@ -2908,11 +3100,7 @@ class PrintingService {
         'Attempting to print daily summary report. Bytes length: ${bytes.length}',
       );
 
-      await _thermalPrinter.printData(
-        _connectedReceiptPrinter!,
-        bytes,
-        longData: true,
-      );
+      await _dispatchBytes(PrinterPurpose.receipt, bytes);
 
       debugPrint('Daily summary report printed successfully');
       return true;
@@ -3154,11 +3342,7 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
-      await _thermalPrinter.printData(
-        _connectedReceiptPrinter!,
-        bytes,
-        longData: true,
-      );
+      await _dispatchBytes(PrinterPurpose.receipt, bytes);
 
       debugPrint('Daily orders report printed successfully');
       _isPrintingInProgress = false;
@@ -3240,10 +3424,7 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
-      final printer = purpose == PrinterPurpose.receipt
-          ? _connectedReceiptPrinter!
-          : _connectedKdsPrinter!;
-      await _thermalPrinter.printData(printer, bytes, longData: true);
+      await _dispatchBytes(purpose, bytes);
 
       debugPrint('Test page printed successfully for ${purpose.name}');
       _isPrintingInProgress = false;

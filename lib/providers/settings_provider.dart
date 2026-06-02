@@ -54,6 +54,15 @@ class SettingsKeys {
   // Customer Display settings
   static const String enableCustomerDisplay = 'enable_customer_display';
 
+  // Order validation rules (admin-configurable)
+  static const String requireTableForDineIn = 'require_table_for_dine_in';
+  static const String requireWaiterForDineIn = 'require_waiter_for_dine_in';
+  static const String requireCustomerForDelivery =
+      'require_customer_for_delivery';
+  static const String requireDeliveryAddress = 'require_delivery_address';
+  static const String autoClearTableAfterPaying =
+      'auto_clear_table_after_paying';
+
   // Payment settings
   static const String defaultPaymentMethod = 'default_payment_method';
 
@@ -151,6 +160,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       autoStartServer: _prefs.getBool(SettingsKeys.autoStartServer) ?? false,
       enableSnackBars: _prefs.getBool(SettingsKeys.enableSnackBars) ?? false,
       enableCustomerDisplay: _prefs.getBool(SettingsKeys.enableCustomerDisplay) ?? false,
+      requireTableForDineIn:
+          _prefs.getBool(SettingsKeys.requireTableForDineIn) ?? false,
+      requireWaiterForDineIn:
+          _prefs.getBool(SettingsKeys.requireWaiterForDineIn) ?? false,
+      requireCustomerForDelivery:
+          _prefs.getBool(SettingsKeys.requireCustomerForDelivery) ?? false,
+      requireDeliveryAddress:
+          _prefs.getBool(SettingsKeys.requireDeliveryAddress) ?? false,
+      autoClearTableAfterPaying:
+          _prefs.getBool(SettingsKeys.autoClearTableAfterPaying) ?? false,
       defaultPaymentMethod: _prefs.getString(SettingsKeys.defaultPaymentMethod) ?? 'CASH',
       agendaTimeStep: _prefs.getInt(SettingsKeys.agendaTimeStep) ?? 60,
       showOnscreenKeyboard: _prefs.getBool(SettingsKeys.showOnscreenKeyboard) ?? true,
@@ -347,6 +366,31 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setEnableCustomerDisplay(bool value) async {
     await _prefs.setBool(SettingsKeys.enableCustomerDisplay, value);
     state = state.copyWith(enableCustomerDisplay: value);
+  }
+
+  Future<void> setRequireTableForDineIn(bool value) async {
+    await _prefs.setBool(SettingsKeys.requireTableForDineIn, value);
+    state = state.copyWith(requireTableForDineIn: value);
+  }
+
+  Future<void> setRequireWaiterForDineIn(bool value) async {
+    await _prefs.setBool(SettingsKeys.requireWaiterForDineIn, value);
+    state = state.copyWith(requireWaiterForDineIn: value);
+  }
+
+  Future<void> setRequireCustomerForDelivery(bool value) async {
+    await _prefs.setBool(SettingsKeys.requireCustomerForDelivery, value);
+    state = state.copyWith(requireCustomerForDelivery: value);
+  }
+
+  Future<void> setRequireDeliveryAddress(bool value) async {
+    await _prefs.setBool(SettingsKeys.requireDeliveryAddress, value);
+    state = state.copyWith(requireDeliveryAddress: value);
+  }
+
+  Future<void> setAutoClearTableAfterPaying(bool value) async {
+    await _prefs.setBool(SettingsKeys.autoClearTableAfterPaying, value);
+    state = state.copyWith(autoClearTableAfterPaying: value);
   }
 
   Future<void> setDefaultPaymentMethod(String method) async {

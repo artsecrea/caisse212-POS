@@ -733,69 +733,119 @@ class OrderRepository {
   }
 
   Future<CurrentOrder> loadOrderDetails(Order order) async {
-    // Get order products
-    final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
+    // Batched-fetch rewrite: collapses the previous N+1 pattern
+    // (one query per item × product / variant / OPCs / per-component) into
+    // ~5 IN(...) queries regardless of order size. Saves the
+    // "Continue with table's order" lag on big orders.
+    final orderProducts = await (_database.select(_database.orderProducts)
+          ..where((tbl) => tbl.orderId.equals(order.id)))
+        .get();
 
     final items = <OrderItem>[];
-    for (final orderProduct in orderProducts) {
-      // Get product details
-      final product = await (_database.select(_database.products)..where((tbl) => tbl.id.equals(orderProduct.productId))).getSingleOrNull();
+    if (orderProducts.isNotEmpty) {
+      final productIds = orderProducts.map((p) => p.productId).toSet();
+      final variantIds = orderProducts
+          .where((p) => p.variantId != null)
+          .map((p) => p.variantId!)
+          .toSet();
+      final orderProductIds = orderProducts.map((p) => p.id).toSet();
 
-      if (product == null) continue;
+      // 1) All products in one IN(...) query
+      final products = productIds.isEmpty
+          ? const <Product>[]
+          : await (_database.select(_database.products)
+                ..where((t) => t.id.isIn(productIds)))
+              .get();
+      final productById = {for (final p in products) p.id: p};
 
-      // Get variant details if variantId exists
-      String? variantName;
-      String? variantImageUrl;
-      if (orderProduct.variantId != null) {
-        final variant = await (_database.select(_database.productVariants)..where((tbl) => tbl.id.equals(orderProduct.variantId!))).getSingleOrNull();
-        if (variant != null) {
-          variantName = variant.name;
-          variantImageUrl = variant.imageUrl;
+      // 2) All variants in one IN(...) query
+      final productVariantById = <int, ProductVariant>{};
+      if (variantIds.isNotEmpty) {
+        final variants = await (_database.select(_database.productVariants)
+              ..where((t) => t.id.isIn(variantIds)))
+            .get();
+        for (final v in variants) {
+          productVariantById[v.id] = v;
         }
       }
 
-      // Get order product components
-      final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(orderProduct.id))).get();
-
-      final components = <OrderItemComponent>[];
-      for (final orderComp in orderComponents) {
-        final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
-
-        if (component != null) {
-          components.add(OrderItemComponent(
-            componentId: component.id,
-            name: component.name,
-            quantity: orderComp.quantity,
-            price: orderComp.price, // Use stored price from order time
-            isSpecial: orderComp.isSpecial,
-          ));
-        }
+      // 3) All order_product_components for these order products, grouped
+      //    by orderProductId in memory.
+      final allOpcs = orderProductIds.isEmpty
+          ? const <OrderProductComponent>[]
+          : await (_database.select(_database.orderProductComponents)
+                ..where((t) => t.orderProductId.isIn(orderProductIds)))
+              .get();
+      final opcsByOp = <int, List<OrderProductComponent>>{};
+      for (final c in allOpcs) {
+        opcsByOp.putIfAbsent(c.orderProductId, () => []).add(c);
       }
 
-      items.add(OrderItem(
-        id: orderProduct.id,
-        productId: product.id,
-        productName: product.name,
-        variantId: orderProduct.variantId,
-        variantName: variantName,
-        imageUrl: variantImageUrl ?? product.imageUrl,
-        finalPrice: orderProduct.unitaryPrice,
-        quantity: orderProduct.quantity,
-        // Baseline for the decrement floor — cashier can take back only what
-        // they added on top of this in the current session.
-        savedQuantity: orderProduct.quantity,
-        components: components,
-        note: orderProduct.note,
-        discount: orderProduct.unitaryDiscount,
-        manualDiscount: orderProduct.manualDiscount,
-        tva: orderProduct.unitaryTva,
-        ticketId: orderProduct.ticketId,
-        state: orderProduct.state,
-        planStartAt: orderProduct.planStartAt,
-        planEndAt: orderProduct.planEndAt,
-        planWaiterId: orderProduct.planWaiterId,
-        kdsPrintedAt: orderProduct.kdsPrintedAt,
-      ));
+      // 4) All distinct components those reference, in one query.
+      //    The map is left untyped to avoid the name clash between drift's
+      //    framework `Component` class and the project's `Component` table
+      //    row class — both are visible through the imports above.
+      final componentIds = allOpcs.map((c) => c.componentId).toSet();
+      final componentById = {
+        if (componentIds.isNotEmpty)
+          for (final c in await (_database.select(_database.components)
+                ..where((t) => t.id.isIn(componentIds)))
+              .get())
+            c.id: c,
+      };
+
+      // 5) Assemble OrderItems from the in-memory lookups — no awaits.
+      for (final orderProduct in orderProducts) {
+        final product = productById[orderProduct.productId];
+        if (product == null) continue; // tolerate orphan rows like before
+
+        String? variantName;
+        String? variantImageUrl;
+        if (orderProduct.variantId != null) {
+          final v = productVariantById[orderProduct.variantId!];
+          variantName = v?.name;
+          variantImageUrl = v?.imageUrl;
+        }
+
+        final components = <OrderItemComponent>[];
+        for (final orderComp in opcsByOp[orderProduct.id] ?? const []) {
+          final component = componentById[orderComp.componentId];
+          if (component != null) {
+            components.add(OrderItemComponent(
+              componentId: component.id,
+              name: component.name,
+              quantity: orderComp.quantity,
+              price: orderComp.price, // Use stored price from order time
+              isSpecial: orderComp.isSpecial,
+            ));
+          }
+        }
+
+        items.add(OrderItem(
+          id: orderProduct.id,
+          productId: product.id,
+          productName: product.name,
+          variantId: orderProduct.variantId,
+          variantName: variantName,
+          imageUrl: variantImageUrl ?? product.imageUrl,
+          finalPrice: orderProduct.unitaryPrice,
+          quantity: orderProduct.quantity,
+          // Baseline for the decrement floor — cashier can take back only
+          // what they added on top of this in the current session.
+          savedQuantity: orderProduct.quantity,
+          components: components,
+          note: orderProduct.note,
+          discount: orderProduct.unitaryDiscount,
+          manualDiscount: orderProduct.manualDiscount,
+          tva: orderProduct.unitaryTva,
+          ticketId: orderProduct.ticketId,
+          state: orderProduct.state,
+          planStartAt: orderProduct.planStartAt,
+          planEndAt: orderProduct.planEndAt,
+          planWaiterId: orderProduct.planWaiterId,
+          kdsPrintedAt: orderProduct.kdsPrintedAt,
+        ));
+      }
     }
 
     // Get table name

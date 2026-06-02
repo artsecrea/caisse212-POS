@@ -56,18 +56,30 @@ class AdminModeChip extends ConsumerWidget {
   }
 
   Future<void> _promptElevate(BuildContext context, WidgetRef ref) async {
+    // Resolve everything that depends on `context` BEFORE any await or
+    // provider mutation. Flipping `adminElevationProvider` rebuilds this
+    // chip in place, which can leave the captured BuildContext attached to
+    // a now-deactivated InheritedElement chain and trip a
+    // _dependents.isEmpty assertion the next frame.
     final l10n = AppLocalizations.of(context)!;
+    final messenger = ScaffoldMessenger.of(context);
     final result = await showAdminCredentialDialog(context, ref);
     if (result == null) return;
-    ref.read(adminElevationProvider.notifier).state = result;
-    final actor = ref.read(currentUserProvider);
-    await ref.read(activityLogServiceProvider).logAdminElevationGranted(
-          userId: actor?.id,
-          username: actor?.effectiveDisplayName,
-          adminUsername: result.adminUsername,
-        );
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+
+    // Defer the provider flip until after the dialog's frame has fully
+    // committed — same workaround the top_bar logout path uses to avoid
+    // AnimatedDefaultTextStyle dirty-widget-in-wrong-scope crashes.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(adminElevationProvider.notifier).state = result;
+      final actor = ref.read(currentUserProvider);
+      // Fire-and-forget the audit log — we don't want to await it while the
+      // tree is mid-rebuild.
+      ref.read(activityLogServiceProvider).logAdminElevationGranted(
+            userId: actor?.id,
+            username: actor?.effectiveDisplayName,
+            adminUsername: result.adminUsername,
+          );
+      messenger.showSnackBar(
         SnackBar(
           backgroundColor: Colors.green.shade700,
           content: Text(
@@ -76,21 +88,22 @@ class AdminModeChip extends ConsumerWidget {
           ),
         ),
       );
-    }
+    });
   }
 
   Future<void> _revoke(BuildContext context, WidgetRef ref) async {
     final l10n = AppLocalizations.of(context)!;
-    ref.read(adminElevationProvider.notifier).state = null;
-    final actor = ref.read(currentUserProvider);
-    await ref.read(activityLogServiceProvider).logAdminElevationRevoked(
-          userId: actor?.id,
-          username: actor?.effectiveDisplayName,
-        );
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(adminElevationProvider.notifier).state = null;
+      final actor = ref.read(currentUserProvider);
+      ref.read(activityLogServiceProvider).logAdminElevationRevoked(
+            userId: actor?.id,
+            username: actor?.effectiveDisplayName,
+          );
+      messenger.showSnackBar(
         SnackBar(content: Text(l10n.translate('admin_mode_revoked'))),
       );
-    }
+    });
   }
 }

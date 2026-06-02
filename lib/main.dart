@@ -88,12 +88,15 @@ Future<void> _initializeApp() async {
     // Show a loading screen immediately to prevent blank white screen
     runApp(const _BootScreen());
 
-    // Initialize window manager for desktop platforms (fullscreen support)
+    // Initialize window manager for desktop platforms. We open the window
+    // maximized (filling the workArea) rather than borderless fullscreen so
+    // the OS title-bar and taskbar stay visible.
     if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
       try {
         await windowManager.ensureInitialized();
         await windowManager.waitUntilReadyToShow(null, () async {
           await windowManager.show();
+          await windowManager.maximize();
           await windowManager.focus();
         }).timeout(
           const Duration(seconds: 5),

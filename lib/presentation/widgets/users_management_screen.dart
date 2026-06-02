@@ -5,6 +5,8 @@ import 'package:data_table_2/data_table_2.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/permission_descriptions.dart';
+import '../../utils/user_display.dart';
 import 'admin_mode_chip.dart';
 
 /// Permission catalog grouped by resource (used by the table + details dialog).
@@ -233,7 +235,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
       cells: [
         DataCell(Text('#${user.id}', style: const TextStyle(fontWeight: FontWeight.w600))),
         DataCell(Text(user.username)),
-        DataCell(Text('${user.firstName} ${user.lastName}')),
+        DataCell(Text(user.displayLabel)),
         DataCell(_buildTypeChip(user.type)),
         DataCell(_buildPermissionsCell(granted, hasAll, l10n)),
         DataCell(Text(user.lastLogin != null ? _formatDate(user.lastLogin!) : l10n.translate('never'),
@@ -403,7 +405,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
       switch (_sortColumnIndex) {
         case 0: cmp = a.id.compareTo(b.id); break;
         case 1: cmp = a.username.compareTo(b.username); break;
-        case 2: cmp = '${a.firstName} ${a.lastName}'.compareTo('${b.firstName} ${b.lastName}'); break;
+        case 2: cmp = a.displayLabel.compareTo(b.displayLabel); break;
         case 3: cmp = a.type.compareTo(b.type); break;
         case 5:
           if (a.lastLogin == null && b.lastLogin == null) cmp = 0;
@@ -527,7 +529,7 @@ class _UserDetailsDialog extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${user.firstName} ${user.lastName}',
+                Text(user.displayLabel,
                     style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                 Text('@${user.username}', style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 13)),
               ],
@@ -620,7 +622,8 @@ class _UserDetailsDialog extends StatelessWidget {
                     runSpacing: 6,
                     children: groupPerms.map((perm) {
                       final has = granted.contains(perm);
-                      final label = perm.split(':').last;
+                      final label =
+                          describePermission(perm, AppLocalizations.of(context)!).title;
                       return _permChip(label, has);
                     }).toList(),
                   ),

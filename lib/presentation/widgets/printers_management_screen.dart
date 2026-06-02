@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
@@ -13,6 +14,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/escpos_parser.dart';
 
 class PrintersManagementScreen extends ConsumerStatefulWidget {
   const PrintersManagementScreen({super.key});
@@ -561,6 +563,19 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _showManualNetworkPrinterDialog,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
+                        icon: const Icon(Icons.add_link, size: 24),
+                        label: Text(l10n.translate('add_network_printer_manually')),
+                      ),
                     ),
                   ],
                 ),
@@ -1323,6 +1338,14 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                     ),
                     const SizedBox(width: 8),
                     IconButton(
+                      icon: const Icon(Icons.code, color: Colors.deepPurple),
+                      iconSize: 32,
+                      padding: const EdgeInsets.all(12),
+                      onPressed: enabled ? () => _showRawEscPosDialog(purpose) : null,
+                      tooltip: l10n.translate('send_raw_escpos'),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
                       icon: const Icon(Icons.close, color: Colors.red),
                       iconSize: 32,
                       padding: const EdgeInsets.all(12),
@@ -1356,5 +1379,301 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         ),
       ),
     );
+  }
+
+  // ── Manual network printer entry ──────────────────────────────────────────
+
+  Future<void> _showManualNetworkPrinterDialog() async {
+    final l10n = AppLocalizations.of(context)!;
+    final nameCtrl = TextEditingController(text: l10n.translate('network_printer'));
+    final ipCtrl = TextEditingController();
+    final portCtrl = TextEditingController(text: '9100');
+    PrinterPurpose target = PrinterPurpose.receipt;
+    String? errorMessage;
+    bool testing = false;
+    bool saving = false;
+
+    final ipRegex = RegExp(r'^(\d{1,3}\.){3}\d{1,3}$');
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            String? validate() {
+              if (!ipRegex.hasMatch(ipCtrl.text.trim())) {
+                return l10n.translate('invalid_ip');
+              }
+              final port = int.tryParse(portCtrl.text.trim());
+              if (port == null || port <= 0 || port > 65535) {
+                return l10n.translate('port');
+              }
+              return null;
+            }
+
+            String fullAddress() =>
+                '${ipCtrl.text.trim()}:${portCtrl.text.trim()}';
+
+            Future<void> doTest() async {
+              final v = validate();
+              if (v != null) {
+                setLocal(() => errorMessage = v);
+                return;
+              }
+              setLocal(() {
+                testing = true;
+                errorMessage = null;
+              });
+              final ok = await ref
+                  .read(printingServiceProvider)
+                  .testNetworkReachable(fullAddress());
+              setLocal(() => testing = false);
+              if (!ctx.mounted) return;
+              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                backgroundColor: ok ? Colors.green : Colors.red,
+                content: Text(ok
+                    ? l10n.translate('connection_ok')
+                    : l10n.translate('connection_failed')),
+              ));
+            }
+
+            Future<void> doSave() async {
+              final v = validate();
+              if (v != null) {
+                setLocal(() => errorMessage = v);
+                return;
+              }
+              setLocal(() => saving = true);
+              final manual = Printer(
+                name: nameCtrl.text.trim().isEmpty
+                    ? l10n.translate('network_printer')
+                    : nameCtrl.text.trim(),
+                address: fullAddress(),
+                connectionType: ConnectionType.NETWORK,
+                isConnected: false,
+              );
+              await _setPrinter(manual, target);
+              if (ctx.mounted) Navigator.of(ctx).pop();
+            }
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.add_link, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(l10n.translate('add_network_printer_manually')),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 420,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      OnscreenKeyboardTextField(
+                        controller: nameCtrl,
+                        decoration: InputDecoration(
+                          labelText: l10n.translate('network_printer'),
+                          prefixIcon: const Icon(Icons.label_outline),
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      OnscreenKeyboardTextField(
+                        controller: ipCtrl,
+                        decoration: InputDecoration(
+                          labelText: l10n.translate('ip_address'),
+                          prefixIcon: const Icon(Icons.lan_outlined),
+                          hintText: '192.168.1.50',
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      OnscreenKeyboardTextField(
+                        controller: portCtrl,
+                        decoration: InputDecoration(
+                          labelText: l10n.translate('port'),
+                          prefixIcon: const Icon(Icons.numbers),
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(l10n.translate('assign_to'),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 13)),
+                      RadioListTile<PrinterPurpose>(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(l10n.translate('receipt_printer')),
+                        value: PrinterPurpose.receipt,
+                        groupValue: target,
+                        onChanged: (v) =>
+                            setLocal(() => target = v ?? target),
+                      ),
+                      RadioListTile<PrinterPurpose>(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(l10n.translate('kds_printer')),
+                        value: PrinterPurpose.kds,
+                        groupValue: target,
+                        onChanged: (v) =>
+                            setLocal(() => target = v ?? target),
+                      ),
+                      if (errorMessage != null) ...[
+                        const SizedBox(height: 8),
+                        Text(errorMessage!,
+                            style: const TextStyle(
+                                color: Colors.red, fontSize: 13)),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: (saving || testing)
+                      ? null
+                      : () => Navigator.of(ctx).pop(),
+                  child: Text(l10n.translate('cancel')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: (saving || testing) ? null : doTest,
+                  icon: testing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.network_check),
+                  label: Text(l10n.translate('test_connection')),
+                ),
+                ElevatedButton(
+                  onPressed: (saving || testing) ? null : doSave,
+                  child: Text(l10n.translate('save')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    nameCtrl.dispose();
+    ipCtrl.dispose();
+    portCtrl.dispose();
+  }
+
+  // ── Raw ESC/POS dialog ────────────────────────────────────────────────────
+
+  static const Map<String, String> _kEscPosQuickCommands = {
+    'cmd_init': '1B 40',
+    'cmd_cut': '1D 56 41 03',
+    'cmd_drawer_kick': '1B 70 00 19 FA',
+    'cmd_feed_lines': '1B 64 03',
+    'cmd_beep': '1B 42 03 03',
+  };
+
+  Future<void> _showRawEscPosDialog(PrinterPurpose purpose) async {
+    final l10n = AppLocalizations.of(context)!;
+    final inputCtrl = TextEditingController();
+    bool sending = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            Future<void> doSend() async {
+              final bytes = parseEscPosInput(inputCtrl.text);
+              if (bytes.isEmpty) return;
+              setLocal(() => sending = true);
+              final ok = await ref
+                  .read(printingServiceProvider)
+                  .sendRawBytes(purpose, bytes);
+              setLocal(() => sending = false);
+              if (!ctx.mounted) return;
+              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                backgroundColor: ok ? Colors.green : Colors.red,
+                content: Text(ok
+                    ? l10n.translate('raw_escpos_sent')
+                    : l10n.translate('raw_escpos_send_failed')),
+              ));
+              if (ok && ctx.mounted) Navigator.of(ctx).pop();
+            }
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.code, color: Colors.deepPurple),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(l10n.translate('send_raw_escpos'))),
+                ],
+              ),
+              content: SizedBox(
+                width: 480,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(l10n.translate('raw_escpos_hint'),
+                        style: const TextStyle(
+                            color: Colors.grey, fontSize: 13)),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _kEscPosQuickCommands.entries
+                          .map((e) => ActionChip(
+                                label: Text(l10n.translate(e.key)),
+                                onPressed: () => setLocal(() {
+                                  inputCtrl.text = e.value;
+                                  inputCtrl.selection =
+                                      TextSelection.collapsed(
+                                          offset: e.value.length);
+                                }),
+                              ))
+                          .toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    OnscreenKeyboardTextField(
+                      controller: inputCtrl,
+                      maxLines: 5,
+                      minLines: 5,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        hintText: '1B 40 …',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed:
+                      sending ? null : () => Navigator.of(ctx).pop(),
+                  child: Text(l10n.translate('cancel')),
+                ),
+                ElevatedButton.icon(
+                  onPressed: sending ? null : doSend,
+                  icon: sending
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.send),
+                  label: Text(l10n.translate('send_raw_escpos')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    inputCtrl.dispose();
   }
 }
