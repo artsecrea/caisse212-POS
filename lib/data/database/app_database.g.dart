@@ -8097,7 +8097,8 @@ class $CustomersTable extends Customers
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
   );
   static const VerificationMeta _lastNameMeta = const VerificationMeta(
     'lastName',
@@ -8108,12 +8109,24 @@ class $CustomersTable extends Customers
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
   );
   static const VerificationMeta _phoneMeta = const VerificationMeta('phone');
   @override
   late final GeneratedColumn<String> phone = GeneratedColumn<String>(
     'phone',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _phoneNormalizedMeta = const VerificationMeta(
+    'phoneNormalized',
+  );
+  @override
+  late final GeneratedColumn<String> phoneNormalized = GeneratedColumn<String>(
+    'phone_normalized',
     aliasedName,
     true,
     type: DriftSqlType.string,
@@ -8173,6 +8186,7 @@ class $CustomersTable extends Customers
     firstName,
     lastName,
     phone,
+    phoneNormalized,
     email,
     isSynced,
     createdAt,
@@ -8198,21 +8212,26 @@ class $CustomersTable extends Customers
         _firstNameMeta,
         firstName.isAcceptableOrUnknown(data['first_name']!, _firstNameMeta),
       );
-    } else if (isInserting) {
-      context.missing(_firstNameMeta);
     }
     if (data.containsKey('last_name')) {
       context.handle(
         _lastNameMeta,
         lastName.isAcceptableOrUnknown(data['last_name']!, _lastNameMeta),
       );
-    } else if (isInserting) {
-      context.missing(_lastNameMeta);
     }
     if (data.containsKey('phone')) {
       context.handle(
         _phoneMeta,
         phone.isAcceptableOrUnknown(data['phone']!, _phoneMeta),
+      );
+    }
+    if (data.containsKey('phone_normalized')) {
+      context.handle(
+        _phoneNormalizedMeta,
+        phoneNormalized.isAcceptableOrUnknown(
+          data['phone_normalized']!,
+          _phoneNormalizedMeta,
+        ),
       );
     }
     if (data.containsKey('email')) {
@@ -8264,6 +8283,10 @@ class $CustomersTable extends Customers
         DriftSqlType.string,
         data['${effectivePrefix}phone'],
       ),
+      phoneNormalized: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phone_normalized'],
+      ),
       email: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}email'],
@@ -8294,6 +8317,7 @@ class Customer extends DataClass implements Insertable<Customer> {
   final String firstName;
   final String lastName;
   final String? phone;
+  final String? phoneNormalized;
   final String? email;
   final bool isSynced;
   final DateTime createdAt;
@@ -8303,6 +8327,7 @@ class Customer extends DataClass implements Insertable<Customer> {
     required this.firstName,
     required this.lastName,
     this.phone,
+    this.phoneNormalized,
     this.email,
     required this.isSynced,
     required this.createdAt,
@@ -8316,6 +8341,9 @@ class Customer extends DataClass implements Insertable<Customer> {
     map['last_name'] = Variable<String>(lastName);
     if (!nullToAbsent || phone != null) {
       map['phone'] = Variable<String>(phone);
+    }
+    if (!nullToAbsent || phoneNormalized != null) {
+      map['phone_normalized'] = Variable<String>(phoneNormalized);
     }
     if (!nullToAbsent || email != null) {
       map['email'] = Variable<String>(email);
@@ -8334,6 +8362,9 @@ class Customer extends DataClass implements Insertable<Customer> {
       phone: phone == null && nullToAbsent
           ? const Value.absent()
           : Value(phone),
+      phoneNormalized: phoneNormalized == null && nullToAbsent
+          ? const Value.absent()
+          : Value(phoneNormalized),
       email: email == null && nullToAbsent
           ? const Value.absent()
           : Value(email),
@@ -8353,6 +8384,7 @@ class Customer extends DataClass implements Insertable<Customer> {
       firstName: serializer.fromJson<String>(json['firstName']),
       lastName: serializer.fromJson<String>(json['lastName']),
       phone: serializer.fromJson<String?>(json['phone']),
+      phoneNormalized: serializer.fromJson<String?>(json['phoneNormalized']),
       email: serializer.fromJson<String?>(json['email']),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -8367,6 +8399,7 @@ class Customer extends DataClass implements Insertable<Customer> {
       'firstName': serializer.toJson<String>(firstName),
       'lastName': serializer.toJson<String>(lastName),
       'phone': serializer.toJson<String?>(phone),
+      'phoneNormalized': serializer.toJson<String?>(phoneNormalized),
       'email': serializer.toJson<String?>(email),
       'isSynced': serializer.toJson<bool>(isSynced),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -8379,6 +8412,7 @@ class Customer extends DataClass implements Insertable<Customer> {
     String? firstName,
     String? lastName,
     Value<String?> phone = const Value.absent(),
+    Value<String?> phoneNormalized = const Value.absent(),
     Value<String?> email = const Value.absent(),
     bool? isSynced,
     DateTime? createdAt,
@@ -8388,6 +8422,9 @@ class Customer extends DataClass implements Insertable<Customer> {
     firstName: firstName ?? this.firstName,
     lastName: lastName ?? this.lastName,
     phone: phone.present ? phone.value : this.phone,
+    phoneNormalized: phoneNormalized.present
+        ? phoneNormalized.value
+        : this.phoneNormalized,
     email: email.present ? email.value : this.email,
     isSynced: isSynced ?? this.isSynced,
     createdAt: createdAt ?? this.createdAt,
@@ -8399,6 +8436,9 @@ class Customer extends DataClass implements Insertable<Customer> {
       firstName: data.firstName.present ? data.firstName.value : this.firstName,
       lastName: data.lastName.present ? data.lastName.value : this.lastName,
       phone: data.phone.present ? data.phone.value : this.phone,
+      phoneNormalized: data.phoneNormalized.present
+          ? data.phoneNormalized.value
+          : this.phoneNormalized,
       email: data.email.present ? data.email.value : this.email,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
@@ -8413,6 +8453,7 @@ class Customer extends DataClass implements Insertable<Customer> {
           ..write('firstName: $firstName, ')
           ..write('lastName: $lastName, ')
           ..write('phone: $phone, ')
+          ..write('phoneNormalized: $phoneNormalized, ')
           ..write('email: $email, ')
           ..write('isSynced: $isSynced, ')
           ..write('createdAt: $createdAt, ')
@@ -8427,6 +8468,7 @@ class Customer extends DataClass implements Insertable<Customer> {
     firstName,
     lastName,
     phone,
+    phoneNormalized,
     email,
     isSynced,
     createdAt,
@@ -8440,6 +8482,7 @@ class Customer extends DataClass implements Insertable<Customer> {
           other.firstName == this.firstName &&
           other.lastName == this.lastName &&
           other.phone == this.phone &&
+          other.phoneNormalized == this.phoneNormalized &&
           other.email == this.email &&
           other.isSynced == this.isSynced &&
           other.createdAt == this.createdAt &&
@@ -8451,6 +8494,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
   final Value<String> firstName;
   final Value<String> lastName;
   final Value<String?> phone;
+  final Value<String?> phoneNormalized;
   final Value<String?> email;
   final Value<bool> isSynced;
   final Value<DateTime> createdAt;
@@ -8460,6 +8504,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
     this.firstName = const Value.absent(),
     this.lastName = const Value.absent(),
     this.phone = const Value.absent(),
+    this.phoneNormalized = const Value.absent(),
     this.email = const Value.absent(),
     this.isSynced = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -8467,20 +8512,21 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
   });
   CustomersCompanion.insert({
     this.id = const Value.absent(),
-    required String firstName,
-    required String lastName,
+    this.firstName = const Value.absent(),
+    this.lastName = const Value.absent(),
     this.phone = const Value.absent(),
+    this.phoneNormalized = const Value.absent(),
     this.email = const Value.absent(),
     this.isSynced = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
-  }) : firstName = Value(firstName),
-       lastName = Value(lastName);
+  });
   static Insertable<Customer> custom({
     Expression<int>? id,
     Expression<String>? firstName,
     Expression<String>? lastName,
     Expression<String>? phone,
+    Expression<String>? phoneNormalized,
     Expression<String>? email,
     Expression<bool>? isSynced,
     Expression<DateTime>? createdAt,
@@ -8491,6 +8537,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
       if (firstName != null) 'first_name': firstName,
       if (lastName != null) 'last_name': lastName,
       if (phone != null) 'phone': phone,
+      if (phoneNormalized != null) 'phone_normalized': phoneNormalized,
       if (email != null) 'email': email,
       if (isSynced != null) 'is_synced': isSynced,
       if (createdAt != null) 'created_at': createdAt,
@@ -8503,6 +8550,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
     Value<String>? firstName,
     Value<String>? lastName,
     Value<String?>? phone,
+    Value<String?>? phoneNormalized,
     Value<String?>? email,
     Value<bool>? isSynced,
     Value<DateTime>? createdAt,
@@ -8513,6 +8561,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
       firstName: firstName ?? this.firstName,
       lastName: lastName ?? this.lastName,
       phone: phone ?? this.phone,
+      phoneNormalized: phoneNormalized ?? this.phoneNormalized,
       email: email ?? this.email,
       isSynced: isSynced ?? this.isSynced,
       createdAt: createdAt ?? this.createdAt,
@@ -8534,6 +8583,9 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
     }
     if (phone.present) {
       map['phone'] = Variable<String>(phone.value);
+    }
+    if (phoneNormalized.present) {
+      map['phone_normalized'] = Variable<String>(phoneNormalized.value);
     }
     if (email.present) {
       map['email'] = Variable<String>(email.value);
@@ -8557,6 +8609,7 @@ class CustomersCompanion extends UpdateCompanion<Customer> {
           ..write('firstName: $firstName, ')
           ..write('lastName: $lastName, ')
           ..write('phone: $phone, ')
+          ..write('phoneNormalized: $phoneNormalized, ')
           ..write('email: $email, ')
           ..write('isSynced: $isSynced, ')
           ..write('createdAt: $createdAt, ')
@@ -21024,9 +21077,10 @@ typedef $$CommercialsTableProcessedTableManager =
 typedef $$CustomersTableCreateCompanionBuilder =
     CustomersCompanion Function({
       Value<int> id,
-      required String firstName,
-      required String lastName,
+      Value<String> firstName,
+      Value<String> lastName,
       Value<String?> phone,
+      Value<String?> phoneNormalized,
       Value<String?> email,
       Value<bool> isSynced,
       Value<DateTime> createdAt,
@@ -21038,6 +21092,7 @@ typedef $$CustomersTableUpdateCompanionBuilder =
       Value<String> firstName,
       Value<String> lastName,
       Value<String?> phone,
+      Value<String?> phoneNormalized,
       Value<String?> email,
       Value<bool> isSynced,
       Value<DateTime> createdAt,
@@ -21070,6 +21125,11 @@ class $$CustomersTableFilterComposer
 
   ColumnFilters<String> get phone => $composableBuilder(
     column: $table.phone,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phoneNormalized => $composableBuilder(
+    column: $table.phoneNormalized,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -21123,6 +21183,11 @@ class $$CustomersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get phoneNormalized => $composableBuilder(
+    column: $table.phoneNormalized,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get email => $composableBuilder(
     column: $table.email,
     builder: (column) => ColumnOrderings(column),
@@ -21164,6 +21229,11 @@ class $$CustomersTableAnnotationComposer
 
   GeneratedColumn<String> get phone =>
       $composableBuilder(column: $table.phone, builder: (column) => column);
+
+  GeneratedColumn<String> get phoneNormalized => $composableBuilder(
+    column: $table.phoneNormalized,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get email =>
       $composableBuilder(column: $table.email, builder: (column) => column);
@@ -21210,6 +21280,7 @@ class $$CustomersTableTableManager
                 Value<String> firstName = const Value.absent(),
                 Value<String> lastName = const Value.absent(),
                 Value<String?> phone = const Value.absent(),
+                Value<String?> phoneNormalized = const Value.absent(),
                 Value<String?> email = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -21219,6 +21290,7 @@ class $$CustomersTableTableManager
                 firstName: firstName,
                 lastName: lastName,
                 phone: phone,
+                phoneNormalized: phoneNormalized,
                 email: email,
                 isSynced: isSynced,
                 createdAt: createdAt,
@@ -21227,9 +21299,10 @@ class $$CustomersTableTableManager
           createCompanionCallback:
               ({
                 Value<int> id = const Value.absent(),
-                required String firstName,
-                required String lastName,
+                Value<String> firstName = const Value.absent(),
+                Value<String> lastName = const Value.absent(),
                 Value<String?> phone = const Value.absent(),
+                Value<String?> phoneNormalized = const Value.absent(),
                 Value<String?> email = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -21239,6 +21312,7 @@ class $$CustomersTableTableManager
                 firstName: firstName,
                 lastName: lastName,
                 phone: phone,
+                phoneNormalized: phoneNormalized,
                 email: email,
                 isSynced: isSynced,
                 createdAt: createdAt,

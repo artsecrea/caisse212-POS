@@ -482,7 +482,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         ref.watch(desktopUpdaterControllerProvider);
 
     final app = MaterialApp(
-      title: 'updatere    dsdlkfndsl',
+      title: 'caisse212',
       builder: (context, child) {
         // Update localization provider whenever context changes
         WidgetsBinding.instance.addPostFrameCallback((_) {

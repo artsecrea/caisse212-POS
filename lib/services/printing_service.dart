@@ -109,6 +109,14 @@ class PrinterConfig {
   final bool cashDrawerCashOnly; // Only kick drawer for cash payments
   final bool splitKdsByStation; // Split kitchen tickets per station
   final KdsPrintMode defaultKdsMode; // Default kitchen print mode
+  // When `splitKdsByStation` is on AND there's more than one station to
+  // print, send all station tickets to the printer in a SINGLE driver job
+  // (one `_dispatchBytes` call) — with paper cuts between sections — instead
+  // of one job per station. This avoids the "third sequential print fails"
+  // class of bug on Windows USB drivers, where rapid back-to-back jobs
+  // overwhelm the spooler / driver. Default is true; turn it off if you
+  // prefer the legacy per-job behavior.
+  final bool consolidateKdsJob;
 
   const PrinterConfig({
     this.receiptPrinterAddress,
@@ -133,6 +141,7 @@ class PrinterConfig {
     this.cashDrawerCashOnly = true,
     this.splitKdsByStation = true,
     this.defaultKdsMode = KdsPrintMode.modificationsOnly,
+    this.consolidateKdsJob = true,
   });
 
   PrinterConfig copyWith({
@@ -158,6 +167,7 @@ class PrinterConfig {
     bool? cashDrawerCashOnly,
     bool? splitKdsByStation,
     KdsPrintMode? defaultKdsMode,
+    bool? consolidateKdsJob,
   }) {
     return PrinterConfig(
       receiptPrinterAddress:
@@ -184,6 +194,7 @@ class PrinterConfig {
       cashDrawerCashOnly: cashDrawerCashOnly ?? this.cashDrawerCashOnly,
       splitKdsByStation: splitKdsByStation ?? this.splitKdsByStation,
       defaultKdsMode: defaultKdsMode ?? this.defaultKdsMode,
+      consolidateKdsJob: consolidateKdsJob ?? this.consolidateKdsJob,
     );
   }
 
@@ -210,6 +221,7 @@ class PrinterConfig {
     'cashDrawerCashOnly': cashDrawerCashOnly,
     'splitKdsByStation': splitKdsByStation,
     'defaultKdsMode': defaultKdsMode.index,
+    'consolidateKdsJob': consolidateKdsJob,
   };
 
   factory PrinterConfig.fromJson(Map<String, dynamic> json) {
@@ -251,6 +263,7 @@ class PrinterConfig {
       defaultKdsMode: json['defaultKdsMode'] != null
           ? KdsPrintMode.values[json['defaultKdsMode']]
           : KdsPrintMode.modificationsOnly,
+      consolidateKdsJob: json['consolidateKdsJob'] ?? true,
     );
   }
 }
@@ -409,6 +422,8 @@ class PrintingService {
       defaultKdsMode: defaultKdsModeIndex != null
           ? KdsPrintMode.values[defaultKdsModeIndex]
           : KdsPrintMode.modificationsOnly,
+      consolidateKdsJob:
+          prefs.getBool('printer_consolidate_kds_job') ?? true,
     );
     _configController.add(_config);
   }
@@ -500,6 +515,8 @@ class PrintingService {
         'printer_split_kds_by_station', newConfig.splitKdsByStation);
     await prefs.setInt(
         'printer_default_kds_mode', newConfig.defaultKdsMode.index);
+    await prefs.setBool(
+        'printer_consolidate_kds_job', newConfig.consolidateKdsJob);
 
     _configController.add(_config);
   }
@@ -644,6 +661,13 @@ class PrintingService {
   /// Single dispatch point for byte sends — branches on the slot's connection
   /// type so callers don't have to know whether the printer is USB/BLE
   /// (plugin-managed) or NETWORK (TCP socket).
+  ///
+  /// Returns `true` only when the bytes were actually accepted by the
+  /// transport. **All callers must honour this** — in particular, callers
+  /// that mark items as printed in the DB (e.g. KDS in
+  /// `KdsPrintMode.modificationsOnly`) must skip the mark when this returns
+  /// false, otherwise a single transient failure permanently swallows the
+  /// kitchen ticket.
   Future<bool> _dispatchBytes(
       PrinterPurpose purpose, List<int> bytes) async {
     final address = purpose == PrinterPurpose.receipt
@@ -666,8 +690,47 @@ class PrintingService {
       debugPrint('Dispatch: ${purpose.name} printer not connected');
       return false;
     }
-    await _thermalPrinter.printData(printer, bytes, longData: true);
-    return true;
+    // The plugin call is fire-and-forget on success, but it CAN throw — and
+    // on some platforms it can hang indefinitely (cover open, paper jam,
+    // BLE in a weird state). Bound it with a timeout and treat any failure
+    // as a real failure rather than a silent success.
+    try {
+      await _thermalPrinter
+          .printData(printer, bytes, longData: true)
+          .timeout(const Duration(seconds: 10));
+      return true;
+    } on TimeoutException catch (e) {
+      debugPrint('Dispatch: printData timed out on ${purpose.name}: $e');
+      // CRITICAL: drop the cached handle. The plugin's `printer` reference
+      // is almost certainly unusable after a timeout (BLE stuck, USB queue
+      // full, paper jam mid-cut). If we leave it in place,
+      // `_ensurePrinterConnected` will see a non-null cached printer next
+      // time and skip the reconnect — so every subsequent print (the
+      // customer receipt after a KDS station times out, the user's manual
+      // retry from the dialog, everything) hits the same dead handle and
+      // also fails. That's the "I can't even print just the receipt"
+      // symptom the cashier sees after a partial KDS failure.
+      _invalidateCachedPrinter(purpose);
+      return false;
+    } catch (e, stackTrace) {
+      debugPrint(
+          'Dispatch: printData failed on ${purpose.name}: $e\n$stackTrace');
+      // Same reasoning: a thrown plugin call usually leaves the underlying
+      // transport in an unusable state.
+      _invalidateCachedPrinter(purpose);
+      return false;
+    }
+  }
+
+  /// Drop the cached `Printer` handle for [purpose] so the next print call
+  /// goes through the reconnect path (rescan for USB/BLE, fresh TCP probe
+  /// for NETWORK). Cheap and idempotent.
+  void _invalidateCachedPrinter(PrinterPurpose purpose) {
+    if (purpose == PrinterPurpose.receipt) {
+      _connectedReceiptPrinter = null;
+    } else {
+      _connectedKdsPrinter = null;
+    }
   }
 
   /// Send arbitrary ESC/POS bytes to the receipt or KDS printer. Used by the
@@ -1000,13 +1063,75 @@ class PrintingService {
   /// Translation helper using printing language (independent of app language)
   String _translate(String key, {String? fallback}) {
     final printL10n = AppLocalizations(Locale(_config.printingLanguage));
-    return printL10n.translate(key);
+    return _sanitizeForThermal(printL10n.translate(key));
   }
 
   /// Helper for static text that might not need translation but should be consistent
   String _text(String key, {String? fallback}) {
     return _translate(key, fallback: fallback);
   }
+
+  /// Replace characters that aren't reliably encodable in the common ESC/POS
+  /// code pages (CP437 / CP850 / CP858) with safe equivalents.
+  ///
+  /// Background: cheap thermal printers internally use one of those code
+  /// pages even when the app sends `setGlobalCodeTable CP1252`. A character
+  /// the printer's page can't represent (canonical example: `œ` in `Bœuf`,
+  /// at CP1252 byte 0x9C) causes some driver+firmware combos to stall
+  /// mid-stream, the Windows spool's WritePrinter call to block, and the
+  /// 10s dispatch timeout to fire — looking like "the printer just refuses
+  /// to print this ticket".
+  ///
+  /// This function is called on every user-typed string (product names,
+  /// customer info, notes, addresses) and on every translated label before
+  /// it reaches `generator.text(...)`. The mapping table is curated for the
+  /// characters that *actually* break — common French (`é è ê à ç ï ô î û`)
+  /// is universally supported and passes through untouched.
+  ///
+  /// The final regex strips anything outside Latin-1 (`> U+00FF`) — CJK,
+  /// Cyrillic, Arabic, emoji — replacing with `?`. Those weren't going to
+  /// print anyway and silently swallowing them is better than hanging the
+  /// whole ticket.
+  String _sanitizeForThermal(String? input) {
+    if (input == null || input.isEmpty) return input ?? '';
+    const replacements = {
+      // The actual culprit observed in production: `Bœuf` in product names.
+      'œ': 'oe', 'Œ': 'OE',
+      // Eastern European / German / Icelandic — defense in depth in case
+      // the menu ever includes imported items. Cheap to map; harmless when
+      // not present.
+      'ß': 'ss',
+      'Ÿ': 'Y',
+      'Š': 'S', 'š': 's',
+      'Ž': 'Z', 'ž': 'z',
+      'Č': 'C', 'č': 'c',
+      'Đ': 'D', 'đ': 'd',
+      'Þ': 'Th', 'þ': 'th',
+      // Currency / typographic — present in CP1252 but missing in CP437.
+      '€': 'EUR',
+      '–': '-', '—': '-',
+      '“': '"', '”': '"',
+      '‘': "'", '’': "'",
+      '…': '...',
+    };
+    var out = input;
+    replacements.forEach((bad, safe) {
+      if (out.contains(bad)) out = out.replaceAll(bad, safe);
+    });
+    // Final safety net: anything outside Latin-1 becomes '?'. Cheap, and
+    // means the next surprise menu item (sushi name in kanji, dish in
+    // Cyrillic, emoji) prints as a question mark rather than hanging the
+    // whole ticket and freezing the cashier.
+    if (out.codeUnits.any((c) => c > 0xFF)) {
+      out = out.replaceAll(RegExp(r'[^ -ÿ]'), '?');
+    }
+    return out;
+  }
+
+  /// Shorthand for `_sanitizeForThermal` used at call sites that take a
+  /// nullable input. Returns an empty string for null so the caller can
+  /// concatenate without a null check.
+  String _safe(String? input) => _sanitizeForThermal(input);
 
   /// Get AppLocalizations instance for printing language (for daily summary report)
   AppLocalizations _getPrintingL10n() {
@@ -1129,7 +1254,7 @@ class PrintingService {
       // Header
       if (storeName != null) {
         bytes += generator.text(
-          storeName,
+          _safe(storeName),
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
@@ -1141,7 +1266,7 @@ class PrintingService {
 
       if (storeAddress != null) {
         bytes += generator.text(
-          storeAddress,
+          _safe(storeAddress),
           styles: PosStyles(
             align: PosAlign.center,
             height: _resolveTextSize(),
@@ -1152,7 +1277,7 @@ class PrintingService {
 
       if (storePhone != null) {
         bytes += generator.text(
-          '${_text('tel', fallback: 'Tel')}: $storePhone',
+          '${_text('tel', fallback: 'Tel')}: ${_safe(storePhone)}',
           styles: PosStyles(
             align: PosAlign.center,
             height: _resolveTextSize(),
@@ -1167,7 +1292,7 @@ class PrintingService {
           final settings = _ref!.read(settingsProvider);
           if (settings.ticketHeader.isNotEmpty) {
             bytes += generator.text(
-              settings.ticketHeader,
+              _safe(settings.ticketHeader),
               styles: PosStyles(
                 align: PosAlign.center,
                 height: _resolveTextSize(),
@@ -1202,7 +1327,7 @@ class PrintingService {
       );
       if (cashierName != null) {
         bytes += generator.text(
-          '${_translate("cashier")}: $cashierName',
+          '${_translate("cashier")}: ${_safe(cashierName)}',
           styles: PosStyles(
             align: PosAlign.left,
             height: _resolveTextSize(),
@@ -1212,7 +1337,7 @@ class PrintingService {
       }
       if (order.tableName != null) {
         bytes += generator.text(
-          '${_translate("table")}: ${order.tableName}',
+          '${_translate("table")}: ${_safe(order.tableName)}',
           styles: PosStyles(
             align: PosAlign.left,
             height: _resolveTextSize(),
@@ -1222,7 +1347,7 @@ class PrintingService {
       }
       if (order.customerName != null) {
         bytes += generator.text(
-          '${_text('customer', fallback: 'Customer')}: ${order.customerName}',
+          '${_text('customer', fallback: 'Customer')}: ${_safe(order.customerName)}',
           styles: PosStyles(
             align: PosAlign.left,
             height: _resolveTextSize(),
@@ -1232,7 +1357,7 @@ class PrintingService {
       }
       if (order.customerPhone != null && order.customerPhone!.isNotEmpty) {
         bytes += generator.text(
-          '${_text('phone', fallback: 'Phone')}: ${order.customerPhone}',
+          '${_text('phone', fallback: 'Phone')}: ${_safe(order.customerPhone)}',
           styles: PosStyles(
             align: PosAlign.left,
             height: _resolveTextSize(),
@@ -1253,7 +1378,7 @@ class PrintingService {
           order.deliveryAddress != null &&
           order.deliveryAddress!.trim().isNotEmpty) {
         bytes += generator.text(
-          '${_text('delivery_address', fallback: 'Delivery address')}: ${order.deliveryAddress}',
+          '${_text('delivery_address', fallback: 'Delivery address')}: ${_safe(order.deliveryAddress)}',
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,
@@ -1277,7 +1402,7 @@ class PrintingService {
       for (final item in order.items) {
         bytes += generator.row([
           PosColumn(
-            text: '${item.quantity}x ${item.displayName}',
+            text: '${item.quantity}x ${_safe(item.displayName)}',
             width: 8,
             styles: PosStyles(
               align: PosAlign.left,
@@ -1302,7 +1427,7 @@ class PrintingService {
         // Components
         for (final comp in item.components) {
           bytes += generator.text(
-            '  + ${comp.name} x${comp.quantity}',
+            '  + ${_safe(comp.name)} x${comp.quantity}',
             styles: PosStyles(
               align: PosAlign.left,
               height: _resolveTextSize(),
@@ -1314,7 +1439,7 @@ class PrintingService {
         // Note
         if (item.note != null && item.note!.isNotEmpty) {
           bytes += generator.text(
-            '  ${_text('note', fallback: 'Note')}: ${item.note}',
+            '  ${_text('note', fallback: 'Note')}: ${_safe(item.note)}',
             styles: PosStyles(
               align: PosAlign.left,
               fontType: PosFontType.fontB,
@@ -1485,7 +1610,13 @@ class PrintingService {
 
       debugPrint('Attempting to print receipt. Bytes length: ${bytes.length}');
 
-      await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      final ok = await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      if (!ok) {
+        debugPrint('Receipt dispatch failed — no paper came out.');
+        _isPrintingInProgress = false;
+        _printingStatusController.add(null);
+        return false;
+      }
 
       debugPrint('Receipt printed successfully');
       _isPrintingInProgress = false;
@@ -1629,41 +1760,152 @@ class PrintingService {
       if (itemsWithoutStation.isNotEmpty) {
         itemsByStation.putIfAbsent(_text('general', fallback: 'General'), () => []).addAll(itemsWithoutStation);
       }
-      
-      // Print one ticket per station
+
+      // Consolidated-job path: when enabled and we actually have more than
+      // one station ticket to print, send them all in a single dispatch
+      // (one driver job, multiple paper cuts). Side-steps the "third
+      // sequential print fails" class of failure on Windows USB drivers
+      // entirely — see _printConsolidatedKdsBatch for the rationale.
+      // Single-station orders fall through to the per-station path below
+      // since there's no benefit to consolidating one section.
+      if (_config.consolidateKdsJob && itemsByStation.length > 1) {
+        final ok = await _printConsolidatedKdsBatch(
+          order: order,
+          itemsByStation: itemsByStation,
+          mode: resolvedMode,
+        );
+        if (ok) {
+          // Dedupe items across stations (multi-station products appear
+          // in multiple keys) and mark them all printed.
+          final markedById = <int, OrderItem>{};
+          for (final stationItems in itemsByStation.values) {
+            for (final item in stationItems) {
+              if (item.id != null) markedById[item.id!] = item;
+            }
+          }
+          if (markedById.isNotEmpty) {
+            await _markItemsAsPrinted(database, markedById.values.toList());
+          }
+        }
+        debugPrint('Consolidated KDS print: ${ok ? 'OK' : 'FAILED'}');
+        _isPrintingInProgress = false;
+        _printingStatusController.add(null);
+        return ok;
+      }
+
+      // Per-station path (legacy). One driver job per station with a
+      // self-healing retry and deferred marking. Used when the
+      // consolidated flag is off, or when there's only one station.
+      //
+      // CRITICAL: marking items as printed is DEFERRED until the loop
+      // finishes, and an item is only marked when EVERY station ticket it
+      // appeared on succeeded. The previous version marked per-station
+      // immediately, which produced this bug for multi-station products:
+      //
+      //   Station A succeeds  -> item.kdsPrintedAt = now
+      //   Station B fails     -> overall return = false
+      //   User retries        -> `modificationsOnly` filter sees the item
+      //                          as printed and skips it -> Kitchen B
+      //                          never gets the ticket.
+      //
+      // Tracking per-item via two maps keyed by the order_product id; a
+      // multi-station product appears under multiple station keys but is
+      // the same row in DB.
+      final stationsPerItem = <int, int>{};
+      for (final stationItems in itemsByStation.values) {
+        for (final item in stationItems) {
+          if (item.id == null) continue;
+          stationsPerItem[item.id!] = (stationsPerItem[item.id!] ?? 0) + 1;
+        }
+      }
+      final successesPerItem = <int, int>{};
+
       bool allSuccessful = true;
       int stationCount = 0;
-      
+
       for (final stationEntry in itemsByStation.entries) {
         stationCount++;
         final stationName = stationEntry.key;
         final stationItems = stationEntry.value;
-        
+
         debugPrint('Printing KDS ticket $stationCount/${itemsByStation.length} for station: $stationName (mode: $resolvedMode)');
 
-        final success = await _printKdsTicketForStation(
+        bool success = await _printKdsTicketForStation(
           order: order,
           stationName: stationName,
           items: stationItems,
           cashierName: cashierName,
           mode: resolvedMode,
         );
-        
+
+        // Self-healing retry. The dominant cause of an Nth-print failure in
+        // a multi-station run is a buffer-drain race: the printer hasn't
+        // finished cutting/advancing paper from ticket N-1 when N's bytes
+        // arrive, so they get rejected. After a failure the cached printer
+        // handle has been invalidated by _dispatchBytes (see fix in
+        // _invalidateCachedPrinter), so we explicitly reconnect, then wait
+        // a longer cool-down before retrying once.
         if (!success) {
-          allSuccessful = false;
-          debugPrint('Failed to print ticket for station: $stationName');
-        } else {
-          // Mark items as printed in database
-          await _markItemsAsPrinted(database, stationItems);
+          debugPrint(
+              'Station $stationName failed first attempt — reconnecting and retrying after cool-down');
+          await Future.delayed(const Duration(milliseconds: 1500));
+          final reconnected = await _ensurePrinterConnected(PrinterPurpose.kds);
+          if (reconnected) {
+            success = await _printKdsTicketForStation(
+              order: order,
+              stationName: stationName,
+              items: stationItems,
+              cashierName: cashierName,
+              mode: resolvedMode,
+            );
+            if (success) {
+              debugPrint('Station $stationName succeeded on retry');
+            }
+          } else {
+            debugPrint(
+                'Station $stationName retry skipped — could not reconnect');
+          }
         }
-        
-        // Small delay between prints to avoid printer buffer issues
+
+        if (success) {
+          for (final item in stationItems) {
+            if (item.id == null) continue;
+            successesPerItem[item.id!] =
+                (successesPerItem[item.id!] ?? 0) + 1;
+          }
+        } else {
+          allSuccessful = false;
+          debugPrint('Failed to print ticket for station: $stationName (after retry)');
+        }
+
+        // Inter-print pause. 300ms was tight in the field: networked thermal
+        // printers need time to flush, advance paper, and accept the next
+        // document, otherwise the next send arrives mid-cut and the TCP
+        // write times out — producing the "always errors on multi-station"
+        // symptom. 800ms is conservative and barely noticeable to the user.
         if (stationCount < itemsByStation.length) {
-          await Future.delayed(const Duration(milliseconds: 300));
+          await Future.delayed(const Duration(milliseconds: 800));
         }
       }
 
-      debugPrint('KDS tickets printed: ${allSuccessful ? 'all successful' : 'some failed'}');
+      // Mark only items whose every station ticket succeeded. Dedupe via
+      // a Map<int, OrderItem> keyed by order_product id since a multi-
+      // station product appears in more than one station's list.
+      final markedById = <int, OrderItem>{};
+      for (final stationItems in itemsByStation.values) {
+        for (final item in stationItems) {
+          if (item.id == null) continue;
+          if (successesPerItem[item.id!] == stationsPerItem[item.id!]) {
+            markedById[item.id!] = item;
+          }
+        }
+      }
+      if (markedById.isNotEmpty) {
+        await _markItemsAsPrinted(database, markedById.values.toList());
+      }
+
+      debugPrint('KDS tickets printed: ${allSuccessful ? 'all successful' : 'some failed'} '
+          '(marked ${markedById.length}/${stationsPerItem.length} items as printed)');
       _isPrintingInProgress = false;
       _printingStatusController.add(null);
       return allSuccessful;
@@ -1683,8 +1925,13 @@ class PrintingService {
         // Return all items
         return items;
       case KdsPrintMode.modificationsOnly:
-        // Return only items that haven't been printed yet (kdsPrintedAt is null)
-        return items.where((item) => item.kdsPrintedAt == null).toList();
+        // "Modifications" = things the kitchen hasn't seen AND that are still
+        // open business. A paid line (ticketId != null) is by definition not
+        // a modification — even if its kdsPrintedAt got lost. Including it
+        // here caused the "new items only (2)" ghost on fully-paid orders.
+        return items
+            .where((item) => item.ticketId == null && item.kdsPrintedAt == null)
+            .toList();
     }
   }
 
@@ -1707,25 +1954,26 @@ class PrintingService {
     }
   }
 
-  /// Print a single KDS ticket for a specific station
-  Future<bool> _printKdsTicketForStation({
+  /// Build the ESC/POS byte buffer for a single station's KDS ticket
+  /// (header, items, barcode, cut). Pure function — no dispatch, no DB
+  /// access. Extracted from [_printKdsTicketForStation] so the
+  /// consolidated-job path can concatenate per-station buffers into one
+  /// dispatch.
+  Future<List<int>> _buildKdsTicketBytesForStation({
     required CurrentOrder order,
     required String stationName,
     required List<OrderItem> items,
-    required String? cashierName,
-    KdsPrintMode mode = KdsPrintMode.modificationsOnly,
+    required KdsPrintMode mode,
+    required Generator generator,
   }) async {
-    try {
-      final profile = await CapabilityProfile.load();
-      final generator = Generator(_config.paperSize, profile);
-      List<int> bytes = [];
+    List<int> bytes = [];
 
-      // Set code table based on current language (supports Arabic, French, English)
-      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
+    // Set code table based on current language (supports Arabic, French, English)
+    bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
 
-      // STATION NAME - Very prominent at the top
+    // STATION NAME - Very prominent at the top
       bytes += generator.text(
-        '*** ${stationName.toUpperCase()} ***',
+        '*** ${_safe(stationName).toUpperCase()} ***',
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
@@ -1753,7 +2001,7 @@ class PrintingService {
 
       // Large order number
       bytes += generator.text(
-        '${_text('order', fallback: 'ORDER')} #${order.orderCode ?? "N/A"}',
+        '${_text('order', fallback: 'ORDER')} #${_safe(order.orderCode ?? "N/A")}',
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
@@ -1786,7 +2034,7 @@ class PrintingService {
 
       if (order.tableName != null) {
         bytes += generator.text(
-          '${_text('table', fallback: 'TABLE')}: ${order.tableName}',
+          '${_text('table', fallback: 'TABLE')}: ${_safe(order.tableName)}',
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
@@ -1807,7 +2055,7 @@ class PrintingService {
 
       if (order.customerName != null) {
         bytes += generator.text(
-          '${_text('customer', fallback: 'Customer')}: ${order.customerName}',
+          '${_text('customer', fallback: 'Customer')}: ${_safe(order.customerName)}',
           styles: PosStyles(
             align: PosAlign.center,
             height: _resolveTextSize(),
@@ -1817,7 +2065,7 @@ class PrintingService {
       }
       if (order.customerPhone != null && order.customerPhone!.isNotEmpty) {
         bytes += generator.text(
-          '${_text('phone', fallback: 'Phone')}: ${order.customerPhone}',
+          '${_text('phone', fallback: 'Phone')}: ${_safe(order.customerPhone)}',
           styles: PosStyles(
             align: PosAlign.center,
             height: _resolveTextSize(),
@@ -1831,7 +2079,7 @@ class PrintingService {
       // Items - large and clear for kitchen (only items for this station)
       for (final item in items) {
         bytes += generator.text(
-          '${item.quantity}x ${item.displayName}',
+          '${item.quantity}x ${_safe(item.displayName)}',
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,
@@ -1843,7 +2091,7 @@ class PrintingService {
         // Components
         for (final comp in item.components) {
           bytes += generator.text(
-            '   + ${comp.name} x${comp.quantity}',
+            '   + ${_safe(comp.name)} x${comp.quantity}',
             styles: PosStyles(
               align: PosAlign.left,
               bold: true,
@@ -1856,7 +2104,7 @@ class PrintingService {
         // Note - highlighted for kitchen
         if (item.note != null && item.note!.isNotEmpty) {
           bytes += generator.text(
-            '   *** ${item.note} ***',
+            '   *** ${_safe(item.note)} ***',
             styles: PosStyles(
               align: PosAlign.left,
               bold: true,
@@ -1893,16 +2141,100 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
+      return bytes;
+  }
+
+  /// Print a single station's KDS ticket (build bytes + dispatch). Returns
+  /// true only when the printer accepted the bytes. The caller is
+  /// responsible for stamping `kdsPrintedAt` on success — see
+  /// [printKdsTicket] for the multi-station bookkeeping.
+  Future<bool> _printKdsTicketForStation({
+    required CurrentOrder order,
+    required String stationName,
+    required List<OrderItem> items,
+    required String? cashierName,
+    KdsPrintMode mode = KdsPrintMode.modificationsOnly,
+  }) async {
+    try {
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(_config.paperSize, profile);
+      final bytes = await _buildKdsTicketBytesForStation(
+        order: order,
+        stationName: stationName,
+        items: items,
+        mode: mode,
+        generator: generator,
+      );
+
       debugPrint(
         'Attempting to print KDS ticket for $stationName. Bytes length: ${bytes.length}',
       );
 
-      await _dispatchBytes(PrinterPurpose.kds, bytes);
+      final ok = await _dispatchBytes(PrinterPurpose.kds, bytes);
+      if (!ok) {
+        // CRITICAL: do NOT pretend success. The caller (printKdsTicket)
+        // only stamps `kdsPrintedAt` on items when this returns true; if
+        // we lied here, the items would be marked printed even though no
+        // paper came out and `KdsPrintMode.modificationsOnly` would
+        // permanently skip them on retry.
+        debugPrint(
+            'KDS dispatch failed for $stationName — items will NOT be marked printed.');
+        return false;
+      }
 
       debugPrint('KDS ticket for $stationName printed successfully');
       return true;
     } catch (e, stackTrace) {
       debugPrint('Error printing KDS ticket for $stationName: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return false;
+    }
+  }
+
+  /// Build all station tickets into one buffer and dispatch as a SINGLE
+  /// print job, with paper cuts between stations. Used when
+  /// `_config.consolidateKdsJob` is enabled.
+  ///
+  /// Rationale: on Windows USB drivers, sending three back-to-back
+  /// `printData` calls creates three separate spool jobs. Some drivers
+  /// can't sequence rapid jobs cleanly — the third hits the driver before
+  /// the second has fully cleared, the spool stalls, and `printData` blocks
+  /// past the 10s timeout. One driver job side-steps that class of failure
+  /// entirely; the printer sees one stream of bytes, performs the cuts at
+  /// the section boundaries, and the kitchen still gets visually separate
+  /// tickets.
+  ///
+  /// Returns true iff the single dispatch succeeded. There is no per-
+  /// station partial success in this mode — by design.
+  Future<bool> _printConsolidatedKdsBatch({
+    required CurrentOrder order,
+    required Map<String, List<OrderItem>> itemsByStation,
+    required KdsPrintMode mode,
+  }) async {
+    try {
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(_config.paperSize, profile);
+      List<int> bytes = [];
+      for (final entry in itemsByStation.entries) {
+        bytes += await _buildKdsTicketBytesForStation(
+          order: order,
+          stationName: entry.key,
+          items: entry.value,
+          mode: mode,
+          generator: generator,
+        );
+      }
+      debugPrint(
+        'Attempting consolidated KDS print: ${itemsByStation.length} stations, '
+        '${bytes.length} bytes total',
+      );
+      final ok = await _dispatchBytes(PrinterPurpose.kds, bytes);
+      if (!ok) {
+        debugPrint('Consolidated KDS dispatch failed — items will NOT be marked printed.');
+      }
+      return ok;
+    } catch (e, stackTrace) {
+      debugPrint('Error in consolidated KDS print: $e');
       debugPrint('Stack trace: $stackTrace');
       return false;
     }
@@ -1951,7 +2283,7 @@ class PrintingService {
       // Header
       if (storeName != null) {
         bytes += generator.text(
-          storeName,
+          _safe(storeName),
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
@@ -2001,7 +2333,7 @@ class PrintingService {
           final settings = _ref!.read(settingsProvider);
           if (settings.ticketHeader.isNotEmpty) {
             bytes += generator.text(
-              settings.ticketHeader,
+              _safe(settings.ticketHeader),
               styles: PosStyles(
                 align: PosAlign.center,
                 height: _resolveTextSize(),
@@ -2030,7 +2362,7 @@ class PrintingService {
       // Add order code if available
       if (orderCode != null && orderCode.isNotEmpty) {
         bytes += generator.text(
-          '${_text('order', fallback: 'Order')}: $orderCode',
+          '${_text('order', fallback: 'Order')}: ${_safe(orderCode)}',
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
@@ -2050,7 +2382,7 @@ class PrintingService {
       );
       if (cashierName != null) {
         bytes += generator.text(
-          '${_translate("cashier")}: $cashierName',
+          '${_translate("cashier")}: ${_safe(cashierName)}',
           styles: PosStyles(
             align: PosAlign.left,
             height: _resolveTextSize(),
@@ -2060,7 +2392,7 @@ class PrintingService {
       }
       if (customerName != null) {
         bytes += generator.text(
-          '${_text('customer', fallback: 'Customer')}: $customerName',
+          '${_text('customer', fallback: 'Customer')}: ${_safe(customerName)}',
           styles: PosStyles(
             align: PosAlign.left,
             height: _resolveTextSize(),
@@ -2070,7 +2402,7 @@ class PrintingService {
       }
       if (customerPhone != null && customerPhone.isNotEmpty) {
         bytes += generator.text(
-          '${_text('phone', fallback: 'Phone')}: $customerPhone',
+          '${_text('phone', fallback: 'Phone')}: ${_safe(customerPhone)}',
           styles: PosStyles(
             align: PosAlign.left,
             height: _resolveTextSize(),
@@ -2080,7 +2412,7 @@ class PrintingService {
       }
       if (deliveryAddress != null && deliveryAddress.trim().isNotEmpty) {
         bytes += generator.text(
-          '${_text('delivery_address', fallback: 'Delivery address')}: $deliveryAddress',
+          '${_text('delivery_address', fallback: 'Delivery address')}: ${_safe(deliveryAddress)}',
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,
@@ -2102,7 +2434,7 @@ class PrintingService {
 
       // Items
       for (final item in items) {
-        final name = item['name'] ?? 'Unknown';
+        final name = _safe(item['name'] as String? ?? 'Unknown');
         final qty = item['quantity'] ?? 1;
         final price = item['price'] ?? 0.0;
 
@@ -2134,7 +2466,7 @@ class PrintingService {
         final components = item['components'] as List<dynamic>?;
         if (components != null && components.isNotEmpty) {
           for (final comp in components) {
-            final compName = comp['name'] ?? '';
+            final compName = _safe(comp['name'] as String? ?? '');
             final compQty = comp['quantity'] ?? 1;
             final compPrice = comp['price'] ?? 0.0;
 
@@ -2244,7 +2576,13 @@ class PrintingService {
         'Attempting to print ticket receipt. Bytes length: ${bytes.length}',
       );
 
-      await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      final ok = await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      if (!ok) {
+        debugPrint('Ticket receipt dispatch failed — no paper came out.');
+        _isPrintingInProgress = false;
+        _printingStatusController.add(null);
+        return false;
+      }
 
       debugPrint('Ticket receipt printed successfully');
       _isPrintingInProgress = false;
@@ -3100,7 +3438,12 @@ class PrintingService {
         'Attempting to print daily summary report. Bytes length: ${bytes.length}',
       );
 
-      await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      final ok = await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      if (!ok) {
+        debugPrint(
+            'Daily summary report dispatch failed — no paper came out.');
+        return false;
+      }
 
       debugPrint('Daily summary report printed successfully');
       return true;
@@ -3342,7 +3685,14 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
-      await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      final ok = await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      if (!ok) {
+        debugPrint(
+            'Daily orders report dispatch failed — no paper came out.');
+        _isPrintingInProgress = false;
+        _printingStatusController.add(null);
+        return false;
+      }
 
       debugPrint('Daily orders report printed successfully');
       _isPrintingInProgress = false;
@@ -3424,7 +3774,13 @@ class PrintingService {
       bytes += generator.emptyLines(2);
       bytes += generator.cut();
 
-      await _dispatchBytes(purpose, bytes);
+      final ok = await _dispatchBytes(purpose, bytes);
+      if (!ok) {
+        debugPrint('Test page dispatch failed for ${purpose.name}.');
+        _isPrintingInProgress = false;
+        _printingStatusController.add(null);
+        return false;
+      }
 
       debugPrint('Test page printed successfully for ${purpose.name}');
       _isPrintingInProgress = false;

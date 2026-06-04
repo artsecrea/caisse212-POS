@@ -8,6 +8,7 @@ import '../../providers/admin_elevation_provider.dart';
 import '../../utils/admin_auth.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import '../../utils/customer_display.dart';
 
 import 'package:data_table_2/data_table_2.dart';
 import '../../domain/models/order_models.dart';
@@ -38,6 +39,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   DateTime? _startDate;
   DateTime? _endDate;
   int? _selectedCustomerId;
+  int? _selectedTableId;
+  String? _selectedTableName;
 
   // Pagination
   int _currentPage = 0;
@@ -128,11 +131,13 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       final lowerQuery = query.toLowerCase();
       final allCustomers = await database.select(database.customers).get();
       final filtered = allCustomers.where((c) {
-        final fullName = '${c.firstName} ${c.lastName}'.toLowerCase();
+        final fullName = c.displayLabel.toLowerCase();
         final phone = c.phone?.toLowerCase() ?? '';
+        final phoneNorm = c.phoneNormalized?.toLowerCase() ?? '';
         final email = c.email?.toLowerCase() ?? '';
         return fullName.contains(lowerQuery) ||
             phone.contains(lowerQuery) ||
+            phoneNorm.contains(lowerQuery) ||
             email.contains(lowerQuery);
       }).toList();
       if (mounted) setState(() => _customers = filtered);
@@ -157,6 +162,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         searchQuery: _searchQuery.isNotEmpty ? _searchQuery : null,
         customerId: _selectedCustomerId,
         cashierId: _showAllOrders ? null : currentUser?.id,
+        tableId: _selectedTableId,
         startDate: _startDate,
         endDate: _endDate,
         sortColumn: _sortColumn,
@@ -405,7 +411,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   Widget _buildFiltersBar(AppLocalizations l10n) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
         boxShadow: [
@@ -416,157 +422,550 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           ),
         ],
       ),
-      child: Row(
-        children: [
-          // Search field
-          Expanded(
-            flex: 2,
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: l10n.translate('search_by_code_username_customer'),
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          _searchQuery = '';
-                          _onFilterChanged();
-                        },
-                      )
-                    : null,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          // Three breakpoints:
+          //   wide  ≥ 1000 px → single row, full controls.
+          //   med   600–999  → search on top, 3 controls below.
+          //   narrow< 600    → fully stacked, each control gets its own row.
+          if (width >= 1000) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(flex: 3, child: _buildSearchField(l10n)),
+                const SizedBox(width: 12),
+                Expanded(flex: 2, child: _buildStatusDropdown(l10n)),
+                const SizedBox(width: 12),
+                Expanded(flex: 2, child: _buildCustomerDropdown(l10n)),
+                const SizedBox(width: 12),
+                Expanded(flex: 2, child: _buildTableFilterField(l10n)),
+                const SizedBox(width: 12),
+                _buildDateRangeButton(l10n),
+                if (_hasAnyFilter()) ...[
+                  const SizedBox(width: 4),
+                  _buildResetAllButton(l10n),
+                ],
+              ],
+            );
+          }
+          if (width >= 600) {
+            return Column(
+              children: [
+                _buildSearchField(l10n),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: _buildStatusDropdown(l10n)),
+                    const SizedBox(width: 10),
+                    Expanded(child: _buildCustomerDropdown(l10n)),
+                    const SizedBox(width: 10),
+                    Expanded(child: _buildTableFilterField(l10n)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: _buildDateRangeButton(l10n)),
+                    if (_hasAnyFilter()) ...[
+                      const SizedBox(width: 8),
+                      _buildResetAllButton(l10n),
+                    ],
+                  ],
+                ),
+              ],
+            );
+          }
+          // Narrow — fully stacked.
+          return Column(
+            children: [
+              _buildSearchField(l10n),
+              const SizedBox(height: 8),
+              _buildStatusDropdown(l10n),
+              const SizedBox(height: 8),
+              _buildCustomerDropdown(l10n),
+              const SizedBox(height: 8),
+              _buildTableFilterField(l10n),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(child: _buildDateRangeButton(l10n)),
+                  if (_hasAnyFilter()) ...[
+                    const SizedBox(width: 8),
+                    _buildResetAllButton(l10n),
+                  ],
+                ],
               ),
-              onSubmitted: (value) {
-                _searchQuery = value;
-                _onFilterChanged();
-              },
-            ),
-          ),
-          const SizedBox(width: 16),
-          // Status filter
-          Expanded(
-            child: _buildStatusDropdown(l10n),
-          ),
-          const SizedBox(width: 16),
-          // Customer filter
-          Expanded(
-            child: _buildCustomerDropdown(l10n),
-          ),
-          const SizedBox(width: 16),
-          // Date range picker
-          OutlinedButton.icon(
-            onPressed: _showDateRangePicker,
-            icon: const Icon(Icons.date_range, size: 18),
-            label: Text(_getDateRangeText(l10n), style: const TextStyle(fontSize: 12)),
-          ),
-          if (_startDate != null || _endDate != null)
-            IconButton(
-              icon: const Icon(Icons.clear, size: 18),
-              onPressed: () {
-                _startDate = null;
-                _endDate = null;
-                _onFilterChanged();
-              },
-              tooltip: l10n.translate('clear_date_filter'),
-            ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
 
+  Widget _buildSearchField(AppLocalizations l10n) {
+    return TextField(
+      controller: _searchController,
+      decoration: InputDecoration(
+        hintText: l10n.translate('search_by_code_username_customer'),
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon: _searchQuery.isNotEmpty
+            ? IconButton(
+                icon: const Icon(Icons.clear),
+                onPressed: () {
+                  _searchController.clear();
+                  _searchQuery = '';
+                  _onFilterChanged();
+                },
+              )
+            : null,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        isDense: true,
+      ),
+      onSubmitted: (value) {
+        _searchQuery = value;
+        _onFilterChanged();
+      },
+    );
+  }
+
+  Widget _buildDateRangeButton(AppLocalizations l10n) {
+    final has = _startDate != null || _endDate != null;
+    return OutlinedButton.icon(
+      onPressed: _showDateRangePicker,
+      icon: Icon(Icons.date_range, size: 18, color: has ? null : Colors.grey),
+      label: Text(
+        _getDateRangeText(l10n),
+        style: const TextStyle(fontSize: 12),
+        overflow: TextOverflow.ellipsis,
+      ),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        side: BorderSide(
+          color: has
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.outline.withValues(alpha: 0.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResetAllButton(AppLocalizations l10n) {
+    return Tooltip(
+      message: l10n.translate('clear_all_filters'),
+      child: OutlinedButton.icon(
+        onPressed: _resetAllFilters,
+        icon: const Icon(Icons.filter_alt_off, size: 18),
+        label: Text(l10n.translate('reset'),
+            style: const TextStyle(fontSize: 12)),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          foregroundColor: Colors.red[700],
+          side: BorderSide(color: Colors.red.withValues(alpha: 0.4)),
+        ),
+      ),
+    );
+  }
+
+  bool _hasAnyFilter() {
+    return _statusFilter != 'ALL' ||
+        _searchQuery.isNotEmpty ||
+        _selectedCustomerId != null ||
+        _selectedTableId != null ||
+        _startDate != null ||
+        _endDate != null;
+  }
+
+  void _resetAllFilters() {
+    setState(() {
+      _statusFilter = 'ALL';
+      _searchQuery = '';
+      _searchController.clear();
+      _selectedCustomerId = null;
+      _selectedCustomerName = null;
+      _customerSearchController.clear();
+      _selectedTableId = null;
+      _selectedTableName = null;
+      _startDate = null;
+      _endDate = null;
+      _customers = [];
+    });
+    _onFilterChanged();
+  }
+
+  Widget _buildTableFilterField(AppLocalizations l10n) {
+    return InkWell(
+      onTap: _showTablePicker,
+      borderRadius: BorderRadius.circular(8),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: l10n.translate('filter_by_table'),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          prefixIcon: const Icon(Icons.table_restaurant, size: 20),
+          suffixIcon: _selectedTableId != null
+              ? IconButton(
+                  icon: const Icon(Icons.clear, size: 18),
+                  onPressed: () {
+                    setState(() {
+                      _selectedTableId = null;
+                      _selectedTableName = null;
+                    });
+                    _onFilterChanged();
+                  },
+                )
+              : const Icon(Icons.arrow_drop_down),
+          isDense: true,
+        ),
+        child: Text(
+          _selectedTableName ?? l10n.translate('all_tables'),
+          style: TextStyle(
+            color: _selectedTableId != null
+                ? Theme.of(context).colorScheme.onSurface
+                : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+            fontSize: 14,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTablePicker() async {
+    final l10n = AppLocalizations.of(context)!;
+    final database = ref.read(databaseProvider);
+    final tables = await database.select(database.areaTables).get();
+    if (!mounted) return;
+    final selectedId = await showDialog<int?>(
+      context: context,
+      builder: (ctx) {
+        String search = '';
+        return StatefulBuilder(builder: (ctx, setLocal) {
+          final filtered = search.isEmpty
+              ? tables
+              : tables
+                  .where((t) =>
+                      t.name.toLowerCase().contains(search.toLowerCase()))
+                  .toList();
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.table_restaurant),
+                const SizedBox(width: 8),
+                Text(l10n.translate('filter_by_table')),
+              ],
+            ),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: l10n.translate('search_tables'),
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      isDense: true,
+                    ),
+                    onChanged: (v) => setLocal(() => search = v),
+                  ),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: tables.isEmpty
+                        ? Padding(
+                            padding: const EdgeInsets.all(16),
+                            child:
+                                Text(l10n.translate('no_tables_available')),
+                          )
+                        : ListView(
+                            shrinkWrap: true,
+                            children: [
+                              ListTile(
+                                leading: const Icon(Icons.public),
+                                title: Text(l10n.translate('all_tables'),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w600)),
+                                onTap: () =>
+                                    Navigator.of(ctx).pop<int?>(null),
+                                selected: _selectedTableId == null,
+                              ),
+                              const Divider(height: 1),
+                              ...filtered.map((t) => ListTile(
+                                    leading:
+                                        const Icon(Icons.table_restaurant),
+                                    title: Text(t.name),
+                                    subtitle: Text(
+                                        '${l10n.translate('capacity')}: ${t.capacity}'),
+                                    onTap: () =>
+                                        Navigator.of(ctx).pop<int?>(t.id),
+                                    selected: _selectedTableId == t.id,
+                                  )),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop<int?>(-1),
+                child: Text(l10n.translate('cancel')),
+              ),
+            ],
+          );
+        });
+      },
+    );
+    if (selectedId == -1) return; // cancelled
+    if (!mounted) return;
+    setState(() {
+      _selectedTableId = selectedId;
+      _selectedTableName = selectedId == null
+          ? null
+          : tables.firstWhere((t) => t.id == selectedId).name;
+    });
+    _onFilterChanged();
+  }
+
   Widget _buildSecondaryFiltersBar(AppLocalizations l10n) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerLow,
-        border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+        border:
+            Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
       ),
-      child: Row(
-        children: [
-          // Group by
-          Text('${l10n.translate('group_by')}: ', style: const TextStyle(fontWeight: FontWeight.w500)),
-          const SizedBox(width: 8),
-          SegmentedButton<String>(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 700;
+          final groupBySegment = SegmentedButton<String>(
             segments: [
-              ButtonSegment(value: 'none', label: Text(l10n.translate('none'), style: const TextStyle(fontSize: 12))),
-              ButtonSegment(value: 'status', label: Text(l10n.translate('status'), style: const TextStyle(fontSize: 12))),
-              ButtonSegment(value: 'date', label: Text(l10n.translate('date'), style: const TextStyle(fontSize: 12))),
+              ButtonSegment(
+                  value: 'none',
+                  label: Text(l10n.translate('none'),
+                      style: const TextStyle(fontSize: 12))),
+              ButtonSegment(
+                  value: 'status',
+                  label: Text(l10n.translate('status'),
+                      style: const TextStyle(fontSize: 12))),
+              ButtonSegment(
+                  value: 'date',
+                  label: Text(l10n.translate('date'),
+                      style: const TextStyle(fontSize: 12))),
             ],
             selected: {_groupBy},
             onSelectionChanged: (selected) {
-              setState(() {
-                _groupBy = selected.first;
-              });
+              setState(() => _groupBy = selected.first);
             },
             style: const ButtonStyle(
               visualDensity: VisualDensity.compact,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-          ),
-          const Spacer(),
-          // Rows per page
-          Text('${l10n.translate('rows_per_page')}: ', style: const TextStyle(fontSize: 12)),
-          DropdownButton<int>(
-            value: _rowsPerPage,
-            underline: const SizedBox(),
-            items: const [
-              DropdownMenuItem(value: 10, child: Text('10')),
-              DropdownMenuItem(value: 25, child: Text('25')),
-              DropdownMenuItem(value: 50, child: Text('50')),
-              DropdownMenuItem(value: 100, child: Text('100')),
-            ],
-            onChanged: (value) {
-              if (value != null) {
-                _rowsPerPage = value;
-                _currentPage = 0;
-                _loadOrders();
-              }
-            },
-          ),
-          const SizedBox(width: 16),
-          // Quick filters
-          Wrap(
-            spacing: 8,
+          );
+          final rowsPerPageDropdown = Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              FilterChip(
-                label: Text(l10n.translate('today'), style: const TextStyle(fontSize: 11)),
-                selected: _isToday(),
-                onSelected: (selected) {
-                  if (selected) {
-                    final now = DateTime.now();
-                    _startDate = DateTime(now.year, now.month, now.day);
-                    _endDate = now;
-                  } else {
-                    _startDate = null;
-                    _endDate = null;
+              Text('${l10n.translate('rows_per_page')}: ',
+                  style: const TextStyle(fontSize: 12)),
+              DropdownButton<int>(
+                value: _rowsPerPage,
+                underline: const SizedBox(),
+                items: const [
+                  DropdownMenuItem(value: 10, child: Text('10')),
+                  DropdownMenuItem(value: 25, child: Text('25')),
+                  DropdownMenuItem(value: 50, child: Text('50')),
+                  DropdownMenuItem(value: 100, child: Text('100')),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    _rowsPerPage = value;
+                    _currentPage = 0;
+                    _loadOrders();
                   }
-                  _onFilterChanged();
-                },
-              ),
-              FilterChip(
-                label: Text(l10n.translate('unsynced'), style: const TextStyle(fontSize: 11)),
-                selected: _statusFilter == 'COMPLETED',
-                onSelected: (selected) {
-                  _statusFilter = selected ? 'COMPLETED' : 'ALL';
-                  _onFilterChanged();
                 },
               ),
             ],
-          ),
-        ],
+          );
+          final quickChips = Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: _buildQuickFilterChips(l10n),
+          );
+
+          if (isNarrow) {
+            // Compact two-row layout: chips on top, controls below.
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                quickChips,
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(children: [
+                          Text('${l10n.translate('group_by')}: ',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w500)),
+                          groupBySegment,
+                        ]),
+                      ),
+                    ),
+                    rowsPerPageDropdown,
+                  ],
+                ),
+              ],
+            );
+          }
+
+          // Wide layout — one row.
+          return Row(
+            children: [
+              Text('${l10n.translate('group_by')}: ',
+                  style: const TextStyle(fontWeight: FontWeight.w500)),
+              const SizedBox(width: 8),
+              groupBySegment,
+              const SizedBox(width: 12),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  reverse: false,
+                  child: quickChips,
+                ),
+              ),
+              const SizedBox(width: 12),
+              rowsPerPageDropdown,
+            ],
+          );
+        },
       ),
     );
   }
 
-  bool _isToday() {
+  List<Widget> _buildQuickFilterChips(AppLocalizations l10n) {
+    return [
+      FilterChip(
+        label: Text(l10n.translate('today'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _isRangeToday(),
+        onSelected: (selected) {
+          if (selected) {
+            final now = DateTime.now();
+            _startDate = DateTime(now.year, now.month, now.day);
+            _endDate = DateTime(now.year, now.month, now.day, 23, 59, 59);
+          } else {
+            _startDate = null;
+            _endDate = null;
+          }
+          _onFilterChanged();
+        },
+      ),
+      FilterChip(
+        label: Text(l10n.translate('yesterday'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _isRangeYesterday(),
+        onSelected: (selected) {
+          if (selected) {
+            final y =
+                DateTime.now().subtract(const Duration(days: 1));
+            _startDate = DateTime(y.year, y.month, y.day);
+            _endDate = DateTime(y.year, y.month, y.day, 23, 59, 59);
+          } else {
+            _startDate = null;
+            _endDate = null;
+          }
+          _onFilterChanged();
+        },
+      ),
+      FilterChip(
+        label: Text(l10n.translate('this_week'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _isRangeThisWeek(),
+        onSelected: (selected) {
+          if (selected) {
+            final now = DateTime.now();
+            final start =
+                now.subtract(Duration(days: now.weekday - 1));
+            _startDate = DateTime(start.year, start.month, start.day);
+            _endDate = DateTime(now.year, now.month, now.day, 23, 59, 59);
+          } else {
+            _startDate = null;
+            _endDate = null;
+          }
+          _onFilterChanged();
+        },
+      ),
+      FilterChip(
+        label: Text(l10n.translate('this_month'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _isRangeThisMonth(),
+        onSelected: (selected) {
+          if (selected) {
+            final now = DateTime.now();
+            _startDate = DateTime(now.year, now.month, 1);
+            _endDate = DateTime(now.year, now.month, now.day, 23, 59, 59);
+          } else {
+            _startDate = null;
+            _endDate = null;
+          }
+          _onFilterChanged();
+        },
+      ),
+      FilterChip(
+        label: Text(l10n.translate('on_hold'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _statusFilter == 'ONHOLD',
+        onSelected: (selected) {
+          _statusFilter = selected ? 'ONHOLD' : 'ALL';
+          _onFilterChanged();
+        },
+      ),
+      FilterChip(
+        label: Text(l10n.translate('canceled'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _statusFilter == 'CANCELED',
+        onSelected: (selected) {
+          _statusFilter = selected ? 'CANCELED' : 'ALL';
+          _onFilterChanged();
+        },
+      ),
+    ];
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  bool _isRangeToday() {
+    if (_startDate == null) return false;
+    return _isSameDay(_startDate!, DateTime.now());
+  }
+
+  bool _isRangeYesterday() {
+    if (_startDate == null) return false;
+    final y = DateTime.now().subtract(const Duration(days: 1));
+    return _isSameDay(_startDate!, y);
+  }
+
+  bool _isRangeThisWeek() {
+    if (_startDate == null) return false;
+    final now = DateTime.now();
+    final start = now.subtract(Duration(days: now.weekday - 1));
+    return _isSameDay(_startDate!, start) &&
+        (_endDate == null || _isSameDay(_endDate!, now));
+  }
+
+  bool _isRangeThisMonth() {
     if (_startDate == null) return false;
     final now = DateTime.now();
     return _startDate!.year == now.year &&
-           _startDate!.month == now.month &&
-           _startDate!.day == now.day;
+        _startDate!.month == now.month &&
+        _startDate!.day == 1;
   }
 
   Widget _buildStatusDropdown(AppLocalizations l10n) {
@@ -608,7 +1007,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             await _searchCustomersInDb(query);
             return _customers;
           },
-          displayStringForOption: (Customer c) => '${c.firstName} ${c.lastName}',
+          displayStringForOption: (Customer c) => c.displayLabel,
           fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
             return TextFormField(
               controller: controller,
@@ -657,14 +1056,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                         leading: CircleAvatar(
                           radius: 16,
                           child: Text(
-                            customer.firstName.isNotEmpty
-                                ? customer.firstName[0].toUpperCase()
-                                : '?',
+                            customer.displayInitial,
                             style: const TextStyle(fontSize: 14),
                           ),
                         ),
                         title: Text(
-                          '${customer.firstName} ${customer.lastName}',
+                          customer.displayLabel,
                           style: const TextStyle(fontWeight: FontWeight.w500),
                         ),
                         subtitle: customer.phone != null
@@ -680,7 +1077,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           },
           onSelected: (Customer customer) {
             _selectedCustomerId = customer.id;
-            _selectedCustomerName = '${customer.firstName} ${customer.lastName}';
+            _selectedCustomerName = customer.displayLabel;
             _customerSearchController.text = _selectedCustomerName!;
             _onFilterChanged();
           },
@@ -1196,15 +1593,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
-            onPressed: () {
-              _statusFilter = 'ALL';
-              _searchQuery = '';
-              _searchController.clear();
-              _selectedCustomerId = null;
-              _startDate = null;
-              _endDate = null;
-              _onFilterChanged();
-            },
+            onPressed: _resetAllFilters,
             icon: const Icon(Icons.clear_all),
             label: Text(l10n.translate('clear_filters')),
           ),

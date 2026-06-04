@@ -1,30 +1,38 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:desktop_updater/desktop_updater.dart';
 import 'package:desktop_updater/updater_controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'database_providers.dart';
+import 'settings_provider.dart';
+
+/// Flat static-manifest endpoint for the desktop builds. Each platform reads
+/// `{base}/{platform}-archive.json` (e.g. `windows-archive.json`).
+///
+/// This replaces the old tenant-derived URL (`{api_base_url}/pos/app-archive.json`)
+/// so the update channel no longer touches the backend at all — you just push
+/// new files into a bucket / CDN. Change the host below when you wire the
+/// real production domain.
+///
+/// **Windows is the primary supported target.** Linux / macOS get their own
+/// archive files at the same base URL but aren't actively maintained yet.
+const String _kDesktopUpdateBaseUrl = 'https://update.caisse212.com';
 
 // SharedPreferences key for the testing override URL.
 // Set this via the dev tools / a hidden setting to bypass the production URL.
 // Example: prefs.setString('update_archive_url_override', 'http://localhost:9090/pos/app-archive.json')
 const _kArchiveUrlOverrideKey = 'update_archive_url_override';
 
-/// Derives the archive URL from [baseUrl] (which already ends with /api).
-/// Strips the trailing /api segment so we get the bare server root, then
-/// appends /pos/app-archive.json.
-///
-/// Examples:
-///   https://app.caisse212.com/api  →  https://app.caisse212.com/pos/app-archive.json
-///   http://localhost:9090/api       →  http://localhost:9090/pos/app-archive.json
-String _deriveArchiveUrl(String baseUrl) {
-  var root = baseUrl.trimRight();
-  // Strip a trailing "/api" segment if present (the standard case).
-  if (root.endsWith('/api')) {
-    root = root.substring(0, root.length - 4);
-  }
-  return '$root/pos/app-archive.json';
+/// Returns the static archive URL for the host platform, or `null` on
+/// platforms where desktop updates don't apply (Android, iOS, web, unknown).
+String? _archiveUrlForCurrentPlatform() {
+  if (kIsWeb) return null;
+  if (Platform.isWindows) return '$_kDesktopUpdateBaseUrl/windows-archive.json';
+  if (Platform.isLinux) return '$_kDesktopUpdateBaseUrl/linux-archive.json';
+  if (Platform.isMacOS) return '$_kDesktopUpdateBaseUrl/macos-archive.json';
+  return null;
 }
 
 /// Fetches the archive JSON and prints it for debugging.
@@ -106,18 +114,25 @@ class _SafeDesktopUpdaterController extends DesktopUpdaterController {
   }
 }
 
-/// Provides a [DesktopUpdaterController] built from the stored server URL.
+/// Provides a [DesktopUpdaterController] pointed at the flat per-platform
+/// archive manifest. No tenant backend involvement — just a static file on a
+/// CDN / bucket.
 ///
 /// ## URL resolution order
-/// 1. If `update_archive_url_override` is set in SharedPreferences → use it directly (testing mode).
-/// 2. Otherwise derive from `api_base_url` by stripping the trailing `/api` and appending `/pos/app-archive.json`.
+/// 1. If `update_archive_url_override` is set in SharedPreferences → use it
+///    directly (testing mode, e.g. a local server).
+/// 2. Otherwise hit `$_kDesktopUpdateBaseUrl/{platform}-archive.json` via
+///    [_archiveUrlForCurrentPlatform].
+///
+/// On non-desktop platforms (Android/iOS/web) this returns `null` — the
+/// caller in `main.dart` already gates on `Platform.isWindows/MacOS/Linux`.
 ///
 /// ## Testing mode
-/// Run the app and before startup set via dart:
-///   prefs.setString('update_archive_url_override', 'http://localhost:9090/pos/app-archive.json');
+/// Before startup, in code:
+///   `prefs.setString('update_archive_url_override', 'http://localhost:9090/windows-archive.json')`
 /// Or use the hidden dev setting in the Settings screen.
 ///
-/// ## Required app-archive.json format
+/// ## Required {platform}-archive.json format
 /// ```json
 /// {
 ///   "appName": "CAISSE212",
@@ -129,8 +144,8 @@ class _SafeDesktopUpdaterController extends DesktopUpdaterController {
 ///       "changes": [{"message": "Bug fixes"}],
 ///       "date": "2026-05-13",
 ///       "mandatory": false,
-///       "url": "http://localhost:9090/updates/1.0.1-linux",
-///       "platform": "linux"
+///       "url": "https://update.caisse212.com/builds/1.0.1-windows.zip",
+///       "platform": "windows"
 ///     }
 ///   ]
 /// }
@@ -138,6 +153,9 @@ class _SafeDesktopUpdaterController extends DesktopUpdaterController {
 final desktopUpdaterControllerProvider =
     Provider<DesktopUpdaterController?>((ref) {
   final prefs = ref.watch(sharedPreferencesProvider);
+  // Rebuild when the app language changes so the desktop-updater overlay
+  // text tracks the rest of the UI (en/ar/fr).
+  final lang = ref.watch(settingsProvider.select((s) => s.language));
 
   // Testing/override mode — use the exact URL stored in prefs.
   final overrideUrl = prefs.getString(_kArchiveUrlOverrideKey);
@@ -147,10 +165,13 @@ final desktopUpdaterControllerProvider =
     archiveUrlStr = overrideUrl;
     debugPrint('[DesktopUpdater] 🧪 Testing mode — using override URL: $archiveUrlStr');
   } else {
-    final baseUrl = prefs.getString('api_base_url');
-    if (baseUrl == null || baseUrl.isEmpty) return null;
-    archiveUrlStr = _deriveArchiveUrl(baseUrl);
-    debugPrint('[DesktopUpdater] Derived archive URL: $archiveUrlStr');
+    final url = _archiveUrlForCurrentPlatform();
+    if (url == null) {
+      debugPrint('[DesktopUpdater] No archive URL for this platform');
+      return null;
+    }
+    archiveUrlStr = url;
+    debugPrint('[DesktopUpdater] Archive URL: $archiveUrlStr');
   }
 
   final archiveUri = Uri.tryParse(archiveUrlStr);
@@ -162,21 +183,59 @@ final desktopUpdaterControllerProvider =
   return _SafeDesktopUpdaterController(
     appArchiveUrl: archiveUri,
     rawArchiveUrl: archiveUrlStr,
-    localization: const DesktopUpdateLocalization(
-      updateAvailableText: 'Mise à jour disponible',
-      newVersionAvailableText: '{} {} est disponible',
-      newVersionLongText:
-          'Une nouvelle version est prête. Cliquez pour télécharger ({} MB).',
-      restartText: 'Redémarrer pour mettre à jour',
-      warningTitleText: 'Êtes-vous sûr ?',
-      restartWarningText:
-          'Un redémarrage est nécessaire pour terminer la mise à jour.\n'
-          'Les modifications non sauvegardées seront perdues. Redémarrer maintenant ?',
-      warningCancelText: 'Plus tard',
-      warningConfirmText: 'Redémarrer',
-    ),
+    localization: _localizationFor(lang),
   );
 });
+
+/// Build the desktop_updater plugin's overlay strings for the requested
+/// app language. Falls back to English for any unknown locale.
+DesktopUpdateLocalization _localizationFor(String lang) {
+  switch (lang) {
+    case 'ar':
+      return const DesktopUpdateLocalization(
+        updateAvailableText: 'تحديث متاح',
+        newVersionAvailableText: '{} {} متاح',
+        newVersionLongText:
+            'إصدار جديد جاهز. انقر للتنزيل ({} ميغابايت).',
+        restartText: 'أعد التشغيل للتحديث',
+        warningTitleText: 'هل أنت متأكد؟',
+        restartWarningText:
+            'تحتاج إلى إعادة تشغيل لإكمال التحديث.\n'
+            'ستفقد التغييرات غير المحفوظة. هل تعيد التشغيل الآن؟',
+        warningCancelText: 'لاحقا',
+        warningConfirmText: 'إعادة التشغيل',
+      );
+    case 'fr':
+      return const DesktopUpdateLocalization(
+        updateAvailableText: 'Mise à jour disponible',
+        newVersionAvailableText: '{} {} est disponible',
+        newVersionLongText:
+            'Une nouvelle version est prête. Cliquez pour télécharger ({} MB).',
+        restartText: 'Redémarrer pour mettre à jour',
+        warningTitleText: 'Êtes-vous sûr ?',
+        restartWarningText:
+            'Un redémarrage est nécessaire pour terminer la mise à jour.\n'
+            'Les modifications non sauvegardées seront perdues. Redémarrer maintenant ?',
+        warningCancelText: 'Plus tard',
+        warningConfirmText: 'Redémarrer',
+      );
+    case 'en':
+    default:
+      return const DesktopUpdateLocalization(
+        updateAvailableText: 'Update available',
+        newVersionAvailableText: '{} {} is available',
+        newVersionLongText:
+            'A new version is ready. Tap to download ({} MB).',
+        restartText: 'Restart to update',
+        warningTitleText: 'Are you sure?',
+        restartWarningText:
+            'A restart is required to finish the update.\n'
+            'Unsaved changes will be lost. Restart now?',
+        warningCancelText: 'Later',
+        warningConfirmText: 'Restart',
+      );
+  }
+}
 
 /// Provider that exposes read/write access to the testing-mode override URL.
 final updateArchiveUrlOverrideProvider =

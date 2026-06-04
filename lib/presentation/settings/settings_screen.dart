@@ -1,10 +1,16 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/server_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/update_provider.dart';
+import '../../providers/desktop_update_provider.dart';
 import '../widgets/users_management_screen.dart' show kPermissionGroups;
+import '../widgets/update_dialog.dart';
 import '../../domain/models/app_settings.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/permission_descriptions.dart';
@@ -33,6 +39,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     NavItem(icon: Icons.sync, label: l10n.translate('sync_settings')),
     NavItem(icon: Icons.dns, label: l10n.translate('server_settings')),
     NavItem(icon: Icons.scale, label: l10n.translate('scale_config')),
+    NavItem(icon: Icons.info_outline, label: l10n.translate('about')),
     if (isAdmin)
       NavItem(icon: Icons.badge, label: l10n.translate('cashier_role_defaults')),
   ];
@@ -272,6 +279,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       case 7:
         return const _ScaleConfigSection();
       case 8:
+        return _buildAboutContent(context);
+      case 9:
         return _buildCashierDefaultsContent(settings, settingsNotifier, context);
       default:
         return const SizedBox.shrink();
@@ -835,8 +844,94 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           max: 30,
           onChanged: (value) => notifier.setDataRetentionDays(value),
         ),
+        // TEMP-RETENTION-TEST: remove this button once the retention purge has
+        // been verified in production. Tracked in memory note retention_test_button.
+        const SizedBox(height: 12),
+        _buildRetentionTestButton(context, settings.dataRetentionDays),
       ],
     );
+  }
+
+  // TEMP-RETENTION-TEST: delete this whole method together with the button
+  // above once verified.
+  Widget _buildRetentionTestButton(BuildContext context, int retentionDays) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Test retention purge now (DEV)\nDeletes synced orders & children older than the value above. Customers and sessions are NOT touched.',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+            const SizedBox(width: 12),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.delete_forever),
+              label: const Text('Run now'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              onPressed: () => _runRetentionPurge(context, retentionDays),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // TEMP-RETENTION-TEST: delete this method too.
+  Future<void> _runRetentionPurge(BuildContext context, int retentionDays) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Run retention purge?'),
+        content: Text(
+          'This will permanently delete all SYNCED orders (and their tickets, '
+          'line items, components, payments, transactions, notes, and order '
+          'logs) whose updatedAt is older than $retentionDays day(s).\n\n'
+          'Customers and cash sessions are NOT affected.\n\n'
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!context.mounted) return;
+
+    final syncService = ref.read(dataSyncServiceProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final deleted = await syncService.clearOldSyncedData(retentionDays);
+      if (!context.mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text(deleted == 0
+            ? 'No eligible orders found (nothing older than $retentionDays day(s) and synced).'
+            : 'Purged $deleted order(s) and their related rows.'),
+        backgroundColor: deleted == 0 ? null : Colors.green.shade700,
+      ));
+    } catch (e) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text('Retention purge failed: $e'),
+        backgroundColor: Colors.red.shade700,
+      ));
+    }
   }
 
   Widget _buildSwitchTile({
@@ -2168,6 +2263,129 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  // ── About + update check ──────────────────────────────────────────────
+
+  Widget _buildAboutContent(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return FutureBuilder<PackageInfo>(
+      future: PackageInfo.fromPlatform(),
+      builder: (context, snap) {
+        final info = snap.data;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              l10n.translate('about'),
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildInfoTile(
+              context: context,
+              icon: Icons.app_settings_alt,
+              title: l10n.translate('app_name'),
+              value: info?.appName ?? '—',
+            ),
+            const SizedBox(height: 8),
+            _buildInfoTile(
+              context: context,
+              icon: Icons.tag,
+              title: l10n.translate('version'),
+              value: info?.version ?? '—',
+            ),
+            const SizedBox(height: 8),
+            _buildInfoTile(
+              context: context,
+              icon: Icons.numbers,
+              title: l10n.translate('build_number'),
+              value: info?.buildNumber ?? '—',
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () => _runUpdateCheck(context),
+              icon: const Icon(Icons.system_update_alt),
+              label: Text(l10n.translate('check_for_updates_now')),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 16),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildInfoTile({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required String value,
+  }) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withValues(alpha: 0.3),
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        trailing: Text(
+          value,
+          style: const TextStyle(
+              fontFamily: 'monospace', fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runUpdateCheck(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(l10n.translate('checking_for_updates')),
+      duration: const Duration(seconds: 2),
+    ));
+
+    if (!kIsWeb && Platform.isAndroid) {
+      final notifier = ref.read(updateProvider.notifier);
+      final found = await notifier.checkForUpdates();
+      if (!context.mounted) return;
+      if (found) {
+        final isMandatory = ref.read(updateProvider).updateRequired;
+        showDialog(
+          context: context,
+          barrierDismissible: !isMandatory,
+          builder: (_) => UpdateDialog(isMandatory: isMandatory),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('app_up_to_date')),
+          backgroundColor: Colors.green,
+        ));
+      }
+      return;
+    }
+
+    if (!kIsWeb &&
+        (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+      final controller = ref.read(desktopUpdaterControllerProvider);
+      if (controller == null) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('update_server_unreachable')),
+          backgroundColor: Colors.orange,
+        ));
+        return;
+      }
+      // Plugin shows its own UpdateDialogListener overlay if an update exists.
+      await controller.checkVersion();
+      return;
+    }
+  }
 }
 
 class NavItem {

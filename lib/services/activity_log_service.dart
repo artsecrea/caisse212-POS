@@ -77,6 +77,15 @@ class ActivityLogService {
       log(ActivityAction.orderUpdated, 'audit_order_updated', [orderCode, username ?? ''],
           userId: userId, username: username);
 
+  /// Audit line listing the items dropped from an order when the cashier
+  /// removed a line (or reduced its quantity) and re-saved. [summary] is the
+  /// pre-formatted list, e.g. "2× Coffee (Large), 1× Pizza".
+  Future<void> logOrderItemsRemoved(String orderCode, String summary,
+          {int? userId, String? username}) =>
+      log(ActivityAction.orderUpdated, 'audit_order_items_removed',
+          [orderCode, summary, username ?? ''],
+          userId: userId, username: username);
+
   Future<void> logOrderConfirmed(String orderCode, {int? userId, String? username}) =>
       log(ActivityAction.orderConfirmed, 'audit_order_confirmed', [orderCode, username ?? ''],
           userId: userId, username: username);

@@ -11,6 +11,7 @@ import '../../services/data_sync_service.dart';
 import '../../services/pending_operations_service.dart';
 import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/customer_display.dart';
 import '../../utils/currency_formatter.dart';
 import 'admin_mode_chip.dart';
 
@@ -846,7 +847,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
             ..where((tbl) => tbl.id.equals(orderData!.clientId!)))
           .getSingleOrNull();
       if (customer != null) {
-        customerName = '${customer.firstName} ${customer.lastName}';
+        customerName = customer.displayLabel;
         customerPhone = customer.phone;
       }
     }
@@ -1257,7 +1258,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
             ..where((tbl) => tbl.id.equals(orderData!.clientId!)))
           .getSingleOrNull();
       if (customer != null) {
-        customerName = '${customer.firstName} ${customer.lastName}';
+        customerName = customer.displayLabel;
         customerPhone = customer.phone;
       }
     }

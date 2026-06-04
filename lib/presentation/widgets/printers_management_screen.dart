@@ -1212,6 +1212,24 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
           onChanged: (v) =>
               _updateConfig(_config.copyWith(splitKdsByStation: v)),
         ),
+        // Consolidated-job toggle. Only meaningful when split-by-station
+        // is on (otherwise everything is already one job).
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('consolidate_kds_job'),
+              style: TextStyle(
+                  fontSize: 18,
+                  color: _config.splitKdsByStation ? null : Colors.grey)),
+          subtitle: Text(
+              l10n.translate('consolidate_kds_job_subtitle'),
+              style: TextStyle(
+                  fontSize: 14,
+                  color: _config.splitKdsByStation ? null : Colors.grey)),
+          value: _config.consolidateKdsJob,
+          onChanged: _config.splitKdsByStation
+              ? (v) => _updateConfig(_config.copyWith(consolidateKdsJob: v))
+              : null,
+        ),
         const Divider(height: 24),
         ListTile(
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),

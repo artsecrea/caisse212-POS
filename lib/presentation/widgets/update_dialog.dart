@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/update_provider.dart';
+import '../../utils/app_localizations.dart';
 
 /// Update dialog that shows when an update is available
 class UpdateDialog extends ConsumerWidget {
@@ -15,6 +16,7 @@ class UpdateDialog extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final updateState = ref.watch(updateProvider);
     final updateInfo = updateState.availableUpdate;
+    final l10n = AppLocalizations.of(context)!;
 
     if (updateInfo == null) return const SizedBox.shrink();
 
@@ -28,7 +30,9 @@ class UpdateDialog extends ConsumerWidget {
               color: isMandatory ? Colors.orange : Colors.blue,
             ),
             const SizedBox(width: 8),
-            Text(isMandatory ? 'Update Required' : 'Update Available'),
+            Text(isMandatory
+                ? l10n.translate('update_required_title')
+                : l10n.translate('update_available_title')),
           ],
         ),
         content: SizedBox(
@@ -38,7 +42,9 @@ class UpdateDialog extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Version ${updateInfo.version} is available',
+                l10n
+                    .translate('update_version_is_available')
+                    .replaceAll('{0}', updateInfo.version),
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -46,9 +52,9 @@ class UpdateDialog extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
               if ((updateInfo.releaseNotes ?? '').isNotEmpty) ...[
-                const Text(
-                  'What\'s New:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                Text(
+                  '${l10n.translate('update_whats_new')}:',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 Container(
@@ -58,7 +64,7 @@ class UpdateDialog extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    updateInfo.releaseNotes ?? 'No release notes provided.',
+                    updateInfo.releaseNotes ?? '',
                     style: const TextStyle(fontSize: 14),
                   ),
                 ),
@@ -78,7 +84,7 @@ class UpdateDialog extends ConsumerWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'This is a mandatory update. You must update to continue using the app.',
+                          l10n.translate('update_mandatory_notice'),
                           style: TextStyle(
                             color: Colors.orange[900],
                             fontSize: 12,
@@ -94,7 +100,10 @@ class UpdateDialog extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Downloading... ${(updateState.downloadProgress * 100).toStringAsFixed(0)}%',
+                      l10n.translate('update_downloading_pct').replaceAll(
+                          '{0}',
+                          (updateState.downloadProgress * 100)
+                              .toStringAsFixed(0)),
                       style: const TextStyle(fontSize: 14),
                     ),
                     const SizedBox(height: 8),
@@ -144,18 +153,21 @@ class UpdateDialog extends ConsumerWidget {
                 ref.read(updateProvider.notifier).dismissUpdate();
                 Navigator.of(context).pop();
               },
-              child: const Text('Later'),
+              child: Text(l10n.translate('update_later')),
             ),
           ElevatedButton(
             onPressed: updateState.isDownloading
                 ? null
                 : () async {
-                    final success = await ref.read(updateProvider.notifier).downloadAndInstall();
-                    
+                    final success = await ref
+                        .read(updateProvider.notifier)
+                        .downloadAndInstall();
+
                     if (success && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Update started. Please follow the installation instructions.'),
+                        SnackBar(
+                          content: Text(
+                              l10n.translate('update_started_snackbar')),
                           backgroundColor: Colors.green,
                         ),
                       );
@@ -168,7 +180,7 @@ class UpdateDialog extends ConsumerWidget {
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('Update Now'),
+                : Text(l10n.translate('update_now')),
           ),
         ],
       ),

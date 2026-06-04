@@ -7,6 +7,7 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/customer_display.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // View mode
@@ -88,7 +89,7 @@ final agendaEntriesProvider =
             ..where((t) => t.id.equals(order!.clientId!)))
           .getSingleOrNull();
       if (customer != null) {
-        customerName = '${customer.firstName} ${customer.lastName}'.trim();
+        customerName = customer.displayLabel;
         customerPhone = customer.phone;
       }
     }

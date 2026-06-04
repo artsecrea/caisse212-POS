@@ -70,7 +70,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration {
@@ -293,6 +293,42 @@ class AppDatabase extends _$AppDatabase {
               'CREATE INDEX IF NOT EXISTS idx_users_type ON users(type);',
             );
           } catch (e) {/* may already exist */}
+        }
+        if (from < 16) {
+          // Customer identity rework: phone becomes the dedup key.
+          //  • Add phone_normalized column (canonical form for sync upsert).
+          //  • Backfill it for every existing row that has a non-empty phone.
+          //  • Create a partial UNIQUE index so local duplicates surface
+          //    immediately instead of waiting for the server bulk POST.
+          try {
+            await customStatement(
+              'ALTER TABLE customers ADD COLUMN phone_normalized TEXT;',
+            );
+          } catch (e) {/* may already exist */}
+          try {
+            // Best-effort backfill: strip non-digits, peel a leading 0,
+            // prefix the default country code (212 — Morocco). Existing
+            // rows missing a phone stay null and will be re-synced as
+            // "anonymous" customers if/when they're touched again.
+            await customStatement(
+              "UPDATE customers SET phone_normalized = "
+              "CASE WHEN phone IS NULL OR TRIM(phone) = '' THEN NULL "
+              "ELSE '212' || "
+              "  CASE WHEN substr(REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', ''), 1, 1) = '0' "
+              "       THEN substr(REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', ''), 2) "
+              "       ELSE REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', '') "
+              "  END "
+              "END "
+              "WHERE phone_normalized IS NULL;",
+            );
+          } catch (e) {/* keep migration moving — UI will renormalize on next edit */}
+          try {
+            await customStatement(
+              'CREATE UNIQUE INDEX IF NOT EXISTS '
+              'idx_customers_phone_normalized ON customers(phone_normalized) '
+              'WHERE phone_normalized IS NOT NULL;',
+            );
+          } catch (e) {/* duplicates exist — log + skip; admin must dedup */}
         }
       },
     );

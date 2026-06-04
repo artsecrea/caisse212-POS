@@ -5,7 +5,17 @@ import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:loggecrea/loggecrea.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+/// Flat static-manifest endpoint. Each platform reads `{base}/{platform}.json`
+/// (e.g. `https://update.caisse212.com/android.json`). The endpoint returns
+/// either:
+///   - HTTP 200 with an [UpdateInfo] JSON object → an update is available;
+///   - HTTP 200 with body `null` / empty / `{}` → no update;
+///   - HTTP 404 / any error → no update (silently).
+///
+/// No auth, no tenant context, no api/* prefix — it's a flat file you upload
+/// to a bucket / CDN. Replace the host below when you wire the real domain.
+const String _kUpdateManifestBaseUrl = 'https://update.caisse212.com';
 
 class UpdateInfo {
   final String appName;
@@ -42,22 +52,8 @@ class UpdateInfo {
 class UpdateService {
   final _logger = Logger.instance;
   final Dio _dio = Dio();
-  SharedPreferences? _prefs;
 
-  static const String _baseUrlKey = 'api_base_url';
-  static const String _accessTokenKey = 'server_access_token';
-  static const String _posNameKey = 'pos_name';
-  static const String _tenantIdKey = 'tenant_id';
-
-  Future<void> _initPrefs() async {
-    _prefs ??= await SharedPreferences.getInstance();
-  }
-
-  String? _getAccessToken() => _prefs?.getString(_accessTokenKey);
-  String? _getPosName() => _prefs?.getString(_posNameKey);
-  int? _getTenantId() => _prefs?.getInt(_tenantIdKey);
-
-  /// Get current platform string for API
+  /// Get current platform string for the manifest URL path.
   static String get currentPlatform {
     if (Platform.isAndroid) return 'android';
     if (Platform.isWindows) return 'windows';
@@ -67,53 +63,60 @@ class UpdateService {
     return 'unknown';
   }
 
-  /// Check for available updates (Android only; desktop uses desktop_updater).
+  /// Check for available updates.
+  ///
+  /// Hits the flat static manifest at
+  /// `$_kUpdateManifestBaseUrl/{platform}.json` — no backend, no auth, no
+  /// tenant context. The endpoint is allowed to return any of these and we
+  /// treat them all as "no update":
+  ///   - HTTP 404
+  ///   - HTTP 200 with body `null` (literal four bytes)
+  ///   - HTTP 200 with empty body
+  ///   - HTTP 200 with body `{}`
+  ///   - any network / parse error
+  ///
+  /// Version comparison is the caller's job ([UpdateNotifier.checkForUpdates]).
   Future<UpdateInfo?> checkForUpdates() async {
+    final url = '$_kUpdateManifestBaseUrl/$currentPlatform.json';
+    _logger.info('Checking for updates: $url');
+
     try {
-      await _initPrefs();
-
-      final baseUrl = _prefs?.getString(_baseUrlKey);
-      if (baseUrl == null || baseUrl.isEmpty) {
-        _logger.warning('No base URL configured for update check');
-        return null;
-      }
-
-      // Strip trailing /api so we can re-append it cleanly.
-      var root = baseUrl.trimRight();
-      if (root.endsWith('/api')) root = root.substring(0, root.length - 4);
-      final platform = UpdateService.currentPlatform;
-      final url = '$root/api/pos/update_check?platform=$platform';
-      _logger.info('Checking for updates: $url');
-
-      final headers = <String, dynamic>{};
-      final token = _getAccessToken();
-      if (token != null) headers['Authorization'] = 'Bearer $token';
-      final posName = _getPosName();
-      if (posName != null) headers['X-POS-Name'] = posName;
-      final tenantId = _getTenantId();
-      if (tenantId != null) headers['X-Tenant-ID'] = tenantId.toString();
-
       final response = await _dio.get(
         url,
-        options: Options(headers: headers),
+        options: Options(
+          // Don't let Dio auto-throw on 404 — we read it as "no update".
+          validateStatus: (code) => code != null && code < 500,
+          // Static hosts sometimes serve JSON as text/plain; force string so
+          // we can decode it ourselves.
+          responseType: ResponseType.plain,
+        ),
       );
 
-      if (response.statusCode == 200 && response.data != null) {
-        final data = response.data is String
-            ? jsonDecode(response.data as String) as Map<String, dynamic>
-            : response.data as Map<String, dynamic>;
-        final updateInfo = UpdateInfo.fromJson(data);
-        _logger.info('Update info received: version ${updateInfo.version}');
-        return updateInfo;
-      }
-
-      _logger.info('No update available');
-      return null;
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 404) {
+      if (response.statusCode == 404) {
         _logger.info('No update available (404)');
         return null;
       }
+      if (response.statusCode != 200) {
+        _logger.warning('Update check got HTTP ${response.statusCode}');
+        return null;
+      }
+
+      final raw = (response.data as String?)?.trim() ?? '';
+      if (raw.isEmpty || raw == 'null') {
+        _logger.info('No update available (empty/null manifest)');
+        return null;
+      }
+
+      final decoded = jsonDecode(raw);
+      if (decoded == null || decoded is! Map<String, dynamic> || decoded.isEmpty) {
+        _logger.info('No update available (manifest empty or wrong shape)');
+        return null;
+      }
+
+      final updateInfo = UpdateInfo.fromJson(decoded);
+      _logger.info('Update info received: version ${updateInfo.version}');
+      return updateInfo;
+    } on DioException catch (e) {
       _logger.error('Failed to check for updates: ${e.message}');
       return null;
     } catch (e) {

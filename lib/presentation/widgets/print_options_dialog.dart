@@ -42,13 +42,20 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
     _checkUnprintedItems();
   }
 
+  // "New" means an unpaid line the kitchen hasn't seen yet. A paid line
+  // with kdsPrintedAt == null is NOT new — it just lost its KDS stamp
+  // (failed first print, KDS was disabled, came from the server, etc.) and
+  // surprising the cashier with a "(2)" badge on an order they didn't touch
+  // is what the customer complaint was about. Reprinting those paid lines
+  // is still possible via `KdsPrintMode.full`.
+  bool _isUnprinted(item) => item.ticketId == null && item.kdsPrintedAt == null;
+
   void _checkUnprintedItems() {
-    final hasUnprinted = widget.order.items.any((item) => item.kdsPrintedAt == null);
+    final hasUnprinted = widget.order.items.any(_isUnprinted);
     if (!hasUnprinted) _kdsPrintMode = KdsPrintMode.full;
   }
 
-  int get _unprintedCount =>
-      widget.order.items.where((item) => item.kdsPrintedAt == null).length;
+  int get _unprintedCount => widget.order.items.where(_isUnprinted).length;
 
   Future<void> _handlePrint() async {
     if (!_printReceipt && !_printKds) {

@@ -6,7 +6,8 @@ import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/app_localizations.dart';
-import 'package:drift/drift.dart' show Value;
+import '../../utils/customer_display.dart';
+import '../../services/customer_repository.dart';
 
 class CustomerSelectionDialog extends ConsumerStatefulWidget {
   const CustomerSelectionDialog({Key? key}) : super(key: key);
@@ -182,23 +183,27 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
               ),
               child: ListTile(
                 leading: CircleAvatar(
-                  child: Text(customer.firstName.substring(0, 1).toUpperCase()),
+                  child: Text(customer.displayInitial),
                 ),
                 title: Text(
-                  '${customer.firstName} ${customer.lastName}',
+                  customer.displayLabel,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (customer.phone != null) Text('${l10n.translate('phone')}: ${customer.phone}'),
-                    if (customer.email != null) Text('${l10n.translate('email')}: ${customer.email}'),
+                    if (customer.phone != null)
+                      Text(
+                          '${l10n.translate('phone')}: ${customer.phone}'),
+                    if (customer.email != null)
+                      Text(
+                          '${l10n.translate('email')}: ${customer.email}'),
                   ],
                 ),
                 onTap: () {
                   Navigator.of(context).pop({
                     'id': customer.id,
-                    'name': '${customer.firstName} ${customer.lastName}',
+                    'name': customer.displayLabel,
                     'phone': customer.phone,
                   });
                 },
@@ -221,11 +226,13 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
     return query
         .watch()
         .map((customers) => customers.where((c) {
-              final name = '${c.firstName} ${c.lastName}'.toLowerCase();
+              final name = c.displayLabel.toLowerCase();
               final phone = c.phone?.toLowerCase() ?? '';
+              final phoneNorm = c.phoneNormalized?.toLowerCase() ?? '';
               final email = c.email?.toLowerCase() ?? '';
               return name.contains(_searchQuery) ||
                   phone.contains(_searchQuery) ||
+                  phoneNorm.contains(_searchQuery) ||
                   email.contains(_searchQuery);
             }).toList());
   }
@@ -291,22 +298,21 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
   }
 
   String? _validateFirstName(String? value) {
-    final l10n = AppLocalizations.of(context)!;
-    if (value == null || value.trim().isEmpty) {
-      return l10n.translate('first_name_required');
-    }
+    // First name is OPTIONAL — phone is the canonical identifier now.
+    // Only enforce the minimum length when the user actually typed something.
+    if (value == null || value.trim().isEmpty) return null;
     if (value.trim().length < 2) {
+      final l10n = AppLocalizations.of(context)!;
       return l10n.translate('name_too_short');
     }
     return null;
   }
 
   String? _validateLastName(String? value) {
-    final l10n = AppLocalizations.of(context)!;
-    if (value == null || value.trim().isEmpty) {
-      return l10n.translate('last_name_required');
-    }
+    // Last name is OPTIONAL — see [_validateFirstName].
+    if (value == null || value.trim().isEmpty) return null;
     if (value.trim().length < 2) {
+      final l10n = AppLocalizations.of(context)!;
       return l10n.translate('name_too_short');
     }
     return null;
@@ -324,12 +330,13 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
   }
 
   String? _validatePhone(String? value) {
-    if (value == null || value.isEmpty) return null; // Phone is optional
-
-    // Remove spaces and dashes for validation
-    final cleanPhone = value.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+    final l10n = AppLocalizations.of(context)!;
+    if (value == null || value.trim().isEmpty) {
+      return l10n.translate('phone_required');
+    }
+    // Strip every formatting character before counting digits.
+    final cleanPhone = value.replaceAll(RegExp(r'[^\d]'), '');
     if (cleanPhone.length < 8) {
-      final l10n = AppLocalizations.of(context)!;
       return l10n.translate('phone_too_short');
     }
     return null;
@@ -356,26 +363,55 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() => 
+    _isLoading = true
+    );
 
     try {
-      final customerId = await widget.database.into(widget.database.customers).insert(
-        CustomersCompanion.insert(
-          firstName: _firstNameController.text.trim(),
-          lastName: _lastNameController.text.trim(),
-          phone: Value(_phoneController.text.trim().isEmpty ? null : _phoneController.text.trim()),
-          email: Value(_emailController.text.trim().isEmpty ? null : _emailController.text.trim()),
-          isSynced: const Value(false),
-        ),
+
+      final firstName = _firstNameController.text.trim();
+      final lastName = _lastNameController.text.trim();
+
+      final phoneRaw = _phoneController.text.trim();
+      final emailRaw = _emailController.text.trim();
+
+      // Phone-unique upsert: if a customer with the same normalised phone
+      // already exists, override its non-empty fields and reuse its id
+      // instead of producing a duplicate. See [CustomerRepository] for the
+      // rationale (sync-reconciliation and search-list cleanliness).
+      final customerId = await CustomerRepository(widget.database).upsertByPhone(
+        phoneRaw: phoneRaw,
+        firstName: firstName,
+        lastName: lastName,
+        email: emailRaw.isEmpty ? null : emailRaw,
+        isSynced: false,
       );
 
+      if (customerId == null) {
+        // Shouldn't be reachable — _validatePhone already rejected an empty
+        // phone — but defend against future validator changes.
+        if (mounted) {
+          setState(() => _isLoading = false);
+          final l10n = AppLocalizations.of(context)!;
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(l10n.translate('phone_required')),
+            backgroundColor: Colors.red,
+          ));
+        }
+        return;
+      }
+
       if (mounted) {
-        // Pop with the new customer data so the caller can auto-select it.
+        // Pop with the customer data so the caller can auto-select it.
+        // The label falls back to the phone when the cashier didn't type a
+        // name (matches CustomerDisplayExt.displayLabel).
+        final composedName = '$firstName $lastName'.trim();
+        final displayName =
+            composedName.isNotEmpty ? composedName : phoneRaw;
         Navigator.of(context).pop({
           'id': customerId,
-          'name':
-              '${_firstNameController.text.trim()} ${_lastNameController.text.trim()}',
-          'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
+          'name': displayName,
+          'phone': phoneRaw,
         });
       }
     } catch (e) {
@@ -465,7 +501,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
                             focusNode: _firstNameFocus,
                             enabled: !_isLoading,
                             decoration: InputDecoration(
-                              labelText: '${l10n.translate('first_name')} *',
+                              labelText: l10n.translate('first_name'),
                               hintText: l10n.translate('enter_first_name'),
                               prefixIcon: const Icon(Icons.person_outline),
                               border: OutlineInputBorder(
@@ -498,7 +534,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
                           focusNode: _lastNameFocus,
                           enabled: !_isLoading,
                           decoration: InputDecoration(
-                            labelText: '${l10n.translate('last_name')} *',
+                            labelText: l10n.translate('last_name'),
                             hintText: l10n.translate('enter_last_name'),
                             prefixIcon: const Icon(Icons.person_outline),
                             border: OutlineInputBorder(
@@ -542,7 +578,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
                           focusNode: _phoneFocus,
                           enabled: !_isLoading,
                           decoration: InputDecoration(
-                            labelText: l10n.translate('phone'),
+                            labelText: '${l10n.translate('phone')} *',
                             hintText: l10n.translate('enter_phone_number'),
                             helperText: l10n.translate('optional_field'),
                             prefixIcon: const Icon(Icons.phone_outlined),

@@ -4,6 +4,7 @@ import 'package:loggecrea/loggecrea.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/external_order_models.dart';
 import 'api_service.dart';
+import 'customer_repository.dart';
 
 /// Handles the external order queue:
 /// - Fetches pending items from the server
@@ -39,7 +40,37 @@ class ExternalOrderQueueService {
 
     // 2. Write to local DB in a transaction
     await _db.transaction(() async {
-      // Insert order — use server-assigned id and code
+      // 2a. Upsert the customer locally first, using the phone-unique
+      //     repository — that way the order's clientId points at a row
+      //     that actually exists locally, and a second order from the
+      //     same person doesn't create a duplicate customer.
+      //
+      //     Splits the queue's free-form customerName into first/last on
+      //     whitespace. Doesn't try to be clever — the rest of the app
+      //     concatenates them back via displayLabel anyway.
+      int? localClientId;
+      final phone = item.order.customerPhone?.trim() ?? '';
+      if (phone.isNotEmpty) {
+        final fullName = (item.order.customerName ?? '').trim();
+        final parts = fullName.isEmpty
+            ? const <String>[]
+            : fullName.split(RegExp(r'\s+'));
+        final firstName = parts.isNotEmpty ? parts.first : '';
+        final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+        localClientId = await CustomerRepository(_db).upsertByPhone(
+          phoneRaw: phone,
+          firstName: firstName,
+          lastName: lastName,
+          // The server already has this customer (it came through the
+          // queue ack), so don't re-push them on the next sync cycle.
+          isSynced: true,
+        );
+      }
+
+      // 2b. Insert order — use server-assigned id and code, but prefer
+      //     the LOCAL customer id (so display lookups work immediately).
+      //     Falls back to the server-supplied customerId when no phone was
+      //     attached to the external order.
       await _db.into(_db.orders).insert(
         OrdersCompanion(
           id: Value(ack.orderId),
@@ -48,7 +79,7 @@ class ExternalOrderQueueService {
           type: Value(item.order.type),
           source: Value(item.source),
           sourceId: Value(item.id),
-          clientId: Value(item.customerId),
+          clientId: Value(localClientId ?? item.customerId),
           note: Value(item.order.note),
           isSynced: const Value(true), // already persisted server-side
           persons: const Value(1),

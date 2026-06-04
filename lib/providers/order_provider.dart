@@ -9,6 +9,7 @@ import '../services/pending_operations_service.dart';
 import '../services/data_sync_service.dart';
 import '../services/order_log_service.dart';
 import '../services/activity_log_service.dart';
+import '../utils/customer_display.dart';
 import 'package:uuid/uuid.dart';
 import 'database_providers.dart';
 import 'network_provider.dart';
@@ -578,6 +579,23 @@ class OrderRepository {
       isSynced: Value(wasAlreadySynced ? false : existingOrder?.isSynced ?? false),
     ));
 
+    // Snapshot the existing UNPAID lines BEFORE we wipe them, so that after
+    // the re-insert below we can diff old vs new and surface which items the
+    // cashier dropped (or reduced) in this save. Paid items are filtered out
+    // because they're not touched by the update.
+    //
+    // Key = (productId, variantId ?? -1). Two lines with the same product +
+    // variant collapse into one entry whose value is the summed quantity, so
+    // a partial reduction (e.g. removing one of two Pizzas) still surfaces.
+    final removedSnapshot = <String, int>{};
+    final existingUnpaidRows = await (_database.select(_database.orderProducts)
+          ..where((t) => t.orderId.equals(orderId) & t.ticketId.isNull()))
+        .get();
+    for (final row in existingUnpaidRows) {
+      final key = '${row.productId}:${row.variantId ?? -1}';
+      removedSnapshot[key] = (removedSnapshot[key] ?? 0) + row.quantity;
+    }
+
     // Delete existing unpaid order products (keep paid ones)
     await (_database.delete(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))..where((tbl) => tbl.ticketId.isNull())).go();
 
@@ -660,6 +678,78 @@ class OrderRepository {
     // Log order update
     await _logService.logOrderUpdated(orderId, 'Order updated: code=$orderCode');
     _audit((log, uid, uname) => log.logOrderUpdated(orderCode, userId: uid, username: uname));
+
+    // Subtract the new state from the snapshot — anything left is what got
+    // removed (whole line dropped OR quantity reduced). We do this AFTER the
+    // re-insert so the snapshot map is still untouched by intermediate state.
+    for (final item in order.items) {
+      if (item.ticketId != null) continue; // paid lines aren't in the snapshot
+      final key = '${item.productId}:${item.variantId ?? -1}';
+      final remaining = (removedSnapshot[key] ?? 0) - item.quantity;
+      if (remaining <= 0) {
+        removedSnapshot.remove(key);
+      } else {
+        removedSnapshot[key] = remaining;
+      }
+    }
+    if (removedSnapshot.isNotEmpty) {
+      await _logRemovedItems(orderId, orderCode, removedSnapshot);
+    }
+  }
+
+  /// Resolves product/variant names for the leftover snapshot entries and
+  /// writes both the technical (`OrderLogs`) and audit (`ActivityLogs`) lines.
+  /// Wrapped in try/catch — a logging failure must never abort an order save.
+  Future<void> _logRemovedItems(
+      int orderId, String orderCode, Map<String, int> removed) async {
+    try {
+      final productIds = <int>{};
+      final variantIds = <int>{};
+      for (final key in removed.keys) {
+        final parts = key.split(':');
+        productIds.add(int.parse(parts[0]));
+        final vid = int.parse(parts[1]);
+        if (vid != -1) variantIds.add(vid);
+      }
+
+      final productsById = <int, Product>{};
+      if (productIds.isNotEmpty) {
+        final rows = await (_database.select(_database.products)
+              ..where((t) => t.id.isIn(productIds)))
+            .get();
+        for (final p in rows) {
+          productsById[p.id] = p;
+        }
+      }
+      final variantsById = <int, ProductVariant>{};
+      if (variantIds.isNotEmpty) {
+        final rows = await (_database.select(_database.productVariants)
+              ..where((t) => t.id.isIn(variantIds)))
+            .get();
+        for (final v in rows) {
+          variantsById[v.id] = v;
+        }
+      }
+
+      final parts = <String>[];
+      removed.forEach((key, qty) {
+        final split = key.split(':');
+        final pid = int.parse(split[0]);
+        final vid = int.parse(split[1]);
+        final productName = productsById[pid]?.name ?? 'item #$pid';
+        final variantName = vid != -1 ? variantsById[vid]?.name : null;
+        final label =
+            variantName != null ? '$productName ($variantName)' : productName;
+        parts.add('$qty× $label');
+      });
+      final summary = parts.join(', ');
+
+      await _logService.logOrderUpdated(orderId, 'Items removed: $summary');
+      _audit((log, uid, uname) =>
+          log.logOrderItemsRemoved(orderCode, summary, userId: uid, username: uname));
+    } catch (e) {
+      _logger.error('Failed to log removed items for order $orderCode: $e');
+    }
   }
 
   /// Helper to queue order update operation
@@ -861,7 +951,7 @@ class OrderRepository {
     if (order.clientId != null) {
       final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
       if (customer != null) {
-        customerName = '${customer.firstName} ${customer.lastName}';
+        customerName = customer.displayLabel;
         customerPhone = customer.phone;
       }
     }
@@ -1160,6 +1250,7 @@ class OrderRepository {
     String? searchQuery,
     int? customerId,
     int? cashierId,
+    int? tableId,
     DateTime? startDate,
     DateTime? endDate,
     String sortColumn = 'createdAt',
@@ -1181,6 +1272,10 @@ class OrderRepository {
 
       if (cashierId != null) {
         query = query..where((tbl) => tbl.takenBy.equals(cashierId));
+      }
+
+      if (tableId != null) {
+        query = query..where((tbl) => tbl.tableId.equals(tableId));
       }
 
       if (startDate != null) {
@@ -1215,7 +1310,7 @@ class OrderRepository {
           if (order.clientId != null) {
             final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
             if (customer != null) {
-              final fullName = '${customer.firstName} ${customer.lastName}'.toLowerCase();
+              final fullName = customer.displayLabel.toLowerCase();
               if (fullName.contains(searchLower)) {
                 filteredOrders.add(order);
               }
@@ -1253,6 +1348,10 @@ class OrderRepository {
 
     if (cashierId != null) {
       query = query..where((tbl) => tbl.takenBy.equals(cashierId));
+    }
+
+    if (tableId != null) {
+      query = query..where((tbl) => tbl.tableId.equals(tableId));
     }
 
     if (startDate != null) {
@@ -1305,7 +1404,7 @@ class OrderRepository {
         if (order.clientId != null) {
           final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
           if (customer != null) {
-            final fullName = '${customer.firstName} ${customer.lastName}'.toLowerCase();
+            final fullName = customer.displayLabel.toLowerCase();
             if (fullName.contains(searchLower)) {
               ordersToProcess.add(order);
             }
@@ -1365,7 +1464,7 @@ class OrderRepository {
     if (order.clientId != null) {
       final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
       if (customer != null) {
-        customerName = '${customer.firstName} ${customer.lastName}';
+        customerName = customer.displayLabel;
         customerPhone = customer.phone;
         customerId = customer.id;
       }

@@ -585,8 +585,8 @@ class SampleDataGenerator {
       await database.into(database.customers).insert(
         CustomersCompanion.insert(
           id: Value(customer['id'] as int),
-          firstName: customer['firstName'] as String,
-          lastName: customer['lastName'] as String,
+          firstName: Value(customer['firstName'] as String),
+          lastName: Value(customer['lastName'] as String),
           phone: Value(customer['phone'] as String?),
           isSynced: const Value(true), // Sample data is considered synced
         ),

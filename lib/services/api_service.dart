@@ -636,16 +636,37 @@ class ApiService {
     }
   }
 
-  /// Sync customers to server (new customers created locally)
-  /// Throws if the server does not return a 2xx status.
-  Future<void> syncCustomers(List<Map<String, dynamic>> customers) async {
+  /// Sync customers to server (new customers created locally).
+  ///
+  /// Throws if the server does not return a 2xx status. Returns the
+  /// `mappings` array the new backend sends with each canonical id
+  /// (`[{localId, serverId, phoneNormalized}]`), or an empty list on older
+  /// backends that don't include one. The caller uses the list to renumber
+  /// local rows so the dedup-by-phone feature can activate without a
+  /// coordinated client release.
+  Future<List<Map<String, dynamic>>> syncCustomers(
+      List<Map<String, dynamic>> customers) async {
     try {
-      final response = await _dio.post('/pos/customers/bulk', data: {"customers" : customers});
-      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
-        throw Exception('Server returned status ${response.statusCode} for bulk customers sync');
+      final response = await _dio
+          .post('/pos/customers/bulk', data: {"customers": customers});
+      if (response.statusCode == null ||
+          response.statusCode! < 200 ||
+          response.statusCode! >= 300) {
+        throw Exception(
+            'Server returned status ${response.statusCode} for bulk customers sync');
       }
+      final body = response.data;
+      if (body is Map && body['mappings'] is List) {
+        return List<Map<String, dynamic>>.from(
+          (body['mappings'] as List)
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m)),
+        );
+      }
+      return const <Map<String, dynamic>>[];
     } on DioException catch (e) {
-      throw Exception('Failed to sync customers: ${e.message ?? 'Check connection.'}');
+      throw Exception(
+          'Failed to sync customers: ${e.message ?? 'Check connection.'}');
     } catch (e) {
       throw Exception('Error syncing customers: ${e.toString()}');
     }

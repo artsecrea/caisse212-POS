@@ -22,12 +22,20 @@ class DataSyncService {
   /// Callback for progress updates
   Function(String message, double progress)? onProgress;
 
-  /// Clear only master data (not transactional data like orders, tickets, sessions)
+  /// Clear only master data (not transactional data like orders, tickets, sessions).
+  ///
+  /// Server-authoritative tables (users, products, categories, waiters,
+  /// commercials, etc.) are wiped here and repopulated by the subsequent
+  /// fetch calls — that way **rows the admin deleted on the backend
+  /// actually disappear from the device**. Tables that have a local-create
+  /// flow (customers, with isSynced=false rows that haven't been uploaded
+  /// yet) are deliberately NOT wiped here; their upload path runs first.
   Future<void> clearMasterData() async {
-    // Only clear reference/master data, preserve transactional data
-    // Delete in reverse order of dependencies to avoid foreign key issues
+    // Delete in reverse order of dependencies to avoid foreign key issues.
     await _database.delete(_database.kDSs).go();
     await _database.delete(_database.kiosks).go();
+    // waiterAreas references waiters AND areas — drop before either.
+    await _database.delete(_database.waiterAreas).go();
     await _database.delete(_database.areaTables).go();
     await _database.delete(_database.areas).go();
     await _database.delete(_database.productComponents).go();
@@ -38,32 +46,162 @@ class DataSyncService {
     await _database.delete(_database.componentGroups).go();
     await _database.delete(_database.stations).go();
     await _database.delete(_database.categories).go();
+    // Waiters + commercials are purely server-authoritative — wipe them so
+    // backend deletes propagate to the device on the next sync.
+    await _database.delete(_database.commercials).go();
+    await _database.delete(_database.waiters).go();
     await _database.delete(_database.users).go();
   }
 
-  /// Clear old synced data based on retention period
-  Future<void> clearOldSyncedData(int retentionDays) async {
+  /// Clear old synced data based on retention period.
+  ///
+  /// Scope is **orders and the rows that belong to them** — not customers,
+  /// not cash sessions, not any other top-level entity. The previous version
+  /// of this method had four flaws we've now fixed:
+  ///
+  ///  1. **It deleted customers** (by `createdAt`) — but customers are NOT
+  ///     order data. A customer created 30 days ago is often still being
+  ///     referenced by a recent order; deleting them left the order with a
+  ///     dangling `clientId`. Customers are now left alone.
+  ///  2. **It deleted cash sessions** — sessions are top-level financial
+  ///     records (Z-reports, totals) and aren't strictly order data. Left
+  ///     alone too; admins can purge them via the sessions screen if needed.
+  ///  3. **It deleted tickets by their own `date`** instead of by their
+  ///     order's eligibility — could orphan a ticket whose parent order had
+  ///     been edited recently. Tickets are now deleted only when their
+  ///     order is being deleted.
+  ///  4. **Child rows were never cleaned up.** SQLite's `foreign_keys`
+  ///     pragma is OFF in this app, so the `onDelete: cascade` declared in
+  ///     `Tickets` and `Notes` does NOT fire — orderProducts,
+  ///     orderProductComponents, orderLogs, payments, and transactions all
+  ///     piled up forever as orphans. This method now manually cascades:
+  ///     children first (OPCs → OPs → tickets/notes/logs/payments/
+  ///     transactions), then the parent order itself. We also clear stale
+  ///     `area_tables.orderId` pointers so a freed table doesn't keep
+  ///     showing as busy.
+  ///
+  /// Wrapped in a single transaction so a partial failure rolls everything
+  /// back rather than leaving the DB half-purged.
+  /// Returns the number of orders deleted.
+  Future<int> clearOldSyncedData(int retentionDays) async {
     final cutoffDate = DateTime.now().subtract(Duration(days: retentionDays));
+    var deletedOrders = 0;
 
-    // Delete old synced orders
-    await (_database.delete(_database.orders)
-      ..where((o) => o.isSynced.equals(true) & o.updatedAt.isSmallerThanValue(cutoffDate)))
-      .go();
+    await _database.transaction(() async {
+      // 1. Find the set of orders eligible for deletion.
+      //
+      // Eligibility = synced AND paid AND older than the cutoff.
+      // - `isSynced=true` protects orders that haven't reached the server yet
+      //   (deleting them would lose data permanently).
+      // - `paymentId IS NOT NULL` protects unpaid orders — an order with no
+      //   linked payment is still "open business" (held tab, abandoned cart,
+      //   layby, etc.) and must never be auto-purged regardless of age.
+      // - `updatedAt < cutoff` is the retention window.
+      final eligible = await (_database.select(_database.orders)
+            ..where((o) =>
+                o.isSynced.equals(true) &
+                o.paymentId.isNotNull() &
+                o.updatedAt.isSmallerThanValue(cutoffDate)))
+          .get();
+      if (eligible.isEmpty) return;
+      deletedOrders = eligible.length;
+      final orderIds = eligible.map((o) => o.id).toList();
+      final paymentIds = eligible
+          .where((o) => o.paymentId != null)
+          .map((o) => o.paymentId!)
+          .toSet()
+          .toList();
 
-    // Delete old synced tickets
-    await (_database.delete(_database.tickets)
-      ..where((t) => t.isSynced.equals(true) & t.date.isSmallerThanValue(cutoffDate)))
-      .go();
+      // 2. Cascade — chunk by 500 to stay clear of SQLite's
+      //    SQLITE_MAX_VARIABLE_NUMBER (typically 999) on large purges.
+      Future<void> deleteInChunks<T>(
+        List<int> ids,
+        Future<void> Function(List<int> chunk) deleter,
+      ) async {
+        const chunkSize = 500;
+        for (var i = 0; i < ids.length; i += chunkSize) {
+          final end = (i + chunkSize).clamp(0, ids.length);
+          await deleter(ids.sublist(i, end));
+        }
+      }
 
-    // Delete old synced sessions
-    await (_database.delete(_database.cashSessions)
-      ..where((s) => s.isSynced.equals(true) & s.endedAt.isSmallerThanValue(cutoffDate)))
-      .go();
+      // 2a. order_product_components — referenced by orderProductId
+      //     (we need the OP ids first).
+      final orderProducts = <int>[];
+      await deleteInChunks(orderIds, (chunk) async {
+        final ops = await (_database.select(_database.orderProducts)
+              ..where((p) => p.orderId.isIn(chunk)))
+            .get();
+        orderProducts.addAll(ops.map((p) => p.id));
+      });
+      if (orderProducts.isNotEmpty) {
+        await deleteInChunks(orderProducts, (chunk) async {
+          await (_database.delete(_database.orderProductComponents)
+                ..where((c) => c.orderProductId.isIn(chunk)))
+              .go();
+        });
+      }
 
-    // Delete old synced customers
-    await (_database.delete(_database.customers)
-      ..where((c) => c.isSynced.equals(true) & c.createdAt.isSmallerThanValue(cutoffDate)))
-      .go();
+      // 2b. order_products
+      await deleteInChunks(orderIds, (chunk) async {
+        await (_database.delete(_database.orderProducts)
+              ..where((p) => p.orderId.isIn(chunk)))
+            .go();
+      });
+
+      // 2c. tickets
+      await deleteInChunks(orderIds, (chunk) async {
+        await (_database.delete(_database.tickets)
+              ..where((t) => t.orderId.isIn(chunk)))
+            .go();
+      });
+
+      // 2d. notes
+      await deleteInChunks(orderIds, (chunk) async {
+        await (_database.delete(_database.notes)
+              ..where((n) => n.orderId.isIn(chunk)))
+            .go();
+      });
+
+      // 2e. order_logs
+      await deleteInChunks(orderIds, (chunk) async {
+        await (_database.delete(_database.orderLogs)
+              ..where((l) => l.orderId.isIn(chunk)))
+            .go();
+      });
+
+      // 2f. transactions + payments (linked via orders.paymentId →
+      //     payments.id, then transactions.paymentId).
+      if (paymentIds.isNotEmpty) {
+        await deleteInChunks(paymentIds, (chunk) async {
+          await (_database.delete(_database.transactions)
+                ..where((t) => t.paymentId.isIn(chunk)))
+              .go();
+        });
+        await deleteInChunks(paymentIds, (chunk) async {
+          await (_database.delete(_database.payments)
+                ..where((p) => p.id.isIn(chunk)))
+              .go();
+        });
+      }
+
+      // 2g. Clear stale area_tables.orderId pointers so freed tables don't
+      //     keep showing as "busy" with a deleted order.
+      await deleteInChunks(orderIds, (chunk) async {
+        await (_database.update(_database.areaTables)
+              ..where((t) => t.orderId.isIn(chunk)))
+            .write(const AreaTablesCompanion(orderId: Value(null)));
+      });
+
+      // 3. Finally delete the orders themselves.
+      await deleteInChunks(orderIds, (chunk) async {
+        await (_database.delete(_database.orders)
+              ..where((o) => o.id.isIn(chunk)))
+            .go();
+      });
+    });
+
+    return deletedOrders;
   }
 
   /// Dump/backup the database file before clearing.
@@ -504,18 +642,41 @@ class DataSyncService {
   Future<void> _syncCustomers() async {
     final customers = await _apiService.fetchCustomers();
     for (final customer in customers) {
+      // Accept either `phoneNormalized` or snake_case `phone_normalized` from
+      // the server. If neither is present, fall back to a local normalisation
+      // of the raw `phone` so the dedup key is still populated.
+      final phone = customer['phone'] as String?;
+      final serverNorm =
+          customer['phoneNormalized'] ?? customer['phone_normalized'];
+      final normalised = (serverNorm is String && serverNorm.isNotEmpty)
+          ? serverNorm
+          : (phone == null || phone.isEmpty
+              ? null
+              : _normalizePhoneFallback(phone));
       await _database.into(_database.customers).insert(
         CustomersCompanion.insert(
           id: Value(customer['id']),
-          firstName: customer['firstName'],
-          lastName: customer['lastName'],
-          phone: Value(customer['phone']),
+          firstName: Value(customer['firstName'] ?? ''),
+          lastName: Value(customer['lastName'] ?? ''),
+          phone: Value(phone),
+          phoneNormalized: Value(normalised),
           email: Value(customer['email']),
           isSynced: const Value(true), // Data from server is already synced
         ),
         mode: InsertMode.insertOrReplace,
       );
     }
+  }
+
+  /// Tiny inline normaliser — same logic as `utils/phone_normalizer.dart` but
+  /// kept here to avoid a cross-package import inside the sync service.
+  String _normalizePhoneFallback(String raw, {String cc = '212'}) {
+    var d = raw.replaceAll(RegExp(r'[^\d]'), '');
+    if (d.isEmpty) return '';
+    if (d.startsWith('00$cc')) d = d.substring(2 + cc.length);
+    else if (d.startsWith(cc)) d = d.substring(cc.length);
+    if (d.startsWith('0')) d = d.substring(1);
+    return '$cc$d';
   }
 
   Future<void> _syncWaiters() async {
@@ -750,6 +911,7 @@ class DataSyncService {
       'firstName': c.firstName,
       'lastName': c.lastName,
       'phone': c.phone,
+      'phoneNormalized': c.phoneNormalized,
       'email': c.email,
       'createdAt': c.createdAt.toIso8601String(),
     }).toList();
@@ -787,6 +949,36 @@ class DataSyncService {
       .write(const CustomersCompanion(isSynced: Value(true)));
   }
 
+  /// Renumber local customer rows whose canonical server id differs from
+  /// the local autoincrement value. Cascades the renumber to every order
+  /// row that referenced the old id, in one transaction so the FK is never
+  /// dangling. No-op when the backend returns no mappings (= old backend
+  /// or no divergence).
+  Future<void> _reconcileCustomerIds(
+      List<Map<String, dynamic>> mappings) async {
+    if (mappings.isEmpty) return;
+    await _database.transaction(() async {
+      for (final m in mappings) {
+        final localId = m['localId'];
+        final serverId = m['serverId'];
+        if (localId is! int || serverId is! int) continue;
+        if (localId == serverId) continue;
+        // Update orders' FK FIRST so we never leave a dangling reference.
+        await _database.customStatement(
+          'UPDATE orders SET client_id = ? WHERE client_id = ?;',
+          [serverId, localId],
+        );
+        // Then the customer row itself.
+        await _database.customStatement(
+          'UPDATE customers SET id = ? WHERE id = ?;',
+          [serverId, localId],
+        );
+        _logger.info(
+            'Reconciled customer local id $localId -> server id $serverId');
+      }
+    });
+  }
+
   /// Sync all local data to server
   /// Each entity type is synced independently so a failure in one does not
   /// block the others.  Mark-as-synced only runs when the API call succeeds.
@@ -795,12 +987,17 @@ class DataSyncService {
     try {
       final customers = await getCustomersForSync();
       if (customers.isNotEmpty) {
-        await _apiService.syncCustomers(customers);
-        // Only mark after a confirmed successful API response
-        await markCustomersAsSynced(customers.map((c) => c['id'] as int).toList());
+        final mappings = await _apiService.syncCustomers(customers);
+        // Renumber local rows whose canonical server id differs (no-op
+        // when the server returns no mappings — old backends, no changes).
+        await _reconcileCustomerIds(mappings);
+        // Only mark after a confirmed successful API response.
+        await markCustomersAsSynced(
+            customers.map((c) => c['id'] as int).toList());
       }
     } catch (e) {
-      _logger.error('uploadLocalData: customers sync failed – will retry later: $e');
+      _logger.error(
+          'uploadLocalData: customers sync failed – will retry later: $e');
     }
 
     // Sync completed orders
