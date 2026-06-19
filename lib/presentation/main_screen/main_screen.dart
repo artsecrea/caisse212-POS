@@ -17,6 +17,10 @@ import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
 import '../order_confirmation/order_confirmation_screen.dart';
 import '../paymen_screen/payment_screen.dart';
+// TEMP-TIP-HIDDEN: pourboire flow disabled — restore this import together
+// with the four commented-out blocks below (`case 'tip'`, the two payment
+// helpers, the table-pay branch).
+// import '../widgets/tip_flow.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/category_grid.dart';
 import '../widgets/commercial_selection_dialog.dart';
@@ -892,7 +896,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                   // Handle different actions
                   if (action == 'pay' && result['order'] != null) {
-                    final order = result['order'];
+                    final order = result['order'] as CurrentOrder;
+                    // TEMP-TIP-HIDDEN: pourboire flow disabled.
+                    // if (context.mounted) {
+                    //   order = await applyTipIfEnabled(context, ref, order);
+                    // }
+                    if (!context.mounted) return;
                     final paymentResult = await showDialog<bool>(
                       context: context,
                       builder: (context) => PaymentScreen(order: order),
@@ -1201,6 +1210,61 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           }
           break;
 
+        // TEMP-TIP-HIDDEN: tip toolbar button branch disabled. Restore the
+        // whole `case 'tip':` block (and the `import 'tip_flow.dart'`
+        // up top) to re-enable. Falls through to the default — no button
+        // renders for the 'tip' key in buttonOrder.
+        /*
+        case 'tip':
+          // Tip button. Pure in-memory tip mutation — no save-first dance.
+          // If the order is already saved, persist via the normal update
+          // path so the row reflects the new tip immediately. If not,
+          // setting the tip on the OrderNotifier is enough; the cashier's
+          // next Proceed / Pay will save the order with the tip already on
+          // it (the row's first write includes the tip — never a "save
+          // then add tip" round-trip).
+          shouldShow = settings.showTipButton;
+          if (shouldShow) {
+            final currencySymbol = settings.currency;
+            final hasTip = currentOrder.tip > 0;
+            button = _buildActionButton(
+              icon: Icons.attach_money,
+              label: hasTip
+                  ? '${l10n.translate('tip')}: ${currentOrder.tip.toStringAsFixed(0)} $currencySymbol'
+                  : l10n.translate('tip'),
+              color: hasTip ? Colors.amber.shade700 : null,
+              onPressed: (currentOrder.items.isEmpty || _isSavingOrder)
+                  ? null
+                  : () async {
+                      final order = ref.read(orderProvider);
+                      final updated = await runTipFlow(context, ref, order);
+                      if (updated.tip == order.tip) return;
+                      ref.read(orderProvider.notifier).setTip(updated.tip);
+                      // Already-saved orders: push the tip change via the
+                      // normal update path so it doesn't get lost if the
+                      // cashier abandons the order or refreshes.
+                      if (updated.orderId != null) {
+                        try {
+                          await ref
+                              .read(orderRepositoryProvider)
+                              .updateOrder(updated);
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('$e'),
+                                backgroundColor: Colors.red.shade700,
+                              ),
+                            );
+                          }
+                        }
+                      }
+                    },
+            );
+          }
+          break;
+        */
+
         case 'pay':
           // Taking payment creates a ticket -> tickets:create.
           shouldShow = settings.showPayButton &&
@@ -1399,10 +1463,19 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if (!ok) return;
     currentOrder = ref.read(orderProvider);
 
+    // TEMP-TIP-HIDDEN: pre-save tip dialog disabled.
+    // if (mounted) {
+    //   final withTip = await applyTipIfEnabled(context, ref, currentOrder);
+    //   if (withTip.tip != currentOrder.tip) {
+    //     ref.read(orderProvider.notifier).setTip(withTip.tip);
+    //     currentOrder = ref.read(orderProvider);
+    //   }
+    // }
+
     setState(() => _isSavingOrder = true);
     try {
       int orderId;
-      // Save or update order first
+      // Save or update order first.
       if (currentOrder.isSaved()) {
         _logger.debug('Updating existing order with ${currentOrder.items.length} items');
         await orderRepo.updateOrder(currentOrder);
@@ -1522,7 +1595,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           orderCode: reloadedOrder.orderCode,
           cashierName: currentUser.firstName,
           storeName: businessName,
+          storeAddress: prefs.getString('business_address'),
+          storePhone: prefs.getString('business_phone'),
+          customerName: reloadedOrder.customerName,
+          customerPhone: reloadedOrder.customerPhone,
           deliveryAddress: reloadedOrder.deliveryAddress,
+          tableName: reloadedOrder.tableName,
+          numberOfPersons: reloadedOrder.numberOfPersons,
         );
 
         await database.customStatement(
@@ -1606,10 +1685,19 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if (!ok) return;
     currentOrder = ref.read(orderProvider);
 
+    // TEMP-TIP-HIDDEN: pre-save tip dialog disabled.
+    // if (mounted) {
+    //   final withTip = await applyTipIfEnabled(context, ref, currentOrder);
+    //   if (withTip.tip != currentOrder.tip) {
+    //     ref.read(orderProvider.notifier).setTip(withTip.tip);
+    //     currentOrder = ref.read(orderProvider);
+    //   }
+    // }
+
     setState(() => _isSavingOrder = true);
     try {
       int orderId;
-      // Save or update order first
+      // Save or update order first.
       if (currentOrder.isSaved()) {
         await orderRepo.updateOrder(currentOrder);
         orderId = currentOrder.orderId!;
@@ -1625,7 +1713,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         }
       }
 
-      // Reload the order from database to get updated IDs
+      // Reload the order from database to get updated IDs (and the tip
+      // we just persisted).
       final reloadedOrder = await orderRepo.getOrderById(orderId);
       if (reloadedOrder == null) {
         throw Exception('Failed to reload order');

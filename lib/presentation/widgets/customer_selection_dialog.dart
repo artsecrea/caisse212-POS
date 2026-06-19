@@ -249,11 +249,50 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
   }
 }
 
+/// Opens the manual add-customer dialog with optional pre-filled values.
+/// Returns the same shape as the in-file caller — `{id, name, phone}` on
+/// save, `null` on cancel. Provided so the external-order review flow
+/// (and any other caller) can reuse the dialog without grabbing the
+/// private class.
+Future<Map<String, dynamic>?> showPrefilledAddCustomerDialog(
+  BuildContext context, {
+  required AppDatabase database,
+  String? initialFirstName,
+  String? initialLastName,
+  String? initialPhone,
+  String? initialEmail,
+}) {
+  return showDialog<Map<String, dynamic>?>(
+    context: context,
+    builder: (_) => _AddCustomerDialog(
+      database: database,
+      initialFirstName: initialFirstName,
+      initialLastName: initialLastName,
+      initialPhone: initialPhone,
+      initialEmail: initialEmail,
+    ),
+  );
+}
+
 // Enhanced Add Customer Dialog with better validation and UX
 class _AddCustomerDialog extends StatefulWidget {
   final AppDatabase database;
+  // Optional pre-fill values — used when the dialog is opened from the
+  // external-order review flow with the queue's customer data prepopulated.
+  // Any of these that are null or empty leave the corresponding field blank,
+  // exactly as if the dialog were opened normally.
+  final String? initialFirstName;
+  final String? initialLastName;
+  final String? initialPhone;
+  final String? initialEmail;
 
-  const _AddCustomerDialog({required this.database});
+  const _AddCustomerDialog({
+    required this.database,
+    this.initialFirstName,
+    this.initialLastName,
+    this.initialPhone,
+    this.initialEmail,
+  });
 
   @override
   State<_AddCustomerDialog> createState() => _AddCustomerDialogState();
@@ -278,6 +317,21 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
   @override
   void initState() {
     super.initState();
+    // Pre-populate from constructor values when present. Empty/null is
+    // treated as "no pre-fill" — leave the controller untouched so the
+    // hint shows.
+    if ((widget.initialFirstName ?? '').isNotEmpty) {
+      _firstNameController.text = widget.initialFirstName!;
+    }
+    if ((widget.initialLastName ?? '').isNotEmpty) {
+      _lastNameController.text = widget.initialLastName!;
+    }
+    if ((widget.initialPhone ?? '').isNotEmpty) {
+      _phoneController.text = widget.initialPhone!;
+    }
+    if ((widget.initialEmail ?? '').isNotEmpty) {
+      _emailController.text = widget.initialEmail!;
+    }
     // Auto-focus on first field when dialog opens
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _firstNameFocus.requestFocus();

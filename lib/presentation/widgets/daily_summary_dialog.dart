@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
-import '../../providers/settings_provider.dart';
 import '../../services/daily_summary_service.dart';
-import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import '../../utils/snackbar_helper.dart';
 
 class DailySummaryDialog extends ConsumerStatefulWidget {
   const DailySummaryDialog({Key? key}) : super(key: key);
@@ -47,8 +46,10 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading sessions: $e')),
+        final l10n = AppLocalizations.of(context);
+        SnackBarHelper.error(
+          context,
+          '${l10n?.translate('error_loading_sessions') ?? 'Error loading sessions'}: $e',
         );
       }
     }
@@ -57,8 +58,10 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
   Future<void> _generateReport() async {
     if (_selectedSessionIds.isEmpty) {
       final l10n = AppLocalizations.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n?.translate('select_at_least_one_session') ?? 'Please select at least one session')),
+      SnackBarHelper.warning(
+        context,
+        l10n?.translate('select_at_least_one_session') ??
+            'Please select at least one session',
       );
       return;
     }
@@ -81,8 +84,10 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
     } catch (e) {
       setState(() => _isGenerating = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error generating report: $e')),
+        final l10n = AppLocalizations.of(context);
+        SnackBarHelper.error(
+          context,
+          '${l10n?.translate('error_generating_report') ?? 'Error generating report'}: $e',
         );
       }
     }
@@ -128,20 +133,17 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n?.translate('report_printed_successfully') ?? 'Report printed successfully'),
-            backgroundColor: Colors.green,
-          ),
+        SnackBarHelper.success(
+          context,
+          l10n?.translate('report_printed_successfully') ??
+              'Report printed successfully',
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${l10n?.translate('print_error') ?? 'Print error'}: $e'),
-            backgroundColor: Colors.red,
-          ),
+        SnackBarHelper.error(
+          context,
+          '${l10n?.translate('print_error') ?? 'Print error'}: $e',
         );
       }
     }
@@ -160,7 +162,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
     final l10n = AppLocalizations.of(context);
     final currencyFormatter = ref.read(currencyFormatterProvider);
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = theme.colorScheme;
 
     return Dialog(
       insetPadding: const EdgeInsets.all(16),
@@ -174,7 +176,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: theme.primaryColor,
+                color: cs.primary,
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(4),
                   topRight: Radius.circular(4),
@@ -182,20 +184,20 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.summarize, color: Colors.white, size: 28),
+                  Icon(Icons.summarize, color: cs.onPrimary, size: 28),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       l10n?.translate('daily_summary') ?? 'Daily Summary',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: cs.onPrimary,
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
+                    icon: Icon(Icons.close, color: cs.onPrimary),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
@@ -206,7 +208,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: isDark ? Colors.grey[850] : Colors.grey[100],
+                color: cs.surfaceContainer,
               ),
               child: Row(
                 children: [
@@ -217,12 +219,12 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         decoration: BoxDecoration(
-                          border: Border.all(color: theme.primaryColor),
+                          border: Border.all(color: cs.primary),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.calendar_today, color: theme.primaryColor),
+                            Icon(Icons.calendar_today, color: cs.primary),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
@@ -231,7 +233,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                                   Text(
                                     l10n?.translate('date_range') ?? 'Date Range',
                                     style: TextStyle(
-                                      color: Colors.grey[600],
+                                      color: cs.onSurfaceVariant,
                                       fontSize: 12,
                                     ),
                                   ),
@@ -247,7 +249,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                                 ],
                               ),
                             ),
-                            Icon(Icons.arrow_drop_down, color: theme.primaryColor),
+                            Icon(Icons.arrow_drop_down, color: cs.primary),
                           ],
                         ),
                       ),
@@ -310,9 +312,9 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: isDark ? Colors.grey[850] : Colors.grey[100],
+                color: cs.surfaceContainer,
                 border: Border(
-                  top: BorderSide(color: Colors.grey[300]!),
+                  top: BorderSide(color: cs.outlineVariant),
                 ),
               ),
               child: Row(
@@ -357,8 +359,8 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                         minimumSize: const Size(150, 50),
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
+                        backgroundColor: cs.tertiary,
+                        foregroundColor: cs.onTertiary,
                       ),
                     ),
                     // "Reprint Z" surfaces when the selection narrows to a
@@ -376,8 +378,8 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                           minimumSize: const Size(150, 50),
-                          backgroundColor: Colors.indigo,
-                          foregroundColor: Colors.white,
+                          backgroundColor: cs.primary,
+                          foregroundColor: cs.onPrimary,
                         ),
                       ),
                     ],
@@ -402,16 +404,19 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
   }
 
   Widget _buildSessionSelector(AppLocalizations? l10n, CurrencyFormatter currencyFormatter) {
+    final cs = Theme.of(context).colorScheme;
     if (_availableSessions.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.event_busy, size: 64, color: Colors.grey[400]),
+            Icon(Icons.event_busy,
+                size: 64,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
             const SizedBox(height: 16),
             Text(
               l10n?.translate('no_sessions_in_range') ?? 'No sessions found in this date range',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 16, color: cs.onSurfaceVariant),
             ),
           ],
         ),
@@ -525,7 +530,8 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
   Widget _buildReportPreview(AppLocalizations? l10n, CurrencyFormatter currencyFormatter) {
     final report = _report!;
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = theme.colorScheme;
+    final ch = _channelColors(context);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -537,9 +543,9 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: isDark ? Colors.grey[800] : Colors.white,
+              color: cs.surface,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey[300]!),
+              border: Border.all(color: cs.outlineVariant),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -554,12 +560,12 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                 const SizedBox(height: 8),
                 Text(
                   '${l10n?.translate('date_range') ?? 'Date Range'}: ${_formatDate(report.startDate)} - ${_formatDate(report.endDate)}',
-                  style: TextStyle(color: Colors.grey[600]),
+                  style: TextStyle(color: cs.onSurfaceVariant),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   '${l10n?.translate('number_of_sessions') ?? 'Number of Sessions'}: ${report.totalSessions}',
-                  style: TextStyle(color: Colors.grey[600]),
+                  style: TextStyle(color: cs.onSurfaceVariant),
                 ),
               ],
             ),
@@ -582,9 +588,9 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: theme.primaryColor.withValues(alpha: 0.1),
+              color: cs.primaryContainer.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: theme.primaryColor),
+              border: Border.all(color: cs.primary),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -594,7 +600,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: theme.primaryColor,
+                    color: cs.onPrimaryContainer,
                   ),
                 ),
                 const Divider(height: 24),
@@ -603,45 +609,50 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                 _buildSummaryRow(l10n?.translate('total_tickets') ?? 'Total Tickets', '${report.totalTickets}'),
                 _buildSummaryRow(l10n?.translate('expected_from_tickets') ?? 'Expected from Tickets', currencyFormatter.format(report.totalExpectedFromTickets)),
                 const Divider(height: 16),
-                _buildSummaryRow(l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', '${report.totalUnpaidOrders}', Colors.orange),
-                _buildSummaryRow(l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', currencyFormatter.format(report.totalUnpaidAmount), Colors.orange),
+                _buildSummaryRow(l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', '${report.totalUnpaidOrders}', ch.unpaid),
+                _buildSummaryRow(l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', currencyFormatter.format(report.totalUnpaidAmount), ch.unpaid),
                 if (report.totalCancelledTickets > 0) ...[
                   const Divider(height: 16),
-                  _buildSummaryRow(l10n?.translate('cancelled_tickets') ?? 'Cancelled Tickets', '${report.totalCancelledTickets}', Colors.red),
-                  _buildSummaryRow(l10n?.translate('cancelled_amount') ?? 'Cancelled Amount', currencyFormatter.format(report.totalCancelledAmount), Colors.red),
+                  _buildSummaryRow(l10n?.translate('cancelled_tickets') ?? 'Cancelled Tickets', '${report.totalCancelledTickets}', cs.error),
+                  _buildSummaryRow(l10n?.translate('cancelled_amount') ?? 'Cancelled Amount', currencyFormatter.format(report.totalCancelledAmount), cs.error),
                 ],
                 const Divider(height: 16),
-                _buildSummaryRow(l10n?.translate('paid_by_cash') ?? 'Paid by Cash', currencyFormatter.format(report.totalPaidByCash), Colors.green),
-                _buildSummaryRow(l10n?.translate('paid_by_card') ?? 'Paid by Card', currencyFormatter.format(report.totalPaidByCard), Colors.blue),
-                _buildSummaryRow(l10n?.translate('paid_by_phone') ?? 'Paid by Phone', currencyFormatter.format(report.totalPaidByPhone), Colors.purple),
-                _buildSummaryRow(l10n?.translate('paid_by_other') ?? 'Paid by Other', currencyFormatter.format(report.totalPaidByOther), Colors.grey),
+                _buildSummaryRow(l10n?.translate('paid_by_cash') ?? 'Paid by Cash', currencyFormatter.format(report.totalPaidByCash), ch.cash),
+                _buildSummaryRow(l10n?.translate('paid_by_card') ?? 'Paid by Card', currencyFormatter.format(report.totalPaidByCard), ch.card),
+                _buildSummaryRow(l10n?.translate('paid_by_phone') ?? 'Paid by Phone', currencyFormatter.format(report.totalPaidByPhone), ch.phone),
+                _buildSummaryRow(l10n?.translate('paid_by_other') ?? 'Paid by Other', currencyFormatter.format(report.totalPaidByOther), ch.other),
                 const Divider(height: 16),
                 _buildSummaryRow(
                   l10n?.translate('total_paid') ?? 'Total Paid',
                   currencyFormatter.format(report.totalPaid),
-                  theme.primaryColor,
+                  cs.primary,
                   true,
                 ),
                 _buildSummaryRow(l10n?.translate('total_starting_balance') ?? 'Total Starting Balance', currencyFormatter.format(report.totalStartingBalance)),
               ],
             ),
           ),
+          if (report.totalWaiterBreakdown.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _buildWaiterBreakdownBlock(
+                report.totalWaiterBreakdown, l10n, currencyFormatter),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildSessionCard(SessionSummaryReport session, AppLocalizations? l10n, CurrencyFormatter currencyFormatter) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final cs = Theme.of(context).colorScheme;
+    final ch = _channelColors(context);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isDark ? Colors.grey[800] : Colors.white,
+        color: cs.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: cs.outlineVariant),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -701,11 +712,11 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             spacing: 24,
             runSpacing: 8,
             children: [
-              _buildDetailItem(l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', '${session.unpaidOrders}', Colors.orange),
-              _buildDetailItem(l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', currencyFormatter.format(session.unpaidAmount), Colors.orange),
+              _buildDetailItem(l10n?.translate('unpaid_orders') ?? 'Unpaid Orders', '${session.unpaidOrders}', ch.unpaid),
+              _buildDetailItem(l10n?.translate('unpaid_amount') ?? 'Unpaid Amount', currencyFormatter.format(session.unpaidAmount), ch.unpaid),
               if (session.cancelledTickets > 0) ...[
-                _buildDetailItem(l10n?.translate('cancelled_tickets') ?? 'Cancelled Tickets', '${session.cancelledTickets}', Colors.red),
-                _buildDetailItem(l10n?.translate('cancelled_amount') ?? 'Cancelled Amount', currencyFormatter.format(session.cancelledAmount), Colors.red),
+                _buildDetailItem(l10n?.translate('cancelled_tickets') ?? 'Cancelled Tickets', '${session.cancelledTickets}', cs.error),
+                _buildDetailItem(l10n?.translate('cancelled_amount') ?? 'Cancelled Amount', currencyFormatter.format(session.cancelledAmount), cs.error),
               ],
             ],
           ),
@@ -714,14 +725,109 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             spacing: 24,
             runSpacing: 8,
             children: [
-              _buildDetailItem(l10n?.translate('paid_by_cash') ?? 'Cash', currencyFormatter.format(session.paidByCash), Colors.green),
-              _buildDetailItem(l10n?.translate('paid_by_card') ?? 'Card', currencyFormatter.format(session.paidByCard), Colors.blue),
-              _buildDetailItem(l10n?.translate('paid_by_phone') ?? 'Phone', currencyFormatter.format(session.paidByPhone), Colors.purple),
-              _buildDetailItem(l10n?.translate('paid_by_other') ?? 'Other', currencyFormatter.format(session.paidByOther), Colors.grey),
+              _buildDetailItem(l10n?.translate('paid_by_cash') ?? 'Cash', currencyFormatter.format(session.paidByCash), ch.cash),
+              _buildDetailItem(l10n?.translate('paid_by_card') ?? 'Card', currencyFormatter.format(session.paidByCard), ch.card),
+              _buildDetailItem(l10n?.translate('paid_by_phone') ?? 'Phone', currencyFormatter.format(session.paidByPhone), ch.phone),
+              _buildDetailItem(l10n?.translate('paid_by_other') ?? 'Other', currencyFormatter.format(session.paidByOther), ch.other),
             ],
           ),
           if (session.countedCash != null)
             _buildZReportBlock(session, l10n, currencyFormatter),
+          if (session.waiterBreakdown.isNotEmpty)
+            _buildWaiterBreakdownBlock(
+                session.waiterBreakdown, l10n, currencyFormatter),
+        ],
+      ),
+    );
+  }
+
+  /// On-screen twin of the per-section "BY WAITER" block on the printed Z
+  /// report. Single waiter row per attribution, with orders count, paid
+  /// total, and owed total when non-zero. Same widget is reused for the
+  /// report-level aggregate at the bottom of `_buildReportPreview`.
+  Widget _buildWaiterBreakdownBlock(
+    List<WaiterBreakdown> waiters,
+    AppLocalizations? l10n,
+    CurrencyFormatter fmt,
+  ) {
+    final cs = Theme.of(context).colorScheme;
+    final ch = _channelColors(context);
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.room_service, color: cs.primary, size: 18),
+              const SizedBox(width: 6),
+              Text(
+                l10n?.translate('by_waiter') ?? 'By waiter',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: cs.primary,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final w in waiters)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 5,
+                    child: Text(
+                      w.waiterName,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: Text(
+                      '${w.ordersCount} ${l10n?.translate('orders') ?? 'orders'}',
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                      textAlign: TextAlign.right,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 3,
+                    child: Text(
+                      fmt.format(w.paid),
+                      style: TextStyle(
+                        color: ch.cash,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      textAlign: TextAlign.right,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 3,
+                    child: Text(
+                      w.owed > 0.005 ? fmt.format(w.owed) : '—',
+                      style: TextStyle(
+                        color:
+                            w.owed > 0.005 ? cs.error : cs.onSurfaceVariant,
+                        fontWeight: w.owed > 0.005
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                      textAlign: TextAlign.right,
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -735,38 +841,42 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
     AppLocalizations? l10n,
     CurrencyFormatter currencyFormatter,
   ) {
+    final cs = Theme.of(context).colorScheme;
+    final ch = _channelColors(context);
     final expected = session.startingBalance + session.paidByCash;
     final counted = session.countedCash ?? expected;
     final variance = session.variance ?? (counted - expected);
+    // Variance semantics: on-target → cash/success tone; short → error;
+    // over → warning. Tonal palette so contrast works in both modes.
     final varianceColor = variance.abs() < 0.005
-        ? Colors.green
-        : (variance < 0 ? Colors.red : Colors.orange);
+        ? ch.cash
+        : (variance < 0 ? cs.error : ch.unpaid);
     return Container(
       margin: const EdgeInsets.only(top: 16),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.indigo.withValues(alpha: 0.06),
+        color: cs.primaryContainer.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.indigo.withValues(alpha: 0.3)),
+        border: Border.all(color: cs.primary.withValues(alpha: 0.4)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.receipt_long, color: Colors.indigo, size: 18),
+              Icon(Icons.receipt_long, color: cs.primary, size: 18),
               const SizedBox(width: 6),
               Text(
                 l10n?.translate('z_report') ?? 'Z report',
-                style: const TextStyle(
+                style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: Colors.indigo,
+                    color: cs.primary,
                     fontSize: 14),
               ),
               const SizedBox(width: 8),
               Text(
                 l10n?.translate('z_report_subtitle') ?? 'Session reconciliation',
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
               ),
             ],
           ),
@@ -802,7 +912,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
               l10n?.translate('count_notes') ?? 'Notes',
               style: TextStyle(
                   fontSize: 12,
-                  color: Colors.grey[600],
+                  color: cs.onSurfaceVariant,
                   fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 2),
@@ -817,6 +927,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
   }
 
   Widget _buildDetailItem(String label, String value, [Color? valueColor]) {
+    final cs = Theme.of(context).colorScheme;
     return SizedBox(
       width: 180,
       child: Column(
@@ -826,7 +937,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
             label,
             style: TextStyle(
               fontSize: 12,
-              color: Colors.grey[600],
+              color: cs.onSurfaceVariant,
             ),
           ),
           Text(
@@ -862,16 +973,40 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
   }
 
   Color _getStatusColor(String status) {
+    final ch = _channelColors(context);
+    final cs = Theme.of(context).colorScheme;
     switch (status.toLowerCase()) {
       case 'active':
-        return Colors.green;
+        return ch.cash; // green-toned "live" indicator
       case 'paused':
-        return Colors.orange;
+        return ch.unpaid; // amber-toned "attention"
       case 'ended':
-        return Colors.grey;
+        return cs.onSurfaceVariant; // muted
       default:
-        return Colors.grey;
+        return cs.onSurfaceVariant;
     }
+  }
+
+  /// Distinct payment-channel colors. M3's `colorScheme` only carries 3
+  /// accent slots (primary/secondary/tertiary), but the daily summary needs
+  /// 6+ visually distinct semantic colors at a glance: cash, card, phone,
+  /// other, unpaid, cancelled. So we keep the named colors but pick tonal
+  /// shades that have legible contrast on BOTH light and dark surfaces.
+  ({
+    Color cash,
+    Color card,
+    Color phone,
+    Color other,
+    Color unpaid,
+  }) _channelColors(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return (
+      cash: isDark ? Colors.green.shade300 : Colors.green.shade700,
+      card: isDark ? Colors.lightBlue.shade300 : Colors.blue.shade700,
+      phone: isDark ? Colors.purple.shade200 : Colors.purple.shade700,
+      other: Theme.of(context).colorScheme.onSurfaceVariant,
+      unpaid: isDark ? Colors.orange.shade300 : Colors.orange.shade800,
+    );
   }
 }
 

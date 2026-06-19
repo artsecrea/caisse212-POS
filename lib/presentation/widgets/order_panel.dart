@@ -13,6 +13,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../data/database/app_database.dart';
 import 'product_modification_dialog.dart' show ProductModificationDialog;
+import 'unpaid_orders_dialog.dart';
 
 
 class OrderPanel extends ConsumerWidget {
@@ -66,6 +67,22 @@ class OrderPanel extends ConsumerWidget {
   /// dedicated orders-management screen.
   Future<void> _handleClear(BuildContext context, WidgetRef ref) async {
     ref.read(orderProvider.notifier).clearOrder();
+  }
+
+  /// Opens the [UnpaidOrdersDialog] so the cashier can pick an existing
+  /// unpaid / on-hold order to load into the working cart. Only meant for
+  /// the empty-cart state — when there are items, the panel hides this
+  /// shortcut.
+  Future<void> _openResumeDialog(BuildContext context, WidgetRef ref) async {
+    final orderId = await showDialog<int>(
+      context: context,
+      builder: (_) => const UnpaidOrdersDialog(),
+    );
+    if (orderId == null || !context.mounted) return;
+    final repo = ref.read(orderRepositoryProvider);
+    final order = await repo.getOrderById(orderId);
+    if (order == null) return;
+    ref.read(orderProvider.notifier).loadOrder(order);
   }
 
   void _showItemOptions(BuildContext context, WidgetRef ref, int index, OrderItem item) async {
@@ -423,6 +440,28 @@ class OrderPanel extends ConsumerWidget {
                           style: TextStyle(
                             fontSize: 16,
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        // Fast-access button to resume an unpaid / on-hold
+                        // order. Hidden when items are in the cart so the
+                        // cashier can't accidentally swap the working
+                        // order mid-build.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: ElevatedButton.icon(
+                            onPressed: () =>
+                                _openResumeDialog(context, ref),
+                            icon: const Icon(Icons.pending_actions, size: 20),
+                            label: Text(l10n.translate('resume_order')),
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                              textStyle: const TextStyle(
+                                  fontSize: 14, fontWeight: FontWeight.w600),
+                            ),
                           ),
                         ),
                       ],

@@ -70,7 +70,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 18;
 
   @override
   MigrationStrategy get migration {
@@ -327,6 +327,35 @@ class AppDatabase extends _$AppDatabase {
               'CREATE UNIQUE INDEX IF NOT EXISTS '
               'idx_customers_phone_normalized ON customers(phone_normalized) '
               'WHERE phone_normalized IS NOT NULL;',
+            );
+          } catch (e) {/* duplicates exist — log + skip; admin must dedup */}
+        }
+        if (from < 17) {
+          // Tip column on orders. Nullable so existing rows stay valid;
+          // backend treats null + 0 differently (null = no tip recorded,
+          // 0 explicitly cleared) — we mirror that semantic locally.
+          try {
+            await customStatement(
+              'ALTER TABLE orders ADD COLUMN tip REAL;',
+            );
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 18) {
+          // PIN-based waiter auth. Pin is nullable to keep existing rows
+          // valid while the backend rolls out pin assignment; the partial
+          // unique index allows multiple NULLs to coexist but enforces
+          // uniqueness on every non-null pin (same pattern used for
+          // customers.phone_normalized at v16).
+          try {
+            await customStatement(
+              'ALTER TABLE waiters ADD COLUMN pin TEXT;',
+            );
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+              'CREATE UNIQUE INDEX IF NOT EXISTS '
+              'idx_waiters_pin ON waiters(pin) '
+              'WHERE pin IS NOT NULL;',
             );
           } catch (e) {/* duplicates exist — log + skip; admin must dedup */}
         }

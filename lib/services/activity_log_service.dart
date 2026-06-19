@@ -123,6 +123,33 @@ class ActivityLogService {
       log(ActivityAction.login, 'audit_login', [username ?? ''],
           userId: userId, username: username);
 
+  // ── Waiter actions ─────────────────────────────────────────────────────
+  //
+  // Waiter ids live in `waiters`, not `users`; passing them as `userId`
+  // here would make the `users` table lookup misfire (same root cause as
+  // the orders.createdBy fix). So we pass `userId: null` and the
+  // waiter's full name as `username`. The log row still shows the right
+  // actor in the audit screen — it just doesn't try to dereference a
+  // user record that doesn't exist.
+
+  Future<void> logWaiterLogin({required String waiterName}) =>
+      log(ActivityAction.login, 'audit_waiter_login', [waiterName],
+          username: waiterName);
+
+  Future<void> logWaiterOrderCreated(
+          {required String waiterName, required String orderCode}) =>
+      log(ActivityAction.orderCreated, 'audit_waiter_order_created',
+          [waiterName, orderCode],
+          username: waiterName);
+
+  Future<void> logWaiterProductAdded(
+          {required String waiterName,
+          required String productName,
+          required String orderCode}) =>
+      log(ActivityAction.orderUpdated, 'audit_waiter_product_added',
+          [waiterName, productName, orderCode],
+          username: waiterName);
+
   Future<void> logLogout({int? userId, String? username}) =>
       log(ActivityAction.logout, 'audit_logout', [username ?? ''],
           userId: userId, username: username);

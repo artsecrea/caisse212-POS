@@ -547,6 +547,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           onChanged: (value) => notifier.setDefaultOrderStatus(value),
         ),
         const SizedBox(height: 12),
+        _buildWaiterOrderStatusSelector(
+          context: context,
+          currentStatus: settings.waiterOrderDefaultStatus,
+          onChanged: (value) => notifier.setWaiterOrderDefaultStatus(value),
+        ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.attach_money,
+          title: l10n.translate('waiter_order_default_paid'),
+          subtitle: l10n.translate('waiter_order_default_paid_subtitle'),
+          value: settings.waiterOrderDefaultPaid,
+          onChanged: (value) => notifier.setWaiterOrderDefaultPaid(value),
+        ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.receipt_long,
+          title: l10n.translate('print_waiter_order_ticket'),
+          subtitle: l10n.translate('print_waiter_order_ticket_subtitle'),
+          value: settings.printWaiterOrderTicket,
+          onChanged: (value) => notifier.setPrintWaiterOrderTicket(value),
+        ),
+        const SizedBox(height: 12),
         _buildPaidOrderStatusSelector(
           context: context,
           currentStatus: settings.paidOrderDefaultStatus,
@@ -558,6 +582,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           currentMethod: settings.defaultPaymentMethod,
           onChanged: (value) => notifier.setDefaultPaymentMethod(value),
         ),
+        // Tip dialog toggle intentionally hidden — full plumbing is still
+        // wired (model field, runtime guard in `applyTipIfEnabled`, sync
+        // payload, queue replay), the toggle is just removed so the
+        // cashier can't enable it yet. Re-add this `_buildSwitchTile` to
+        // turn the feature back on.
 
         // ── Validation rules ──────────────────────────────────────────────
         const SizedBox(height: 28),
@@ -665,6 +694,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       'discount': (icon: Icons.percent, titleKey: 'discount_button', subtitleKey: 'manual_discount', visible: settings.showDiscountButton, setVisible: notifier.setShowDiscountButton),
       'print': (icon: Icons.print, titleKey: 'print_button', subtitleKey: 'print_orders', visible: settings.showPrintButton, setVisible: notifier.setShowPrintButton),
       'dailySummary': (icon: Icons.summarize, titleKey: 'daily_summary_button', subtitleKey: 'daily_report', visible: settings.showDailySummaryButton, setVisible: notifier.setShowDailySummaryButton),
+      // Tip button toggle intentionally hidden — same reasoning as the
+      // tip dialog toggle above. The `case 'tip':` branch in main_screen
+      // checks `settings.showTipButton` which defaults to false, so the
+      // button never renders. Restore this map entry to expose the toggle.
       'pay': (icon: Icons.payment, titleKey: 'pay_button', subtitleKey: 'process_payment', visible: settings.showPayButton, setVisible: notifier.setShowPayButton),
       'proceed': (icon: Icons.check_circle, titleKey: 'proceed_button', subtitleKey: 'save_order', visible: true, setVisible: (_) async {}), // Always visible
     };
@@ -833,105 +866,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           max: 200,
           onChanged: (value) => notifier.setBulkSyncSize(value),
         ),
-        const SizedBox(height: 12),
-        _buildNumberSelector(
-          context: context,
-          icon: Icons.calendar_today,
-          title: l10n.translate('data_retention'),
-          subtitle: l10n.translate('data_retention_subtitle'),
-          value: settings.dataRetentionDays,
-          min: 1,
-          max: 30,
-          onChanged: (value) => notifier.setDataRetentionDays(value),
-        ),
-        // TEMP-RETENTION-TEST: remove this button once the retention purge has
-        // been verified in production. Tracked in memory note retention_test_button.
-        const SizedBox(height: 12),
-        _buildRetentionTestButton(context, settings.dataRetentionDays),
       ],
     );
-  }
-
-  // TEMP-RETENTION-TEST: delete this whole method together with the button
-  // above once verified.
-  Widget _buildRetentionTestButton(BuildContext context, int retentionDays) {
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.3),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            const Icon(Icons.warning_amber_rounded),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Test retention purge now (DEV)\nDeletes synced orders & children older than the value above. Customers and sessions are NOT touched.',
-                style: TextStyle(fontSize: 13),
-              ),
-            ),
-            const SizedBox(width: 12),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.delete_forever),
-              label: const Text('Run now'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-                foregroundColor: Theme.of(context).colorScheme.onError,
-              ),
-              onPressed: () => _runRetentionPurge(context, retentionDays),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // TEMP-RETENTION-TEST: delete this method too.
-  Future<void> _runRetentionPurge(BuildContext context, int retentionDays) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Run retention purge?'),
-        content: Text(
-          'This will permanently delete all SYNCED orders (and their tickets, '
-          'line items, components, payments, transactions, notes, and order '
-          'logs) whose updatedAt is older than $retentionDays day(s).\n\n'
-          'Customers and cash sessions are NOT affected.\n\n'
-          'This action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.tonal(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    if (!context.mounted) return;
-
-    final syncService = ref.read(dataSyncServiceProvider);
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final deleted = await syncService.clearOldSyncedData(retentionDays);
-      if (!context.mounted) return;
-      messenger.showSnackBar(SnackBar(
-        content: Text(deleted == 0
-            ? 'No eligible orders found (nothing older than $retentionDays day(s) and synced).'
-            : 'Purged $deleted order(s) and their related rows.'),
-        backgroundColor: deleted == 0 ? null : Colors.green.shade700,
-      ));
-    } catch (e) {
-      if (!context.mounted) return;
-      messenger.showSnackBar(SnackBar(
-        content: Text('Retention purge failed: $e'),
-        backgroundColor: Colors.red.shade700,
-      ));
-    }
   }
 
   Widget _buildSwitchTile({
@@ -1126,6 +1062,90 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   color: Colors.grey,
                   onTap: () => onChanged('ONHOLD'),
                 ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.pending,
+                  label: l10n.translate('pending'),
+                  value: 'PENDING',
+                  currentValue: currentStatus,
+                  color: Colors.orange,
+                  onTap: () => onChanged('PENDING'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.restaurant,
+                  label: l10n.translate('preparing'),
+                  value: 'PREPARING',
+                  currentValue: currentStatus,
+                  color: Colors.blue,
+                  onTap: () => onChanged('PREPARING'),
+                ),
+                _buildOrderStatusOption(
+                  context: context,
+                  icon: Icons.check_circle,
+                  label: l10n.translate('completed'),
+                  value: 'COMPLETED',
+                  currentValue: currentStatus,
+                  color: Colors.green,
+                  onTap: () => onChanged('COMPLETED'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  /// Default status applied to orders created via the waiter app
+  /// (POST /waiters/orders). Mirrors [_buildOrderStatusSelector] but exposes
+  /// only PENDING / PREPARING / COMPLETED — ONHOLD is intentionally absent
+  /// since a "needs cashier approval" gate doesn't fit the waiter flow.
+  Widget _buildWaiterOrderStatusSelector({
+    required BuildContext context,
+    required String currentStatus,
+    required ValueChanged<String> onChanged,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.room_service),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.translate('waiter_order_default_status'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      l10n.translate('waiter_order_default_status_subtitle'),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
                 _buildOrderStatusOption(
                   context: context,
                   icon: Icons.pending,
@@ -2011,6 +2031,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           subtitle: l10n.translate('auto_start_subtitle'),
           value: settings.autoStartServer,
           onChanged: (value) => notifier.setAutoStartServer(value),
+        ),
+        const SizedBox(height: 12),
+
+        // Waiter app dashboard: show or hide the owed/collected money
+        // fields. Off = backend strips them from the response.
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.visibility,
+          title: l10n.translate('waiter_dashboard_show_owed'),
+          subtitle: l10n.translate('waiter_dashboard_show_owed_subtitle'),
+          value: settings.waiterDashboardShowOwed,
+          onChanged: (value) => notifier.setWaiterDashboardShowOwed(value),
         ),
         const SizedBox(height: 16),
 

@@ -10,12 +10,19 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/enums.dart' show TransactionType;
 import '../data/database/app_database.dart';
 import '../domain/models/socket_models.dart';
 import '../providers/database_providers.dart';
+import '../providers/order_provider.dart' show orderRepositoryProvider;
+import '../providers/settings_provider.dart' show settingsProvider;
+import '../providers/network_provider.dart' show lastKnownOnlineStatusProvider;
+import '../providers/sync_manager_provider.dart' show syncManagerProvider;
+import 'activity_log_service.dart' show activityLogServiceProvider;
 import 'order_log_service.dart';
+import 'printing_service.dart' show PrintOutput, KdsPrintMode;
+import '../utils/order_code.dart';
 import 'package:drift/drift.dart' as drift;
-import 'package:bcrypt/bcrypt.dart';
 
 class ServerService {
   final Ref _ref;
@@ -90,6 +97,7 @@ class ServerService {
     router.get('/waiters/orders', _waiterOrders);
     router.post('/waiters/orders', _waiterCreateOrder);
     router.put('/waiters/orders/<code>/add-product', _waiterAddProductToOrder);
+    router.post('/waiters/orders/<code>/print', _waiterPrintOrder);
 
     // Catch-all for 404
     router.all('/<ignored|.*>', _notFound);
@@ -720,46 +728,64 @@ class ServerService {
   // ==================== WAITER ENDPOINTS ====================
 
   /// POST /waiters/login
-  /// Body: { "username": "...", "password": "..." }
+  ///
+  /// Pin-only authentication. The waiter types a numeric PIN into the
+  /// waiter app; that PIN is the unique identifier for the waiter record
+  /// (uniqueness enforced by the partial unique index `idx_waiters_pin`
+  /// added at schemaVersion 18, populated from the backend via
+  /// `_persistWaiters`).
+  ///
+  /// Body: `{ "pin": "1234" }`
+  ///
+  /// Responses (see `docs/waiter_app_pin_login.md` for the full contract):
+  ///   - 200: `{ "waiter": { id, firstName, lastName, imageUrl, areaIds } }`
+  ///   - 400: `{ "error": "pin_required" }`
+  ///   - 403: `{ "error": "invalid_pin" }`          // unknown OR inactive
+  ///   - 500: `{ "error": "login_failed", "details": "..." }`
+  ///
+  /// Deliberately returns the SAME error code for "no such pin" and
+  /// "pin matches an inactive waiter" so the response can't be used as an
+  /// oracle to enumerate valid pins.
   Future<Response> _waiterLogin(Request request) async {
     try {
-      final body = jsonDecode(await request.readAsString()) as Map<String, dynamic>;
-      final username = body['username'] as String?;
-      final password = body['password'] as String?;
+      final body =
+          jsonDecode(await request.readAsString()) as Map<String, dynamic>;
+      final pin = (body['pin'] as String?)?.trim();
 
-      if (username == null || username.isEmpty) {
+      if (pin == null || pin.isEmpty) {
         return Response.badRequest(
-          body: jsonEncode({'error': 'username is required'}),
+          body: jsonEncode({'error': 'pin_required'}),
           headers: {'Content-Type': 'application/json'},
         );
       }
 
       final db = _ref.read(databaseProvider);
+      // Look up by pin alone. The partial unique index guarantees at most
+      // one match; `getSingleOrNull` collapses the null case for us.
       final waiter = await (db.select(db.waiters)
-            ..where((w) => w.username.equals(username))
-            ..where((w) => w.isActive.equals(true)))
+            ..where((w) => w.pin.equals(pin)))
           .getSingleOrNull();
 
-      if (waiter == null) {
+      if (waiter == null || !waiter.isActive) {
         return Response.forbidden(
-          jsonEncode({'error': 'Invalid username or password'}),
+          jsonEncode({'error': 'invalid_pin'}),
           headers: {'Content-Type': 'application/json'},
         );
-      }
-
-      // Verify password when the account has a hash configured
-      if (waiter.passwordHash != null) {
-        if (password == null || !BCrypt.checkpw(password, waiter.passwordHash!)) {
-          return Response.forbidden(
-            jsonEncode({'error': 'Invalid username or password'}),
-            headers: {'Content-Type': 'application/json'},
-          );
-        }
       }
 
       final waiterAreas = await (db.select(db.waiterAreas)
             ..where((wa) => wa.waiterId.equals(waiter.id)))
           .get();
+
+      // Activity log — audit trail of every successful waiter PIN login.
+      // Fire-and-forget; the service swallows its own errors so a logging
+      // hiccup never breaks login.
+      final waiterFullName =
+          '${waiter.firstName} ${waiter.lastName ?? ''}'.trim();
+      // ignore: unawaited_futures
+      _ref
+          .read(activityLogServiceProvider)
+          .logWaiterLogin(waiterName: waiterFullName);
 
       return Response.ok(
         jsonEncode({
@@ -777,7 +803,7 @@ class ServerService {
       print('❌ Error in _waiterLogin: $e');
       print(stackTrace);
       return Response.internalServerError(
-        body: jsonEncode({'error': 'Login failed', 'details': e.toString()}),
+        body: jsonEncode({'error': 'login_failed', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
       );
     }
@@ -885,14 +911,20 @@ class ServerService {
         }
       }
 
+      // Cashier setting — when off, zero out the financial fields so the
+      // waiter app sees `0` rows instead of the real values. Keys stay in
+      // the response (the waiter app gets a stable JSON shape) but the
+      // numbers don't leak the cash situation back to the waiter.
+      final showOwed =
+          _ref.read(settingsProvider).waiterDashboardShowOwed;
       return Response.ok(
         jsonEncode({
           'totalOrders': totalOrders,
           'activeOrders': activeOrders,
           'cancelledOrders': cancelledCount,
-          'expectedCash': expectedCash,
-          'totalCash': totalCash,
-          'cancelledAmount': cancelledAmount,
+          'expectedCash': showOwed ? expectedCash : 0.0,
+          'totalCash': showOwed ? totalCash : 0.0,
+          'cancelledAmount': showOwed ? cancelledAmount : 0.0,
         }),
         headers: {'Content-Type': 'application/json'},
       );
@@ -1546,12 +1578,19 @@ class ServerService {
           );
         }
         if (table.areaId != null) {
-          final assignment = await (database.select(database.waiterAreas)
-                ..where((wa) =>
-                    wa.waiterId.equals(waiterId) &
-                    wa.areaId.equals(table.areaId!)))
-              .getSingleOrNull();
-          if (assignment == null) {
+          // A waiter with NO area assignments is "global" and may serve any
+          // table — this mirrors GET /waiters/tables (_waiterTables), which
+          // shows global waiters every table. Without this, a global waiter
+          // can browse all tables but gets a 403 when creating an order on
+          // any table that belongs to an area. Only area-restricted waiters
+          // are checked against the specific table's area.
+          final waiterAreas = await (database.select(database.waiterAreas)
+                ..where((wa) => wa.waiterId.equals(waiterId)))
+              .get();
+          final isAreaRestricted = waiterAreas.isNotEmpty;
+          final assignedToArea =
+              waiterAreas.any((wa) => wa.areaId == table.areaId);
+          if (isAreaRestricted && !assignedToArea) {
             return Response(
               403,
               body: jsonEncode({
@@ -1563,21 +1602,46 @@ class ServerService {
         }
       }
 
-      // Generate order code
+      // Generate a short uppercase alphanumeric order code (e.g. RGH7IE3H3LR),
+      // verified unique against existing orders.
       final now = DateTime.now();
-      final orderCode = 'W${waiterId}_${now.millisecondsSinceEpoch}';
+      final orderCode = await _generateUniqueOrderCode(database);
 
-      // Create order
+      // Create order. `source: 'WAITER'` lets the print-rule engine filter
+      // this row out (or in) per cashier config — see [PrintRule.sources].
+      // Initial status is cashier-configurable via
+      // `AppSettings.waiterOrderDefaultStatus` (default PENDING) so shops
+      // that pre-pay at the table can set this to COMPLETED, or send
+      // straight to the kitchen with PREPARING.
+      //
+      // `sessionId` carries the active cash session at create-time so the
+      // order lands inside the current Z-report scope — without this the
+      // cashier-side `WaiterProfileDialog` (which filters
+      // `orders.sessionId == currentSession.id`) excludes every waiter
+      // order. Null when no session is open is fine; the profile dialog
+      // falls back to a today-window in that case.
+      final settings = _ref.read(settingsProvider);
+      final session = _ref.read(currentSessionProvider);
+      final waiterOrderStatus = settings.waiterOrderDefaultStatus;
+      // Attribute the order to whoever is logged into the POS right now, so a
+      // waiter order behaves like a normal POS order created by that cashier:
+      // `createdBy`/`takenBy` reference `users.id` and drive the "Cashier"
+      // line on the ticket + the Orders Management attribution. The `waiterId`
+      // column above still records which waiter raised it (for the waiter
+      // app's own order list / dashboard). Null when no cashier is logged in.
+      final posUser = _ref.read(currentUserProvider);
       final orderId = await database.into(database.orders).insert(
         OrdersCompanion.insert(
           code: orderCode,
-          status: const drift.Value('PENDING'),
+          status: drift.Value(waiterOrderStatus),
           type: drift.Value(type),
           persons: drift.Value(persons),
           tableId: drift.Value(tableId),
+          source: const drift.Value('WAITER'),
           waiterId: drift.Value(waiterId),
-          createdBy: drift.Value(waiterId),
-          takenBy: drift.Value(waiterId),
+          createdBy: drift.Value(posUser?.id),
+          takenBy: drift.Value(posUser?.id),
+          sessionId: drift.Value(session?.id),
           createdAt: drift.Value(now),
           updatedAt: drift.Value(now),
         ),
@@ -1654,8 +1718,90 @@ class ServerService {
           .write(AreaTablesCompanion(orderId: drift.Value(orderId)));
       }
 
-      // Log order creation
-      await logService.logOrderCreated(orderId, 'Order created by waiter #$waiterId');
+      // Default-paid path: when `waiterOrderDefaultPaid` is on, create a
+      // CASH ticket covering the full order, mark every product PAID +
+      // linked to that ticket, and bump the order status to the
+      // cashier-configured `paidOrderDefaultStatus` (mirrors the cashier
+      // payment screen at payment_screen.dart:1503-1525). Skipped when
+      // off — today's legacy behaviour kicks in (open order, settle via
+      // the cashier-side WaiterSettlementDialog later).
+      final wasPaidOnCreate = settings.waiterOrderDefaultPaid;
+      if (wasPaidOnCreate) {
+        final orderTotal = await _computeWaiterOrderTotal(database, orderId);
+        final ticketId = await database.into(database.tickets).insert(
+          TicketsCompanion.insert(
+            num: '0001',
+            orderId: orderId,
+            paymentMethod: TransactionType.cash.value,
+            amount: orderTotal,
+            sessionId: drift.Value(session?.id),
+            isPaid: const drift.Value(true),
+            printCount: const drift.Value(0),
+          ),
+        );
+        await (database.update(database.orderProducts)
+              ..where((p) => p.orderId.equals(orderId)))
+            .write(OrderProductsCompanion(
+          ticketId: drift.Value(ticketId),
+          state: const drift.Value('PAID'),
+          updatedAt: drift.Value(now),
+        ));
+        final paidStatus = settings.paidOrderDefaultStatus;
+        await (database.update(database.orders)
+              ..where((o) => o.id.equals(orderId)))
+            .write(OrdersCompanion(
+          status: drift.Value(paidStatus),
+          updatedAt: drift.Value(now),
+        ));
+      }
+
+      // Order-level log (visible in order details) + cross-cutting
+      // activity log (visible in the Logs screen). The order log carries
+      // the waiter's name so the audit trail reads naturally; the activity
+      // log fires through the new `logWaiterOrderCreated` convenience that
+      // skips the users-table lookup (waiter ids live in `waiters`).
+      final waiterFullName =
+          '${waiter.firstName} ${waiter.lastName ?? ''}'.trim();
+      await logService.logOrderCreated(
+          orderId, 'Order created by waiter $waiterFullName');
+      // ignore: unawaited_futures
+      _ref.read(activityLogServiceProvider).logWaiterOrderCreated(
+            waiterName: waiterFullName,
+            orderCode: orderCode,
+          );
+
+      // Fire the configured auto-prints (order ticket + KDS, plus the
+      // customer receipt + store copy when the order arrived pre-paid)
+      // in the background so the waiter app's POST doesn't block on a
+      // slow / dead printer. The pipeline reads the just-saved row via
+      // OrderRepository, then gates each output via shouldPrint(... source:
+      // 'WAITER') — so the cashier's print rules (incl. the "sources"
+      // checkboxes in `printers_management_screen`) decide whether
+      // this waiter order produces paper.
+      // ignore: unawaited_futures
+      _firePrintsForWaiterOrder(orderId, posUser?.firstName,
+          wasPaid: wasPaidOnCreate);
+
+      // Immediate auto-sync when online. Mirrors the cashier-side path in
+      // `main_screen.dart` so a default-paid waiter order doesn't sit
+      // unsynced for up to a `SyncJobService` cycle (default 5 min). The
+      // row already has `isSynced=false`, so the periodic sync is the
+      // automatic fallback when offline / when this call fails.
+      try {
+        final isOnline = _ref.read(lastKnownOnlineStatusProvider);
+        if (isOnline) {
+          // ignore: unawaited_futures
+          _ref
+              .read(syncManagerProvider.notifier)
+              .autoSyncOrder(orderId)
+              .catchError((Object e) {
+            print('⚠️ Waiter order autoSync failed: $e');
+            return false;
+          });
+        }
+      } catch (e) {
+        print('⚠️ Waiter order autoSync kickoff failed: $e');
+      }
 
       return Response(
         201,
@@ -1671,6 +1817,351 @@ class ServerService {
       print(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to create order', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// Sum the just-inserted order's line totals. Mirrors the cashier-side
+  /// math in `OrderRepository._buildOrderFullDetails` but skips the
+  /// discount factors (the waiter endpoint doesn't accept discount
+  /// inputs today): for each `order_products` row, take
+  /// `(unitaryPrice + Σ components.price × components.quantity) × quantity`.
+  ///
+  /// Used by the default-paid path in [_waiterCreateOrder] to compute the
+  /// ticket amount.
+  /// Generate a unique order code (see [generateOrderCode]) by re-rolling on
+  /// the astronomically rare chance the random code already exists. Falls back
+  /// to a timestamp-suffixed code after a few tries to guarantee termination.
+  Future<String> _generateUniqueOrderCode(AppDatabase database) async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final code = generateOrderCode();
+      final existing = await (database.select(database.orders)
+            ..where((o) => o.code.equals(code)))
+          .getSingleOrNull();
+      if (existing == null) return code;
+    }
+    return 'O${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  Future<double> _computeWaiterOrderTotal(
+      AppDatabase database, int orderId) async {
+    final products = await (database.select(database.orderProducts)
+          ..where((p) => p.orderId.equals(orderId)))
+        .get();
+    var total = 0.0;
+    for (final p in products) {
+      final components = await (database.select(database.orderProductComponents)
+            ..where((c) => c.orderProductId.equals(p.id)))
+          .get();
+      var componentTotal = 0.0;
+      for (final c in components) {
+        componentTotal += c.price * c.quantity;
+      }
+      total += (p.unitaryPrice + componentTotal) * p.quantity;
+    }
+    return total;
+  }
+
+  /// Background auto-print for a freshly created waiter order. Reads the
+  /// saved row back as a [CurrentOrder] (so the print formatters see the
+  /// same shape they do on the cashier side), then fires order ticket and
+  /// KDS prints — each gated by [PrintingService.shouldPrint] with
+  /// `source: 'WAITER'`. The cashier's print-rule config (see
+  /// `printers_management_screen.dart`) decides whether any of these
+  /// actually produce paper.
+  ///
+  /// When [wasPaid] is true, ALSO fires `printPaymentDocuments` (customer
+  /// receipt + store copy) — the cashier post-payment flow. Same source
+  /// gate applies; the cashier can opt out per-rule.
+  ///
+  /// [cashierName] is the POS user logged in when the waiter order arrived —
+  /// the order is attributed to them (`createdBy`), so the ticket shows the
+  /// standard "Cashier" line exactly like a POS-created order. There is no
+  /// special waiter-only ticket.
+  ///
+  /// All exceptions are swallowed: the order is already persisted, the
+  /// waiter app already got its 201, and a printer outage must not crash
+  /// the server isolate.
+  Future<void> _firePrintsForWaiterOrder(int orderId, String? cashierName,
+      {bool wasPaid = false}) async {
+    try {
+      final orderRepo = _ref.read(orderRepositoryProvider);
+      final printingService = _ref.read(printingServiceProvider);
+      final currentOrder = await orderRepo.getOrderById(orderId);
+      if (currentOrder == null) {
+        print('⚠️ _firePrintsForWaiterOrder: order $orderId not found post-insert');
+        return;
+      }
+      final hasTable = currentOrder.tableId != null;
+
+      // Same store-identity header the cashier passes (see main_screen.dart
+      // proceed-flow). Without these the ticket prints with no business
+      // header and looks unlike the standard cashier ticket.
+      final prefs = _ref.read(sharedPreferencesProvider);
+      final storeName = prefs.getString('business_name');
+      final storeAddress = prefs.getString('business_address');
+      final storePhone = prefs.getString('business_phone');
+
+      // Global shortcut: when the cashier turned off "print waiter order
+      // ticket" in Settings → Order Defaults, skip the order-ticket auto-
+      // print entirely (KDS still fires below). Saves paper without the
+      // cashier needing to maintain per-rule Sources filters.
+      final printOrderTicket =
+          _ref.read(settingsProvider).printWaiterOrderTicket;
+      if (printOrderTicket &&
+          printingService.shouldPrint(
+            PrintOutput.orderTicket,
+            orderType: currentOrder.type,
+            hasTable: hasTable,
+            source: 'WAITER',
+          )) {
+        try {
+          // Print exactly like a POS order created by the current cashier:
+          // standard "Cashier" line + the same store header.
+          await printingService.printOrderReceipt(
+            order: currentOrder,
+            cashierName: cashierName,
+            storeName: storeName,
+            storeAddress: storeAddress,
+            storePhone: storePhone,
+          );
+        } catch (e) {
+          print('⚠️ Waiter orderTicket print failed: $e');
+        }
+      }
+
+      if (printingService.config.kdsEnabled &&
+          printingService.shouldPrint(
+            PrintOutput.kds,
+            orderType: currentOrder.type,
+            hasTable: hasTable,
+            source: 'WAITER',
+          )) {
+        try {
+          await printingService.printKdsTicket(
+            order: currentOrder,
+            cashierName: cashierName,
+          );
+        } catch (e) {
+          print('⚠️ Waiter KDS print failed: $e');
+        }
+      }
+
+      // Default-paid path: fire the cashier post-payment prints (customer
+      // receipt + store copy). printPaymentDocuments internally calls
+      // shouldPrint for each output with source:'WAITER', so the cashier
+      // can disable per-rule from printers_management without touching
+      // server code. Look up the freshly created ticket by orderId; the
+      // default-paid branch always inserts exactly one with num='0001'.
+      if (wasPaid) {
+        try {
+          final database = _ref.read(databaseProvider);
+          final ticket = await (database.select(database.tickets)
+                ..where((t) => t.orderId.equals(orderId)))
+              .getSingleOrNull();
+          if (ticket != null) {
+            final itemsForPrint = currentOrder.items.map((item) {
+              return {
+                'name': item.displayName,
+                'quantity': item.quantity,
+                'price': item.totalPrice,
+                'components': item.components
+                    .map((c) => {'name': c.name, 'quantity': c.quantity})
+                    .toList(),
+              };
+            }).toList();
+
+            await printingService.printPaymentDocuments(
+              ticketId: ticket.id,
+              ticketNumber: ticket.num,
+              amount: ticket.amount,
+              paymentMethod: ticket.paymentMethod,
+              createdAt: ticket.date,
+              items: itemsForPrint,
+              orderType: currentOrder.type,
+              hasTable: hasTable,
+              source: 'WAITER',
+              orderCode: currentOrder.orderCode,
+              cashierName: cashierName,
+              storeName: storeName,
+              storeAddress: storeAddress,
+              storePhone: storePhone,
+              customerName: currentOrder.customerName,
+              customerPhone: currentOrder.customerPhone,
+              tableName: currentOrder.tableName,
+              numberOfPersons: currentOrder.numberOfPersons,
+            );
+          }
+        } catch (e) {
+          print('⚠️ Waiter paymentDocuments print failed: $e');
+        }
+      }
+    } catch (e, st) {
+      print('❌ _firePrintsForWaiterOrder failed: $e\n$st');
+    }
+  }
+
+  /// Background KDS print after a waiter appends a product to an existing
+  /// order. Prints in `modificationsOnly` mode so ONLY the just-added,
+  /// not-yet-printed items reach the kitchen — same behaviour as the
+  /// cashier-side "add to open order" flow. Gated by the same `kds` print
+  /// rule (`source: 'WAITER'`). [cashierName] is the current POS user, so the
+  /// kitchen ticket carries the standard cashier line. Exceptions swallowed:
+  /// the product is already saved and the waiter app already got its 200.
+  Future<void> _fireKdsForWaiterAddedProduct(
+      int orderId, String? cashierName) async {
+    try {
+      final printingService = _ref.read(printingServiceProvider);
+      if (!printingService.config.kdsEnabled) return;
+      final orderRepo = _ref.read(orderRepositoryProvider);
+      final currentOrder = await orderRepo.getOrderById(orderId);
+      if (currentOrder == null) {
+        print('⚠️ _fireKdsForWaiterAddedProduct: order $orderId not found');
+        return;
+      }
+      if (!printingService.shouldPrint(
+        PrintOutput.kds,
+        orderType: currentOrder.type,
+        hasTable: currentOrder.tableId != null,
+        source: 'WAITER',
+      )) {
+        return;
+      }
+      await printingService.printKdsTicket(
+        order: currentOrder,
+        cashierName: cashierName,
+        mode: KdsPrintMode.modificationsOnly,
+      );
+    } catch (e, st) {
+      print('❌ _fireKdsForWaiterAddedProduct failed: $e\n$st');
+    }
+  }
+
+  /// POST /waiters/orders/<code>/print — on-demand (re)print of an order's
+  /// ticket from the waiter app.
+  ///
+  /// Body: `{ "waiterId": int, "kds"?: bool }`
+  ///   - `waiterId` (required): must own the order, else 403.
+  ///   - `kds` (optional, default false): also (re)print the kitchen ticket,
+  ///     in FULL mode (every item) — a reprint must not depend on the
+  ///     "modifications only" cursor, which could emit nothing.
+  ///
+  /// Unlike the auto-print at creation, this is an explicit operator action,
+  /// so it BYPASSES the `shouldPrint` rule/source gate (mirrors the
+  /// cashier-side reprints). The order ticket carries the "Waiter:" line via
+  /// `order.waiterName`, so no cashier name is passed.
+  ///
+  /// Responses:
+  ///   - 200 `{ printed: true, outputs: {...} }`  — at least one output printed
+  ///   - 503 `{ printed: false, outputs: {...} }` — printer offline/disabled
+  ///   - 400 / 403 / 404 for bad input / wrong owner / missing order
+  Future<Response> _waiterPrintOrder(Request request, String code) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final body = await request.readAsString();
+      final json = body.isNotEmpty
+          ? jsonDecode(body) as Map<String, dynamic>
+          : <String, dynamic>{};
+      final waiterId = json['waiterId'] as int?;
+      final alsoKds = json['kds'] as bool? ?? false;
+
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final order = await (database.select(database.orders)
+            ..where((o) => o.code.equals(code)))
+          .getSingleOrNull();
+      if (order == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Order not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (order.waiterId != waiterId) {
+        return Response(
+          403,
+          body: jsonEncode({'error': 'Not authorized to print this order'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final printingService = _ref.read(printingServiceProvider);
+      if (!printingService.config.printingEnabled) {
+        return Response(
+          503,
+          body: jsonEncode({'error': 'printing_disabled', 'printed': false}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final orderRepo = _ref.read(orderRepositoryProvider);
+      final currentOrder = await orderRepo.getOrderByCode(code);
+      if (currentOrder == null) {
+        return Response.internalServerError(
+          body: jsonEncode({'error': 'Failed to load order'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // Same store-identity header as the cashier ticket / the create-time
+      // auto-print, so a reprint is byte-for-byte the standard ticket.
+      final prefs = _ref.read(sharedPreferencesProvider);
+      final storeName = prefs.getString('business_name');
+      final storeAddress = prefs.getString('business_address');
+      final storePhone = prefs.getString('business_phone');
+
+      // Cashier line = the POS user the order was attributed to at creation
+      // (`createdBy`), so a reprint matches the original ticket.
+      String? cashierName;
+      if (order.createdBy != null) {
+        final u = await (database.select(database.users)
+              ..where((x) => x.id.equals(order.createdBy!)))
+            .getSingleOrNull();
+        cashierName = u?.firstName;
+      }
+
+      final outputs = <String, bool>{};
+      try {
+        outputs['orderTicket'] = await printingService.printOrderReceipt(
+          order: currentOrder,
+          cashierName: cashierName,
+          storeName: storeName,
+          storeAddress: storeAddress,
+          storePhone: storePhone,
+        );
+      } catch (e) {
+        print('⚠️ Waiter reprint orderTicket failed: $e');
+        outputs['orderTicket'] = false;
+      }
+
+      if (alsoKds && printingService.config.kdsEnabled) {
+        try {
+          outputs['kds'] = await printingService.printKdsTicket(
+            order: currentOrder,
+            cashierName: cashierName,
+            mode: KdsPrintMode.full,
+          );
+        } catch (e) {
+          print('⚠️ Waiter reprint KDS failed: $e');
+          outputs['kds'] = false;
+        }
+      }
+
+      final anyPrinted = outputs.values.any((v) => v);
+      return Response(
+        anyPrinted ? 200 : 503,
+        body: jsonEncode({'printed': anyPrinted, 'outputs': outputs}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, st) {
+      print('❌ _waiterPrintOrder failed: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to print', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
       );
     }
@@ -1784,8 +2275,31 @@ class ServerService {
       await (database.update(database.orders)..where((o) => o.id.equals(order.id)))
         .write(OrdersCompanion(updatedAt: drift.Value(DateTime.now())));
 
-      // Log update
-      await logService.logOrderUpdated(order.id, 'Product added by waiter #$waiterId');
+      // Order-level log + cross-cutting activity log. Same shape as
+      // _waiterCreateOrder above: waiter name resolved once, then both
+      // logs fire.
+      final waiterRow = await (database.select(database.waiters)
+            ..where((w) => w.id.equals(waiterId)))
+          .getSingleOrNull();
+      final waiterFullName = waiterRow == null
+          ? 'waiter #$waiterId'
+          : '${waiterRow.firstName} ${waiterRow.lastName ?? ''}'.trim();
+      await logService.logOrderUpdated(
+          order.id, 'Product added by waiter $waiterFullName');
+      // ignore: unawaited_futures
+      _ref.read(activityLogServiceProvider).logWaiterProductAdded(
+            waiterName: waiterFullName,
+            productName: product.name,
+            orderCode: code,
+          );
+
+      // Fire the kitchen ticket for the newly-added item, in the background so
+      // the waiter app's PUT doesn't block on the printer. modifications-only,
+      // so only this new line prints — exactly like adding to an order on the
+      // POS. Attributed to the current POS cashier.
+      final posUser = _ref.read(currentUserProvider);
+      // ignore: unawaited_futures
+      _fireKdsForWaiterAddedProduct(order.id, posUser?.firstName);
 
       return Response.ok(
         jsonEncode({'message': 'Product added to order successfully'}),

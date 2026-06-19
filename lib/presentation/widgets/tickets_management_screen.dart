@@ -852,6 +852,16 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       }
     }
 
+    // Resolve table name for the metadata block — the Order row only
+    // holds tableId. Same lookup pattern the order receipt uses.
+    String? tableName;
+    if (orderData?.tableId != null) {
+      final table = await (database.select(database.areaTables)
+            ..where((t) => t.id.equals(orderData!.tableId!)))
+          .getSingleOrNull();
+      tableName = table?.name;
+    }
+
     final itemsForPrint = await _buildTicketPrintItems(database, ticket.id);
     final businessName = prefs.getString('business_name') ?? 'POS Store';
 
@@ -865,8 +875,14 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       orderCode: orderData?.code,
       cashierName: currentUser?.firstName,
       storeName: businessName,
+      storeAddress: prefs.getString('business_address'),
+      storePhone: prefs.getString('business_phone'),
       customerName: customerName,
       customerPhone: customerPhone,
+      deliveryAddress: orderData?.address,
+      tableName: tableName,
+      numberOfPersons: orderData?.persons,
+      orderType: orderData?.type,
       isReprint: true,
     );
 
@@ -1263,6 +1279,16 @@ class _TicketDetailsDialog extends ConsumerWidget {
       }
     }
 
+    // Resolve table name for the metadata block — same lookup the order
+    // receipt does, kept inline so the reprint path is self-contained.
+    String? tableName;
+    if (orderData?.tableId != null) {
+      final table = await (database.select(database.areaTables)
+            ..where((t) => t.id.equals(orderData!.tableId!)))
+          .getSingleOrNull();
+      tableName = table?.name;
+    }
+
     // Build items list for printing with components
     final itemsForPrint = await _buildTicketPrintItems(database, ticket.id);
 
@@ -1281,8 +1307,14 @@ class _TicketDetailsDialog extends ConsumerWidget {
         orderCode: orderData?.code,
         cashierName: currentUser?.firstName,
         storeName: businessName,
+        storeAddress: prefs.getString('business_address'),
+        storePhone: prefs.getString('business_phone'),
         customerName: customerName,
         customerPhone: customerPhone,
+        deliveryAddress: orderData?.address,
+        tableName: tableName,
+        numberOfPersons: orderData?.persons,
+        orderType: orderData?.type,
         isReprint: true,
       );
 

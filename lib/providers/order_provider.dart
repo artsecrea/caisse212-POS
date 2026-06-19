@@ -10,7 +10,7 @@ import '../services/data_sync_service.dart';
 import '../services/order_log_service.dart';
 import '../services/activity_log_service.dart';
 import '../utils/customer_display.dart';
-import 'package:uuid/uuid.dart';
+import '../utils/order_code.dart';
 import 'database_providers.dart';
 import 'network_provider.dart';
 
@@ -289,6 +289,21 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = state.copyWith(numberOfPersons: count);
   }
 
+  /// Stamps the tip value returned by `PATCH /orders/{id}/tip` onto the
+  /// in-memory order. The server is the source of truth; this just keeps
+  /// the UI in sync so the tip button label and the payment screen totals
+  /// reflect what's saved.
+  void setTip(double value) {
+    state = state.copyWith(tip: value);
+  }
+
+  /// Replace the in-memory order outright with [order]. Used after a save
+  /// + reload pass when the caller wants the DB-loaded copy (with
+  /// auto-generated ids, etc.) to become the working order.
+  void setOrder(CurrentOrder order) {
+    state = order;
+  }
+
   void clearOrder() {
     state = CurrentOrder();
   }
@@ -376,9 +391,9 @@ class OrderRepository {
     }
     
     _logger.debug('saveOrder: ${order.items.length} items, first item: ${order.items.first.toJson()}');
-    // Generate order code
-    final uuid = const Uuid();
-    final orderCode = order.orderCode != null ? order.orderCode! : uuid.v4().substring(0, 8).toUpperCase();
+    // Generate order code — short uppercase alphanumeric (e.g. RGH7IE3H3LR),
+    // consistent with the waiter-app path. Uniqueness is checked just below.
+    final orderCode = order.orderCode ?? generateOrderCode();
 
     // check if the order with that code exists
     final existingOrder = await (_database.select(_database.orders)..where((tbl) => tbl.code.equals(orderCode))).getSingleOrNull();
@@ -398,6 +413,10 @@ class OrderRepository {
         source: Value('POS'),
         sourceId: Value(null),
         discountPercentage: Value(order.discountPercentage),
+        // Only persist a tip when the cashier actually entered one — keeps
+        // the column null for the "no tip recorded" case, matching the
+        // backend's `tip: null` semantic.
+        tip: order.tip > 0 ? Value(order.tip) : const Value.absent(),
         createdBy: Value(userId),
         takenBy: Value(userId),
         waiterId: Value(order.waiterId),
@@ -569,6 +588,10 @@ class OrderRepository {
       commercialId: Value(order.commercialId),
       waiterId: Value(order.waiterId),
       discountPercentage: Value(order.discountPercentage),
+      // Tip — passes `null` when cleared (cashier picked "No tip" on the
+      // dialog), so the server's clear-semantic round-trips correctly via
+      // the normal order update path.
+      tip: Value(order.tip > 0 ? order.tip : null),
       persons: Value(order.numberOfPersons),
       type: Value(order.type),
       note: Value(order.note),
@@ -752,18 +775,34 @@ class OrderRepository {
     }
   }
 
-  /// Helper to queue order update operation
+  /// Helper to queue order update operation.
+  ///
+  /// CRITICAL: every field the server should see on a queued replay MUST
+  /// be in this map. The pending-operations queue does a plain `PUT
+  /// /pos/orders/{code}` with this body and nothing else — anything missing
+  /// here is silently dropped server-side. Past omissions:
+  ///   - `tip` was forgotten and never reached the backend when the cashier
+  ///     was offline or the auto-sync hit a transient error and fell back
+  ///     to the queue. Adding it here closes that gap.
+  ///   - `customerPhoneNormalized` replaces the old `customerId` lookup per
+  ///     the latest backend contract — server dedups customers by phone,
+  ///     ignores ids on the order payload.
   Future<void> _queueOrderUpdate(int orderId, String orderCode, CurrentOrder order) async {
     try {
+      final phoneNormalized = await _lookupCustomerPhoneNormalized(order.customerId);
       final pendingOpsService = PendingOperationsService(_database);
       await pendingOpsService.queueOrderUpdate(
         entityId: orderId,
         orderCode: orderCode,
         updateData: {
           'tableId': order.tableId,
+          // Kept for backward compat — server ignores it now, but old
+          // server builds still read it. No harm sending both.
           'clientId': order.customerId,
+          'customerPhoneNormalized': phoneNormalized,
           'commercialId': order.commercialId,
           'discountPercentage': order.discountPercentage,
+          'tip': order.tip,
           'note': order.note,
           'type': order.type,
           'address': order.deliveryAddress,
@@ -773,6 +812,17 @@ class OrderRepository {
     } catch (e) {
       _logger.error('Failed to queue update operation: $e');
     }
+  }
+
+  /// Resolve the canonical `phone_normalized` for [customerId], or `null`
+  /// if there's no customer or the customer has no phone on record. Used
+  /// to build order payloads that key customers by phone instead of by id.
+  Future<String?> _lookupCustomerPhoneNormalized(int? customerId) async {
+    if (customerId == null) return null;
+    final row = await (_database.select(_database.customers)
+          ..where((c) => c.id.equals(customerId)))
+        .getSingleOrNull();
+    return row?.phoneNormalized;
   }
 
   Future<CurrentOrder?> getOrderByTable(int tableId) async {
@@ -992,6 +1042,7 @@ class OrderRepository {
       note: order.note,
       type: order.type,
       deliveryAddress: order.address,
+      tip: order.tip ?? 0.0,
     );
   }
 
@@ -1247,10 +1298,14 @@ class OrderRepository {
     required int page,
     required int pageSize,
     String? statusFilter,
+    String? typeFilter,
+    bool unpaidOnly = false,
     String? searchQuery,
     int? customerId,
     int? cashierId,
     int? tableId,
+    int? waiterId,
+    int? sessionId,
     DateTime? startDate,
     DateTime? endDate,
     String sortColumn = 'createdAt',
@@ -1266,6 +1321,10 @@ class OrderRepository {
         query = query..where((tbl) => tbl.status.equals(statusFilter));
       }
 
+      if (typeFilter != null && typeFilter != 'ALL') {
+        query = query..where((tbl) => tbl.type.equals(typeFilter));
+      }
+
       if (customerId != null) {
         query = query..where((tbl) => tbl.clientId.equals(customerId));
       }
@@ -1276,6 +1335,14 @@ class OrderRepository {
 
       if (tableId != null) {
         query = query..where((tbl) => tbl.tableId.equals(tableId));
+      }
+
+      if (waiterId != null) {
+        query = query..where((tbl) => tbl.waiterId.equals(waiterId));
+      }
+
+      if (sessionId != null) {
+        query = query..where((tbl) => tbl.sessionId.equals(sessionId));
       }
 
       if (startDate != null) {
@@ -1290,6 +1357,7 @@ class OrderRepository {
       final allOrders = await query.get();
 
       // Filter by search query in memory (code and userName need joins)
+      List<Order> postSqlOrders = allOrders;
       if (searchQuery != null && searchQuery.isNotEmpty) {
         final searchLower = searchQuery.toLowerCase();
         final filteredOrders = <Order>[];
@@ -1317,9 +1385,23 @@ class OrderRepository {
             }
           }
         }
-        totalCount = filteredOrders.length;
+        postSqlOrders = filteredOrders;
+      }
+
+      // Unpaid-only filter — applied in memory because it compares
+      // computed sums (ticket payments vs order line-item totals). Done
+      // here in the count phase so totalCount + pagination math match
+      // what the data phase will produce.
+      if (unpaidOnly) {
+        final unpaidOrders = <Order>[];
+        for (final order in postSqlOrders) {
+          if (await _isOrderUnpaid(order)) {
+            unpaidOrders.add(order);
+          }
+        }
+        totalCount = unpaidOrders.length;
       } else {
-        totalCount = allOrders.length;
+        totalCount = postSqlOrders.length;
       }
     }
 
@@ -1342,6 +1424,10 @@ class OrderRepository {
       query = query..where((tbl) => tbl.status.equals(statusFilter));
     }
 
+    if (typeFilter != null && typeFilter != 'ALL') {
+      query = query..where((tbl) => tbl.type.equals(typeFilter));
+    }
+
     if (customerId != null) {
       query = query..where((tbl) => tbl.clientId.equals(customerId));
     }
@@ -1352,6 +1438,14 @@ class OrderRepository {
 
     if (tableId != null) {
       query = query..where((tbl) => tbl.tableId.equals(tableId));
+    }
+
+    if (waiterId != null) {
+      query = query..where((tbl) => tbl.waiterId.equals(waiterId));
+    }
+
+    if (sessionId != null) {
+      query = query..where((tbl) => tbl.sessionId.equals(sessionId));
     }
 
     if (startDate != null) {
@@ -1415,6 +1509,19 @@ class OrderRepository {
       ordersToProcess = allFilteredOrders;
     }
 
+    // Apply unpaid-only filter (in memory — same reasoning as the count
+    // phase). Done BEFORE pagination so the page slicing is over the
+    // already-filtered set.
+    if (unpaidOnly) {
+      final unpaidOrders = <Order>[];
+      for (final order in ordersToProcess) {
+        if (await _isOrderUnpaid(order)) {
+          unpaidOrders.add(order);
+        }
+      }
+      ordersToProcess = unpaidOrders;
+    }
+
     // Apply pagination in memory after search
     final start = page * pageSize;
     final end = (start + pageSize).clamp(0, ordersToProcess.length);
@@ -1436,6 +1543,162 @@ class OrderRepository {
       pageSize: pageSize,
       totalPages: totalPages,
     );
+  }
+
+  /// Fetches the small ranked list of orders that the cashier can
+  /// "resume" from the empty cart panel.
+  ///
+  /// Inclusion rule = "the cashier might want to pick this back up":
+  ///   * status NOT IN (`COMPLETED`, `CANCELED`)
+  ///   * AND ([_isOrderUnpaid] returns true) — i.e. line items haven't
+  ///     been fully covered by paid tickets yet. `ONHOLD` orders pass
+  ///     this naturally since they have no tickets.
+  ///
+  /// Filters are pushed into SQL where they're cheap (`type`, `tableId`)
+  /// and applied in memory where they need joins (customer-name match).
+  /// [customerQuery] does a case-insensitive substring match on the
+  /// concatenated first + last name; an empty / null value means "no
+  /// customer filter".
+  ///
+  /// Cap defaults to 50 — the dialog this feeds is meant for "pick the
+  /// one you were just working on", not for browsing a long history.
+  /// The orders-management screen handles the deep-browse case.
+  Future<List<Order>> getUnpaidOrdersForResume({
+    String? typeFilter,
+    int? tableId,
+    String? customerQuery,
+    int? cashierId,
+    int limit = 50,
+  }) async {
+    var query = _database.select(_database.orders)
+      ..where((tbl) => tbl.status.isNotIn(const ['COMPLETED', 'CANCELED']))
+      ..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)]);
+
+    if (typeFilter != null && typeFilter != 'ALL') {
+      query = query..where((tbl) => tbl.type.equals(typeFilter));
+    }
+    if (tableId != null) {
+      query = query..where((tbl) => tbl.tableId.equals(tableId));
+    }
+    if (cashierId != null) {
+      query = query..where((tbl) => tbl.takenBy.equals(cashierId));
+    }
+
+    final candidates = await query.get();
+
+    final needle = (customerQuery ?? '').trim().toLowerCase();
+    final result = <Order>[];
+    for (final order in candidates) {
+      // Customer-name filter — needs a customers join we can't do in the
+      // base select without restructuring, so it runs in memory. Cheap
+      // because the SQL where clauses above have already pruned the
+      // candidate set.
+      if (needle.isNotEmpty) {
+        if (order.clientId == null) continue;
+        final customer = await (_database.select(_database.customers)
+              ..where((c) => c.id.equals(order.clientId!)))
+            .getSingleOrNull();
+        if (customer == null) continue;
+        final fullName =
+            '${customer.firstName} ${customer.lastName}'.toLowerCase();
+        if (!fullName.contains(needle)) continue;
+      }
+      if (await _isOrderUnpaid(order)) {
+        result.add(order);
+        if (result.length >= limit) break;
+      }
+    }
+    return result;
+  }
+
+  /// Returns the correctly-computed total for each requested order.
+  ///
+  /// Formula matches [OrderItem.totalPrice] + [CurrentOrder.total]:
+  ///   componentTotal = Σ (component.price × component.quantity)
+  ///   itemTotal      = (unitaryPrice + componentTotal − manualDiscount) × quantity
+  ///   beforeDiscount = Σ itemTotal
+  ///   total          = beforeDiscount − (beforeDiscount × discountPct / 100)
+  ///
+  /// Batched: three queries total (orders, orderProducts,
+  /// orderProductComponents) no matter how many ids are passed in.
+  /// Empty input or empty order returns 0 for that id.
+  ///
+  /// Previous version (`_isOrderUnpaid` baseline) summed only
+  /// `unitaryPrice × quantity` — dropped every component price, every
+  /// manual discount, and the entire order-level discount %, so totals
+  /// looked wildly off for any order with paid add-ons (Cheese,
+  /// Mushrooms, etc.) or a discount applied.
+  Future<Map<int, double>> getOrderTotals(List<int> orderIds) async {
+    if (orderIds.isEmpty) return const {};
+
+    final orders = await (_database.select(_database.orders)
+          ..where((o) => o.id.isIn(orderIds)))
+        .get();
+    final discountPctById = {
+      for (final o in orders) o.id: o.discountPercentage,
+    };
+
+    final products = await (_database.select(_database.orderProducts)
+          ..where((p) => p.orderId.isIn(orderIds)))
+        .get();
+    if (products.isEmpty) {
+      return {for (final id in orderIds) id: 0.0};
+    }
+
+    final productIds = products.map((p) => p.id).toList();
+    final allComps = await (_database.select(_database.orderProductComponents)
+          ..where((c) => c.orderProductId.isIn(productIds)))
+        .get();
+    final compsByProductId = <int, List<OrderProductComponent>>{};
+    for (final c in allComps) {
+      compsByProductId.putIfAbsent(c.orderProductId, () => []).add(c);
+    }
+
+    final beforeDiscount = <int, double>{};
+    for (final p in products) {
+      final comps = compsByProductId[p.id] ?? const <OrderProductComponent>[];
+      final componentTotal = comps.fold<double>(
+        0.0,
+        (sum, c) => sum + (c.price * c.quantity),
+      );
+      final itemTotal =
+          ((p.unitaryPrice + componentTotal) - p.manualDiscount) * p.quantity;
+      beforeDiscount[p.orderId] =
+          (beforeDiscount[p.orderId] ?? 0) + itemTotal;
+    }
+
+    final result = <int, double>{};
+    for (final id in orderIds) {
+      final before = beforeDiscount[id] ?? 0;
+      final pct = discountPctById[id] ?? 0;
+      result[id] = before - (before * pct / 100);
+    }
+    return result;
+  }
+
+  /// "Is this order unpaid?" — the canonical check used by the orders-
+  /// management unpaid-filter chip and by the resume-order picker.
+  ///
+  /// Cancelled orders report as paid (so the filter doesn't surface
+  /// them as "needs payment" — they're done). Uses [getOrderTotals]
+  /// internally so the math matches what the payment screen, the cart,
+  /// and the printed receipt all see.
+  Future<bool> _isOrderUnpaid(Order order) async {
+    if (order.status == 'CANCELED') return false;
+    final totals = await getOrderTotals([order.id]);
+    final total = totals[order.id] ?? 0.0;
+    if (total <= 0) return false; // empty order isn't "unpaid"
+    final tickets = await (_database.select(_database.tickets)
+          ..where((t) =>
+              t.orderId.equals(order.id) &
+              t.isPaid.equals(true) &
+              t.isCancelled.equals(false)))
+        .get();
+    final totalPaid =
+        tickets.fold<double>(0.0, (sum, t) => sum + t.amount);
+    // Tiny epsilon so floating-point rounding doesn't classify a fully-
+    // paid order as unpaid by a penny.
+    return totalPaid + 0.005 < total;
   }
 
   // Helper method to build OrderFullDetails from an Order

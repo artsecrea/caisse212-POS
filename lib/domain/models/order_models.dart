@@ -229,6 +229,11 @@ class CurrentOrder {
   final String? deliveryAddress; // Delivery address (when type == DELIVERY)
   final int numberOfPersons; // Number of persons for the order
 
+  /// Tip stored on the server via `PATCH /api/orders/{id}/tip`. NOT included
+  /// in [total] — the cashier collects `total + tip` from the customer.
+  /// Carries through to PaymentScreen so the receipt and total-due lines
+  /// show the right number.
+  final double tip;
 
   CurrentOrder({
     this.orderId,
@@ -249,6 +254,7 @@ class CurrentOrder {
     this.type = 'DINE_IN',
     this.deliveryAddress,
     this.numberOfPersons = 1,
+    this.tip = 0.0,
   });
 
   // Subtotal: sum of all base prices (no tax, no discounts)
@@ -315,6 +321,7 @@ class CurrentOrder {
     String? type,
     String? deliveryAddress,
     int? numberOfPersons,
+    double? tip,
   }) {
     return CurrentOrder(
       orderId: orderId ?? this.orderId,
@@ -335,6 +342,7 @@ class CurrentOrder {
       type: type ?? this.type,
       deliveryAddress: deliveryAddress ?? this.deliveryAddress,
       numberOfPersons: numberOfPersons ?? this.numberOfPersons,
+      tip: tip ?? this.tip,
     );
   }
 

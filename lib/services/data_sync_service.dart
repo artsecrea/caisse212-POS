@@ -273,60 +273,116 @@ class DataSyncService {
     await clearMasterData();
   }
 
-  /// Sync all data from the server
+  /// Sync all data from the server.
+  ///
+  /// **Fetch-then-swap** topology — the local DB is held byte-identical
+  /// to its current contents until every network call has finished
+  /// successfully:
+  ///
+  ///   Phase 1 (no DB writes): fetch every entity over the network into
+  ///     in-memory lists. Any failure here aborts the sync with the
+  ///     local tables completely untouched — the cashier keeps using the
+  ///     pre-sync data they were just looking at, instead of seeing an
+  ///     empty UI mid-purge.
+  ///
+  ///   Phase 2 (single transaction): snapshot locally-tracked user
+  ///     fields (`lastLogin`, `displayName`) that the server doesn't
+  ///     send, run `clearMasterData()` + retention purge, then persist
+  ///     all the cached lists. Wrapped in one transaction so the swap
+  ///     is atomic — if anything in phase 2 throws, drift rolls back
+  ///     and the old data is still there.
+  ///
+  /// This replaces the old pattern that cleared and re-fetched inside
+  /// one long transaction — which held DB locks for the whole network
+  /// round-trip and showed an empty UI during the brief window between
+  /// clear and refetch.
   Future<void> syncAllData({int? dataRetentionDays}) async {
     try {
-      // Wrap entire sync in a transaction so it's atomic - all or nothing
+      // ── Phase 1: network fetches ────────────────────────────────────
+      onProgress?.call('Fetching users...', 0.05);
+      final users = await _apiService.fetchUsers();
+
+      onProgress?.call('Fetching categories...', 0.12);
+      final categories = await _apiService.fetchCategories();
+
+      onProgress?.call('Fetching stations...', 0.18);
+      final stations = await _apiService.fetchStations();
+
+      onProgress?.call('Fetching products...', 0.25);
+      final products = await _apiService.fetchProducts();
+
+      onProgress?.call('Fetching product variants...', 0.34);
+      final variants = await _apiService.fetchVariants();
+
+      onProgress?.call('Fetching component groups...', 0.42);
+      final componentGroups = await _apiService.fetchComponentGroups();
+
+      onProgress?.call('Fetching components...', 0.5);
+      final components = await _apiService.fetchComponents();
+
+      onProgress?.call('Fetching product components...', 0.58);
+      final productComponents = await _apiService.fetchProductComponents();
+
+      onProgress?.call('Fetching areas...', 0.66);
+      final areas = await _apiService.fetchAreas();
+
+      onProgress?.call('Fetching tables...', 0.72);
+      final tables = await _apiService.fetchTables();
+
+      onProgress?.call('Fetching commercials...', 0.78);
+      final commercials = await _apiService.fetchCommercials();
+
+      onProgress?.call('Fetching customers...', 0.84);
+      final customers = await _apiService.fetchCustomers();
+
+      onProgress?.call('Fetching waiters...', 0.9);
+      final waiters = await _apiService.fetchWaiters();
+
+      // ── Phase 2: atomic swap (snapshot → clear → persist) ───────────
+      onProgress?.call('Updating local data...', 0.95);
       await _database.transaction(() async {
-        // Clear only master data (keep transactional data like orders, tickets)
-        onProgress?.call('Clearing master data...', 0.0);
+        // Snapshot 1: locally-tracked user fields. Server doesn't send
+        // lastLogin / displayName, so we'd lose them otherwise.
+        final existingUsers = await _database.select(_database.users).get();
+        final existingUsersById = {for (final u in existingUsers) u.id: u};
+
+        // Snapshot 2: which table is currently holding which order. The
+        // API only sends static table data (name, capacity, area); the
+        // runtime `area_tables.orderId` mapping is set locally by the
+        // cashier (Hold / Pay flows) and would otherwise be wiped when
+        // `clearMasterData` deletes the table rows. Lives in memory until
+        // we've reinserted the new table set and can re-apply it.
+        final tableOrderSnapshot = await _snapshotTableOrders();
+
         await clearMasterData();
 
-        // Optionally clear old synced data based on retention period
         if (dataRetentionDays != null && dataRetentionDays > 0) {
-          onProgress?.call('Clearing old synced data...', 0.05);
           await clearOldSyncedData(dataRetentionDays);
         }
 
-        // Sync in order to respect foreign key constraints
-        onProgress?.call('Fetching users...', 0.1);
-        await _syncUsers();
-
-        onProgress?.call('Fetching categories...', 0.2);
-        await _syncCategories();
-
-        onProgress?.call('Fetching stations...', 0.25);
-        await _syncStations();
-
-        onProgress?.call('Fetching products...', 0.3);
-        await _syncProducts();
-
-        onProgress?.call('Fetching product variants...', 0.35);
-        await _syncVariants();
-
-        onProgress?.call('Fetching component groups...', 0.4);
-        await _syncComponentGroups();
-
-        onProgress?.call('Fetching components...', 0.5);
-        await _syncComponents();
-
-        onProgress?.call('Fetching product components...', 0.6);
-        await _syncProductComponents();
-
-        onProgress?.call('Fetching areas...', 0.7);
-        await _syncAreas();
-
-        onProgress?.call('Fetching tables...', 0.75);
-        await _syncTables();
-
-        onProgress?.call('Fetching commercials...', 0.8);
-        await _syncCommercials();
-
-        onProgress?.call('Fetching customers...', 0.85);
-        await _syncCustomers();
-
-        onProgress?.call('Fetching waiters...', 0.95);
-        await _syncWaiters();
+        // Persist in FK-respecting order. Each helper is a pure DB
+        // writer: it doesn't touch the network and can be re-run safely
+        // on a partial failure (drift rolls back the transaction on any
+        // throw).
+        await _persistUsers(users, existingUsersById);
+        await _persistCategories(categories);
+        await _persistStations(stations);
+        await _persistProducts(products);
+        await _persistVariants(variants);
+        await _persistComponentGroups(componentGroups);
+        await _persistComponents(components);
+        await _persistProductComponents(productComponents);
+        await _persistAreas(areas);
+        await _persistTables(tables);
+        // Restore the table → order assignments now that the new table
+        // rows exist. Done AFTER `_persistTables` so the update has
+        // something to write to. Skips entries whose order was purged by
+        // the retention pass above, or whose table id no longer exists
+        // in the server's response.
+        await _restoreTableOrders(tableOrderSnapshot);
+        await _persistCommercials(commercials);
+        await _persistCustomers(customers);
+        await _persistWaiters(waiters);
       });
 
       onProgress?.call('Sync complete!', 1.0);
@@ -336,14 +392,13 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncUsers() async {
-    final users = await _apiService.fetchUsers();
-
-    // Snapshot existing rows so insertOrReplace doesn't wipe locally-tracked
-    // fields (e.g. lastLogin set at login) when the server doesn't send them.
-    final existing = await _database.select(_database.users).get();
-    final existingById = {for (final u in existing) u.id: u};
-
+  /// Writes the previously-fetched users into the local DB. Uses the
+  /// snapshot the caller took **before clearMasterData ran** so locally-
+  /// tracked fields (`lastLogin`, `displayName`) survive the swap.
+  Future<void> _persistUsers(
+    List<Map<String, dynamic>> users,
+    Map<int, User> existingById,
+  ) async {
     for (final user in users) {
       final int? id = user['id'];
       final prior = id != null ? existingById[id] : null;
@@ -425,8 +480,8 @@ class DataSyncService {
     return value.toString();
   }
 
-  Future<void> _syncCategories() async {
-    final categories = await _apiService.fetchCategories();
+  Future<void> _persistCategories(
+      List<Map<String, dynamic>> categories) async {
     for (final category in categories) {
       await _database.into(_database.categories).insert(
         CategoriesCompanion.insert(
@@ -443,8 +498,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncStations() async {
-    final stations = await _apiService.fetchStations();
+  Future<void> _persistStations(
+      List<Map<String, dynamic>> stations) async {
     for (final station in stations) {
       await _database.into(_database.stations).insert(
         StationsCompanion.insert(
@@ -457,8 +512,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncProducts() async {
-    final products = await _apiService.fetchProducts();
+  Future<void> _persistProducts(
+      List<Map<String, dynamic>> products) async {
     for (final product in products) {
       await _database.into(_database.products).insert(
         ProductsCompanion.insert(
@@ -506,8 +561,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncVariants() async {
-    final variants = await _apiService.fetchVariants();
+  Future<void> _persistVariants(
+      List<Map<String, dynamic>> variants) async {
     for (final variant in variants) {
       // Insert variant
       await _database.into(_database.productVariants).insert(
@@ -546,8 +601,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncComponentGroups() async {
-    final groups = await _apiService.fetchComponentGroups();
+  Future<void> _persistComponentGroups(
+      List<Map<String, dynamic>> groups) async {
     for (final group in groups) {
       await _database.into(_database.componentGroups).insert(
         ComponentGroupsCompanion.insert(
@@ -561,8 +616,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncComponents() async {
-    final components = await _apiService.fetchComponents();
+  Future<void> _persistComponents(
+      List<Map<String, dynamic>> components) async {
     for (final component in components) {
       await _database.into(_database.components).insert(
         ComponentsCompanion.insert(
@@ -576,8 +631,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncProductComponents() async {
-    final productComponents = await _apiService.fetchProductComponents();
+  Future<void> _persistProductComponents(
+      List<Map<String, dynamic>> productComponents) async {
     for (final pc in productComponents) {
       await _database.into(_database.productComponents).insert(
         ProductComponentsCompanion.insert(
@@ -595,8 +650,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncAreas() async {
-    final areas = await _apiService.fetchAreas();
+  Future<void> _persistAreas(
+      List<Map<String, dynamic>> areas) async {
     for (final area in areas) {
       await _database.into(_database.areas).insert(
         AreasCompanion.insert(
@@ -609,8 +664,44 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncTables() async {
-    final tables = await _apiService.fetchTables();
+  /// Read the current `tableId → orderId` mapping into memory. Only rows
+  /// with an active order are captured — empty tables don't need to be
+  /// "restored" since the new table set starts empty anyway.
+  Future<Map<int, int>> _snapshotTableOrders() async {
+    final rows = await (_database.select(_database.areaTables)
+          ..where((t) => t.orderId.isNotNull()))
+        .get();
+    return {for (final r in rows) r.id: r.orderId!};
+  }
+
+  /// Re-apply a `tableId → orderId` mapping captured by
+  /// [_snapshotTableOrders] before the table rows were wiped.
+  ///
+  /// Two guards:
+  ///   - If the new (server-returned) table set doesn't include a snapshot
+  ///     id, the `UPDATE ... WHERE id = ?` simply matches zero rows and
+  ///     the entry is silently dropped — the table doesn't exist anymore.
+  ///   - If the referenced order was purged by the retention pass that
+  ///     ran earlier in the same transaction, skip the restore so we
+  ///     don't reattach a dangling FK.
+  Future<void> _restoreTableOrders(Map<int, int> mapping) async {
+    if (mapping.isEmpty) return;
+    final orderIds = mapping.values.toSet().toList();
+    final survivors = await (_database.select(_database.orders)
+          ..where((o) => o.id.isIn(orderIds)))
+        .get();
+    final survivingIds = survivors.map((o) => o.id).toSet();
+
+    for (final entry in mapping.entries) {
+      if (!survivingIds.contains(entry.value)) continue;
+      await (_database.update(_database.areaTables)
+            ..where((t) => t.id.equals(entry.key)))
+          .write(AreaTablesCompanion(orderId: Value(entry.value)));
+    }
+  }
+
+  Future<void> _persistTables(
+      List<Map<String, dynamic>> tables) async {
     for (final table in tables) {
       await _database.into(_database.areaTables).insert(
         AreaTablesCompanion.insert(
@@ -624,8 +715,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncCommercials() async {
-    final commercials = await _apiService.fetchCommercials();
+  Future<void> _persistCommercials(
+      List<Map<String, dynamic>> commercials) async {
     for (final commercial in commercials) {
       await _database.into(_database.commercials).insert(
         CommercialsCompanion.insert(
@@ -639,8 +730,8 @@ class DataSyncService {
     }
   }
 
-  Future<void> _syncCustomers() async {
-    final customers = await _apiService.fetchCustomers();
+  Future<void> _persistCustomers(
+      List<Map<String, dynamic>> customers) async {
     for (final customer in customers) {
       // Accept either `phoneNormalized` or snake_case `phone_normalized` from
       // the server. If neither is present, fall back to a local normalisation
@@ -653,6 +744,10 @@ class DataSyncService {
           : (phone == null || phone.isEmpty
               ? null
               : _normalizePhoneFallback(phone));
+      // updatedAt comes back from the server now (new bulk response field).
+      // Use it when present so the local row reflects the canonical
+      // last-touched timestamp; fall back to existing default otherwise.
+      final updatedAt = _parseDateTime(customer['updatedAt']);
       await _database.into(_database.customers).insert(
         CustomersCompanion.insert(
           id: Value(customer['id']),
@@ -662,6 +757,7 @@ class DataSyncService {
           phoneNormalized: Value(normalised),
           email: Value(customer['email']),
           isSynced: const Value(true), // Data from server is already synced
+          updatedAt: updatedAt != null ? Value(updatedAt) : const Value.absent(),
         ),
         mode: InsertMode.insertOrReplace,
       );
@@ -679,22 +775,25 @@ class DataSyncService {
     return '$cc$d';
   }
 
-  Future<void> _syncWaiters() async {
-    final waiters = await _apiService.fetchWaiters();
-
-    // Clear existing waiter-area assignments
-    await _database.delete(_database.waiterAreas).go();
-
+  Future<void> _persistWaiters(
+      List<Map<String, dynamic>> waiters) async {
+    // No per-waiter clear of `waiter_areas` needed — clearMasterData
+    // already wiped that table at the start of the transaction.
     for (final waiter in waiters) {
-      // Insert or update waiter (username and passwordHash may be null)
+      // `pin` is the credential the waiter app uses to authenticate against
+      // the local POS — see `_waiterLogin` in server_service.dart. Stored
+      // as-is (plaintext) since the LAN-only server has no separate hashing
+      // requirement; uniqueness is enforced by the partial index added at
+      // schemaVersion 18.
       await _database.into(_database.waiters).insert(
         WaitersCompanion.insert(
           id: Value(waiter['id']),
           firstName: waiter['firstName'] ?? '',
           lastName: Value(waiter['lastName']),
           imageUrl: Value(waiter['imageUrl']),
-          username: Value(waiter['username']), // Can be null - for future authentication
-          passwordHash: Value(waiter['passwordHash']), // Can be null - for future authentication
+          pin: Value(waiter['pin']),
+          username: Value(waiter['username']),
+          passwordHash: Value(waiter['passwordHash']),
           isActive: const Value(true),
         ),
         mode: InsertMode.insertOrReplace,
@@ -799,6 +898,41 @@ class DataSyncService {
       ..where((o) => o.isSynced.equals(false) & o.status.isNotValue('ONHOLD')))
       .get();
 
+    // Pre-load `phone_normalized` for every customer referenced by this
+    // batch so we don't run N queries inside the loop. The new backend
+    // contract keys orders to customers by phone, not by id.
+    final clientIds = orders
+        .where((o) => o.clientId != null)
+        .map((o) => o.clientId!)
+        .toSet();
+    final phoneByClientId = <int, String?>{};
+    if (clientIds.isNotEmpty) {
+      final rows = await (_database.select(_database.customers)
+            ..where((c) => c.id.isIn(clientIds)))
+          .get();
+      for (final c in rows) {
+        phoneByClientId[c.id] = c.phoneNormalized;
+      }
+    }
+
+    // Pre-load `code` for every session referenced by this batch so the
+    // payload can carry both `sessionId` (local) and `sessionCode` (the
+    // backend's stable key) — same pattern the ticket sync at line 990
+    // uses. Without this the backend can't reconcile orders to a Z-report.
+    final sessionIds = orders
+        .where((o) => o.sessionId != null)
+        .map((o) => o.sessionId!)
+        .toSet();
+    final sessionCodeById = <int, String?>{};
+    if (sessionIds.isNotEmpty) {
+      final rows = await (_database.select(_database.cashSessions)
+            ..where((s) => s.id.isIn(sessionIds)))
+          .get();
+      for (final s in rows) {
+        sessionCodeById[s.id] = s.code;
+      }
+    }
+
     // Build order list with products
     final ordersList = <Map<String, dynamic>>[];
 
@@ -822,14 +956,34 @@ class DataSyncService {
         'coupon': order.coupon,
         'persons': order.persons,
         'tableId': order.tableId,
+        // Origin of the order ('POS' / 'WAITER' / 'KIOSK' / 'EXTERNAL').
+        // Lets the backend filter / report by source. Null on legacy rows
+        // that predate the column — backend should treat null as 'POS'.
+        'source': order.source,
+        // Kept for backward compat with older backends — the new server
+        // ignores clientId and routes by customerPhoneNormalized instead.
         'clientId': order.clientId,
+        'customerPhoneNormalized':
+            order.clientId == null ? null : phoneByClientId[order.clientId!],
         'commercialId': order.commercialId,
         'discountPercentage': 0.0,
+        // `tip` is sent regardless of value (including null) so the server
+        // can distinguish "no tip" from "clear the tip" — the bulk endpoint
+        // accepts a nullable `tip` field per the contract.
+        'tip': order.tip,
         'note': order.note,
         'address': order.address,
         'cancellationReason': order.cancellationReason,
         'createdBy': order.createdBy,
+        'takenBy': order.takenBy,
         'servedBy': order.waiterId,
+        // Bind the order to its cash session. Mirrors the shape ticket
+        // sync already uses — `sessionId` is the POS-local int, `sessionCode`
+        // is the backend's stable key.
+        'sessionId': order.sessionId,
+        'sessionCode': order.sessionId == null
+            ? null
+            : sessionCodeById[order.sessionId!],
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),
         'updatedAt': order.updatedAt.toIso8601String(),
@@ -1093,6 +1247,25 @@ class DataSyncService {
       // Build products list, merging order-level discount into manualDiscount
       final productsList = await _buildProductsListForSync(orderProducts, order.discountPercentage);
 
+      // Resolve customer phone for the new phone-keyed contract.
+      String? customerPhoneNormalized;
+      if (order.clientId != null) {
+        final c = await (_database.select(_database.customers)
+              ..where((t) => t.id.equals(order.clientId!)))
+            .getSingleOrNull();
+        customerPhoneNormalized = c?.phoneNormalized;
+      }
+
+      // Resolve the parent session's code for the backend's session-keyed
+      // contract. See the matching block in getOrdersForSync.
+      String? sessionCode;
+      if (order.sessionId != null) {
+        final s = await (_database.select(_database.cashSessions)
+              ..where((t) => t.id.equals(order.sessionId!)))
+            .getSingleOrNull();
+        sessionCode = s?.code;
+      }
+
       // Build order map - use code as identifier for backend
       // discountPercentage is set to 0 because it's been merged into each product's manualDiscount
       final orderData = {
@@ -1103,11 +1276,20 @@ class DataSyncService {
         'coupon': order.coupon,
         'persons': order.persons,
         'tableId': order.tableId,
+        // Origin of the order — see getOrdersForSync for the contract.
+        'source': order.source,
+        // Kept for backward compat with older backends.
         'clientId': order.clientId,
+        'customerPhoneNormalized': customerPhoneNormalized,
         'commercialId': order.commercialId,
         'discountPercentage': 0.0,
+        // Sent regardless of value — see comment in getOrdersForSync.
+        'tip': order.tip,
         'createdBy': order.createdBy,
+        'takenBy': order.takenBy,
         'servedBy': order.waiterId,
+        'sessionId': order.sessionId,
+        'sessionCode': sessionCode,
         'note': order.note,
         'address': order.address,
         'cancellationReason': order.cancellationReason,

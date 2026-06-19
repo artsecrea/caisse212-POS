@@ -40,27 +40,46 @@ enum PrintOutput { orderTicket, customerReceipt, storeCopy, kds }
 /// All known order types — used as the default set in a [PrintRule].
 const Set<String> kAllOrderTypes = {'DINE_IN', 'TAKE_AWAY', 'DELIVERY'};
 
+/// Canonical set of order *origins* the print rule can filter on.
+///
+/// Stored as the [Orders.source] column on the order row. New origins added
+/// later (e.g. a self-service tablet) should land here so existing rules
+/// continue to apply to them by default — the alternative (defaulting
+/// unknown sources to "blocked") would silently break printing the moment
+/// a new origin shows up.
+///
+/// - `POS`      — order created from the cashier POS UI (this app).
+/// - `WAITER`   — order created via the waiter app over `/waiters/orders`.
+/// - `KIOSK`    — order placed by an in-store kiosk (future).
+/// - `EXTERNAL` — DealUp / WhatsApp queue confirmations.
+const Set<String> kAllOrderSources = {'POS', 'WAITER', 'KIOSK', 'EXTERNAL'};
+
 /// Per-output conditional print rule: whether the output prints at all, for
-/// which order types, and whether a table must be selected.
+/// which order types, for which sources, and whether a table must be
+/// selected.
 class PrintRule {
   final bool enabled;
   final Set<String> orderTypes;
+  final Set<String> sources;
   final bool requireTable;
 
   const PrintRule({
     this.enabled = true,
     this.orderTypes = kAllOrderTypes,
+    this.sources = kAllOrderSources,
     this.requireTable = false,
   });
 
   PrintRule copyWith({
     bool? enabled,
     Set<String>? orderTypes,
+    Set<String>? sources,
     bool? requireTable,
   }) {
     return PrintRule(
       enabled: enabled ?? this.enabled,
       orderTypes: orderTypes ?? this.orderTypes,
+      sources: sources ?? this.sources,
       requireTable: requireTable ?? this.requireTable,
     );
   }
@@ -68,6 +87,7 @@ class PrintRule {
   Map<String, dynamic> toJson() => {
     'enabled': enabled,
     'orderTypes': orderTypes.toList(),
+    'sources': sources.toList(),
     'requireTable': requireTable,
   };
 
@@ -76,6 +96,11 @@ class PrintRule {
       enabled: json['enabled'] ?? true,
       orderTypes: (json['orderTypes'] as List?)?.map((e) => e.toString()).toSet() ??
           kAllOrderTypes,
+      // Backward compat: rules persisted before this field existed default
+      // to ALL sources so behavior matches what they had — they were always
+      // applied to every order regardless of origin.
+      sources: (json['sources'] as List?)?.map((e) => e.toString()).toSet() ??
+          kAllOrderSources,
       requireTable: json['requireTable'] ?? false,
     );
   }
@@ -207,7 +232,9 @@ class PrinterConfig {
     'kdsConnectionType': kdsConnectionType?.index,
     'kdsEnabled': kdsEnabled,
     'printingEnabled': printingEnabled,
-    'paperSize': paperSize.value,
+    // Human width (58/80) — `fromJson` reads it back by comparing to 58.
+    // Storing `paperSize.value` (internal 1/2/3) broke the round-trip.
+    'paperSize': paperSize == PaperSize.mm58 ? 58 : 80,
     'textSize': textSize,
     'printingLanguage': printingLanguage,
     'orderTicketRule': orderTicketRule.toJson(),
@@ -238,7 +265,9 @@ class PrinterConfig {
           : null,
       kdsEnabled: json['kdsEnabled'] ?? true,
       printingEnabled: json['printingEnabled'] ?? true,
-      paperSize: json['paperSize'] == 58 ? PaperSize.mm58 : PaperSize.mm80,
+      paperSize: (json['paperSize'] == 58 || json['paperSize'] == 1)
+          ? PaperSize.mm58
+          : PaperSize.mm80,
       textSize: json['textSize'] ?? 1,
       printingLanguage: json['printingLanguage'] ?? 'en',
       orderTicketRule: json['orderTicketRule'] != null
@@ -266,6 +295,75 @@ class PrinterConfig {
       consolidateKdsJob: json['consolidateKdsJob'] ?? true,
     );
   }
+}
+
+/// A named entry in the per-station printer pool. Lives in SharedPrefs as
+/// part of a JSON-encoded list under `station_printer_pool_v1`. Identified
+/// by a stable [id] so [stationAssignments] (stationId -> printerId) keeps
+/// resolving even after the pool list is reordered.
+class NamedPrinter {
+  final String id;
+  final String label;
+  final String address;
+  final String name;
+  final ConnectionType connectionType;
+
+  const NamedPrinter({
+    required this.id,
+    required this.label,
+    required this.address,
+    required this.name,
+    required this.connectionType,
+  });
+
+  NamedPrinter copyWith({
+    String? label,
+    String? address,
+    String? name,
+    ConnectionType? connectionType,
+  }) {
+    return NamedPrinter(
+      id: id,
+      label: label ?? this.label,
+      address: address ?? this.address,
+      name: name ?? this.name,
+      connectionType: connectionType ?? this.connectionType,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'label': label,
+    'address': address,
+    'name': name,
+    'connectionType': connectionType.index,
+  };
+
+  factory NamedPrinter.fromJson(Map<String, dynamic> json) {
+    return NamedPrinter(
+      id: json['id'] as String,
+      label: (json['label'] ?? '') as String,
+      address: (json['address'] ?? '') as String,
+      name: (json['name'] ?? '') as String,
+      connectionType: ConnectionType.values[(json['connectionType'] ?? 0) as int],
+    );
+  }
+}
+
+/// SharedPrefs key holding the JSON-encoded list of [NamedPrinter] entries.
+const _kPrefsPrinterPool = 'station_printer_pool_v1';
+
+/// SharedPrefs key holding the JSON-encoded `Map<String stationId, String printerId>`.
+const _kPrefsStationAssignments = 'station_printer_assignments_v1';
+
+/// Resolved per-call KDS printer target. Passed through the dispatch and
+/// "ensure connected" path so station printing can hit a pool printer
+/// without mutating `_config`.
+class _KdsTarget {
+  final String address;
+  final String? name;
+  final ConnectionType type;
+  const _KdsTarget({required this.address, this.name, required this.type});
 }
 
 /// Entry representing a single order in a user's daily report
@@ -307,6 +405,14 @@ class PrintingService {
   bool _isScanning = false;
   Ref? _ref; // Store ref for accessing providers
 
+  // Per-station printer routing (SharedPrefs-persisted, survives DB sync).
+  List<NamedPrinter> _printerPool = [];
+  Map<int, String> _stationAssignments = {}; // stationId -> NamedPrinter.id
+
+  final _poolController = StreamController<List<NamedPrinter>>.broadcast();
+  final _assignmentsController =
+      StreamController<Map<int, String>>.broadcast();
+
   // Stream controllers
   final _printersController = StreamController<List<Printer>>.broadcast();
   final _scanningController = StreamController<bool>.broadcast();
@@ -334,6 +440,17 @@ class PrintingService {
 
   Stream<PrinterConfig> get configStream => _configController.stream;
 
+  /// Read-only view of the named-printer pool the cashier has configured.
+  List<NamedPrinter> get printerPool => List.unmodifiable(_printerPool);
+
+  /// stationId -> NamedPrinter.id. Stations missing from this map fall back
+  /// to the global KDS printer at print time.
+  Map<int, String> get stationAssignments => Map.unmodifiable(_stationAssignments);
+
+  Stream<List<NamedPrinter>> get printerPoolStream => _poolController.stream;
+  Stream<Map<int, String>> get stationAssignmentsStream =>
+      _assignmentsController.stream;
+
   /// Stream of printing status messages (null = idle, non-null = status text shown in overlay)
   Stream<String?> get printingStatusStream => _printingStatusController.stream;
 
@@ -343,6 +460,7 @@ class PrintingService {
 
     // Load saved configuration
     await _loadConfig(prefs);
+    _loadStationRouting(prefs);
 
     // Listen to printer stream - wrapped in try-catch for platforms
     // where thermal printer may not be fully supported
@@ -402,7 +520,12 @@ class PrintingService {
           : null,
       kdsEnabled: kdsEnabled,
       printingEnabled: printingEnabled,
-      paperSize: paperSizeValue == 58 ? PaperSize.mm58 : PaperSize.mm80,
+      // Accept the human width (58) and the legacy internal value (mm58.value
+      // == 1) that older builds mistakenly persisted, so 58mm installs recover
+      // without a manual re-toggle. Everything else => 80mm.
+      paperSize: (paperSizeValue == 58 || paperSizeValue == 1)
+          ? PaperSize.mm58
+          : PaperSize.mm80,
       textSize: textSizeValue,
       printingLanguage: printingLanguage,
       orderTicketRule: loadRule('printer_rule_order_ticket'),
@@ -488,7 +611,14 @@ class PrintingService {
 
     await prefs.setBool('printer_kds_enabled', newConfig.kdsEnabled);
     await prefs.setBool('printer_printing_enabled', newConfig.printingEnabled);
-    await prefs.setInt('printer_paper_size', newConfig.paperSize.value);
+    // Persist the HUMAN width (58 / 80), NOT `PaperSize.value` (which is the
+    // package's internal index: mm58=1, mm72=2, mm80=3). `_loadConfig` /
+    // `fromJson` read this back by comparing to `58`, so storing `.value`
+    // here meant the comparison never matched and the size silently reverted
+    // to 80mm on every restart — a 58mm printer then received 80mm-wide
+    // (48-col) lines and squeezed them, producing the "compressed" ticket.
+    await prefs.setInt('printer_paper_size',
+        newConfig.paperSize == PaperSize.mm58 ? 58 : 80);
     await prefs.setInt('printer_text_size', newConfig.textSize);
     await prefs.setString('printer_language', newConfig.printingLanguage);
 
@@ -519,6 +649,104 @@ class PrintingService {
         'printer_consolidate_kds_job', newConfig.consolidateKdsJob);
 
     _configController.add(_config);
+  }
+
+  /// Load the printer pool + station→printer assignments from SharedPrefs.
+  /// Both are stored as JSON blobs (one key each) — see [_kPrefsPrinterPool]
+  /// and [_kPrefsStationAssignments]. Missing/malformed data resets to empty,
+  /// so a fresh install or a wiped key behaves exactly like today (the
+  /// fallback to the global KDS printer kicks in for every station).
+  void _loadStationRouting(SharedPreferences prefs) {
+    _printerPool = [];
+    _stationAssignments = {};
+
+    final rawPool = prefs.getString(_kPrefsPrinterPool);
+    if (rawPool != null && rawPool.isNotEmpty) {
+      try {
+        final list = jsonDecode(rawPool) as List<dynamic>;
+        _printerPool = list
+            .whereType<Map<dynamic, dynamic>>()
+            .map((m) => NamedPrinter.fromJson(Map<String, dynamic>.from(m)))
+            .toList();
+      } catch (e) {
+        debugPrint('Failed to decode printer pool: $e');
+      }
+    }
+
+    final rawAssignments = prefs.getString(_kPrefsStationAssignments);
+    if (rawAssignments != null && rawAssignments.isNotEmpty) {
+      try {
+        final map = jsonDecode(rawAssignments) as Map<dynamic, dynamic>;
+        _stationAssignments = map.map(
+          (k, v) => MapEntry(int.parse(k.toString()), v.toString()),
+        );
+      } catch (e) {
+        debugPrint('Failed to decode station assignments: $e');
+      }
+    }
+
+    _poolController.add(printerPool);
+    _assignmentsController.add(stationAssignments);
+  }
+
+  /// Persist the named-printer pool. Also strips any station assignment that
+  /// references a removed printer id — keeps the two structures consistent
+  /// without forcing the caller to do it.
+  Future<void> savePrinterPool(
+    SharedPreferences prefs,
+    List<NamedPrinter> pool,
+  ) async {
+    _printerPool = List.of(pool);
+    final encoded = jsonEncode(_printerPool.map((p) => p.toJson()).toList());
+    await prefs.setString(_kPrefsPrinterPool, encoded);
+    _poolController.add(printerPool);
+
+    final validIds = _printerPool.map((p) => p.id).toSet();
+    final pruned = <int, String>{};
+    var changed = false;
+    for (final entry in _stationAssignments.entries) {
+      if (validIds.contains(entry.value)) {
+        pruned[entry.key] = entry.value;
+      } else {
+        changed = true;
+      }
+    }
+    if (changed) {
+      await saveStationAssignments(prefs, pruned);
+    }
+  }
+
+  /// Persist the station→printer map.
+  Future<void> saveStationAssignments(
+    SharedPreferences prefs,
+    Map<int, String> assignments,
+  ) async {
+    _stationAssignments = Map.of(assignments);
+    final encoded = jsonEncode(
+      _stationAssignments.map((k, v) => MapEntry(k.toString(), v)),
+    );
+    await prefs.setString(_kPrefsStationAssignments, encoded);
+    _assignmentsController.add(stationAssignments);
+  }
+
+  /// Resolve which physical printer a given station's items should go to.
+  /// Returns `null` to mean "use the default global KDS printer" — covers a
+  /// null stationId (no station on the product), an unassigned station, and
+  /// a station mapped to a now-deleted pool entry.
+  _KdsTarget? _resolveTargetForStation(int? stationId) {
+    if (stationId == null) return null;
+    final printerId = _stationAssignments[stationId];
+    if (printerId == null) return null;
+    final printer = _printerPool.where((p) => p.id == printerId).cast<NamedPrinter?>().firstWhere(
+          (_) => true,
+          orElse: () => null,
+        );
+    if (printer == null) return null;
+    return _KdsTarget(
+      address: printer.address,
+      name: printer.name.isNotEmpty ? printer.name : printer.label,
+      type: printer.connectionType,
+    );
   }
 
   /// Start scanning for printers
@@ -669,13 +897,23 @@ class PrintingService {
   /// false, otherwise a single transient failure permanently swallows the
   /// kitchen ticket.
   Future<bool> _dispatchBytes(
-      PrinterPurpose purpose, List<int> bytes) async {
-    final address = purpose == PrinterPurpose.receipt
-        ? _config.receiptPrinterAddress
-        : _config.kdsPrinterAddress;
-    final type = purpose == PrinterPurpose.receipt
-        ? _config.receiptConnectionType
-        : _config.kdsConnectionType;
+      PrinterPurpose purpose, List<int> bytes,
+      {_KdsTarget? kdsOverride}) async {
+    // Per-station override (only meaningful when purpose == kds) wins over
+    // the global _config. Used by the per-station routing path so a station
+    // can hit its own physical printer without us mutating _config.
+    final String? address;
+    final ConnectionType? type;
+    if (purpose == PrinterPurpose.kds && kdsOverride != null) {
+      address = kdsOverride.address;
+      type = kdsOverride.type;
+    } else if (purpose == PrinterPurpose.receipt) {
+      address = _config.receiptPrinterAddress;
+      type = _config.receiptConnectionType;
+    } else {
+      address = _config.kdsPrinterAddress;
+      type = _config.kdsConnectionType;
+    }
     if (address == null || type == null) {
       debugPrint('Dispatch: no printer configured for ${purpose.name}');
       return false;
@@ -832,15 +1070,22 @@ class PrintingService {
   }
 
   /// Whether a given output should auto-print for the given order context.
+  ///
+  /// [source] is the [Orders.source] column on the order row — typically one
+  /// of [kAllOrderSources] (`POS`, `WAITER`, `KIOSK`, `EXTERNAL`). If a
+  /// caller has no source recorded, pass `'POS'` (the legacy default) so
+  /// existing rules apply.
   bool shouldPrint(
     PrintOutput output, {
     required String orderType,
     required bool hasTable,
+    String source = 'POS',
   }) {
     if (!_config.printingEnabled) return false;
     final rule = _ruleFor(output);
     if (!rule.enabled) return false;
     if (!rule.orderTypes.contains(orderType)) return false;
+    if (!rule.sources.contains(source)) return false;
     if (rule.requireTable && !hasTable) return false;
     return true;
   }
@@ -872,13 +1117,18 @@ class PrintingService {
     required List<Map<String, dynamic>> items,
     required String orderType,
     required bool hasTable,
+    String source = 'POS',
     String? currency,
     String? orderCode,
     String? cashierName,
     String? storeName,
+    String? storeAddress,
+    String? storePhone,
     String? customerName,
     String? customerPhone,
     String? deliveryAddress,
+    String? tableName,
+    int? numberOfPersons,
   }) async {
     if (!_config.printingEnabled || !_config.autoPrintOnPayment) return;
 
@@ -894,16 +1144,21 @@ class PrintingService {
         orderCode: orderCode,
         cashierName: cashierName,
         storeName: storeName,
+        storeAddress: storeAddress,
+        storePhone: storePhone,
         customerName: customerName,
         customerPhone: customerPhone,
         deliveryAddress: orderType == 'DELIVERY' ? deliveryAddress : null,
+        tableName: tableName,
+        numberOfPersons: numberOfPersons,
+        orderType: orderType,
         storeCopy: storeCopy,
       );
     }
 
     // Customer receipt(s)
     if (shouldPrint(PrintOutput.customerReceipt,
-        orderType: orderType, hasTable: hasTable)) {
+        orderType: orderType, hasTable: hasTable, source: source)) {
       final copies = _config.customerCopies < 1 ? 1 : _config.customerCopies;
       for (var i = 0; i < copies; i++) {
         await printOne(storeCopy: false);
@@ -912,7 +1167,7 @@ class PrintingService {
 
     // Store copy
     if (shouldPrint(PrintOutput.storeCopy,
-        orderType: orderType, hasTable: hasTable)) {
+        orderType: orderType, hasTable: hasTable, source: source)) {
       await printOne(storeCopy: true);
     }
 
@@ -944,25 +1199,99 @@ class PrintingService {
     await saveConfig(prefs, newConfig);
   }
 
-  /// Resolve text size based on config
-  PosTextSize _resolveTextSize({bool isHeader = false}) {
-    if (isHeader) {
-      if (_config.textSize >= 2)
-        return PosTextSize.size2; // Max size for comfortable header
-      return PosTextSize.size2; // Default header size
-    } else {
-      if (_config.textSize == 2) return PosTextSize.size2;
-      if (_config.textSize >= 3)
-        return PosTextSize.size2; // size3 is too big for body usually
-      return PosTextSize.size1; // Default
+  // ── Text-size resolvers ────────────────────────────────────────────────
+  //
+  // ESC/POS only ships two real scales — `size1` (1×) and `size2` (2×) —
+  // applied independently to width and height. The previous resolvers
+  // returned `size1` for "Normal" (tiny on 80mm wide paper) and `size2`
+  // for "Large" (doubled, basically headlines) with nothing in between.
+  // That's the "small or huge" you saw.
+  //
+  // The fix is **asymmetric sizing**: `width: size1, height: size2`
+  // gives single-column-wide text at 2× height — taller, more legible
+  // body text without doubling line consumption. Real-world POS receipts
+  // call this the "compact medium" tier. Now we map:
+  //
+  //   Settings 1 (Normal) → 1× × 1× — dense, compact, like a real receipt
+  //   Settings 2 (Large)  → 1× × 2× — taller body, normal column width
+  //   Settings 3 (Extra)  → 2× × 2× — full headline scale
+  //
+  // Headers shift up one tier so they always stand out from body.
+
+  /// Body text width+height. Returns a `(width, height)` record.
+  ({PosTextSize width, PosTextSize height}) _bodySize() {
+    switch (_config.textSize) {
+      case 1:
+        return (width: PosTextSize.size1, height: PosTextSize.size1);
+      case 2:
+        // Taller-only — the missing middle tier that fixes "too small
+        // OR too big". Two-pass print head means cells are taller but
+        // line consumption stays compact.
+        return (width: PosTextSize.size1, height: PosTextSize.size2);
+      case 3:
+      default:
+        return (width: PosTextSize.size2, height: PosTextSize.size2);
     }
   }
 
-  /// Resolve header text size based on config
-  PosTextSize _resolveHeaderSize() {
-    if (_config.textSize >= 2) return PosTextSize.size3;
-    return PosTextSize.size2;
+  /// Header (store name, section titles, payment totals) — one tier larger
+  /// than body so it always reads as emphasis.
+  ({PosTextSize width, PosTextSize height}) _headerSize() {
+    switch (_config.textSize) {
+      case 1:
+        return (width: PosTextSize.size1, height: PosTextSize.size2);
+      case 2:
+        return (width: PosTextSize.size2, height: PosTextSize.size2);
+      case 3:
+      default:
+        return (width: PosTextSize.size2, height: PosTextSize.size2);
+    }
   }
+
+  /// Body text dimension. The legacy call pattern was
+  ///   `height: _resolveTextSize(), width: _resolveTextSize()`
+  /// which forced symmetric scaling and produced the "tiny OR huge"
+  /// jump. We keep the function returning the **width** dimension so
+  /// callers passing this into both axes still get COMPACT text — exactly
+  /// what real-world POS receipts want. New code that wants the
+  /// asymmetric tall-body tier should use [_resolveTextHeight] or
+  /// [_bodySize] directly.
+  PosTextSize _resolveTextSize({bool isHeader = false}) {
+    final s = isHeader ? _headerSize() : _bodySize();
+    return s.width;
+  }
+
+  /// Body height when paired with [_resolveTextSize] for width. Returns
+  /// the **height** dimension — for body at Settings=2 this is `size2`
+  /// (2× tall), which combined with `width: size1` gives the asymmetric
+  /// "compact medium" tier ESC/POS lacks natively.
+  PosTextSize _resolveTextHeight({bool isHeader = false}) {
+    final s = isHeader ? _headerSize() : _bodySize();
+    return s.height;
+  }
+
+  /// Legacy header resolver. Returns the **width** dimension for the
+  /// same reason as [_resolveTextSize] — symmetric callers get the
+  /// compact rendering. The matching height comes from
+  /// [_resolveHeaderHeight].
+  PosTextSize _resolveHeaderSize() => _headerSize().width;
+
+  /// Header height counterpart to [_resolveHeaderSize].
+  PosTextSize _resolveHeaderHeight() => _headerSize().height;
+
+  // ── Separators ────────────────────────────────────────────────────────
+  //
+  // The package's bare `generator.hr()` defaults to a thin `-` rule that
+  // reads as weak on thermal paper. These helpers swap in styled
+  // characters that print darker and read as clear section dividers:
+  //
+  //   _sepMajor — a heavy `=` rule for top-of-ticket / between-sections.
+  //   _sepMinor — a `-` rule with denser packing for inside-section breaks.
+  //
+  // Both honor the configured paper size (the package's hr() already does
+  // that — we just pick the char).
+  List<int> _sepMajor(Generator generator) => generator.hr(ch: '=');
+  List<int> _sepMinor(Generator generator) => generator.hr(ch: '-');
 
   /// Get currency symbol from settings provider
   String _getCurrency(String? providedCurrency) {
@@ -978,15 +1307,37 @@ class PrintingService {
   }
 
   /// Ensure printer is connected, with automatic rescan and reconnect if needed
-  Future<bool> _ensurePrinterConnected(PrinterPurpose purpose) async {
+  Future<bool> _ensurePrinterConnected(PrinterPurpose purpose,
+      {_KdsTarget? kdsOverride}) async {
     final isReceipt = purpose == PrinterPurpose.receipt;
+    final useOverride = !isReceipt && kdsOverride != null;
     final currentPrinter = isReceipt ? _connectedReceiptPrinter : _connectedKdsPrinter;
-    final savedAddress = isReceipt ? _config.receiptPrinterAddress : _config.kdsPrinterAddress;
-    final savedType = isReceipt ? _config.receiptConnectionType : _config.kdsConnectionType;
-    final savedName = isReceipt ? _config.receiptPrinterName : _config.kdsPrinterName;
+    final savedAddress = useOverride
+        ? kdsOverride.address
+        : (isReceipt ? _config.receiptPrinterAddress : _config.kdsPrinterAddress);
+    final savedType = useOverride
+        ? kdsOverride.type
+        : (isReceipt ? _config.receiptConnectionType : _config.kdsConnectionType);
+    final savedName = useOverride
+        ? kdsOverride.name
+        : (isReceipt ? _config.receiptPrinterName : _config.kdsPrinterName);
+
+    // With an override in play, the cached _connectedKdsPrinter may belong to
+    // a DIFFERENT physical device (a prior station's printer in the same
+    // print run). Only honor the cache when its address matches the address
+    // we're about to dispatch to — otherwise invalidate so we reconnect to
+    // the right device.
+    if (useOverride &&
+        currentPrinter != null &&
+        currentPrinter.address != kdsOverride.address) {
+      _connectedKdsPrinter = null;
+    }
+    final usableCached = (useOverride
+        ? (_connectedKdsPrinter)
+        : currentPrinter);
 
     // If printer already connected, we're good
-    if (currentPrinter != null) {
+    if (usableCached != null) {
       debugPrint('${purpose.name} printer already connected');
       return true;
     }
@@ -1220,6 +1571,327 @@ class PrintingService {
     }
   }
 
+  /// Print a single-page slip summarising what a waiter owes for a chosen
+  /// set of unpaid orders. Operator-initiated from the waiter settlement
+  /// dialog — bypasses [shouldPrint] (no rule gate, no source filter)
+  /// because the cashier explicitly asked for this print.
+  ///
+  /// `orders` carries one entry per included order: code, due amount, and
+  /// optional table label. The slip lists them, sums to `grandTotal`,
+  /// stamps the cashier name + timestamp, then cuts.
+  Future<bool> printWaiterSettlementSlip({
+    required String waiterName,
+    required List<({String code, double due, String? tableName})> orders,
+    required double grandTotal,
+    String? cashierName,
+    String? currency,
+  }) async {
+    final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
+    if (!printerReady) {
+      debugPrint('printWaiterSettlementSlip: receipt printer not ready');
+      return false;
+    }
+
+    _isPrintingInProgress = true;
+    _printingStatusController.add(_translate('printing', fallback: 'Printing...'));
+
+    try {
+      final currencySymbol = _getCurrency(currency);
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(_config.paperSize, profile);
+      List<int> bytes = [];
+
+      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
+      bytes += _printLogoHeader(generator);
+
+      bytes += generator.text(
+        _text('waiter_settlement_slip',
+            fallback: 'WAITER SETTLEMENT'),
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
+      );
+      bytes += _sepMinor(generator);
+      bytes += generator.text(
+        '${_text('waiter', fallback: 'Waiter')}: ${_safe(waiterName)}',
+        styles: const PosStyles(bold: true),
+      );
+      bytes += generator.text(
+        '${_text('date', fallback: 'Date')}: ${_formatDateTime(DateTime.now())}',
+      );
+      if (cashierName != null && cashierName.trim().isNotEmpty) {
+        bytes += generator.text(
+          '${_translate('cashier')}: ${_safe(cashierName)}',
+        );
+      }
+      bytes += _sepMinor(generator);
+
+      for (final o in orders) {
+        // Left col: code (+ optional table). Right col: amount due.
+        final leftLine = o.tableName != null && o.tableName!.trim().isNotEmpty
+            ? '${_safe(o.code)}  (${_safe(o.tableName!)})'
+            : _safe(o.code);
+        bytes += generator.row([
+          PosColumn(
+            text: leftLine,
+            width: 8,
+            styles: const PosStyles(align: PosAlign.left),
+          ),
+          PosColumn(
+            text:
+                CurrencyFormatter.formatWithCurrency(o.due, currencySymbol),
+            width: 4,
+            styles: const PosStyles(align: PosAlign.right),
+          ),
+        ]);
+      }
+
+      bytes += _sepMinor(generator);
+      bytes += generator.row([
+        PosColumn(
+          text: _text('total_due', fallback: 'TOTAL DUE'),
+          width: 6,
+          styles: PosStyles(
+            bold: true,
+            height: PosTextSize.size2,
+            width: PosTextSize.size2,
+          ),
+        ),
+        PosColumn(
+          text: CurrencyFormatter.formatWithCurrency(grandTotal, currencySymbol),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            bold: true,
+            height: PosTextSize.size2,
+            width: PosTextSize.size2,
+          ),
+        ),
+      ]);
+
+      bytes += generator.emptyLines(2);
+      bytes += generator.cut();
+
+      final ok = await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return ok;
+    } catch (e, st) {
+      debugPrint('printWaiterSettlementSlip failed: $e\n$st');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return false;
+    }
+  }
+
+  /// Print a comprehensive **summary** for a waiter (vs. the slim
+  /// "settlement" slip emitted by [printWaiterSettlementSlip]). Same
+  /// printer slot and dispatch path; richer body:
+  ///   - KPI block (orders, paid, owed)
+  ///   - Unpaid list (code + table + due)
+  ///   - Paid history (ticket # + method + amount + time)
+  ///   - Grand "total due" footer
+  ///
+  /// Operator-initiated from [WaiterProfileDialog]; bypasses
+  /// [shouldPrint] for the same reason the settlement slip does.
+  Future<bool> printWaiterProfileSummary({
+    required String waiterName,
+    required String sessionLabel,
+    required int ordersCount,
+    required double totalPaid,
+    required double totalOwed,
+    required List<({String code, double due, String? tableName})> unpaidOrders,
+    required List<
+        ({String ticketNum, String paymentMethod, double amount, DateTime at})> paidTickets,
+    String? cashierName,
+    String? currency,
+  }) async {
+    final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
+    if (!printerReady) {
+      debugPrint('printWaiterProfileSummary: receipt printer not ready');
+      return false;
+    }
+
+    _isPrintingInProgress = true;
+    _printingStatusController.add(_translate('printing', fallback: 'Printing...'));
+
+    try {
+      final currencySymbol = _getCurrency(currency);
+      final profile = await CapabilityProfile.load();
+      final generator = Generator(_config.paperSize, profile);
+      List<int> bytes = [];
+
+      bytes += generator.setGlobalCodeTable(_getCodeTableForLanguage());
+      bytes += _printLogoHeader(generator);
+
+      // Title
+      bytes += generator.text(
+        _text('waiter_summary_slip', fallback: 'WAITER SUMMARY'),
+        styles: PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
+      );
+      bytes += _sepMinor(generator);
+
+      // Identity block
+      bytes += generator.text(
+        '${_text('waiter', fallback: 'Waiter')}: ${_safe(waiterName)}',
+        styles: const PosStyles(bold: true),
+      );
+      bytes += generator.text(
+        '${_text('session', fallback: 'Session')}: ${_safe(sessionLabel)}',
+      );
+      if (cashierName != null && cashierName.trim().isNotEmpty) {
+        bytes += generator.text(
+          '${_translate('cashier')}: ${_safe(cashierName)}',
+        );
+      }
+      bytes += generator.text(
+        '${_text('date', fallback: 'Date')}: ${_formatDateTime(DateTime.now())}',
+      );
+      bytes += _sepMinor(generator);
+
+      // KPIs
+      bytes += generator.row([
+        PosColumn(
+          text: _text('kpi_orders', fallback: 'Orders'),
+          width: 8,
+        ),
+        PosColumn(
+          text: '$ordersCount',
+          width: 4,
+          styles: const PosStyles(align: PosAlign.right, bold: true),
+        ),
+      ]);
+      bytes += generator.row([
+        PosColumn(
+          text: _text('kpi_paid', fallback: 'Paid'),
+          width: 8,
+        ),
+        PosColumn(
+          text:
+              CurrencyFormatter.formatWithCurrency(totalPaid, currencySymbol),
+          width: 4,
+          styles: const PosStyles(align: PosAlign.right, bold: true),
+        ),
+      ]);
+      bytes += generator.row([
+        PosColumn(
+          text: _text('kpi_owed', fallback: 'Owed'),
+          width: 8,
+        ),
+        PosColumn(
+          text:
+              CurrencyFormatter.formatWithCurrency(totalOwed, currencySymbol),
+          width: 4,
+          styles: const PosStyles(align: PosAlign.right, bold: true),
+        ),
+      ]);
+      bytes += _sepMinor(generator);
+
+      // Unpaid orders block (only if any)
+      if (unpaidOrders.isNotEmpty) {
+        bytes += generator.text(
+          _text('tab_unpaid', fallback: 'UNPAID').toUpperCase(),
+          styles: const PosStyles(bold: true),
+        );
+        for (final o in unpaidOrders) {
+          final leftLine = o.tableName != null && o.tableName!.trim().isNotEmpty
+              ? '${_safe(o.code)}  (${_safe(o.tableName!)})'
+              : _safe(o.code);
+          bytes += generator.row([
+            PosColumn(
+              text: leftLine,
+              width: 8,
+              styles: const PosStyles(align: PosAlign.left),
+            ),
+            PosColumn(
+              text:
+                  CurrencyFormatter.formatWithCurrency(o.due, currencySymbol),
+              width: 4,
+              styles: const PosStyles(align: PosAlign.right),
+            ),
+          ]);
+        }
+        bytes += _sepMinor(generator);
+      }
+
+      // Paid history block (only if any)
+      if (paidTickets.isNotEmpty) {
+        bytes += generator.text(
+          _text('tab_paid_history', fallback: 'PAID HISTORY').toUpperCase(),
+          styles: const PosStyles(bold: true),
+        );
+        for (final t in paidTickets) {
+          final timeStr =
+              '${t.at.hour.toString().padLeft(2, '0')}:${t.at.minute.toString().padLeft(2, '0')}';
+          bytes += generator.row([
+            PosColumn(
+              text:
+                  '#${_safe(t.ticketNum)}  ${_safe(t.paymentMethod)}',
+              width: 7,
+              styles: const PosStyles(align: PosAlign.left),
+            ),
+            PosColumn(
+              text: CurrencyFormatter.formatWithCurrency(
+                  t.amount, currencySymbol),
+              width: 3,
+              styles: const PosStyles(align: PosAlign.right),
+            ),
+            PosColumn(
+              text: timeStr,
+              width: 2,
+              styles: const PosStyles(align: PosAlign.right),
+            ),
+          ]);
+        }
+        bytes += _sepMinor(generator);
+      }
+
+      // Total due footer
+      bytes += generator.row([
+        PosColumn(
+          text: _text('total_due', fallback: 'TOTAL DUE'),
+          width: 6,
+          styles: PosStyles(
+            bold: true,
+            height: PosTextSize.size2,
+            width: PosTextSize.size2,
+          ),
+        ),
+        PosColumn(
+          text: CurrencyFormatter.formatWithCurrency(totalOwed, currencySymbol),
+          width: 6,
+          styles: PosStyles(
+            align: PosAlign.right,
+            bold: true,
+            height: PosTextSize.size2,
+            width: PosTextSize.size2,
+          ),
+        ),
+      ]);
+
+      bytes += generator.emptyLines(2);
+      bytes += generator.cut();
+
+      final ok = await _dispatchBytes(PrinterPurpose.receipt, bytes);
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return ok;
+    } catch (e, st) {
+      debugPrint('printWaiterProfileSummary failed: $e\n$st');
+      _isPrintingInProgress = false;
+      _printingStatusController.add(null);
+      return false;
+    }
+  }
+
   /// Print order receipt
   Future<bool> printOrderReceipt({
     required CurrentOrder order,
@@ -1258,7 +1930,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         );
@@ -1269,7 +1941,7 @@ class PrintingService {
           _safe(storeAddress),
           styles: PosStyles(
             align: PosAlign.center,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -1280,7 +1952,7 @@ class PrintingService {
           '${_text('tel', fallback: 'Tel')}: ${_safe(storePhone)}',
           styles: PosStyles(
             align: PosAlign.center,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -1295,7 +1967,7 @@ class PrintingService {
               _safe(settings.ticketHeader),
               styles: PosStyles(
                 align: PosAlign.center,
-                height: _resolveTextSize(),
+                height: _resolveTextHeight(),
                 width: _resolveTextSize(),
               ),
             );
@@ -1305,7 +1977,7 @@ class PrintingService {
         }
       }
 
-      bytes += generator.hr();
+      bytes += _sepMajor(generator);
 
       // Order info
       bytes += generator.text(
@@ -1313,7 +1985,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.left,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -1321,7 +1993,7 @@ class PrintingService {
         '${_text('date', fallback: 'Date')}: ${_formatDateTime(DateTime.now())}',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -1330,7 +2002,7 @@ class PrintingService {
           '${_translate("cashier")}: ${_safe(cashierName)}',
           styles: PosStyles(
             align: PosAlign.left,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -1340,7 +2012,7 @@ class PrintingService {
           '${_translate("table")}: ${_safe(order.tableName)}',
           styles: PosStyles(
             align: PosAlign.left,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -1350,7 +2022,7 @@ class PrintingService {
           '${_text('customer', fallback: 'Customer')}: ${_safe(order.customerName)}',
           styles: PosStyles(
             align: PosAlign.left,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -1360,7 +2032,7 @@ class PrintingService {
           '${_text('phone', fallback: 'Phone')}: ${_safe(order.customerPhone)}',
           styles: PosStyles(
             align: PosAlign.left,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -1369,7 +2041,7 @@ class PrintingService {
         '${_text('type', fallback: 'Type')}: ${_getOrderTypeText(order.type)}',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -1382,7 +2054,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -1391,12 +2063,12 @@ class PrintingService {
         '${_text('persons', fallback: 'Persons')}: ${order.numberOfPersons}',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       // Items
       for (final item in order.items) {
@@ -1406,7 +2078,7 @@ class PrintingService {
             width: 8,
             styles: PosStyles(
               align: PosAlign.left,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -1418,7 +2090,7 @@ class PrintingService {
             width: 4,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -1430,7 +2102,7 @@ class PrintingService {
             '  + ${_safe(comp.name)} x${comp.quantity}',
             styles: PosStyles(
               align: PosAlign.left,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           );
@@ -1443,14 +2115,14 @@ class PrintingService {
             styles: PosStyles(
               align: PosAlign.left,
               fontType: PosFontType.fontB,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           );
         }
       }
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       // Totals
       bytes += generator.row([
@@ -1459,7 +2131,7 @@ class PrintingService {
           width: 8,
           styles: PosStyles(
             align: PosAlign.left,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -1471,7 +2143,7 @@ class PrintingService {
           width: 4,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -1484,7 +2156,7 @@ class PrintingService {
             width: 8,
             styles: PosStyles(
               align: PosAlign.left,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -1494,7 +2166,7 @@ class PrintingService {
             width: 4,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -1509,7 +2181,7 @@ class PrintingService {
             width: 8,
             styles: PosStyles(
               align: PosAlign.left,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -1521,14 +2193,14 @@ class PrintingService {
             width: 4,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
         ]);
       }
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       bytes += generator.row([
         PosColumn(
@@ -1536,7 +2208,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         ),
@@ -1549,7 +2221,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.right,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         ),
@@ -1560,7 +2232,7 @@ class PrintingService {
         _text('thank_you_message', fallback: 'Thank you for your purchase!'),
         styles: PosStyles(
           align: PosAlign.center,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -1574,7 +2246,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -1595,7 +2267,7 @@ class PrintingService {
               settings.ticketFooter,
               styles: PosStyles(
                 align: PosAlign.center,
-                height: _resolveTextSize(),
+                height: _resolveTextHeight(),
                 width: _resolveTextSize(),
               ),
             );
@@ -1708,9 +2380,10 @@ class PrintingService {
         return success;
       }
 
-      // Group items by station
-      final Map<String, List<OrderItem>> itemsByStation = {};
-      final List<OrderItem> itemsWithoutStation = [];
+      // Group items by station id (null = items with no station / "General").
+      // Keyed by int? so we can resolve each station's pool printer without
+      // re-parsing names — names are derived lazily for the display layer.
+      final Map<int?, List<OrderItem>> itemsByStationId = {};
       final Map<int, String> stationNameCache = {};
 
       final bool filterByStation = stationIds.isNotEmpty;
@@ -1727,10 +2400,9 @@ class PrintingService {
       }
 
       for (final item in itemsToPrint) {
-        // Fetch product to get its primary station
         final product = await (database.select(database.products)
-          ..where((tbl) => tbl.id.equals(item.productId)))
-          .getSingleOrNull();
+              ..where((tbl) => tbl.id.equals(item.productId)))
+            .getSingleOrNull();
 
         // Full station set: primary stationId + extra (join) stations.
         final productStationIds = <int>{
@@ -1742,161 +2414,194 @@ class PrintingService {
         productStationIds.addAll(extraRows.map((e) => e.stationId));
 
         if (productStationIds.isEmpty) {
-          // Items without any station only go to General when not filtering.
-          if (!filterByStation) itemsWithoutStation.add(item);
+          if (!filterByStation) {
+            itemsByStationId.putIfAbsent(null, () => []).add(item);
+          }
           continue;
         }
 
-        // Add the item to EVERY station it belongs to (so multi-station products
-        // print on each relevant kitchen ticket), respecting the selection filter.
+        // Add the item to EVERY station it belongs to so multi-station
+        // products print on each relevant kitchen ticket.
         for (final sid in productStationIds) {
           if (filterByStation && !stationIds.contains(sid)) continue;
-          final stationName = await stationNameFor(sid);
-          itemsByStation.putIfAbsent(stationName, () => []).add(item);
+          itemsByStationId.putIfAbsent(sid, () => []).add(item);
         }
       }
 
-      // If there are items without station, add them to a default station
-      if (itemsWithoutStation.isNotEmpty) {
-        itemsByStation.putIfAbsent(_text('general', fallback: 'General'), () => []).addAll(itemsWithoutStation);
-      }
-
-      // Consolidated-job path: when enabled and we actually have more than
-      // one station ticket to print, send them all in a single dispatch
-      // (one driver job, multiple paper cuts). Side-steps the "third
-      // sequential print fails" class of failure on Windows USB drivers
-      // entirely — see _printConsolidatedKdsBatch for the rationale.
-      // Single-station orders fall through to the per-station path below
-      // since there's no benefit to consolidating one section.
-      if (_config.consolidateKdsJob && itemsByStation.length > 1) {
-        final ok = await _printConsolidatedKdsBatch(
-          order: order,
-          itemsByStation: itemsByStation,
-          mode: resolvedMode,
-        );
-        if (ok) {
-          // Dedupe items across stations (multi-station products appear
-          // in multiple keys) and mark them all printed.
-          final markedById = <int, OrderItem>{};
-          for (final stationItems in itemsByStation.values) {
-            for (final item in stationItems) {
-              if (item.id != null) markedById[item.id!] = item;
-            }
-          }
-          if (markedById.isNotEmpty) {
-            await _markItemsAsPrinted(database, markedById.values.toList());
-          }
-        }
-        debugPrint('Consolidated KDS print: ${ok ? 'OK' : 'FAILED'}');
+      if (itemsByStationId.isEmpty) {
         _isPrintingInProgress = false;
         _printingStatusController.add(null);
-        return ok;
+        return true;
       }
 
-      // Per-station path (legacy). One driver job per station with a
-      // self-healing retry and deferred marking. Used when the
-      // consolidated flag is off, or when there's only one station.
-      //
-      // CRITICAL: marking items as printed is DEFERRED until the loop
-      // finishes, and an item is only marked when EVERY station ticket it
-      // appeared on succeeded. The previous version marked per-station
-      // immediately, which produced this bug for multi-station products:
-      //
-      //   Station A succeeds  -> item.kdsPrintedAt = now
-      //   Station B fails     -> overall return = false
-      //   User retries        -> `modificationsOnly` filter sees the item
-      //                          as printed and skips it -> Kitchen B
-      //                          never gets the ticket.
-      //
-      // Tracking per-item via two maps keyed by the order_product id; a
-      // multi-station product appears under multiple station keys but is
-      // the same row in DB.
+      // Resolve each station's target printer, then group station entries by
+      // resolved printer address. Stations with no assignment share a
+      // synthetic '__default__' key so they all collapse into the single
+      // global-KDS print job (today's behavior).
+      const defaultKey = '__default__';
+      final Map<String, _KdsTarget?> targetsByKey = {};
+      final Map<String, Map<String, List<OrderItem>>> printerGroups = {};
+
+      for (final entry in itemsByStationId.entries) {
+        final sid = entry.key;
+        final items = entry.value;
+        final target = sid != null ? _resolveTargetForStation(sid) : null;
+        final key = target?.address ?? defaultKey;
+        targetsByKey[key] = target;
+
+        final stationName = sid == null
+            ? _text('general', fallback: 'General')
+            : await stationNameFor(sid);
+
+        final group = printerGroups.putIfAbsent(key, () => <String, List<OrderItem>>{});
+        group.putIfAbsent(stationName, () => []).addAll(items);
+      }
+
+      // Count how many station sections each item appears in (across ALL
+      // printers). Marking deferred until the end and only applied when an
+      // item's every section succeeded — multi-station / multi-printer items
+      // must not get half-marked.
       final stationsPerItem = <int, int>{};
-      for (final stationItems in itemsByStation.values) {
-        for (final item in stationItems) {
-          if (item.id == null) continue;
-          stationsPerItem[item.id!] = (stationsPerItem[item.id!] ?? 0) + 1;
+      for (final printerGroup in printerGroups.values) {
+        for (final stationItems in printerGroup.values) {
+          for (final item in stationItems) {
+            if (item.id == null) continue;
+            stationsPerItem[item.id!] = (stationsPerItem[item.id!] ?? 0) + 1;
+          }
         }
       }
       final successesPerItem = <int, int>{};
 
       bool allSuccessful = true;
-      int stationCount = 0;
+      int printerIdx = 0;
 
-      for (final stationEntry in itemsByStation.entries) {
-        stationCount++;
-        final stationName = stationEntry.key;
-        final stationItems = stationEntry.value;
+      for (final printerEntry in printerGroups.entries) {
+        printerIdx++;
+        final key = printerEntry.key;
+        final itemsByStation = printerEntry.value;
+        final target = targetsByKey[key];
 
-        debugPrint('Printing KDS ticket $stationCount/${itemsByStation.length} for station: $stationName (mode: $resolvedMode)');
+        // For each physical printer, prefer the consolidated single-job path
+        // when this printer has more than one station section — same Windows
+        // USB driver guard that the original code relied on, but now scoped
+        // per physical device rather than across all of them.
+        final shouldConsolidate =
+            _config.consolidateKdsJob && itemsByStation.length > 1;
 
-        bool success = await _printKdsTicketForStation(
-          order: order,
-          stationName: stationName,
-          items: stationItems,
-          cashierName: cashierName,
-          mode: resolvedMode,
+        debugPrint(
+            'Printing KDS group $printerIdx/${printerGroups.length} for '
+            '${target?.address ?? 'default KDS printer'} '
+            '(${itemsByStation.length} station(s), '
+            'consolidated=$shouldConsolidate)');
+
+        // Make sure the right printer is the active connected one for this
+        // group. With an override, _ensurePrinterConnected handles cached-
+        // handle invalidation when we're switching devices mid-run.
+        final printerReady = await _ensurePrinterConnected(
+          PrinterPurpose.kds,
+          kdsOverride: target,
         );
-
-        // Self-healing retry. The dominant cause of an Nth-print failure in
-        // a multi-station run is a buffer-drain race: the printer hasn't
-        // finished cutting/advancing paper from ticket N-1 when N's bytes
-        // arrive, so they get rejected. After a failure the cached printer
-        // handle has been invalidated by _dispatchBytes (see fix in
-        // _invalidateCachedPrinter), so we explicitly reconnect, then wait
-        // a longer cool-down before retrying once.
-        if (!success) {
+        if (!printerReady) {
+          allSuccessful = false;
           debugPrint(
-              'Station $stationName failed first attempt — reconnecting and retrying after cool-down');
-          await Future.delayed(const Duration(milliseconds: 1500));
-          final reconnected = await _ensurePrinterConnected(PrinterPurpose.kds);
-          if (reconnected) {
-            success = await _printKdsTicketForStation(
+              'Skipping group ${target?.address ?? 'default'} — printer not reachable');
+          continue;
+        }
+
+        if (shouldConsolidate) {
+          final ok = await _printConsolidatedKdsBatch(
+            order: order,
+            itemsByStation: itemsByStation,
+            mode: resolvedMode,
+            kdsOverride: target,
+          );
+          if (ok) {
+            for (final stationItems in itemsByStation.values) {
+              for (final item in stationItems) {
+                if (item.id == null) continue;
+                successesPerItem[item.id!] =
+                    (successesPerItem[item.id!] ?? 0) + 1;
+              }
+            }
+          } else {
+            allSuccessful = false;
+          }
+        } else {
+          int sectionCount = 0;
+          for (final stationEntry in itemsByStation.entries) {
+            sectionCount++;
+            final stationName = stationEntry.key;
+            final stationItems = stationEntry.value;
+
+            bool success = await _printKdsTicketForStation(
               order: order,
               stationName: stationName,
               items: stationItems,
               cashierName: cashierName,
               mode: resolvedMode,
+              kdsOverride: target,
             );
-            if (success) {
-              debugPrint('Station $stationName succeeded on retry');
+
+            // Self-healing retry — same rationale as the previous loop: an
+            // Nth print can hit a buffer-drain race, especially on
+            // Windows USB drivers. After a failure, reconnect then retry
+            // once with a cool-down.
+            if (!success) {
+              debugPrint(
+                  'Station $stationName failed first attempt — reconnecting and retrying after cool-down');
+              await Future.delayed(const Duration(milliseconds: 1500));
+              final reconnected = await _ensurePrinterConnected(
+                PrinterPurpose.kds,
+                kdsOverride: target,
+              );
+              if (reconnected) {
+                success = await _printKdsTicketForStation(
+                  order: order,
+                  stationName: stationName,
+                  items: stationItems,
+                  cashierName: cashierName,
+                  mode: resolvedMode,
+                  kdsOverride: target,
+                );
+              }
             }
-          } else {
-            debugPrint(
-                'Station $stationName retry skipped — could not reconnect');
+
+            if (success) {
+              for (final item in stationItems) {
+                if (item.id == null) continue;
+                successesPerItem[item.id!] =
+                    (successesPerItem[item.id!] ?? 0) + 1;
+              }
+            } else {
+              allSuccessful = false;
+              debugPrint(
+                  'Failed to print ticket for station: $stationName (after retry)');
+            }
+
+            if (sectionCount < itemsByStation.length) {
+              await Future.delayed(const Duration(milliseconds: 800));
+            }
           }
         }
 
-        if (success) {
-          for (final item in stationItems) {
-            if (item.id == null) continue;
-            successesPerItem[item.id!] =
-                (successesPerItem[item.id!] ?? 0) + 1;
-          }
-        } else {
-          allSuccessful = false;
-          debugPrint('Failed to print ticket for station: $stationName (after retry)');
-        }
-
-        // Inter-print pause. 300ms was tight in the field: networked thermal
-        // printers need time to flush, advance paper, and accept the next
-        // document, otherwise the next send arrives mid-cut and the TCP
-        // write times out — producing the "always errors on multi-station"
-        // symptom. 800ms is conservative and barely noticeable to the user.
-        if (stationCount < itemsByStation.length) {
+        // Cool-down between PHYSICAL printers as well — same reasoning as
+        // the inter-section pause, just at a coarser grain.
+        if (printerIdx < printerGroups.length) {
           await Future.delayed(const Duration(milliseconds: 800));
         }
       }
 
-      // Mark only items whose every station ticket succeeded. Dedupe via
-      // a Map<int, OrderItem> keyed by order_product id since a multi-
-      // station product appears in more than one station's list.
+      // Mark only items whose every station section (across all printers)
+      // succeeded. Dedupe via a Map<int, OrderItem> keyed by order_product
+      // id since the same row appears under multiple stations.
       final markedById = <int, OrderItem>{};
-      for (final stationItems in itemsByStation.values) {
-        for (final item in stationItems) {
-          if (item.id == null) continue;
-          if (successesPerItem[item.id!] == stationsPerItem[item.id!]) {
-            markedById[item.id!] = item;
+      for (final printerGroup in printerGroups.values) {
+        for (final stationItems in printerGroup.values) {
+          for (final item in stationItems) {
+            if (item.id == null) continue;
+            if (successesPerItem[item.id!] == stationsPerItem[item.id!]) {
+              markedById[item.id!] = item;
+            }
           }
         }
       }
@@ -2005,7 +2710,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveHeaderSize(),
+          height: _resolveHeaderHeight(),
           width: _resolveHeaderSize(),
         ),
       );
@@ -2018,7 +2723,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2027,7 +2732,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2038,7 +2743,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         );
@@ -2048,7 +2753,7 @@ class PrintingService {
         '${_text('persons', fallback: 'Persons')}: ${order.numberOfPersons}',
         styles: PosStyles(
           align: PosAlign.center,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2058,7 +2763,7 @@ class PrintingService {
           '${_text('customer', fallback: 'Customer')}: ${_safe(order.customerName)}',
           styles: PosStyles(
             align: PosAlign.center,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2068,7 +2773,7 @@ class PrintingService {
           '${_text('phone', fallback: 'Phone')}: ${_safe(order.customerPhone)}',
           styles: PosStyles(
             align: PosAlign.center,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2083,7 +2788,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         );
@@ -2095,7 +2800,7 @@ class PrintingService {
             styles: PosStyles(
               align: PosAlign.left,
               bold: true,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           );
@@ -2108,7 +2813,7 @@ class PrintingService {
             styles: PosStyles(
               align: PosAlign.left,
               bold: true,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           );
@@ -2127,7 +2832,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2154,6 +2859,7 @@ class PrintingService {
     required List<OrderItem> items,
     required String? cashierName,
     KdsPrintMode mode = KdsPrintMode.modificationsOnly,
+    _KdsTarget? kdsOverride,
   }) async {
     try {
       final profile = await CapabilityProfile.load();
@@ -2170,7 +2876,8 @@ class PrintingService {
         'Attempting to print KDS ticket for $stationName. Bytes length: ${bytes.length}',
       );
 
-      final ok = await _dispatchBytes(PrinterPurpose.kds, bytes);
+      final ok =
+          await _dispatchBytes(PrinterPurpose.kds, bytes, kdsOverride: kdsOverride);
       if (!ok) {
         // CRITICAL: do NOT pretend success. The caller (printKdsTicket)
         // only stamps `kdsPrintedAt` on items when this returns true; if
@@ -2210,6 +2917,7 @@ class PrintingService {
     required CurrentOrder order,
     required Map<String, List<OrderItem>> itemsByStation,
     required KdsPrintMode mode,
+    _KdsTarget? kdsOverride,
   }) async {
     try {
       final profile = await CapabilityProfile.load();
@@ -2228,7 +2936,8 @@ class PrintingService {
         'Attempting consolidated KDS print: ${itemsByStation.length} stations, '
         '${bytes.length} bytes total',
       );
-      final ok = await _dispatchBytes(PrinterPurpose.kds, bytes);
+      final ok =
+          await _dispatchBytes(PrinterPurpose.kds, bytes, kdsOverride: kdsOverride);
       if (!ok) {
         debugPrint('Consolidated KDS dispatch failed — items will NOT be marked printed.');
       }
@@ -2252,9 +2961,19 @@ class PrintingService {
     String? orderCode,
     String? cashierName,
     String? storeName,
+    // Store-level fields rendered in the header next to storeName so the
+    // payment receipt has the same identity block as the order ticket.
+    String? storeAddress,
+    String? storePhone,
     String? customerName,
     String? customerPhone,
     String? deliveryAddress,
+    // Order-context fields rendered in the metadata section under the
+    // ticket #. Match the same layout as printOrderReceipt so the two
+    // documents look like they belong to the same family.
+    String? tableName,
+    int? numberOfPersons,
+    String? orderType,
     bool storeCopy = false,
     bool isReprint = false,
   }) async {
@@ -2280,15 +2999,37 @@ class PrintingService {
       // Print business logo if available
       bytes += _printLogoHeader(generator);
 
-      // Header
+      // Header — store identity block. Same shape as printOrderReceipt
+      // so the payment receipt and the order ticket carry matching
+      // letterheads.
       if (storeName != null) {
         bytes += generator.text(
           _safe(storeName),
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
+          ),
+        );
+      }
+      if (storeAddress != null && storeAddress.trim().isNotEmpty) {
+        bytes += generator.text(
+          _safe(storeAddress),
+          styles: PosStyles(
+            align: PosAlign.center,
+            height: _resolveTextHeight(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
+      if (storePhone != null && storePhone.trim().isNotEmpty) {
+        bytes += generator.text(
+          '${_text('tel', fallback: 'Tel')}: ${_safe(storePhone)}',
+          styles: PosStyles(
+            align: PosAlign.center,
+            height: _resolveTextHeight(),
+            width: _resolveTextSize(),
           ),
         );
       }
@@ -2298,7 +3039,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2310,7 +3051,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         );
@@ -2321,7 +3062,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2336,7 +3077,7 @@ class PrintingService {
               _safe(settings.ticketHeader),
               styles: PosStyles(
                 align: PosAlign.center,
-                height: _resolveTextSize(),
+                height: _resolveTextHeight(),
                 width: _resolveTextSize(),
               ),
             );
@@ -2346,7 +3087,7 @@ class PrintingService {
         }
       }
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       // Ticket info
       bytes += generator.text(
@@ -2354,7 +3095,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2366,7 +3107,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2376,7 +3117,7 @@ class PrintingService {
         '${_text('date', fallback: 'Date')}: ${_formatDateTime(createdAt)}',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2385,7 +3126,37 @@ class PrintingService {
           '${_translate("cashier")}: ${_safe(cashierName)}',
           styles: PosStyles(
             align: PosAlign.left,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
+      if (orderType != null && orderType.isNotEmpty) {
+        bytes += generator.text(
+          '${_text('type', fallback: 'Type')}: ${_getOrderTypeText(orderType)}',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextHeight(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
+      if (tableName != null && tableName.trim().isNotEmpty) {
+        bytes += generator.text(
+          '${_translate("table")}: ${_safe(tableName)}',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextHeight(),
+            width: _resolveTextSize(),
+          ),
+        );
+      }
+      if (numberOfPersons != null && numberOfPersons > 1) {
+        bytes += generator.text(
+          '${_text('persons', fallback: 'Persons')}: $numberOfPersons',
+          styles: PosStyles(
+            align: PosAlign.left,
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2395,7 +3166,7 @@ class PrintingService {
           '${_text('customer', fallback: 'Customer')}: ${_safe(customerName)}',
           styles: PosStyles(
             align: PosAlign.left,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2405,7 +3176,7 @@ class PrintingService {
           '${_text('phone', fallback: 'Phone')}: ${_safe(customerPhone)}',
           styles: PosStyles(
             align: PosAlign.left,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2416,7 +3187,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2425,12 +3196,12 @@ class PrintingService {
         '${_text('payment', fallback: 'Payment')}: $paymentMethod',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       // Items
       for (final item in items) {
@@ -2444,7 +3215,7 @@ class PrintingService {
             width: 8,
             styles: PosStyles(
               align: PosAlign.left,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2456,7 +3227,7 @@ class PrintingService {
             width: 4,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2476,7 +3247,7 @@ class PrintingService {
                 styles: PosStyles(
                   align: PosAlign.left,
                   fontType: PosFontType.fontB,
-                  height: _resolveTextSize(),
+                  height: _resolveTextHeight(),
                   width: _resolveTextSize(),
                 ),
               );
@@ -2486,7 +3257,7 @@ class PrintingService {
                 styles: PosStyles(
                   align: PosAlign.left,
                   fontType: PosFontType.fontB,
-                  height: _resolveTextSize(),
+                  height: _resolveTextHeight(),
                   width: _resolveTextSize(),
                 ),
               );
@@ -2495,7 +3266,7 @@ class PrintingService {
         }
       }
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       // Total
       bytes += generator.row([
@@ -2504,7 +3275,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         ),
@@ -2514,7 +3285,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.right,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         ),
@@ -2525,7 +3296,7 @@ class PrintingService {
         _text('thank_you', fallback: 'Thank you!'),
         styles: PosStyles(
           align: PosAlign.center,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2538,7 +3309,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2559,7 +3330,7 @@ class PrintingService {
               settings.ticketFooter,
               styles: PosStyles(
                 align: PosAlign.center,
-                height: _resolveTextSize(),
+                height: _resolveTextHeight(),
                 width: _resolveTextSize(),
               ),
             );
@@ -2678,7 +3449,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2694,7 +3465,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.left,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2702,7 +3473,7 @@ class PrintingService {
         '${_formatDate(report.startDate)} - ${_formatDate(report.endDate)}',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2710,7 +3481,7 @@ class PrintingService {
         '${printL10n.translate('number_of_sessions')}: ${report.totalSessions}',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -2727,7 +3498,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -2741,7 +3512,7 @@ class PrintingService {
             text: printL10n.translate('cashier'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2750,7 +3521,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2761,7 +3532,7 @@ class PrintingService {
             text: printL10n.translate('starting_balance'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2772,7 +3543,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2783,7 +3554,7 @@ class PrintingService {
             text: printL10n.translate('total_orders'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2792,7 +3563,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2803,7 +3574,7 @@ class PrintingService {
             text: printL10n.translate('expected_from_orders'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2814,7 +3585,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2825,7 +3596,7 @@ class PrintingService {
             text: printL10n.translate('total_tickets'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2834,7 +3605,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2846,7 +3617,7 @@ class PrintingService {
                 printL10n.translate('expected_from_tickets'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2857,7 +3628,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2870,7 +3641,7 @@ class PrintingService {
             text: printL10n.translate('unpaid_orders'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2879,7 +3650,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2890,7 +3661,7 @@ class PrintingService {
             text: printL10n.translate('unpaid_amount'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2901,7 +3672,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2914,7 +3685,7 @@ class PrintingService {
             text: printL10n.translate('paid_by_cash'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2925,7 +3696,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2936,7 +3707,7 @@ class PrintingService {
             text: printL10n.translate('paid_by_card'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2947,7 +3718,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2958,7 +3729,7 @@ class PrintingService {
             text: printL10n.translate('paid_by_phone'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2969,7 +3740,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2980,7 +3751,7 @@ class PrintingService {
             text: printL10n.translate('paid_by_other'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -2991,7 +3762,7 @@ class PrintingService {
             width: 6,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -3004,7 +3775,7 @@ class PrintingService {
             text: printL10n.translate('status'),
             width: 6,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -3014,11 +3785,67 @@ class PrintingService {
             styles: PosStyles(
               align: PosAlign.right,
               bold: true,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
         ]);
+
+        // Per-session waiter breakdown. Skipped when the session has no
+        // waiter-attributed orders (cashier-only shift).
+        if (session.waiterBreakdown.isNotEmpty) {
+          bytes += generator.emptyLines(1);
+          bytes += generator.text(
+            printL10n.translate('by_waiter').toUpperCase(),
+            styles: PosStyles(
+              align: PosAlign.left,
+              bold: true,
+              height: _resolveTextHeight(),
+              width: _resolveTextSize(),
+            ),
+          );
+          for (final w in session.waiterBreakdown) {
+            bytes += generator.text(
+              w.waiterName,
+              styles: PosStyles(
+                align: PosAlign.left,
+                bold: true,
+                height: _resolveTextHeight(),
+                width: _resolveTextSize(),
+              ),
+            );
+            bytes += generator.row([
+              PosColumn(
+                text:
+                    '  ${printL10n.translate('orders')}: ${w.ordersCount}',
+                width: 6,
+                styles: const PosStyles(align: PosAlign.left),
+              ),
+              PosColumn(
+                text:
+                    '${printL10n.translate('paid')}: ${currencyFormatter?.format(w.paid) ?? w.paid.toStringAsFixed(2)}',
+                width: 6,
+                styles: const PosStyles(align: PosAlign.right),
+              ),
+            ]);
+            if (w.owed > 0.005) {
+              bytes += generator.row([
+                PosColumn(
+                  text: '  ${printL10n.translate('owed')}',
+                  width: 6,
+                  styles: const PosStyles(align: PosAlign.left, bold: true),
+                ),
+                PosColumn(
+                  text: currencyFormatter?.format(w.owed) ??
+                      w.owed.toStringAsFixed(2),
+                  width: 6,
+                  styles:
+                      const PosStyles(align: PosAlign.right, bold: true),
+                ),
+              ]);
+            }
+          }
+        }
 
         bytes += generator.text(
           separator,
@@ -3052,7 +3879,7 @@ class PrintingService {
           text: printL10n.translate('total_orders'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3062,7 +3889,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.right,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3073,7 +3900,7 @@ class PrintingService {
           text: printL10n.translate('expected_from_orders'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3084,7 +3911,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3095,7 +3922,7 @@ class PrintingService {
           text: printL10n.translate('total_tickets'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3105,7 +3932,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.right,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3116,7 +3943,7 @@ class PrintingService {
           text: printL10n.translate('expected_from_tickets'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3127,7 +3954,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3140,7 +3967,7 @@ class PrintingService {
           text: printL10n.translate('unpaid_orders'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3149,7 +3976,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3160,7 +3987,7 @@ class PrintingService {
           text: printL10n.translate('unpaid_amount'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3171,7 +3998,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3188,7 +4015,7 @@ class PrintingService {
           text: printL10n.translate('paid_by_cash'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3199,7 +4026,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3210,7 +4037,7 @@ class PrintingService {
           text: printL10n.translate('paid_by_card'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3221,7 +4048,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3232,7 +4059,7 @@ class PrintingService {
           text: printL10n.translate('paid_by_phone'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3243,7 +4070,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3254,7 +4081,7 @@ class PrintingService {
           text: printL10n.translate('paid_by_other'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3265,7 +4092,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3282,7 +4109,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3294,7 +4121,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.right,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3305,7 +4132,7 @@ class PrintingService {
           text: printL10n.translate('total_starting_balance'),
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3316,7 +4143,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3348,7 +4175,7 @@ class PrintingService {
               styles: PosStyles(
                 align: PosAlign.left,
                 bold: bold,
-                height: _resolveTextSize(),
+                height: _resolveTextHeight(),
                 width: _resolveTextSize(),
               ),
             ),
@@ -3358,7 +4185,7 @@ class PrintingService {
               styles: PosStyles(
                 align: PosAlign.right,
                 bold: bold,
-                height: _resolveTextSize(),
+                height: _resolveTextHeight(),
                 width: _resolveTextSize(),
               ),
             ),
@@ -3375,7 +4202,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         );
@@ -3402,14 +4229,14 @@ class PrintingService {
             '${printL10n.translate('count_notes')}:',
             styles: PosStyles(
               bold: true,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           );
           bytes += generator.text(
             s.countNotes!,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           );
@@ -3420,13 +4247,77 @@ class PrintingService {
         );
       }
 
+      // Report-level waiter rollup. Skipped when no session had a waiter.
+      if (report.totalWaiterBreakdown.isNotEmpty) {
+        bytes += generator.emptyLines(1);
+        bytes += generator.text(
+          doubleSeparator,
+          styles: const PosStyles(align: PosAlign.center),
+        );
+        bytes += generator.text(
+          printL10n.translate('by_waiter').toUpperCase(),
+          styles: PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: _resolveTextHeight(),
+            width: _resolveTextSize(),
+          ),
+        );
+        bytes += generator.text(
+          doubleSeparator,
+          styles: const PosStyles(align: PosAlign.center),
+        );
+        bytes += generator.emptyLines(1);
+
+        for (final w in report.totalWaiterBreakdown) {
+          bytes += generator.text(
+            w.waiterName,
+            styles: PosStyles(
+              align: PosAlign.left,
+              bold: true,
+              height: _resolveTextHeight(),
+              width: _resolveTextSize(),
+            ),
+          );
+          bytes += generator.row([
+            PosColumn(
+              text: '  ${printL10n.translate('orders')}: ${w.ordersCount}',
+              width: 6,
+              styles: const PosStyles(align: PosAlign.left),
+            ),
+            PosColumn(
+              text:
+                  '${printL10n.translate('paid')}: ${currencyFormatter?.format(w.paid) ?? w.paid.toStringAsFixed(2)}',
+              width: 6,
+              styles: const PosStyles(align: PosAlign.right),
+            ),
+          ]);
+          if (w.owed > 0.005) {
+            bytes += generator.row([
+              PosColumn(
+                text: '  ${printL10n.translate('owed')}',
+                width: 6,
+                styles: const PosStyles(align: PosAlign.left, bold: true),
+              ),
+              PosColumn(
+                text: currencyFormatter?.format(w.owed) ??
+                    w.owed.toStringAsFixed(2),
+                width: 6,
+                styles: const PosStyles(align: PosAlign.right, bold: true),
+              ),
+            ]);
+          }
+          bytes += generator.emptyLines(1);
+        }
+      }
+
       // Footer
       bytes += generator.emptyLines(1);
       bytes += generator.text(
         '${printL10n.translate('printed_at')}: ${_formatDateTime(DateTime.now())}',
         styles: PosStyles(
           align: PosAlign.center,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -3487,7 +4378,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.center,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         );
@@ -3498,18 +4389,18 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       bytes += generator.text(
         '${_text('date', fallback: 'Date')}: ${_formatDate(reportDate)}',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -3518,7 +4409,7 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.left,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -3526,12 +4417,12 @@ class PrintingService {
         '${_text('total_orders', fallback: 'Orders')}: ${orders.length}',
         styles: PosStyles(
           align: PosAlign.left,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       bytes += generator.row([
         PosColumn(
@@ -3539,7 +4430,7 @@ class PrintingService {
           width: 4,
           styles: PosStyles(
             bold: true,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3549,7 +4440,7 @@ class PrintingService {
           styles: PosStyles(
             bold: true,
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3559,13 +4450,13 @@ class PrintingService {
           styles: PosStyles(
             bold: true,
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
       ]);
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       for (final order in orders) {
         bytes += generator.row([
@@ -3573,7 +4464,7 @@ class PrintingService {
             text: order.orderCode,
             width: 4,
             styles: PosStyles(
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -3582,7 +4473,7 @@ class PrintingService {
             width: 5,
             styles: PosStyles(
               align: PosAlign.right,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
@@ -3594,14 +4485,14 @@ class PrintingService {
             styles: PosStyles(
               align: PosAlign.right,
               bold: order.isPaid,
-              height: _resolveTextSize(),
+              height: _resolveTextHeight(),
               width: _resolveTextSize(),
             ),
           ),
         ]);
       }
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       final paidOrders = orders.where((o) => o.isPaid).toList();
       final unpaidOrders = orders.where((o) => !o.isPaid).toList();
@@ -3613,7 +4504,7 @@ class PrintingService {
           text: '${_text('paid', fallback: 'Paid')} (${paidOrders.length}):',
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3622,7 +4513,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3633,7 +4524,7 @@ class PrintingService {
           text: '${_text('unpaid', fallback: 'Unpaid')} (${unpaidOrders.length}):',
           width: 6,
           styles: PosStyles(
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
@@ -3642,13 +4533,13 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             align: PosAlign.right,
-            height: _resolveTextSize(),
+            height: _resolveTextHeight(),
             width: _resolveTextSize(),
           ),
         ),
       ]);
 
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
 
       bytes += generator.row([
         PosColumn(
@@ -3656,7 +4547,7 @@ class PrintingService {
           width: 6,
           styles: PosStyles(
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         ),
@@ -3666,7 +4557,7 @@ class PrintingService {
           styles: PosStyles(
             align: PosAlign.right,
             bold: true,
-            height: _resolveHeaderSize(),
+            height: _resolveHeaderHeight(),
             width: _resolveHeaderSize(),
           ),
         ),
@@ -3677,7 +4568,7 @@ class PrintingService {
         '${_text('printed_at', fallback: 'Printed')}: ${_formatDateTime(DateTime.now())}',
         styles: PosStyles(
           align: PosAlign.center,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -3739,16 +4630,16 @@ class PrintingService {
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
       bytes += generator.text(
         _formatDateTime(DateTime.now()),
         styles: PosStyles(
           align: PosAlign.center,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
@@ -3757,17 +4648,17 @@ class PrintingService {
         'Text: ${_config.textSize == 1 ? "Normal" : _config.textSize == 2 ? "Large" : "XL"}',
         styles: PosStyles(
           align: PosAlign.center,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );
-      bytes += generator.hr();
+      bytes += _sepMinor(generator);
       bytes += generator.text(
         'Printer OK',
         styles: PosStyles(
           align: PosAlign.center,
           bold: true,
-          height: _resolveTextSize(),
+          height: _resolveTextHeight(),
           width: _resolveTextSize(),
         ),
       );

@@ -14,6 +14,12 @@ class Orders extends Table {
   TextColumn get source => text().nullable()(); // Source of the order (table, kiosk, etc.)
   IntColumn get sourceId => integer().nullable()();
   RealColumn get discountPercentage => real().withDefault(const Constant(0.0))(); // Manual discount percentage (0-100)
+  // Tip stored separately from the items total. Nullable: an order with no
+  // tip is `null`, not 0 (matches backend semantics — `tip: null` in the
+  // JSON contract means "no tip recorded", clearing sets it back to null).
+  // Goes up to the server via the normal PUT /pos/orders/{code} payload
+  // (see `data_sync_service.dart::getOrdersForSync`).
+  RealColumn get tip => real().nullable()();
   IntColumn get createdBy => integer().nullable()(); // User who created the order
   IntColumn get takenBy => integer().nullable()(); // User who took the order
   IntColumn get waiterId => integer().nullable()(); // Waiter/server assigned to the order

@@ -13,6 +13,24 @@ class AppSettings {
   final String defaultOrderType; // 'DINE_IN' or 'TAKE_AWAY'
   final bool showProductImages;
   final String defaultOrderStatus; // 'PENDING', 'ONHOLD', etc.
+  /// Status assigned to orders posted through `/waiters/orders` by the
+  /// waiter app. Defaults to 'PENDING' (matches the legacy hard-coded
+  /// behaviour). 'PREPARING' = skip the kitchen ACK step. 'COMPLETED' =
+  /// pre-pay / dine-and-leave flow where the waiter takes payment.
+  final String waiterOrderDefaultStatus;
+  /// When true, orders posted through `/waiters/orders` arrive already
+  /// paid: the server auto-creates a CASH ticket for the full amount,
+  /// marks every product PAID, and bumps the order status to
+  /// [paidOrderDefaultStatus]. Use this when the waiter collects cash at
+  /// the table; leave off (default) when the cashier settles later via
+  /// the waiter profile / settlement dialog.
+  final bool waiterOrderDefaultPaid;
+  /// When false, the order-ticket auto-print is skipped on waiter-created
+  /// orders even when the source rule allows it. KDS prints still fire.
+  /// Default true (current behavior preserved). Common reason to turn
+  /// off: the waiter already has a handheld printer / the cashier doesn't
+  /// need a paper copy of every waiter order.
+  final bool printWaiterOrderTicket;
   final String paidOrderDefaultStatus; // Default status for paid orders: 'COMPLETED', 'DELIVERED', etc.
   final CategoryDisplayMode categoryDisplayMode; // How to display categories
   final String currency; // Currency symbol (e.g., '$', '€', '£', 'DH')
@@ -47,6 +65,11 @@ class AppSettings {
   final int? serverPort; // HTTP server port (default: 8080)
   final String? serverPassword; // Optional password for server authentication
   final bool autoStartServer; // Auto-start server on app startup
+  /// When false, the `GET /waiters/dashboard` endpoint omits the financial
+  /// fields (`expectedCash`, `totalCash`, `cancelledAmount`) from the
+  /// response so the waiter app can't display amounts owed/collected.
+  /// Defaults to true (current behavior preserved).
+  final bool waiterDashboardShowOwed;
 
   // UI settings
   final bool enableSnackBars; // Enable/disable snack bar notifications globally
@@ -67,6 +90,18 @@ class AppSettings {
 
   // Payment settings
   final String defaultPaymentMethod; // Default payment method: 'CASH', 'CARD', 'MOBILE', 'OTHER'
+
+  /// When enabled, clicking the "Pay" button (after any required table /
+  /// waiter selection) shows the tip dialog before opening PaymentScreen.
+  /// Tips go through `PATCH /api/orders/{id}/tip` — local-only-orders (no
+  /// server id) skip the dialog automatically.
+  final bool showTipDialog;
+
+  /// Visibility of the dedicated "Tip" action button in the POS toolbar.
+  /// Independent from [showTipDialog] — a cashier can want a button to
+  /// edit the tip explicitly even if they don't want the auto-prompt on
+  /// pay, or vice versa.
+  final bool showTipButton;
 
   // Agenda settings
   final int agendaTimeStep; // Time grid interval in minutes: 60, 30, or 15
@@ -90,6 +125,9 @@ class AppSettings {
     this.defaultOrderType = 'DINE_IN',
     this.showProductImages = true,
     this.defaultOrderStatus = 'PENDING',
+    this.waiterOrderDefaultStatus = 'PENDING',
+    this.waiterOrderDefaultPaid = false,
+    this.printWaiterOrderTicket = true,
     this.paidOrderDefaultStatus = 'COMPLETED',
     this.categoryDisplayMode = CategoryDisplayMode.topBar,
     this.currency = 'DH',
@@ -130,6 +168,7 @@ class AppSettings {
     this.serverPort = 2004,
     this.serverPassword,
     this.autoStartServer = true,
+    this.waiterDashboardShowOwed = true,
     this.enableSnackBars = false,
     this.enableCustomerDisplay = false,
     this.requireTableForDineIn = false,
@@ -138,6 +177,8 @@ class AppSettings {
     this.requireDeliveryAddress = false,
     this.autoClearTableAfterPaying = false,
     this.defaultPaymentMethod = 'CASH',
+    this.showTipDialog = false,
+    this.showTipButton = false,
     this.agendaTimeStep = 60,
     this.showOnscreenKeyboard = true,
     this.onscreenKeyboardWidthFraction = 0.5,
@@ -154,6 +195,9 @@ class AppSettings {
     String? defaultOrderType,
     bool? showProductImages,
     String? defaultOrderStatus,
+    String? waiterOrderDefaultStatus,
+    bool? waiterOrderDefaultPaid,
+    bool? printWaiterOrderTicket,
     String? paidOrderDefaultStatus,
     CategoryDisplayMode? categoryDisplayMode,
     String? currency,
@@ -180,6 +224,7 @@ class AppSettings {
     int? serverPort,
     String? serverPassword,
     bool? autoStartServer,
+    bool? waiterDashboardShowOwed,
     bool? enableSnackBars,
     bool? enableCustomerDisplay,
     bool? requireTableForDineIn,
@@ -188,6 +233,8 @@ class AppSettings {
     bool? requireDeliveryAddress,
     bool? autoClearTableAfterPaying,
     String? defaultPaymentMethod,
+    bool? showTipDialog,
+    bool? showTipButton,
     int? agendaTimeStep,
     bool? showOnscreenKeyboard,
     double? onscreenKeyboardWidthFraction,
@@ -204,6 +251,12 @@ class AppSettings {
       defaultOrderType: defaultOrderType ?? this.defaultOrderType,
       showProductImages: showProductImages ?? this.showProductImages,
       defaultOrderStatus: defaultOrderStatus ?? this.defaultOrderStatus,
+      waiterOrderDefaultStatus:
+          waiterOrderDefaultStatus ?? this.waiterOrderDefaultStatus,
+      waiterOrderDefaultPaid:
+          waiterOrderDefaultPaid ?? this.waiterOrderDefaultPaid,
+      printWaiterOrderTicket:
+          printWaiterOrderTicket ?? this.printWaiterOrderTicket,
       paidOrderDefaultStatus: paidOrderDefaultStatus ?? this.paidOrderDefaultStatus,
       categoryDisplayMode: categoryDisplayMode ?? this.categoryDisplayMode,
       currency: currency ?? this.currency,
@@ -230,6 +283,8 @@ class AppSettings {
       serverPort: serverPort ?? this.serverPort,
       serverPassword: serverPassword ?? this.serverPassword,
       autoStartServer: autoStartServer ?? this.autoStartServer,
+      waiterDashboardShowOwed:
+          waiterDashboardShowOwed ?? this.waiterDashboardShowOwed,
       enableSnackBars: enableSnackBars ?? this.enableSnackBars,
       enableCustomerDisplay: enableCustomerDisplay ?? this.enableCustomerDisplay,
       requireTableForDineIn:
@@ -243,6 +298,8 @@ class AppSettings {
       autoClearTableAfterPaying:
           autoClearTableAfterPaying ?? this.autoClearTableAfterPaying,
       defaultPaymentMethod: defaultPaymentMethod ?? this.defaultPaymentMethod,
+      showTipDialog: showTipDialog ?? this.showTipDialog,
+      showTipButton: showTipButton ?? this.showTipButton,
       agendaTimeStep: agendaTimeStep ?? this.agendaTimeStep,
       showOnscreenKeyboard: showOnscreenKeyboard ?? this.showOnscreenKeyboard,
       onscreenKeyboardWidthFraction: onscreenKeyboardWidthFraction ?? this.onscreenKeyboardWidthFraction,
@@ -261,6 +318,9 @@ class AppSettings {
       'defaultOrderType': defaultOrderType,
       'showProductImages': showProductImages,
       'defaultOrderStatus': defaultOrderStatus,
+      'waiterOrderDefaultStatus': waiterOrderDefaultStatus,
+      'waiterOrderDefaultPaid': waiterOrderDefaultPaid,
+      'printWaiterOrderTicket': printWaiterOrderTicket,
       'paidOrderDefaultStatus': paidOrderDefaultStatus,
       'categoryDisplayMode': categoryDisplayMode.name,
       'currency': currency,
@@ -287,6 +347,7 @@ class AppSettings {
       'serverPort': serverPort,
       'serverPassword': serverPassword,
       'autoStartServer': autoStartServer,
+      'waiterDashboardShowOwed': waiterDashboardShowOwed,
       'enableSnackBars': enableSnackBars,
       'enableCustomerDisplay': enableCustomerDisplay,
       'requireTableForDineIn': requireTableForDineIn,
@@ -295,6 +356,8 @@ class AppSettings {
       'requireDeliveryAddress': requireDeliveryAddress,
       'autoClearTableAfterPaying': autoClearTableAfterPaying,
       'defaultPaymentMethod': defaultPaymentMethod,
+      'showTipDialog': showTipDialog,
+      'showTipButton': showTipButton,
       'agendaTimeStep': agendaTimeStep,
       'showOnscreenKeyboard': showOnscreenKeyboard,
       'onscreenKeyboardWidthFraction': onscreenKeyboardWidthFraction,
@@ -359,6 +422,8 @@ class AppSettings {
       serverPort: json['serverPort'] as int?,
       serverPassword: json['serverPassword'] as String?,
       autoStartServer: json['autoStartServer'] as bool? ?? true,
+      waiterDashboardShowOwed:
+          json['waiterDashboardShowOwed'] as bool? ?? true,
       enableSnackBars: json['enableSnackBars'] as bool? ?? true,
       enableCustomerDisplay: json['enableCustomerDisplay'] as bool? ?? false,
       requireTableForDineIn:
@@ -372,6 +437,8 @@ class AppSettings {
       autoClearTableAfterPaying:
           json['autoClearTableAfterPaying'] as bool? ?? false,
       defaultPaymentMethod: json['defaultPaymentMethod'] as String? ?? 'CASH',
+      showTipDialog: json['showTipDialog'] as bool? ?? false,
+      showTipButton: json['showTipButton'] as bool? ?? false,
       agendaTimeStep: json['agendaTimeStep'] as int? ?? 60,
       showOnscreenKeyboard: json['showOnscreenKeyboard'] as bool? ?? true,
       onscreenKeyboardWidthFraction: (json['onscreenKeyboardWidthFraction'] as num?)?.toDouble() ?? 0.5,

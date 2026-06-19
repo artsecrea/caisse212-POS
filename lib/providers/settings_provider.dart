@@ -16,6 +16,9 @@ class SettingsKeys {
   static const String defaultOrderType = 'default_order_type';
   static const String showProductImages = 'show_product_images';
   static const String defaultOrderStatus = 'default_order_status';
+  static const String waiterOrderDefaultStatus = 'waiter_order_default_status';
+  static const String waiterOrderDefaultPaid = 'waiter_order_default_paid';
+  static const String printWaiterOrderTicket = 'print_waiter_order_ticket';
   static const String paidOrderDefaultStatus = 'paid_order_default_status';
   static const String categoryDisplayMode = 'category_display_mode';
   static const String currency = 'currency';
@@ -46,6 +49,7 @@ class SettingsKeys {
   static const String serverPort = 'server_port';
   static const String serverPassword = 'server_password';
   static const String autoStartServer = 'auto_start_server';
+  static const String waiterDashboardShowOwed = 'waiter_dashboard_show_owed';
 
   // UI settings
   static const String enableSnackBars = 'enable_snack_bars';
@@ -65,6 +69,8 @@ class SettingsKeys {
 
   // Payment settings
   static const String defaultPaymentMethod = 'default_payment_method';
+  static const String showTipDialog = 'show_tip_dialog';
+  static const String showTipButton = 'show_tip_button';
 
   // Product card size: 1=small, 2=medium, 3=large
   static const String productCardSize = 'product_card_size';
@@ -102,9 +108,25 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       'discount',
       'print',
       'dailySummary',
+      'tip',
       'pay',
       'proceed',
     ];
+
+    // Migration: Add 'tip' button if missing (for existing installations).
+    // Insert it just before 'pay' so the cashier's mental model is
+    // "set tip, then take payment" — left-to-right on the toolbar.
+    if (!buttonOrder.contains('tip')) {
+      final mutableList = List<String>.from(buttonOrder);
+      final payIndex = mutableList.indexOf('pay');
+      if (payIndex >= 0) {
+        mutableList.insert(payIndex, 'tip');
+      } else {
+        mutableList.add('tip');
+      }
+      buttonOrder = mutableList;
+      _prefs.setStringList(SettingsKeys.buttonOrder, buttonOrder);
+    }
 
     // Migration: Add 'waiter' button if missing (for existing installations)
     if (!buttonOrder.contains('waiter')) {
@@ -136,6 +158,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       defaultOrderType: _prefs.getString(SettingsKeys.defaultOrderType) ?? 'DINE_IN',
       showProductImages: _prefs.getBool(SettingsKeys.showProductImages) ?? true,
       defaultOrderStatus: _prefs.getString(SettingsKeys.defaultOrderStatus) ?? 'PENDING',
+      waiterOrderDefaultStatus:
+          _prefs.getString(SettingsKeys.waiterOrderDefaultStatus) ?? 'PENDING',
+      waiterOrderDefaultPaid:
+          _prefs.getBool(SettingsKeys.waiterOrderDefaultPaid) ?? false,
+      printWaiterOrderTicket:
+          _prefs.getBool(SettingsKeys.printWaiterOrderTicket) ?? true,
       paidOrderDefaultStatus: _prefs.getString(SettingsKeys.paidOrderDefaultStatus) ?? 'COMPLETED',
       categoryDisplayMode: categoryMode,
       currency: _prefs.getString(SettingsKeys.currency) ?? '\$',
@@ -158,6 +186,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       serverPort: _prefs.getInt(SettingsKeys.serverPort) ?? 8080,
       serverPassword: _prefs.getString(SettingsKeys.serverPassword),
       autoStartServer: _prefs.getBool(SettingsKeys.autoStartServer) ?? false,
+      waiterDashboardShowOwed:
+          _prefs.getBool(SettingsKeys.waiterDashboardShowOwed) ?? true,
       enableSnackBars: _prefs.getBool(SettingsKeys.enableSnackBars) ?? false,
       enableCustomerDisplay: _prefs.getBool(SettingsKeys.enableCustomerDisplay) ?? false,
       requireTableForDineIn:
@@ -171,6 +201,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       autoClearTableAfterPaying:
           _prefs.getBool(SettingsKeys.autoClearTableAfterPaying) ?? false,
       defaultPaymentMethod: _prefs.getString(SettingsKeys.defaultPaymentMethod) ?? 'CASH',
+      showTipDialog: _prefs.getBool(SettingsKeys.showTipDialog) ?? false,
+      showTipButton: _prefs.getBool(SettingsKeys.showTipButton) ?? false,
       agendaTimeStep: _prefs.getInt(SettingsKeys.agendaTimeStep) ?? 60,
       showOnscreenKeyboard: _prefs.getBool(SettingsKeys.showOnscreenKeyboard) ?? true,
       onscreenKeyboardWidthFraction: _prefs.getDouble(SettingsKeys.onscreenKeyboardWidthFraction) ?? 0.5,
@@ -246,6 +278,21 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setDefaultOrderStatus(String status) async {
     await _prefs.setString(SettingsKeys.defaultOrderStatus, status);
     state = state.copyWith(defaultOrderStatus: status);
+  }
+
+  Future<void> setWaiterOrderDefaultStatus(String status) async {
+    await _prefs.setString(SettingsKeys.waiterOrderDefaultStatus, status);
+    state = state.copyWith(waiterOrderDefaultStatus: status);
+  }
+
+  Future<void> setWaiterOrderDefaultPaid(bool value) async {
+    await _prefs.setBool(SettingsKeys.waiterOrderDefaultPaid, value);
+    state = state.copyWith(waiterOrderDefaultPaid: value);
+  }
+
+  Future<void> setPrintWaiterOrderTicket(bool value) async {
+    await _prefs.setBool(SettingsKeys.printWaiterOrderTicket, value);
+    state = state.copyWith(printWaiterOrderTicket: value);
   }
 
   Future<void> setPaidOrderDefaultStatus(String status) async {
@@ -358,6 +405,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(autoStartServer: value);
   }
 
+  Future<void> setWaiterDashboardShowOwed(bool value) async {
+    await _prefs.setBool(SettingsKeys.waiterDashboardShowOwed, value);
+    state = state.copyWith(waiterDashboardShowOwed: value);
+  }
+
   Future<void> setEnableSnackBars(bool value) async {
     await _prefs.setBool(SettingsKeys.enableSnackBars, value);
     state = state.copyWith(enableSnackBars: value);
@@ -396,6 +448,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setDefaultPaymentMethod(String method) async {
     await _prefs.setString(SettingsKeys.defaultPaymentMethod, method);
     state = state.copyWith(defaultPaymentMethod: method);
+  }
+
+  Future<void> setShowTipDialog(bool value) async {
+    await _prefs.setBool(SettingsKeys.showTipDialog, value);
+    state = state.copyWith(showTipDialog: value);
+  }
+
+  Future<void> setShowTipButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showTipButton, value);
+    state = state.copyWith(showTipButton: value);
   }
 
   Future<void> setAgendaTimeStep(int minutes) async {

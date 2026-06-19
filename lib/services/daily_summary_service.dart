@@ -2,6 +2,38 @@ import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import '../utils/user_display.dart';
 
+/// Per-waiter rollup inside a session or across a full report.
+///
+/// "Paid" is the amount actually settled (sum of non-cancelled tickets
+/// attributed to this waiter's orders). "Owed" is what's still open
+/// (`expected - paid`, never negative). `ordersCount` excludes cancelled
+/// orders so the dashboard math lines up with the Settle Waiter flow.
+class WaiterBreakdown {
+  final int waiterId;
+  final String waiterName;
+  final int ordersCount;
+  final double expected;
+  final double paid;
+  final double owed;
+  final double paidByCash;
+  final double paidByCard;
+  final double paidByPhone;
+  final double paidByOther;
+
+  const WaiterBreakdown({
+    required this.waiterId,
+    required this.waiterName,
+    required this.ordersCount,
+    required this.expected,
+    required this.paid,
+    required this.owed,
+    required this.paidByCash,
+    required this.paidByCard,
+    required this.paidByPhone,
+    required this.paidByOther,
+  });
+}
+
 /// Model for session summary data
 class SessionSummaryReport {
   final int sessionId;
@@ -30,6 +62,9 @@ class SessionSummaryReport {
   final double? variance;
   final DateTime? countedAt;
   final String? countNotes;
+  /// Per-waiter rollup inside this session. Empty when no waiter-attributed
+  /// orders exist (cashier-only shifts).
+  final List<WaiterBreakdown> waiterBreakdown;
 
   SessionSummaryReport({
     required this.sessionId,
@@ -57,6 +92,7 @@ class SessionSummaryReport {
     this.variance,
     this.countedAt,
     this.countNotes,
+    this.waiterBreakdown = const [],
   });
 
   double get totalPaid => paidByCash + paidByCard + paidByPhone + paidByOther;
@@ -82,6 +118,9 @@ class DailySummaryReport {
   final double totalEndingBalance;
   final int totalCancelledTickets;
   final double totalCancelledAmount;
+  /// Aggregated waiter rollup across every session in the report. Same
+  /// waiter appearing in multiple sessions gets a single merged row.
+  final List<WaiterBreakdown> totalWaiterBreakdown;
 
   DailySummaryReport({
     required this.startDate,
@@ -102,6 +141,7 @@ class DailySummaryReport {
     required this.totalEndingBalance,
     this.totalCancelledTickets = 0,
     this.totalCancelledAmount = 0,
+    this.totalWaiterBreakdown = const [],
   });
 
   double get totalPaid => totalPaidByCash + totalPaidByCard + totalPaidByPhone + totalPaidByOther;
@@ -154,6 +194,11 @@ class DailySummaryService {
     int totalCancelledTickets = 0;
     double totalCancelledAmount = 0;
 
+    // Aggregate per-waiter rollup across sessions — same waiter appearing
+    // in multiple sessions collapses into one row with summed totals.
+    final waiterAcc = <int, _WaiterAcc>{};
+    final waiterNameById = <int, String>{};
+
     for (final session in sessions) {
       totalOrders += session.totalOrders;
       totalExpectedFromOrders += session.expectedFromOrders;
@@ -169,7 +214,37 @@ class DailySummaryService {
       totalEndingBalance += session.endingBalance ?? 0;
       totalCancelledTickets += session.cancelledTickets;
       totalCancelledAmount += session.cancelledAmount;
+
+      for (final w in session.waiterBreakdown) {
+        final acc = waiterAcc.putIfAbsent(w.waiterId, () => _WaiterAcc());
+        acc.ordersCount += w.ordersCount;
+        acc.expected += w.expected;
+        acc.paid += w.paid;
+        acc.paidByCash += w.paidByCash;
+        acc.paidByCard += w.paidByCard;
+        acc.paidByPhone += w.paidByPhone;
+        acc.paidByOther += w.paidByOther;
+        waiterNameById[w.waiterId] = w.waiterName;
+      }
     }
+
+    final totalWaiterBreakdown = waiterAcc.entries.map((e) {
+      final acc = e.value;
+      final owed = acc.expected - acc.paid;
+      return WaiterBreakdown(
+        waiterId: e.key,
+        waiterName: waiterNameById[e.key] ?? 'Waiter #${e.key}',
+        ordersCount: acc.ordersCount,
+        expected: acc.expected,
+        paid: acc.paid,
+        owed: owed > 0 ? owed : 0,
+        paidByCash: acc.paidByCash,
+        paidByCard: acc.paidByCard,
+        paidByPhone: acc.paidByPhone,
+        paidByOther: acc.paidByOther,
+      );
+    }).toList()
+      ..sort((a, b) => b.expected.compareTo(a.expected));
 
     return DailySummaryReport(
       startDate: startDate,
@@ -190,6 +265,7 @@ class DailySummaryService {
       totalEndingBalance: totalEndingBalance,
       totalCancelledTickets: totalCancelledTickets,
       totalCancelledAmount: totalCancelledAmount,
+      totalWaiterBreakdown: totalWaiterBreakdown,
     );
   }
 
@@ -234,6 +310,10 @@ class DailySummaryService {
     double expectedFromOrders = 0;
     int unpaidOrders = 0;
     double unpaidAmount = 0;
+
+    // Per-waiter rollup accumulator. Key = waiterId. An order with no
+    // waiterId (cashier rang it up directly) is excluded.
+    final waiterAcc = <int, _WaiterAcc>{};
 
     for (final order in orders) {
       // Get order products to calculate order total
@@ -288,6 +368,32 @@ class DailySummaryService {
         unpaidOrders++;
         unpaidAmount += (orderTotal - ticketTotal);
       }
+
+      // Per-waiter rollup. Walk each ticket on this order so the per-method
+      // split (cash/card/phone/other) attributes correctly, even when an
+      // order has mixed-method partial tickets.
+      final wId = order.waiterId;
+      if (wId != null) {
+        final acc = waiterAcc.putIfAbsent(wId, () => _WaiterAcc());
+        acc.ordersCount++;
+        acc.expected += orderTotal;
+        for (final t in orderTickets) {
+          acc.paid += t.amount;
+          switch (t.paymentMethod.toLowerCase()) {
+            case 'cash':
+              acc.paidByCash += t.amount;
+              break;
+            case 'card':
+              acc.paidByCard += t.amount;
+              break;
+            case 'phone':
+              acc.paidByPhone += t.amount;
+              break;
+            default:
+              acc.paidByOther += t.amount;
+          }
+        }
+      }
     }
 
     // Calculate ticket totals by payment method (excluding cancelled)
@@ -319,6 +425,35 @@ class DailySummaryService {
     final cancelledTicketCount = cancelledTickets.length;
     final cancelledAmount = cancelledTickets.fold<double>(0, (sum, t) => sum + t.amount);
 
+    // Resolve waiter names + finalize the breakdown. Sorted by descending
+    // expected so the busiest waiters land at the top of the printed
+    // section.
+    final waiterIds = waiterAcc.keys.toList();
+    final waiterRows = await (_db.select(_db.waiters)
+          ..where((w) => w.id.isIn(waiterIds)))
+        .get();
+    final waiterNameById = {
+      for (final w in waiterRows)
+        w.id: '${w.firstName} ${w.lastName ?? ''}'.trim(),
+    };
+    final waiterBreakdown = waiterAcc.entries.map((e) {
+      final acc = e.value;
+      final owed = acc.expected - acc.paid;
+      return WaiterBreakdown(
+        waiterId: e.key,
+        waiterName: waiterNameById[e.key] ?? 'Waiter #${e.key}',
+        ordersCount: acc.ordersCount,
+        expected: acc.expected,
+        paid: acc.paid,
+        owed: owed > 0 ? owed : 0,
+        paidByCash: acc.paidByCash,
+        paidByCard: acc.paidByCard,
+        paidByPhone: acc.paidByPhone,
+        paidByOther: acc.paidByOther,
+      );
+    }).toList()
+      ..sort((a, b) => b.expected.compareTo(a.expected));
+
     return SessionSummaryReport(
       sessionId: session.id,
       sessionCode: session.code,
@@ -345,6 +480,7 @@ class DailySummaryService {
       variance: session.variance,
       countedAt: session.countedAt,
       countNotes: session.countNotes,
+      waiterBreakdown: waiterBreakdown,
     );
   }
 
@@ -368,6 +504,20 @@ class DailySummaryService {
       sessionIds: [sessionId],
     );
   }
+}
+
+/// Private mutable accumulator used by `_getSessionSummary` and
+/// `generateReport`. Surfaced as `WaiterBreakdown` (immutable) once the
+/// totals settle. Kept file-private to avoid leaking a mutable type into
+/// the rest of the codebase.
+class _WaiterAcc {
+  int ordersCount = 0;
+  double expected = 0;
+  double paid = 0;
+  double paidByCash = 0;
+  double paidByCard = 0;
+  double paidByPhone = 0;
+  double paidByOther = 0;
 }
 
 

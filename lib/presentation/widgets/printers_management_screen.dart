@@ -10,7 +10,9 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+import 'package:uuid/uuid.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/device_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
@@ -32,12 +34,24 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   final TextEditingController _ticketFooterController = TextEditingController();
   Uint8List? _logoBytes;
 
+  // Local mirrors of the printing service's per-station routing state.
+  // Refreshed from the singleton after every save so the UI re-renders.
+  List<NamedPrinter> _printerPool = [];
+  Map<int, String> _stationAssignments = {};
+
   @override
   void initState() {
     super.initState();
     _initializePrinting();
     _loadBusinessInfo();
     _loadTicketSettings();
+    _loadStationRouting();
+  }
+
+  void _loadStationRouting() {
+    final service = ref.read(printingServiceProvider);
+    _printerPool = List.of(service.printerPool);
+    _stationAssignments = Map.of(service.stationAssignments);
   }
 
   @override
@@ -755,6 +769,11 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
 
             const SizedBox(height: 24),
 
+            // Station printer routing — pool + per-station assignments
+            _buildStationPrintersCard(l10n),
+
+            const SizedBox(height: 24),
+
             // Receipt Printer
             _buildPrinterSection(
               context: context,
@@ -1099,6 +1118,24 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
       }
     }
 
+    // Source-channel filter (POS / WAITER / KIOSK / EXTERNAL). Keep the list
+    // synced with `kAllOrderSources` in printing_service.dart — adding a new
+    // source there without listing it here would silently hide it from the
+    // rule UI even though the rule engine still applies to it.
+    const sources = ['POS', 'WAITER', 'KIOSK', 'EXTERNAL'];
+    String sourceLabel(String s) {
+      switch (s) {
+        case 'POS':
+          return l10n.translate('source_pos');
+        case 'WAITER':
+          return l10n.translate('source_waiter');
+        case 'KIOSK':
+          return l10n.translate('source_kiosk');
+        default:
+          return l10n.translate('source_external');
+      }
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -1147,6 +1184,38 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                       }
                       _updateConfig(_configWithRule(
                           output, rule.copyWith(orderTypes: next)));
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(l10n.translate('order_sources'),
+                    style: const TextStyle(
+                        fontSize: 13, color: Colors.grey)),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Wrap(
+                spacing: 8,
+                children: sources.map((s) {
+                  final selected = rule.sources.contains(s);
+                  return FilterChip(
+                    label: Text(sourceLabel(s)),
+                    selected: selected,
+                    onSelected: (sel) {
+                      final next = Set<String>.from(rule.sources);
+                      if (sel) {
+                        next.add(s);
+                      } else {
+                        next.remove(s);
+                      }
+                      _updateConfig(_configWithRule(
+                          output, rule.copyWith(sources: next)));
                     },
                   );
                 }).toList(),
@@ -1693,5 +1762,565 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     );
 
     inputCtrl.dispose();
+  }
+
+  // ── Station printer routing ────────────────────────────────────────────────
+
+  Future<void> _persistPool(List<NamedPrinter> updated) async {
+    final service = ref.read(printingServiceProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+    await service.savePrinterPool(prefs, updated);
+    if (!mounted) return;
+    setState(() {
+      _printerPool = List.of(service.printerPool);
+      // savePrinterPool may have pruned stale assignments — re-read so the
+      // dropdowns stay in sync.
+      _stationAssignments = Map.of(service.stationAssignments);
+    });
+  }
+
+  Future<void> _persistAssignments(Map<int, String> updated) async {
+    final service = ref.read(printingServiceProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+    await service.saveStationAssignments(prefs, updated);
+    if (!mounted) return;
+    setState(() {
+      _stationAssignments = Map.of(service.stationAssignments);
+    });
+  }
+
+  Future<void> _openPrinterDialog({NamedPrinter? existing}) async {
+    final result = await showDialog<NamedPrinter>(
+      context: context,
+      builder: (ctx) => _NamedPrinterDialog(existing: existing),
+    );
+    if (result == null) return;
+    final updated = List<NamedPrinter>.from(_printerPool);
+    final idx = updated.indexWhere((x) => x.id == result.id);
+    if (idx >= 0) {
+      updated[idx] = result;
+    } else {
+      updated.add(result);
+    }
+    await _persistPool(updated);
+  }
+
+  Future<void> _confirmAndDeletePoolPrinter(NamedPrinter p) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('delete')),
+        content: Text('${l10n.translate('delete')}? ${p.label}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(l10n.translate('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await _persistPool(_printerPool.where((x) => x.id != p.id).toList());
+    }
+  }
+
+  Widget _buildStationPrintersCard(AppLocalizations l10n) {
+    final theme = Theme.of(context);
+    final stationsAsync = ref.watch(stationListProvider);
+
+    return _sectionCard(
+      icon: Icons.alt_route,
+      title: l10n.translate('station_printers'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            l10n.translate('station_printers_subtitle'),
+            style: TextStyle(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontSize: 15,
+            ),
+          ),
+        ),
+        if (!_config.splitKdsByStation) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    color: theme.colorScheme.onTertiaryContainer),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    l10n.translate('split_disabled_warning'),
+                    style: TextStyle(
+                      color: theme.colorScheme.onTertiaryContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        // ── Pool ──
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                l10n.translate('printer_pool'),
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+            FilledButton.tonalIcon(
+              icon: const Icon(Icons.add),
+              label: Text(l10n.translate('add_printer')),
+              onPressed: () => _openPrinterDialog(),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_printerPool.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            child: Text(
+              '—',
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          )
+        else
+          ..._printerPool.map((p) => _buildPoolRow(p, l10n, theme)),
+        const Divider(height: 32),
+        // ── Assignments ──
+        Text(
+          l10n.translate('assign_printers_to_stations'),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        stationsAsync.when(
+          loading: () => const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (e, _) => Text('Error: $e'),
+          data: (stations) {
+            if ((stations as List).isEmpty) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                child: Text(
+                  '—',
+                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              );
+            }
+            return Column(
+              children: [
+                for (final station in stations)
+                  _buildAssignmentRow(station, l10n, theme),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPoolRow(NamedPrinter p, AppLocalizations l10n, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      child: Row(
+        children: [
+          Icon(
+            p.connectionType == ConnectionType.NETWORK
+                ? Icons.lan_outlined
+                : Icons.usb,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  p.label,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${p.connectionType.name} · ${p.address}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: l10n.translate('edit'),
+            onPressed: () => _openPrinterDialog(existing: p),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: l10n.translate('delete'),
+            onPressed: () => _confirmAndDeletePoolPrinter(p),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Drift `Station` row is dynamic-typed here to avoid pulling in the
+  // app_database import — `id` and `name` are the only fields we touch.
+  Widget _buildAssignmentRow(
+    dynamic station,
+    AppLocalizations l10n,
+    ThemeData theme,
+  ) {
+    final int stationId = station.id as int;
+    final String stationName = station.name as String;
+    final String? selectedId = _stationAssignments[stationId];
+    final selectedExists =
+        selectedId != null && _printerPool.any((p) => p.id == selectedId);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: Text(
+              stationName,
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ),
+          Expanded(
+            flex: 4,
+            child: DropdownButton<String?>(
+              value: selectedExists ? selectedId : null,
+              isExpanded: true,
+              hint: Text(l10n.translate('use_default_kds_printer')),
+              items: [
+                DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text(l10n.translate('use_default_kds_printer')),
+                ),
+                for (final p in _printerPool)
+                  DropdownMenuItem<String?>(
+                    value: p.id,
+                    child: Text(
+                      p.label.isNotEmpty ? p.label : p.address,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (value) {
+                final updated = Map<int, String>.from(_stationAssignments);
+                if (value == null) {
+                  updated.remove(stationId);
+                } else {
+                  updated[stationId] = value;
+                }
+                _persistAssignments(updated);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Picker that reuses the same scan-stream + discovered-printer list that the
+/// enclosing [PrintersManagementScreen] uses (via
+/// [PrintingService.printersStream] / [PrintingService.availablePrinters] /
+/// [PrintingService.startScan]), plus a manual-network fallback. Returns the
+/// chosen [NamedPrinter] via `Navigator.pop`, or `null` on cancel.
+class _NamedPrinterDialog extends ConsumerStatefulWidget {
+  final NamedPrinter? existing;
+  const _NamedPrinterDialog({this.existing});
+
+  @override
+  ConsumerState<_NamedPrinterDialog> createState() =>
+      _NamedPrinterDialogState();
+}
+
+class _NamedPrinterDialogState extends ConsumerState<_NamedPrinterDialog> {
+  late final TextEditingController _labelCtrl;
+  late final TextEditingController _addressCtrl;
+  late final TextEditingController _nameCtrl;
+  late ConnectionType _manualType;
+  final _formKey = GlobalKey<FormState>();
+
+  List<Printer> _discovered = const [];
+  bool _isScanning = false;
+  Printer? _selectedDiscovered;
+  bool _manualMode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    _labelCtrl = TextEditingController(text: e?.label ?? '');
+    _addressCtrl = TextEditingController(text: e?.address ?? '');
+    _nameCtrl = TextEditingController(text: e?.name ?? '');
+    _manualType = e?.connectionType ?? ConnectionType.NETWORK;
+    _manualMode = e != null;
+
+    final service = ref.read(printingServiceProvider);
+    _discovered = service.availablePrinters;
+    _isScanning = service.isScanning;
+    service.printersStream.listen((list) {
+      if (mounted) setState(() => _discovered = list);
+    });
+    service.scanningStream.listen((s) {
+      if (mounted) setState(() => _isScanning = s);
+    });
+  }
+
+  @override
+  void dispose() {
+    _labelCtrl.dispose();
+    _addressCtrl.dispose();
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _startScan() async {
+    await ref.read(printingServiceProvider).startScan();
+  }
+
+  Future<void> _stopScan() async {
+    await ref.read(printingServiceProvider).stopScan();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text(
+        widget.existing == null
+            ? l10n.translate('add_printer')
+            : l10n.translate('edit'),
+      ),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextFormField(
+                  controller: _labelCtrl,
+                  decoration: InputDecoration(
+                    labelText: l10n.translate('printer_label'),
+                    prefixIcon: const Icon(Icons.label_outline),
+                    border: const OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Required' : null,
+                ),
+                const SizedBox(height: 16),
+                if (!_manualMode) ...[
+                  _buildScanControls(l10n),
+                  const SizedBox(height: 8),
+                  _buildDiscoveredList(l10n, theme),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => setState(() {
+                      _manualMode = true;
+                      _selectedDiscovered = null;
+                    }),
+                    icon: const Icon(Icons.add_link),
+                    label: Text(l10n.translate('add_network_printer_manually')),
+                  ),
+                ] else
+                  _buildManualForm(l10n),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.translate('cancel')),
+        ),
+        FilledButton(
+          onPressed: _canSave() ? _onSave : null,
+          child: Text(l10n.translate('save')),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScanControls(AppLocalizations l10n) {
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: _isScanning ? null : _startScan,
+            icon: _isScanning
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.search),
+            label: Text(_isScanning
+                ? l10n.translate('scanning')
+                : l10n.translate('start_scan')),
+          ),
+        ),
+        const SizedBox(width: 8),
+        OutlinedButton.icon(
+          onPressed: _isScanning ? _stopScan : null,
+          icon: const Icon(Icons.stop),
+          label: Text(l10n.translate('stop_scan')),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDiscoveredList(AppLocalizations l10n, ThemeData theme) {
+    if (_discovered.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        alignment: Alignment.center,
+        child: Text(
+          _isScanning
+              ? l10n.translate('scanning')
+              : l10n.translate('no_printers_found'),
+          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 240),
+      child: ListView.separated(
+        shrinkWrap: true,
+        itemCount: _discovered.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (ctx, i) {
+          final p = _discovered[i];
+          final selected = _selectedDiscovered != null &&
+              _selectedDiscovered!.address == p.address;
+          return ListTile(
+            dense: true,
+            leading: Icon(
+              p.connectionType == ConnectionType.NETWORK
+                  ? Icons.lan_outlined
+                  : Icons.usb,
+              color: selected ? theme.colorScheme.primary : null,
+            ),
+            title: Text(p.name ?? '—'),
+            subtitle: Text(
+              '${p.connectionType?.name ?? '?'} · ${p.address ?? '—'}',
+            ),
+            trailing: selected
+                ? Icon(Icons.check_circle, color: theme.colorScheme.primary)
+                : null,
+            onTap: () => setState(() => _selectedDiscovered = p),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildManualForm(AppLocalizations l10n) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.existing == null)
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TextButton.icon(
+              onPressed: () => setState(() => _manualMode = false),
+              icon: const Icon(Icons.arrow_back),
+              label: Text(l10n.translate('scan_for_printers')),
+            ),
+          ),
+        TextFormField(
+          controller: _nameCtrl,
+          decoration: InputDecoration(
+            labelText: l10n.translate('network_printer'),
+            prefixIcon: const Icon(Icons.label_outline),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _addressCtrl,
+          decoration: InputDecoration(
+            labelText: l10n.translate('ip_address'),
+            prefixIcon: const Icon(Icons.lan_outlined),
+            hintText: '192.168.1.50:9100',
+            border: const OutlineInputBorder(),
+          ),
+          validator: (v) =>
+              (v == null || v.trim().isEmpty) ? 'Required' : null,
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<ConnectionType>(
+          value: _manualType,
+          decoration: const InputDecoration(
+            labelText: 'Connection type',
+            border: OutlineInputBorder(),
+          ),
+          items: [
+            for (final t in ConnectionType.values)
+              DropdownMenuItem(value: t, child: Text(t.name)),
+          ],
+          onChanged: (v) {
+            if (v != null) setState(() => _manualType = v);
+          },
+        ),
+      ],
+    );
+  }
+
+  bool _canSave() {
+    if (_labelCtrl.text.trim().isEmpty) return false;
+    if (_manualMode) return _addressCtrl.text.trim().isNotEmpty;
+    return _selectedDiscovered != null;
+  }
+
+  void _onSave() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final id = widget.existing?.id ?? const Uuid().v4();
+    final NamedPrinter result;
+    if (_manualMode) {
+      result = NamedPrinter(
+        id: id,
+        label: _labelCtrl.text.trim(),
+        address: _addressCtrl.text.trim(),
+        name: _nameCtrl.text.trim(),
+        connectionType: _manualType,
+      );
+    } else {
+      final p = _selectedDiscovered!;
+      result = NamedPrinter(
+        id: id,
+        label: _labelCtrl.text.trim(),
+        address: p.address ?? '',
+        name: p.name ?? '',
+        connectionType: p.connectionType ?? ConnectionType.NETWORK,
+      );
+    }
+    Navigator.of(context).pop(result);
   }
 }

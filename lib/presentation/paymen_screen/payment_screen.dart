@@ -1578,9 +1578,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           orderCode: widget.order.orderCode,
           cashierName: currentUser?.firstName,
           storeName: businessName,
+          storeAddress: ref.read(sharedPreferencesProvider).getString('business_address'),
+          storePhone: ref.read(sharedPreferencesProvider).getString('business_phone'),
           customerName: widget.order.customerName,
           customerPhone: widget.order.customerPhone,
           deliveryAddress: widget.order.deliveryAddress,
+          tableName: widget.order.tableName,
+          numberOfPersons: widget.order.numberOfPersons,
         );
 
         await database.customStatement(
@@ -2191,8 +2195,14 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         orderCode: widget.order.orderCode,
         cashierName: currentUser?.firstName,
         storeName: businessName,
+        storeAddress: prefs.getString('business_address'),
+        storePhone: prefs.getString('business_phone'),
         customerName: widget.order.customerName,
         customerPhone: widget.order.customerPhone,
+        deliveryAddress: widget.order.deliveryAddress,
+        tableName: widget.order.tableName,
+        numberOfPersons: widget.order.numberOfPersons,
+        orderType: widget.order.type,
         isReprint: true,
       );
 

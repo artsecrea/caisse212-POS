@@ -64,12 +64,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   late final List<Animation<Offset>> _featureSlides;
   late final Animation<double> _shakeAnim;
 
-  static const _features = [
-    (Icons.speed_outlined, 'Fast order management'),
-    (Icons.receipt_long_outlined, 'Thermal printing'),
-    (Icons.wifi_off_outlined, 'Works fully offline'),
-    (Icons.table_restaurant_outlined, 'Table management'),
+  // Icons here, labels resolved per-build via L10n so language toggles update
+  // the brand panel without rebuilding the animation chain.
+  static const _featureIcons = [
+    Icons.speed_outlined,
+    Icons.receipt_long_outlined,
+    Icons.wifi_off_outlined,
+    Icons.table_restaurant_outlined,
   ];
+
+  static const _featureKeys = [
+    'feature_fast_orders',
+    'feature_thermal_printing',
+    'feature_works_offline',
+    'feature_table_management',
+  ];
+
+  static const int _featureCount = 4;
 
   // ── Date-based config password ─────────────────────────────────────────────
   String get _configPassword {
@@ -142,7 +153,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     );
 
     _featureFades = List.generate(
-      _features.length,
+      _featureCount,
       (i) => Tween<double>(begin: 0.0, end: 1.0).animate(
         CurvedAnimation(
           parent: _entranceCtrl,
@@ -152,7 +163,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       ),
     );
     _featureSlides = List.generate(
-      _features.length,
+      _featureCount,
       (i) => Tween<Offset>(
         begin: const Offset(-0.18, 0),
         end: Offset.zero,
@@ -300,8 +311,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     Navigator.of(context).pop(password == _configPassword);
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
                   ),
                   child: Text(l10n.translate('verify')),
                 ),
@@ -316,9 +327,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     if (verified != true) {
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
+        final cs = Theme.of(context).colorScheme;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('invalid_password_date')),
-          backgroundColor: Colors.red,
+          content: Text(
+            l10n.translate('invalid_password_date'),
+            style: TextStyle(color: cs.onError),
+          ),
+          backgroundColor: cs.error,
         ));
       }
       return;
@@ -332,55 +347,61 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.translate('server_configuration')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(l10n.translate('current_configuration'),
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 16)),
-            const SizedBox(height: 16),
-            _buildConfigRow('${l10n.translate('server_url')}:', serverUrl),
-            const SizedBox(height: 8),
-            _buildConfigRow('${l10n.translate('demo_mode')}:',
-                demoMode ? l10n.translate('yes') : l10n.translate('no')),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue[300]!),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline,
-                      color: Colors.blue[700], size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(l10n.translate('to_change_server_logout'),
+      builder: (context) {
+        final cs = Theme.of(context).colorScheme;
+        return AlertDialog(
+          title: Text(l10n.translate('server_configuration')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l10n.translate('current_configuration'),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 16),
+              _buildConfigRow('${l10n.translate('server_url')}:', serverUrl),
+              const SizedBox(height: 8),
+              _buildConfigRow('${l10n.translate('demo_mode')}:',
+                  demoMode ? l10n.translate('yes') : l10n.translate('no')),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: cs.secondaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: cs.outline.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        color: cs.onSecondaryContainer, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l10n.translate('to_change_server_logout'),
                         style: TextStyle(
-                            color: Colors.blue[700], fontSize: 12)),
-                  ),
-                ],
+                            color: cs.onSecondaryContainer, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+            ],
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: AppButtonStyles.elevatedButtonStyle(
+                backgroundColor: cs.primary,
+                foregroundColor: cs.onPrimary,
+                isLarge: true,
+              ),
+              child: const Text('OK'),
             ),
           ],
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(),
-            style: AppButtonStyles.elevatedButtonStyle(
-              backgroundColor: Theme.of(context).primaryColor,
-              foregroundColor: Colors.white,
-              isLarge: true,
-            ),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -801,7 +822,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   // ── Wide layout (desktop / landscape tablet) ───────────────────────────────
 
   Widget _buildWideLayout(BuildContext context, AppLocalizations l10n) {
-    final primary = Theme.of(context).primaryColor;
+    final primary = Theme.of(context).colorScheme.primary;
     final bg = Theme.of(context).scaffoldBackgroundColor;
 
     return Stack(
@@ -855,7 +876,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             ),
           ],
         ),
-        // Overlay buttons
+        // Overlay buttons. Exit sits over the colored brand panel (onBrand);
+        // action bar sits over the form panel's neutral background, so it
+        // needs the surface-tinted variant to keep contrast in light themes.
         Positioned(
           top: 12,
           left: 12,
@@ -864,7 +887,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         Positioned(
           top: 12,
           right: 12,
-          child: _buildActionBar(context),
+          child: _buildActionBar(context, onBrand: false),
         ),
       ],
     );
@@ -873,7 +896,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   // ── Compact layout (mobile / portrait tablet) ──────────────────────────────
 
   Widget _buildCompactLayout(BuildContext context, AppLocalizations l10n) {
-    final primary = Theme.of(context).primaryColor;
+    final primary = Theme.of(context).colorScheme.primary;
 
     return Stack(
       children: [
@@ -940,10 +963,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             ),
           ),
         ),
+        // Both sit over the colored gradient → onBrand=true.
         Positioned(
             top: 12, left: 12, child: _buildExitButton(onBrand: true)),
         Positioned(
-            top: 12, right: 12, child: _buildActionBar(context)),
+            top: 12, right: 12, child: _buildActionBar(context, onBrand: true)),
       ],
     );
   }
@@ -951,6 +975,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   // ── Brand panel ─────────────────────────────────────────────────────────────
 
   Widget _buildBrandPanel(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: const EdgeInsets.fromLTRB(40, 72, 40, 48),
       child: Column(
@@ -983,7 +1008,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Point of Sale System',
+                    l10n.translate('pos_tagline'),
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.72),
                       fontSize: 14,
@@ -996,7 +1021,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           ),
           const SizedBox(height: 48),
           // Staggered feature list
-          for (int i = 0; i < _features.length; i++)
+          for (int i = 0; i < _featureCount; i++)
             Padding(
               padding: const EdgeInsets.only(bottom: 18),
               child: FadeTransition(
@@ -1004,8 +1029,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 child: SlideTransition(
                   position: _featureSlides[i],
                   child: _FeatureItem(
-                    icon: _features[i].$1,
-                    label: _features[i].$2,
+                    icon: _featureIcons[i],
+                    label: l10n.translate(_featureKeys[i]),
                   ),
                 ),
               ),
@@ -1014,7 +1039,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           FadeTransition(
             opacity: _brandFade,
             child: Text(
-              '© 2025 Caisse212',
+              '© ${DateTime.now().year} Caisse212',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.35),
                 fontSize: 11,
@@ -1079,9 +1104,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           const SizedBox(height: 16),
 
           // ── Starting balance ──────────────────────────────────────────────
+          // Pre-filled with '0.0' in the controller, so the hint is suppressed
+          // to avoid the visible "0.0  0.0" double-render that read like a bug.
           OnscreenKeyboardTextField(
             controller: _startingBalanceController,
             keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _isLoading ? null : _handleLogin(),
             decoration: InputDecoration(
               labelText: l10n.translate('starting_balance'),
               prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
@@ -1089,7 +1118,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                   borderRadius: BorderRadius.circular(14)),
               contentPadding: const EdgeInsets.symmetric(
                   horizontal: 16, vertical: 18),
-              hintText: '0.0',
             ),
             style: const TextStyle(fontSize: 16),
           ),
@@ -1115,18 +1143,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             child: ElevatedButton(
               onPressed: _isLoading ? null : _handleLogin,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
                 elevation: 3,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14)),
               ),
               child: _isLoading
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 24,
                       height: 24,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2.5, color: Colors.white),
+                          strokeWidth: 2.5,
+                          color: Theme.of(context).colorScheme.onPrimary),
                     )
                   : Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -1184,6 +1213,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     return OnscreenKeyboardTextField(
       controller: _passwordController,
       obscureText: _obscurePassword,
+      textInputAction: TextInputAction.next,
+      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
       decoration: InputDecoration(
         labelText: '${l10n.translate('password')} *',
         prefixIcon: const Icon(Icons.lock_outline),
@@ -1204,52 +1235,66 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
   // ── Overlay buttons ────────────────────────────────────────────────────────
 
-  Widget _buildExitButton({bool onBrand = false}) {
+  Widget _buildExitButton({bool onBrand = true}) {
+    final l10n = AppLocalizations.of(context)!;
     return _GlassButton(
       onTap: _handleExitToTenant,
-      child: const Icon(Icons.exit_to_app, size: 24, color: Colors.white),
+      onBrand: onBrand,
+      tooltip: l10n.translate('exit_to_tenant'),
+      child: const Icon(Icons.exit_to_app),
     );
   }
 
-  Widget _buildActionBar(BuildContext context) {
+  Widget _buildActionBar(BuildContext context, {bool onBrand = true}) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+    final langBg = onBrand
+        ? Colors.black38
+        : cs.surfaceContainerHighest.withValues(alpha: 0.85);
+    final langIconColor = onBrand ? Colors.white : cs.onSurface;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         _GlassButton(
           onTap: _isTogglingFullscreen ? null : _toggleFullScreen,
-          child: Icon(
-            _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-            size: 24,
-            color: Colors.white,
-          ),
+          onBrand: onBrand,
+          tooltip: l10n.translate('tooltip_fullscreen'),
+          child: Icon(_isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen),
         ),
         const SizedBox(width: 6),
         _GlassButton(
           onTap: _isLoading ? null : _handleSync,
-          child: const Icon(Icons.sync, size: 24, color: Colors.white),
+          onBrand: onBrand,
+          tooltip: l10n.translate('tooltip_sync'),
+          child: const Icon(Icons.sync),
         ),
         const SizedBox(width: 6),
-        Material(
-          color: Colors.black38,
-          borderRadius: BorderRadius.circular(12),
-          child: PopupMenuButton<String>(
-            onSelected: (code) =>
-                ref.read(settingsProvider.notifier).setLanguage(code),
-            itemBuilder: (_) => [
-              _langItem('en', '🇬🇧', 'English'),
-              _langItem('fr', '🇫🇷', 'Français'),
-              _langItem('ar', '🇲🇦', 'العربية'),
-            ],
-            child: const Padding(
-              padding: EdgeInsets.all(12),
-              child: Icon(Icons.language, size: 24, color: Colors.white),
+        Tooltip(
+          message: l10n.translate('tooltip_language'),
+          child: Material(
+            color: langBg,
+            borderRadius: BorderRadius.circular(12),
+            child: PopupMenuButton<String>(
+              onSelected: (code) =>
+                  ref.read(settingsProvider.notifier).setLanguage(code),
+              itemBuilder: (_) => [
+                _langItem('en', '🇬🇧', 'English'),
+                _langItem('fr', '🇫🇷', 'Français'),
+                _langItem('ar', '🇲🇦', 'العربية'),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(Icons.language, size: 24, color: langIconColor),
+              ),
             ),
           ),
         ),
         const SizedBox(width: 6),
         _GlassButton(
           onTap: _showServerConfig,
-          child: const Icon(Icons.settings, size: 24, color: Colors.white),
+          onBrand: onBrand,
+          tooltip: l10n.translate('tooltip_server_config'),
+          child: const Icon(Icons.settings),
         ),
         const SizedBox(width: 6),
         _GlassButton(
@@ -1257,8 +1302,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             context: context,
             builder: (_) => const ReportIssueDialog(),
           ),
-          child:
-              const Icon(Icons.bug_report, size: 24, color: Colors.white),
+          onBrand: onBrand,
+          tooltip: l10n.translate('tooltip_report_issue'),
+          child: const Icon(Icons.bug_report),
         ),
       ],
     );
@@ -1343,23 +1389,25 @@ class _ErrorBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.red.shade50,
+        color: cs.errorContainer,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.red.shade300, width: 1.5),
+        border: Border.all(
+            color: cs.error.withValues(alpha: 0.4), width: 1.5),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+          Icon(Icons.error_outline, color: cs.onErrorContainer, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               message,
               style: TextStyle(
-                color: Colors.red.shade700,
+                color: cs.onErrorContainer,
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
@@ -1374,15 +1422,30 @@ class _ErrorBanner extends StatelessWidget {
 class _GlassButton extends StatelessWidget {
   final VoidCallback? onTap;
   final Widget child;
+  // `true` when the button sits over the colored brand gradient (white icons
+  // on a dark tinted bg). `false` when it sits over the form panel's neutral
+  // background — in that case use a surface-tinted bg with onSurface icons
+  // so the white-on-white contrast bug doesn't bite in light themes.
+  final bool onBrand;
+  final String? tooltip;
 
-  const _GlassButton({required this.onTap, required this.child});
+  const _GlassButton({
+    required this.onTap,
+    required this.child,
+    this.onBrand = true,
+    this.tooltip,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Opacity(
+    final cs = Theme.of(context).colorScheme;
+    final bg = onBrand
+        ? Colors.black38
+        : cs.surfaceContainerHighest.withValues(alpha: 0.85);
+    final btn = Opacity(
       opacity: onTap != null ? 1.0 : 0.45,
       child: Material(
-        color: Colors.black38,
+        color: bg,
         borderRadius: BorderRadius.circular(12),
         elevation: 2,
         child: InkWell(
@@ -1390,10 +1453,18 @@ class _GlassButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: child,
+            child: IconTheme(
+              data: IconThemeData(
+                color: onBrand ? Colors.white : cs.onSurface,
+                size: 24,
+              ),
+              child: child,
+            ),
           ),
         ),
       ),
     );
+    if (tooltip == null || tooltip!.isEmpty) return btn;
+    return Tooltip(message: tooltip!, child: btn);
   }
 }

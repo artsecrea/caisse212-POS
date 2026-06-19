@@ -845,11 +845,20 @@ class ApiService {
     }
   }
 
-  /// Acknowledges a queue item. Server saves the order and returns its ID.
-  Future<Map<String, dynamic>> acknowledgeQueueItem(int queueItemId) async {
+  /// Confirms a queue item. Backend flips state PENDING→CONFIRMED
+  /// atomically (only one terminal wins) and notifies DealUp. The
+  /// **backend does NOT save the order** — the POS is the source of
+  /// truth for order content; the local order row syncs via the regular
+  /// order endpoints.
+  ///
+  /// Returns `{queueItemId, orderCode, status: "CONFIRMED"}` on 200.
+  /// Throws [QueueItemTakenException] on 409 (another terminal already
+  /// confirmed or cancelled) so callers can drop the item from the queue
+  /// view without surfacing a generic error.
+  Future<Map<String, dynamic>> confirmQueueItem(int queueItemId) async {
     try {
       final response = await _dio.post(
-        '/pos/queue/$queueItemId/acknowledge',
+        '/pos/queue/$queueItemId/confirm',
         options: Options(headers: {
           'X-Business-Id': (getTenantId() ?? '').toString(),
         }),
@@ -859,17 +868,67 @@ class ApiService {
       }
       throw Exception('Server returned ${response.statusCode}');
     } on DioException catch (e) {
-      if (e.response?.statusCode == 400) {
-        throw Exception('Order already acknowledged');
+      if (e.response?.statusCode == 409) {
+        throw QueueItemTakenException(queueItemId);
       }
       if (e.response?.statusCode == 404) {
         throw Exception('Queue item not found');
       }
       throw Exception(
-          'Failed to acknowledge: ${e.message ?? 'Check connection.'}');
+          'Failed to confirm: ${e.message ?? 'Check connection.'}');
     } catch (e) {
-      throw Exception('Error acknowledging order: $e');
+      if (e is QueueItemTakenException) rethrow;
+      throw Exception('Error confirming order: $e');
     }
   }
+
+  /// Rejects a queue item. Backend flips state to CANCELLED and notifies
+  /// DealUp.
+  ///
+  /// Returns `{queueItemId, orderCode, status: "CANCELLED"}` on 200.
+  /// On 409 the item was already cancelled by someone else — that's
+  /// idempotent-safe, returns a synthetic success map so callers can
+  /// treat it the same way as a fresh cancel.
+  Future<Map<String, dynamic>> cancelQueueItem(int queueItemId) async {
+    try {
+      final response = await _dio.post(
+        '/pos/queue/$queueItemId/cancel',
+        options: Options(headers: {
+          'X-Business-Id': (getTenantId() ?? '').toString(),
+        }),
+      );
+      if (response.statusCode == 200) {
+        return response.data as Map<String, dynamic>;
+      }
+      throw Exception('Server returned ${response.statusCode}');
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 409) {
+        // Already cancelled — treat as success. Caller can still drop
+        // the queue item locally; the desired end state is reached.
+        return {
+          'queueItemId': queueItemId,
+          'status': 'CANCELLED',
+        };
+      }
+      if (e.response?.statusCode == 404) {
+        throw Exception('Queue item not found');
+      }
+      throw Exception(
+          'Failed to cancel: ${e.message ?? 'Check connection.'}');
+    } catch (e) {
+      throw Exception('Error cancelling order: $e');
+    }
+  }
+}
+
+/// Thrown by [ApiService.confirmQueueItem] on HTTP 409 — another POS
+/// terminal (or admin) already confirmed or cancelled this queue item.
+/// The cashier should be told the item is gone and the local queue view
+/// should drop it; no order is saved.
+class QueueItemTakenException implements Exception {
+  final int queueItemId;
+  QueueItemTakenException(this.queueItemId);
+  @override
+  String toString() => 'QueueItemTakenException(id=$queueItemId)';
 }
 

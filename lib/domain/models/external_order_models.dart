@@ -115,24 +115,30 @@ class ExternalQueueItem {
   }
 }
 
-class AcknowledgeResult {
+/// Server response shape for both confirm and cancel queue endpoints.
+///
+/// Backend no longer carries an `orderId` — the POS owns the order rows
+/// (they live in the local `orders` table and sync up via the normal
+/// order endpoints). The server only tracks queue state (`CONFIRMED`,
+/// `CANCELLED`) and forwards it to DealUp.
+///
+/// Class name kept for now to minimise churn at call sites; the field
+/// shape reflects the new contract.
+class QueueStateResult {
   final int queueItemId;
-  final String orderCode;
-  final int orderId;
-  final String status;
+  final String? orderCode;
+  final String status; // CONFIRMED | CANCELLED
 
-  const AcknowledgeResult({
+  const QueueStateResult({
     required this.queueItemId,
     required this.orderCode,
-    required this.orderId,
     required this.status,
   });
 
-  factory AcknowledgeResult.fromJson(Map<String, dynamic> j) =>
-      AcknowledgeResult(
+  factory QueueStateResult.fromJson(Map<String, dynamic> j) =>
+      QueueStateResult(
         queueItemId: j['queueItemId'] as int,
-        orderCode: j['orderCode'] as String,
-        orderId: j['orderId'] as int,
-        status: j['status'] as String? ?? 'ACKNOWLEDGED',
+        orderCode: j['orderCode'] as String?,
+        status: j['status'] as String? ?? 'CONFIRMED',
       );
 }

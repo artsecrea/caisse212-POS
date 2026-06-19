@@ -8764,6 +8764,15 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         requiredDuringInsert: false,
         defaultValue: const Constant(0.0),
       );
+  static const VerificationMeta _tipMeta = const VerificationMeta('tip');
+  @override
+  late final GeneratedColumn<double> tip = GeneratedColumn<double>(
+    'tip',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdByMeta = const VerificationMeta(
     'createdBy',
   );
@@ -8915,6 +8924,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     source,
     sourceId,
     discountPercentage,
+    tip,
     createdBy,
     takenBy,
     waiterId,
@@ -9018,6 +9028,12 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
           data['discount_percentage']!,
           _discountPercentageMeta,
         ),
+      );
+    }
+    if (data.containsKey('tip')) {
+      context.handle(
+        _tipMeta,
+        tip.isAcceptableOrUnknown(data['tip']!, _tipMeta),
       );
     }
     if (data.containsKey('created_by')) {
@@ -9159,6 +9175,10 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         DriftSqlType.double,
         data['${effectivePrefix}discount_percentage'],
       )!,
+      tip: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}tip'],
+      ),
       createdBy: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}created_by'],
@@ -9230,6 +9250,7 @@ class Order extends DataClass implements Insertable<Order> {
   final String? source;
   final int? sourceId;
   final double discountPercentage;
+  final double? tip;
   final int? createdBy;
   final int? takenBy;
   final int? waiterId;
@@ -9256,6 +9277,7 @@ class Order extends DataClass implements Insertable<Order> {
     this.source,
     this.sourceId,
     required this.discountPercentage,
+    this.tip,
     this.createdBy,
     this.takenBy,
     this.waiterId,
@@ -9295,6 +9317,9 @@ class Order extends DataClass implements Insertable<Order> {
       map['source_id'] = Variable<int>(sourceId);
     }
     map['discount_percentage'] = Variable<double>(discountPercentage);
+    if (!nullToAbsent || tip != null) {
+      map['tip'] = Variable<double>(tip);
+    }
     if (!nullToAbsent || createdBy != null) {
       map['created_by'] = Variable<int>(createdBy);
     }
@@ -9353,6 +9378,7 @@ class Order extends DataClass implements Insertable<Order> {
           ? const Value.absent()
           : Value(sourceId),
       discountPercentage: Value(discountPercentage),
+      tip: tip == null && nullToAbsent ? const Value.absent() : Value(tip),
       createdBy: createdBy == null && nullToAbsent
           ? const Value.absent()
           : Value(createdBy),
@@ -9405,6 +9431,7 @@ class Order extends DataClass implements Insertable<Order> {
       discountPercentage: serializer.fromJson<double>(
         json['discountPercentage'],
       ),
+      tip: serializer.fromJson<double?>(json['tip']),
       createdBy: serializer.fromJson<int?>(json['createdBy']),
       takenBy: serializer.fromJson<int?>(json['takenBy']),
       waiterId: serializer.fromJson<int?>(json['waiterId']),
@@ -9438,6 +9465,7 @@ class Order extends DataClass implements Insertable<Order> {
       'source': serializer.toJson<String?>(source),
       'sourceId': serializer.toJson<int?>(sourceId),
       'discountPercentage': serializer.toJson<double>(discountPercentage),
+      'tip': serializer.toJson<double?>(tip),
       'createdBy': serializer.toJson<int?>(createdBy),
       'takenBy': serializer.toJson<int?>(takenBy),
       'waiterId': serializer.toJson<int?>(waiterId),
@@ -9467,6 +9495,7 @@ class Order extends DataClass implements Insertable<Order> {
     Value<String?> source = const Value.absent(),
     Value<int?> sourceId = const Value.absent(),
     double? discountPercentage,
+    Value<double?> tip = const Value.absent(),
     Value<int?> createdBy = const Value.absent(),
     Value<int?> takenBy = const Value.absent(),
     Value<int?> waiterId = const Value.absent(),
@@ -9493,6 +9522,7 @@ class Order extends DataClass implements Insertable<Order> {
     source: source.present ? source.value : this.source,
     sourceId: sourceId.present ? sourceId.value : this.sourceId,
     discountPercentage: discountPercentage ?? this.discountPercentage,
+    tip: tip.present ? tip.value : this.tip,
     createdBy: createdBy.present ? createdBy.value : this.createdBy,
     takenBy: takenBy.present ? takenBy.value : this.takenBy,
     waiterId: waiterId.present ? waiterId.value : this.waiterId,
@@ -9525,6 +9555,7 @@ class Order extends DataClass implements Insertable<Order> {
       discountPercentage: data.discountPercentage.present
           ? data.discountPercentage.value
           : this.discountPercentage,
+      tip: data.tip.present ? data.tip.value : this.tip,
       createdBy: data.createdBy.present ? data.createdBy.value : this.createdBy,
       takenBy: data.takenBy.present ? data.takenBy.value : this.takenBy,
       waiterId: data.waiterId.present ? data.waiterId.value : this.waiterId,
@@ -9560,6 +9591,7 @@ class Order extends DataClass implements Insertable<Order> {
           ..write('source: $source, ')
           ..write('sourceId: $sourceId, ')
           ..write('discountPercentage: $discountPercentage, ')
+          ..write('tip: $tip, ')
           ..write('createdBy: $createdBy, ')
           ..write('takenBy: $takenBy, ')
           ..write('waiterId: $waiterId, ')
@@ -9591,6 +9623,7 @@ class Order extends DataClass implements Insertable<Order> {
     source,
     sourceId,
     discountPercentage,
+    tip,
     createdBy,
     takenBy,
     waiterId,
@@ -9621,6 +9654,7 @@ class Order extends DataClass implements Insertable<Order> {
           other.source == this.source &&
           other.sourceId == this.sourceId &&
           other.discountPercentage == this.discountPercentage &&
+          other.tip == this.tip &&
           other.createdBy == this.createdBy &&
           other.takenBy == this.takenBy &&
           other.waiterId == this.waiterId &&
@@ -9649,6 +9683,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
   final Value<String?> source;
   final Value<int?> sourceId;
   final Value<double> discountPercentage;
+  final Value<double?> tip;
   final Value<int?> createdBy;
   final Value<int?> takenBy;
   final Value<int?> waiterId;
@@ -9675,6 +9710,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.source = const Value.absent(),
     this.sourceId = const Value.absent(),
     this.discountPercentage = const Value.absent(),
+    this.tip = const Value.absent(),
     this.createdBy = const Value.absent(),
     this.takenBy = const Value.absent(),
     this.waiterId = const Value.absent(),
@@ -9702,6 +9738,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.source = const Value.absent(),
     this.sourceId = const Value.absent(),
     this.discountPercentage = const Value.absent(),
+    this.tip = const Value.absent(),
     this.createdBy = const Value.absent(),
     this.takenBy = const Value.absent(),
     this.waiterId = const Value.absent(),
@@ -9729,6 +9766,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Expression<String>? source,
     Expression<int>? sourceId,
     Expression<double>? discountPercentage,
+    Expression<double>? tip,
     Expression<int>? createdBy,
     Expression<int>? takenBy,
     Expression<int>? waiterId,
@@ -9756,6 +9794,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       if (source != null) 'source': source,
       if (sourceId != null) 'source_id': sourceId,
       if (discountPercentage != null) 'discount_percentage': discountPercentage,
+      if (tip != null) 'tip': tip,
       if (createdBy != null) 'created_by': createdBy,
       if (takenBy != null) 'taken_by': takenBy,
       if (waiterId != null) 'waiter_id': waiterId,
@@ -9785,6 +9824,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Value<String?>? source,
     Value<int?>? sourceId,
     Value<double>? discountPercentage,
+    Value<double?>? tip,
     Value<int?>? createdBy,
     Value<int?>? takenBy,
     Value<int?>? waiterId,
@@ -9812,6 +9852,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       source: source ?? this.source,
       sourceId: sourceId ?? this.sourceId,
       discountPercentage: discountPercentage ?? this.discountPercentage,
+      tip: tip ?? this.tip,
       createdBy: createdBy ?? this.createdBy,
       takenBy: takenBy ?? this.takenBy,
       waiterId: waiterId ?? this.waiterId,
@@ -9869,6 +9910,9 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     if (discountPercentage.present) {
       map['discount_percentage'] = Variable<double>(discountPercentage.value);
     }
+    if (tip.present) {
+      map['tip'] = Variable<double>(tip.value);
+    }
     if (createdBy.present) {
       map['created_by'] = Variable<int>(createdBy.value);
     }
@@ -9924,6 +9968,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
           ..write('source: $source, ')
           ..write('sourceId: $sourceId, ')
           ..write('discountPercentage: $discountPercentage, ')
+          ..write('tip: $tip, ')
           ..write('createdBy: $createdBy, ')
           ..write('takenBy: $takenBy, ')
           ..write('waiterId: $waiterId, ')
@@ -15024,6 +15069,15 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _pinMeta = const VerificationMeta('pin');
+  @override
+  late final GeneratedColumn<String> pin = GeneratedColumn<String>(
+    'pin',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _usernameMeta = const VerificationMeta(
     'username',
   );
@@ -15091,6 +15145,7 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
     firstName,
     lastName,
     imageUrl,
+    pin,
     username,
     passwordHash,
     isActive,
@@ -15130,6 +15185,12 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
       context.handle(
         _imageUrlMeta,
         imageUrl.isAcceptableOrUnknown(data['image_url']!, _imageUrlMeta),
+      );
+    }
+    if (data.containsKey('pin')) {
+      context.handle(
+        _pinMeta,
+        pin.isAcceptableOrUnknown(data['pin']!, _pinMeta),
       );
     }
     if (data.containsKey('username')) {
@@ -15190,6 +15251,10 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
         DriftSqlType.string,
         data['${effectivePrefix}image_url'],
       ),
+      pin: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}pin'],
+      ),
       username: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}username'],
@@ -15224,6 +15289,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
   final String firstName;
   final String? lastName;
   final String? imageUrl;
+  final String? pin;
   final String? username;
   final String? passwordHash;
   final bool isActive;
@@ -15234,6 +15300,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     required this.firstName,
     this.lastName,
     this.imageUrl,
+    this.pin,
     this.username,
     this.passwordHash,
     required this.isActive,
@@ -15250,6 +15317,9 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     }
     if (!nullToAbsent || imageUrl != null) {
       map['image_url'] = Variable<String>(imageUrl);
+    }
+    if (!nullToAbsent || pin != null) {
+      map['pin'] = Variable<String>(pin);
     }
     if (!nullToAbsent || username != null) {
       map['username'] = Variable<String>(username);
@@ -15273,6 +15343,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
       imageUrl: imageUrl == null && nullToAbsent
           ? const Value.absent()
           : Value(imageUrl),
+      pin: pin == null && nullToAbsent ? const Value.absent() : Value(pin),
       username: username == null && nullToAbsent
           ? const Value.absent()
           : Value(username),
@@ -15295,6 +15366,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
       firstName: serializer.fromJson<String>(json['firstName']),
       lastName: serializer.fromJson<String?>(json['lastName']),
       imageUrl: serializer.fromJson<String?>(json['imageUrl']),
+      pin: serializer.fromJson<String?>(json['pin']),
       username: serializer.fromJson<String?>(json['username']),
       passwordHash: serializer.fromJson<String?>(json['passwordHash']),
       isActive: serializer.fromJson<bool>(json['isActive']),
@@ -15310,6 +15382,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
       'firstName': serializer.toJson<String>(firstName),
       'lastName': serializer.toJson<String?>(lastName),
       'imageUrl': serializer.toJson<String?>(imageUrl),
+      'pin': serializer.toJson<String?>(pin),
       'username': serializer.toJson<String?>(username),
       'passwordHash': serializer.toJson<String?>(passwordHash),
       'isActive': serializer.toJson<bool>(isActive),
@@ -15323,6 +15396,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     String? firstName,
     Value<String?> lastName = const Value.absent(),
     Value<String?> imageUrl = const Value.absent(),
+    Value<String?> pin = const Value.absent(),
     Value<String?> username = const Value.absent(),
     Value<String?> passwordHash = const Value.absent(),
     bool? isActive,
@@ -15333,6 +15407,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     firstName: firstName ?? this.firstName,
     lastName: lastName.present ? lastName.value : this.lastName,
     imageUrl: imageUrl.present ? imageUrl.value : this.imageUrl,
+    pin: pin.present ? pin.value : this.pin,
     username: username.present ? username.value : this.username,
     passwordHash: passwordHash.present ? passwordHash.value : this.passwordHash,
     isActive: isActive ?? this.isActive,
@@ -15345,6 +15420,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
       firstName: data.firstName.present ? data.firstName.value : this.firstName,
       lastName: data.lastName.present ? data.lastName.value : this.lastName,
       imageUrl: data.imageUrl.present ? data.imageUrl.value : this.imageUrl,
+      pin: data.pin.present ? data.pin.value : this.pin,
       username: data.username.present ? data.username.value : this.username,
       passwordHash: data.passwordHash.present
           ? data.passwordHash.value
@@ -15362,6 +15438,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
           ..write('firstName: $firstName, ')
           ..write('lastName: $lastName, ')
           ..write('imageUrl: $imageUrl, ')
+          ..write('pin: $pin, ')
           ..write('username: $username, ')
           ..write('passwordHash: $passwordHash, ')
           ..write('isActive: $isActive, ')
@@ -15377,6 +15454,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
     firstName,
     lastName,
     imageUrl,
+    pin,
     username,
     passwordHash,
     isActive,
@@ -15391,6 +15469,7 @@ class Waiter extends DataClass implements Insertable<Waiter> {
           other.firstName == this.firstName &&
           other.lastName == this.lastName &&
           other.imageUrl == this.imageUrl &&
+          other.pin == this.pin &&
           other.username == this.username &&
           other.passwordHash == this.passwordHash &&
           other.isActive == this.isActive &&
@@ -15403,6 +15482,7 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
   final Value<String> firstName;
   final Value<String?> lastName;
   final Value<String?> imageUrl;
+  final Value<String?> pin;
   final Value<String?> username;
   final Value<String?> passwordHash;
   final Value<bool> isActive;
@@ -15413,6 +15493,7 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     this.firstName = const Value.absent(),
     this.lastName = const Value.absent(),
     this.imageUrl = const Value.absent(),
+    this.pin = const Value.absent(),
     this.username = const Value.absent(),
     this.passwordHash = const Value.absent(),
     this.isActive = const Value.absent(),
@@ -15424,6 +15505,7 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     required String firstName,
     this.lastName = const Value.absent(),
     this.imageUrl = const Value.absent(),
+    this.pin = const Value.absent(),
     this.username = const Value.absent(),
     this.passwordHash = const Value.absent(),
     this.isActive = const Value.absent(),
@@ -15435,6 +15517,7 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     Expression<String>? firstName,
     Expression<String>? lastName,
     Expression<String>? imageUrl,
+    Expression<String>? pin,
     Expression<String>? username,
     Expression<String>? passwordHash,
     Expression<bool>? isActive,
@@ -15446,6 +15529,7 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
       if (firstName != null) 'first_name': firstName,
       if (lastName != null) 'last_name': lastName,
       if (imageUrl != null) 'image_url': imageUrl,
+      if (pin != null) 'pin': pin,
       if (username != null) 'username': username,
       if (passwordHash != null) 'password_hash': passwordHash,
       if (isActive != null) 'is_active': isActive,
@@ -15459,6 +15543,7 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     Value<String>? firstName,
     Value<String?>? lastName,
     Value<String?>? imageUrl,
+    Value<String?>? pin,
     Value<String?>? username,
     Value<String?>? passwordHash,
     Value<bool>? isActive,
@@ -15470,6 +15555,7 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
       firstName: firstName ?? this.firstName,
       lastName: lastName ?? this.lastName,
       imageUrl: imageUrl ?? this.imageUrl,
+      pin: pin ?? this.pin,
       username: username ?? this.username,
       passwordHash: passwordHash ?? this.passwordHash,
       isActive: isActive ?? this.isActive,
@@ -15492,6 +15578,9 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
     }
     if (imageUrl.present) {
       map['image_url'] = Variable<String>(imageUrl.value);
+    }
+    if (pin.present) {
+      map['pin'] = Variable<String>(pin.value);
     }
     if (username.present) {
       map['username'] = Variable<String>(username.value);
@@ -15518,6 +15607,7 @@ class WaitersCompanion extends UpdateCompanion<Waiter> {
           ..write('firstName: $firstName, ')
           ..write('lastName: $lastName, ')
           ..write('imageUrl: $imageUrl, ')
+          ..write('pin: $pin, ')
           ..write('username: $username, ')
           ..write('passwordHash: $passwordHash, ')
           ..write('isActive: $isActive, ')
@@ -21355,6 +21445,7 @@ typedef $$OrdersTableCreateCompanionBuilder =
       Value<String?> source,
       Value<int?> sourceId,
       Value<double> discountPercentage,
+      Value<double?> tip,
       Value<int?> createdBy,
       Value<int?> takenBy,
       Value<int?> waiterId,
@@ -21383,6 +21474,7 @@ typedef $$OrdersTableUpdateCompanionBuilder =
       Value<String?> source,
       Value<int?> sourceId,
       Value<double> discountPercentage,
+      Value<double?> tip,
       Value<int?> createdBy,
       Value<int?> takenBy,
       Value<int?> waiterId,
@@ -21529,6 +21621,11 @@ class $$OrdersTableFilterComposer
 
   ColumnFilters<double> get discountPercentage => $composableBuilder(
     column: $table.discountPercentage,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get tip => $composableBuilder(
+    column: $table.tip,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -21742,6 +21839,11 @@ class $$OrdersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get tip => $composableBuilder(
+    column: $table.tip,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get createdBy => $composableBuilder(
     column: $table.createdBy,
     builder: (column) => ColumnOrderings(column),
@@ -21852,6 +21954,9 @@ class $$OrdersTableAnnotationComposer
     column: $table.discountPercentage,
     builder: (column) => column,
   );
+
+  GeneratedColumn<double> get tip =>
+      $composableBuilder(column: $table.tip, builder: (column) => column);
 
   GeneratedColumn<int> get createdBy =>
       $composableBuilder(column: $table.createdBy, builder: (column) => column);
@@ -22014,6 +22119,7 @@ class $$OrdersTableTableManager
                 Value<String?> source = const Value.absent(),
                 Value<int?> sourceId = const Value.absent(),
                 Value<double> discountPercentage = const Value.absent(),
+                Value<double?> tip = const Value.absent(),
                 Value<int?> createdBy = const Value.absent(),
                 Value<int?> takenBy = const Value.absent(),
                 Value<int?> waiterId = const Value.absent(),
@@ -22040,6 +22146,7 @@ class $$OrdersTableTableManager
                 source: source,
                 sourceId: sourceId,
                 discountPercentage: discountPercentage,
+                tip: tip,
                 createdBy: createdBy,
                 takenBy: takenBy,
                 waiterId: waiterId,
@@ -22068,6 +22175,7 @@ class $$OrdersTableTableManager
                 Value<String?> source = const Value.absent(),
                 Value<int?> sourceId = const Value.absent(),
                 Value<double> discountPercentage = const Value.absent(),
+                Value<double?> tip = const Value.absent(),
                 Value<int?> createdBy = const Value.absent(),
                 Value<int?> takenBy = const Value.absent(),
                 Value<int?> waiterId = const Value.absent(),
@@ -22094,6 +22202,7 @@ class $$OrdersTableTableManager
                 source: source,
                 sourceId: sourceId,
                 discountPercentage: discountPercentage,
+                tip: tip,
                 createdBy: createdBy,
                 takenBy: takenBy,
                 waiterId: waiterId,
@@ -24912,6 +25021,7 @@ typedef $$WaitersTableCreateCompanionBuilder =
       required String firstName,
       Value<String?> lastName,
       Value<String?> imageUrl,
+      Value<String?> pin,
       Value<String?> username,
       Value<String?> passwordHash,
       Value<bool> isActive,
@@ -24924,6 +25034,7 @@ typedef $$WaitersTableUpdateCompanionBuilder =
       Value<String> firstName,
       Value<String?> lastName,
       Value<String?> imageUrl,
+      Value<String?> pin,
       Value<String?> username,
       Value<String?> passwordHash,
       Value<bool> isActive,
@@ -24957,6 +25068,11 @@ class $$WaitersTableFilterComposer
 
   ColumnFilters<String> get imageUrl => $composableBuilder(
     column: $table.imageUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get pin => $composableBuilder(
+    column: $table.pin,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -25015,6 +25131,11 @@ class $$WaitersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get pin => $composableBuilder(
+    column: $table.pin,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get username => $composableBuilder(
     column: $table.username,
     builder: (column) => ColumnOrderings(column),
@@ -25061,6 +25182,9 @@ class $$WaitersTableAnnotationComposer
 
   GeneratedColumn<String> get imageUrl =>
       $composableBuilder(column: $table.imageUrl, builder: (column) => column);
+
+  GeneratedColumn<String> get pin =>
+      $composableBuilder(column: $table.pin, builder: (column) => column);
 
   GeneratedColumn<String> get username =>
       $composableBuilder(column: $table.username, builder: (column) => column);
@@ -25112,6 +25236,7 @@ class $$WaitersTableTableManager
                 Value<String> firstName = const Value.absent(),
                 Value<String?> lastName = const Value.absent(),
                 Value<String?> imageUrl = const Value.absent(),
+                Value<String?> pin = const Value.absent(),
                 Value<String?> username = const Value.absent(),
                 Value<String?> passwordHash = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
@@ -25122,6 +25247,7 @@ class $$WaitersTableTableManager
                 firstName: firstName,
                 lastName: lastName,
                 imageUrl: imageUrl,
+                pin: pin,
                 username: username,
                 passwordHash: passwordHash,
                 isActive: isActive,
@@ -25134,6 +25260,7 @@ class $$WaitersTableTableManager
                 required String firstName,
                 Value<String?> lastName = const Value.absent(),
                 Value<String?> imageUrl = const Value.absent(),
+                Value<String?> pin = const Value.absent(),
                 Value<String?> username = const Value.absent(),
                 Value<String?> passwordHash = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
@@ -25144,6 +25271,7 @@ class $$WaitersTableTableManager
                 firstName: firstName,
                 lastName: lastName,
                 imageUrl: imageUrl,
+                pin: pin,
                 username: username,
                 passwordHash: passwordHash,
                 isActive: isActive,

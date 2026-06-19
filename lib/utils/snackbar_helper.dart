@@ -2,9 +2,82 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/settings_provider.dart';
 
-/// Helper class for showing snack bars conditionally based on settings
+/// SnackBar helper.
+///
+/// Two APIs, by design:
+///
+/// 1. **`error/success/info/warning(context, message)`** — takes only a
+///    [BuildContext]. Always shows, regardless of the
+///    `settings.enableSnackBars` toggle. Uses [ColorScheme] tokens so dark
+///    mode behaves correctly. Use this for migrating raw
+///    `ScaffoldMessenger.of(context).showSnackBar(...)` calls.
+///
+/// 2. **`showSnackBar/showXxxSnackBar(context, ref, message)`** — original
+///    settings-gated API. Kept for backward compatibility with the call
+///    sites that already use it; internally now uses [ColorScheme] tokens
+///    instead of hardcoded `Colors.X.shade700`. Use for routine
+///    notifications a user might want to silence (sync started, item
+///    queued, etc.). Errors via this API still honor the toggle — if you
+///    need a "must show" error, use `error(context, ...)` instead.
 class SnackBarHelper {
-  /// Show a snack bar if enabled in settings
+  // ── New ref-free API ───────────────────────────────────────────────────────
+
+  /// Show an error. Always visible, regardless of settings. Uses
+  /// `colorScheme.error` so it adapts to dark mode.
+  static void error(
+    BuildContext context,
+    String message, {
+    Duration duration = const Duration(seconds: 4),
+    SnackBarAction? action,
+  }) {
+    _show(context, message,
+        duration: duration,
+        action: action,
+        kind: _SnackKind.error);
+  }
+
+  /// Show a success. Always visible, regardless of settings.
+  static void success(
+    BuildContext context,
+    String message, {
+    Duration duration = const Duration(seconds: 3),
+    SnackBarAction? action,
+  }) {
+    _show(context, message,
+        duration: duration,
+        action: action,
+        kind: _SnackKind.success);
+  }
+
+  /// Show an info message. Always visible, regardless of settings.
+  static void info(
+    BuildContext context,
+    String message, {
+    Duration duration = const Duration(seconds: 3),
+    SnackBarAction? action,
+  }) {
+    _show(context, message,
+        duration: duration,
+        action: action,
+        kind: _SnackKind.info);
+  }
+
+  /// Show a warning. Always visible, regardless of settings.
+  static void warning(
+    BuildContext context,
+    String message, {
+    Duration duration = const Duration(seconds: 3),
+    SnackBarAction? action,
+  }) {
+    _show(context, message,
+        duration: duration,
+        action: action,
+        kind: _SnackKind.warning);
+  }
+
+  // ── Original settings-gated API (kept for backward compat) ─────────────────
+
+  /// Show a snack bar if enabled in settings.
   static void showSnackBar(
     BuildContext context,
     WidgetRef ref,
@@ -14,25 +87,25 @@ class SnackBarHelper {
     Color? backgroundColor,
     bool isError = false,
   }) {
-    final settings = ref.read(settingsProvider);
+    if (!ref.read(settingsProvider).enableSnackBars) return;
 
-    // Only show if snack bars are enabled
-    if (!settings.enableSnackBars) {
+    if (backgroundColor != null) {
+      // Caller explicitly passed a color — honor it (legacy path).
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(message),
+        duration: duration,
+        action: action,
+        backgroundColor: backgroundColor,
+      ));
       return;
     }
-
-    final snackBar = SnackBar(
-      content: Text(message),
-      duration: duration,
-      action: action,
-      backgroundColor: backgroundColor ??
-        (isError ? Colors.red.shade700 : null),
-    );
-
-    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+    _show(context, message,
+        duration: duration,
+        action: action,
+        kind: isError ? _SnackKind.error : _SnackKind.neutral);
   }
 
-  /// Show an error snack bar if enabled in settings
+  /// Show an error snack bar if enabled in settings.
   static void showErrorSnackBar(
     BuildContext context,
     WidgetRef ref,
@@ -40,17 +113,12 @@ class SnackBarHelper {
     Duration duration = const Duration(seconds: 4),
     SnackBarAction? action,
   }) {
-    showSnackBar(
-      context,
-      ref,
-      message,
-      duration: duration,
-      action: action,
-      isError: true,
-    );
+    if (!ref.read(settingsProvider).enableSnackBars) return;
+    _show(context, message,
+        duration: duration, action: action, kind: _SnackKind.error);
   }
 
-  /// Show a success snack bar if enabled in settings
+  /// Show a success snack bar if enabled in settings.
   static void showSuccessSnackBar(
     BuildContext context,
     WidgetRef ref,
@@ -58,23 +126,12 @@ class SnackBarHelper {
     Duration duration = const Duration(seconds: 3),
     SnackBarAction? action,
   }) {
-    final settings = ref.read(settingsProvider);
-
-    if (!settings.enableSnackBars) {
-      return;
-    }
-
-    final snackBar = SnackBar(
-      content: Text(message),
-      duration: duration,
-      action: action,
-      backgroundColor: Colors.green.shade700,
-    );
-
-    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+    if (!ref.read(settingsProvider).enableSnackBars) return;
+    _show(context, message,
+        duration: duration, action: action, kind: _SnackKind.success);
   }
 
-  /// Show an info snack bar if enabled in settings
+  /// Show an info snack bar if enabled in settings.
   static void showInfoSnackBar(
     BuildContext context,
     WidgetRef ref,
@@ -82,23 +139,12 @@ class SnackBarHelper {
     Duration duration = const Duration(seconds: 3),
     SnackBarAction? action,
   }) {
-    final settings = ref.read(settingsProvider);
-
-    if (!settings.enableSnackBars) {
-      return;
-    }
-
-    final snackBar = SnackBar(
-      content: Text(message),
-      duration: duration,
-      action: action,
-      backgroundColor: Colors.blue.shade700,
-    );
-
-    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+    if (!ref.read(settingsProvider).enableSnackBars) return;
+    _show(context, message,
+        duration: duration, action: action, kind: _SnackKind.info);
   }
 
-  /// Show a warning snack bar if enabled in settings
+  /// Show a warning snack bar if enabled in settings.
   static void showWarningSnackBar(
     BuildContext context,
     WidgetRef ref,
@@ -106,20 +152,35 @@ class SnackBarHelper {
     Duration duration = const Duration(seconds: 3),
     SnackBarAction? action,
   }) {
-    final settings = ref.read(settingsProvider);
+    if (!ref.read(settingsProvider).enableSnackBars) return;
+    _show(context, message,
+        duration: duration, action: action, kind: _SnackKind.warning);
+  }
 
-    if (!settings.enableSnackBars) {
-      return;
-    }
+  // ── Internal ───────────────────────────────────────────────────────────────
 
-    final snackBar = SnackBar(
-      content: Text(message),
+  static void _show(
+    BuildContext context,
+    String message, {
+    required Duration duration,
+    required SnackBarAction? action,
+    required _SnackKind kind,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final (bg, fg) = switch (kind) {
+      _SnackKind.error => (cs.error, cs.onError),
+      _SnackKind.success => (cs.tertiary, cs.onTertiary),
+      _SnackKind.warning => (cs.tertiaryContainer, cs.onTertiaryContainer),
+      _SnackKind.info => (cs.secondary, cs.onSecondary),
+      _SnackKind.neutral => (cs.inverseSurface, cs.onInverseSurface),
+    };
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message, style: TextStyle(color: fg)),
       duration: duration,
       action: action,
-      backgroundColor: Colors.orange.shade700,
-    );
-
-    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+      backgroundColor: bg,
+    ));
   }
 }
 
+enum _SnackKind { error, success, info, warning, neutral }

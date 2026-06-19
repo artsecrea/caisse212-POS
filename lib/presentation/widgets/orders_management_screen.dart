@@ -3,6 +3,8 @@
 import 'package:drift/drift.dart' show OrderingTerm, OrderingMode, Value;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart'
+    show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../utils/admin_auth.dart';
@@ -20,8 +22,11 @@ import '../../services/permission_service.dart';
 import 'admin_mode_chip.dart';
 import 'permission_guard.dart';
 import 'order_details_dialog.dart';
+import 'waiter_settlement_dialog.dart';
 import 'external_orders_tab.dart';
 import '../paymen_screen/payment_screen.dart';
+// TEMP-TIP-HIDDEN: restore together with the commented block in _payOrder.
+// import 'tip_flow.dart';
 
 class OrdersManagementScreen extends ConsumerStatefulWidget {
   const OrdersManagementScreen({super.key});
@@ -35,6 +40,17 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   late TabController _tabController;
   // Filters
   String _statusFilter = 'ALL';
+  // ALL | DINE_IN | TAKE_AWAY | DELIVERY — matches the values stored in
+  // orders.type. ALL skips the SQL where clause.
+  String _typeFilter = 'ALL';
+  // When true, hide orders whose total is fully paid (totalPaid >= total).
+  // Applied as an in-memory post-filter in the repo because it requires
+  // comparing computed sums (tickets vs order line items).
+  bool _unpaidOnly = false;
+  // Filter orders to those whose `orders.waiterId` matches. null = no filter
+  // (show all). Drives the dropdown above the table and is the trigger for
+  // the "Settle waiter" affordance in Phase 3.
+  int? _waiterFilter;
   String _searchQuery = '';
   DateTime? _startDate;
   DateTime? _endDate;
@@ -68,6 +84,19 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   final TextEditingController _customerSearchController = TextEditingController();
   final FocusNode _customerSearchFocusNode = FocusNode();
   String? _selectedCustomerName;
+
+  /// Persistent ScrollController for the DataTable2 in `_buildOrdersTable`.
+  /// MUST live in state — allocating a fresh ScrollController on every
+  /// `build()` leaves the previous one's listeners stranded on the
+  /// InheritedNotifier (DataTable2's internal scroll-position widgets
+  /// hold refs to it), which trips
+  /// `InheritedElement.debugDeactivated`'s `_dependents.isEmpty`
+  /// assertion the next time the tree rebuilds — and then DataTable2's
+  /// intrinsic-size pass goes haywire and overflows by ~100k pixels.
+  /// Symptom showed up specifically when toggling admin mode because
+  /// `setState(() => _showAllOrders = true)` was the most common
+  /// rebuild source.
+  final ScrollController _ordersTableScrollController = ScrollController();
 
   // Customers list for filter (search results)
   List<Customer> _customers = [];
@@ -118,6 +147,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     _searchController.dispose();
     _customerSearchController.dispose();
     _customerSearchFocusNode.dispose();
+    _ordersTableScrollController.dispose();
     super.dispose();
   }
 
@@ -155,14 +185,24 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
       final currentUser = ref.read(currentUserProvider);
+      // Admin elevation bypasses both the "my orders" cashier filter and
+      // any session scoping — when an admin opens this screen they see
+      // every order across every session + every cashier, regardless of
+      // the _showAllOrders toggle state. The toggle remains the affordance
+      // for non-admin cashiers who want to peek at their colleagues'
+      // orders within their own session scope.
+      final isAdmin = ref.read(adminElevationProvider) != null;
       final result = await orderRepo.getPaginatedOrdersWithFullDetails(
         page: _currentPage,
         pageSize: _rowsPerPage,
         statusFilter: _statusFilter,
+        typeFilter: _typeFilter,
+        unpaidOnly: _unpaidOnly,
         searchQuery: _searchQuery.isNotEmpty ? _searchQuery : null,
         customerId: _selectedCustomerId,
-        cashierId: _showAllOrders ? null : currentUser?.id,
+        cashierId: isAdmin ? null : (_showAllOrders ? null : currentUser?.id),
         tableId: _selectedTableId,
+        waiterId: _waiterFilter,
         startDate: _startDate,
         endDate: _endDate,
         sortColumn: _sortColumn,
@@ -504,7 +544,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   Widget _buildSearchField(AppLocalizations l10n) {
-    return TextField(
+    return OnscreenKeyboardTextField(
       controller: _searchController,
       decoration: InputDecoration(
         hintText: l10n.translate('search_by_code_username_customer'),
@@ -571,9 +611,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   bool _hasAnyFilter() {
     return _statusFilter != 'ALL' ||
+        _typeFilter != 'ALL' ||
+        _unpaidOnly ||
         _searchQuery.isNotEmpty ||
         _selectedCustomerId != null ||
         _selectedTableId != null ||
+        _waiterFilter != null ||
         _startDate != null ||
         _endDate != null;
   }
@@ -581,6 +624,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   void _resetAllFilters() {
     setState(() {
       _statusFilter = 'ALL';
+      _typeFilter = 'ALL';
+      _unpaidOnly = false;
       _searchQuery = '';
       _searchController.clear();
       _selectedCustomerId = null;
@@ -588,6 +633,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       _customerSearchController.clear();
       _selectedTableId = null;
       _selectedTableName = null;
+      _waiterFilter = null;
       _startDate = null;
       _endDate = null;
       _customers = [];
@@ -663,7 +709,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
+                  OnscreenKeyboardTextField(
                     autofocus: true,
                     decoration: InputDecoration(
                       hintText: l10n.translate('search_tables'),
@@ -935,7 +981,162 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           _onFilterChanged();
         },
       ),
+      // Type filters — exclusive across DINE_IN / TAKE_AWAY / DELIVERY.
+      // Selecting one clears the others; deselecting reverts to ALL.
+      // Same chip pattern as the status filters above so the visual
+      // grammar stays consistent across the toolbar.
+      FilterChip(
+        label: Text(l10n.translate('dine_in'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _typeFilter == 'DINE_IN',
+        onSelected: (selected) {
+          _typeFilter = selected ? 'DINE_IN' : 'ALL';
+          _onFilterChanged();
+        },
+      ),
+      FilterChip(
+        label: Text(l10n.translate('take_away'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _typeFilter == 'TAKE_AWAY',
+        onSelected: (selected) {
+          _typeFilter = selected ? 'TAKE_AWAY' : 'ALL';
+          _onFilterChanged();
+        },
+      ),
+      FilterChip(
+        label: Text(l10n.translate('delivery'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _typeFilter == 'DELIVERY',
+        onSelected: (selected) {
+          _typeFilter = selected ? 'DELIVERY' : 'ALL';
+          _onFilterChanged();
+        },
+      ),
+      // Unpaid filter — independent toggle, not exclusive with the
+      // others. Hides orders whose tickets already cover the total.
+      FilterChip(
+        label: Text(l10n.translate('unpaid'),
+            style: const TextStyle(fontSize: 11)),
+        selected: _unpaidOnly,
+        onSelected: (selected) {
+          _unpaidOnly = selected;
+          _onFilterChanged();
+        },
+      ),
+      // Waiter dropdown — independent filter. Driving state for the
+      // "Settle waiter" affordance which appears only when a single
+      // waiter is selected.
+      _buildWaiterFilterDropdown(l10n),
+      // Settlement chip appears only when a waiter is picked. Opens the
+      // settlement dialog (cash-only batch pay + slip print).
+      if (_waiterFilter != null) _buildSettleWaiterButton(l10n),
     ];
+  }
+
+  Widget _buildSettleWaiterButton(AppLocalizations l10n) {
+    final waitersAsync = ref.watch(waitersProvider);
+    return waitersAsync.maybeWhen(
+      data: (waiters) {
+        final w = waiters.firstWhere(
+          (x) => x.id == _waiterFilter,
+          orElse: () => waiters.first,
+        );
+        if (w.id != _waiterFilter) return const SizedBox.shrink();
+        final cs = Theme.of(context).colorScheme;
+        final label = (w.lastName != null && w.lastName!.isNotEmpty)
+            ? '${w.firstName} ${w.lastName}'
+            : w.firstName;
+        return SizedBox(
+          height: 32,
+          child: ElevatedButton.icon(
+            onPressed: () async {
+              final settled = await showDialog<bool>(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => WaiterSettlementDialog(
+                  waiterId: w.id,
+                  waiterName: label,
+                ),
+              );
+              if (settled == true && mounted) _loadOrders();
+            },
+            icon: const Icon(Icons.payments, size: 14),
+            label: Text(
+              l10n.translate('settle_waiter'),
+              style: const TextStyle(fontSize: 11),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: cs.primary,
+              foregroundColor: cs.onPrimary,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              textStyle: const TextStyle(fontSize: 11),
+              minimumSize: const Size(0, 32),
+            ),
+          ),
+        );
+      },
+      orElse: () => const SizedBox.shrink(),
+    );
+  }
+
+  Widget _buildWaiterFilterDropdown(AppLocalizations l10n) {
+    final waitersAsync = ref.watch(waitersProvider);
+    return waitersAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (waiters) {
+        final activeWaiters = waiters.where((w) => w.isActive).toList()
+          ..sort((a, b) => a.firstName.compareTo(b.firstName));
+        if (activeWaiters.isEmpty) return const SizedBox.shrink();
+        final cs = Theme.of(context).colorScheme;
+        final selected = _waiterFilter != null;
+        return Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: selected
+                ? cs.secondaryContainer
+                : cs.surfaceContainerHighest.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected ? cs.primary : cs.outlineVariant,
+            ),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int?>(
+              value: _waiterFilter,
+              isDense: true,
+              icon: Icon(Icons.arrow_drop_down,
+                  size: 18, color: cs.onSurfaceVariant),
+              style: TextStyle(fontSize: 11, color: cs.onSurface),
+              hint: Text(l10n.translate('waiter'),
+                  style: const TextStyle(fontSize: 11)),
+              items: [
+                DropdownMenuItem<int?>(
+                  value: null,
+                  child: Text(l10n.translate('all_waiters'),
+                      style: const TextStyle(fontSize: 11)),
+                ),
+                ...activeWaiters.map((w) {
+                  final label = (w.lastName != null && w.lastName!.isNotEmpty)
+                      ? '${w.firstName} ${w.lastName}'
+                      : w.firstName;
+                  return DropdownMenuItem<int?>(
+                    value: w.id,
+                    child: Text(label,
+                        style: const TextStyle(fontSize: 11)),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                _waiterFilter = value;
+                _onFilterChanged();
+              },
+            ),
+          ),
+        );
+      },
+    );
   }
 
   bool _isSameDay(DateTime a, DateTime b) =>
@@ -1009,7 +1210,11 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           },
           displayStringForOption: (Customer c) => c.displayLabel,
           fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-            return TextFormField(
+            // OnscreenKeyboardTextField is the on-screen keyboard variant
+            // of the basic TextField; RawAutocomplete still drives the
+            // controller/focusNode lifecycle and listens for changes, so
+            // the suggestion list keeps working exactly as before.
+            return OnscreenKeyboardTextField(
               controller: controller,
               focusNode: focusNode,
               decoration: InputDecoration(
@@ -1031,7 +1236,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                       )
                     : null,
               ),
-              onFieldSubmitted: (_) => onFieldSubmitted(),
+              onSubmitted: (_) => onFieldSubmitted(),
             );
           },
           optionsViewBuilder: (context, onSelected, options) {
@@ -1148,7 +1353,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   Widget _buildOrderListTile(OrderFullDetails orderDetails, String currency, AppLocalizations l10n) {
     final order = orderDetails.order;
-    final needsSync = !order.isSynced;
+    // Sync state is meaningful for every status except ONHOLD — open
+    // tabs intentionally don't sync (they're not real orders yet). Same
+    // rule used in `_buildDataRow` so the two views agree on which rows
+    // show a cloud icon.
+    final isSyncRelevant = order.status != 'ONHOLD';
+    final needsSync = isSyncRelevant && !order.isSynced;
     final isZLocked = orderDetails.isZLocked;
     final isUnpaid = orderDetails.totalPaid < orderDetails.total;
 
@@ -1170,9 +1380,15 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               child: Icon(Icons.lock, size: 14, color: Colors.purple),
             )
           else if (needsSync)
-            const Icon(Icons.cloud_off, size: 14, color: Colors.orange)
-          else if (order.isSynced)
-            const Icon(Icons.cloud_done, size: 14, color: Colors.green),
+            Tooltip(
+              message: l10n.translate('not_synced'),
+              child: const Icon(Icons.cloud_off, size: 14, color: Colors.orange),
+            )
+          else if (isSyncRelevant && order.isSynced)
+            Tooltip(
+              message: l10n.translate('synced'),
+              child: const Icon(Icons.cloud_done, size: 14, color: Colors.green),
+            ),
         ],
       ),
       subtitle: Row(
@@ -1238,7 +1454,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
             horizontalMargin: 12,
             minWidth: 1200,
             fixedLeftColumns: 1,
-            scrollController: ScrollController(),
+            scrollController: _ordersTableScrollController,
             showCheckboxColumn: false,
             headingRowColor: WidgetStateProperty.all(
               Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -1285,9 +1501,14 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   DataRow _buildDataRow(OrderFullDetails orderDetails, String currency, AppLocalizations l10n) {
     final order = orderDetails.order;
-    final isCompleted = order.status == 'COMPLETED';
     final isSynced = order.isSynced;
-    final needsSync = isCompleted && !isSynced;
+    // Sync state is meaningful for every status except ONHOLD. Previous
+    // gate (`isCompleted && !isSynced`) suppressed the icon for every
+    // PENDING/PREPARING/READY/DELIVERED/CANCELED row that was actually
+    // out of sync, so the table looked clean even when half the orders
+    // were waiting to push.
+    final isSyncRelevant = order.status != 'ONHOLD';
+    final needsSync = isSyncRelevant && !isSynced;
     final isZLocked = orderDetails.isZLocked;
     final isUnpaid = orderDetails.totalPaid < orderDetails.total;
 
@@ -1295,9 +1516,15 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       onSelectChanged: (_) => isZLocked ? _showOrderDetails(order) : _editOrder(order),
       cells: [
         DataCell(
+          // Whole-cell tap target: switching from the `icon:` to the
+          // `child:` constructor wraps the child in an InkWell that
+          // fills the cell, so taps anywhere in the actions column
+          // open the menu (the InkWell also consumes the tap so the
+          // row's onSelectChanged doesn't fire).
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
             tooltip: l10n.translate('actions'),
+            padding: EdgeInsets.zero,
+            position: PopupMenuPosition.under,
             onSelected: (value) {
               if (value == 'view') _showOrderDetails(order);
               else if (value == 'pay') _payOrder(order);
@@ -1306,6 +1533,11 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               else if (value == 'cancel') _cancelOrder(order);
               else if (value == 'delete') _deleteOrder(order);
             },
+            child: const SizedBox(
+              width: double.infinity,
+              height: double.infinity,
+              child: Center(child: Icon(Icons.more_vert)),
+            ),
             itemBuilder: (context) {
               final permissionService = ref.read(permissionServiceProvider);
               final canUpdate = permissionService.hasPermission(Permissions.ordersUpdate);
@@ -1394,8 +1626,8 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 const Tooltip(
                   message: 'Z-Report locked',
                   child: Icon(Icons.lock, size: 14, color: Colors.purple),
-                ),
-              if (isCompleted && !isZLocked)
+                )
+              else if (isSyncRelevant)
                 Tooltip(
                   message: needsSync ? l10n.translate('not_synced') : l10n.translate('synced'),
                   child: Icon(
@@ -1722,8 +1954,16 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   Future<void> _payOrder(Order order) async {
     final l10n = AppLocalizations.of(context)!;
     final orderRepo = ref.read(orderRepositoryProvider);
-    final currentOrder = await orderRepo.getOrderById(order.id);
-    if (currentOrder == null) return;
+    final currentOrderRaw = await orderRepo.getOrderById(order.id);
+    if (currentOrderRaw == null) return;
+    if (!mounted) return;
+
+    // TEMP-TIP-HIDDEN: tip dialog before PaymentScreen disabled.
+    // final currentOrder = await applyTipIfEnabled(context, ref, currentOrderRaw);
+    // if (currentOrder.tip != currentOrderRaw.tip) {
+    //   await orderRepo.updateOrder(currentOrder);
+    // }
+    final currentOrder = currentOrderRaw;
     if (!mounted) return;
 
     final result = await showDialog<bool>(
@@ -1807,7 +2047,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           children: [
             Text('${l10n.translate('confirm_cancel_order')} ${order.code}?'),
             const SizedBox(height: 16),
-            TextField(
+            OnscreenKeyboardTextField(
               controller: reasonController,
               decoration: InputDecoration(
                 labelText: l10n.translate('cancellation_reason'),
@@ -2181,7 +2421,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         ),
         content: SizedBox(
           width: 400,
-          child: TextField(
+          child: OnscreenKeyboardTextField(
             controller: codeController,
             autofocus: true,
             decoration: InputDecoration(

@@ -8,6 +8,7 @@ import '../../services/printing_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import '../../utils/snackbar_helper.dart';
 
 /// Result returned to the caller when the user confirms session close.
 class CloseSessionResult {
@@ -99,28 +100,29 @@ Future<CloseSessionResult> showCloseSessionDialog({
           } catch (e) {
             setLocal(() => busy = false);
             if (ctx.mounted) {
-              ScaffoldMessenger.of(ctx).showSnackBar(
-                SnackBar(
-                  content: Text('$e'),
-                  backgroundColor: Colors.red,
-                ),
-              );
+              SnackBarHelper.error(ctx, '$e');
             }
           }
         }
 
+        final cs = Theme.of(ctx).colorScheme;
         final c = counted();
         final variance = c == null ? null : c - expected;
+        // Variance semantics:
+        //   |variance| ~ 0  → on-target  → success token
+        //   variance  < 0   → short      → error token
+        //   variance  > 0   → over       → warning token
+        // No variance yet → muted onSurfaceVariant.
         final varianceColor = variance == null
-            ? Colors.grey
+            ? cs.onSurfaceVariant
             : (variance.abs() < 0.005
-                ? Colors.green
-                : (variance < 0 ? Colors.red : Colors.orange));
+                ? cs.tertiary
+                : (variance < 0 ? cs.error : cs.secondary));
 
         return AlertDialog(
           title: Row(
             children: [
-              const Icon(Icons.point_of_sale, color: Colors.blue),
+              Icon(Icons.point_of_sale, color: cs.primary),
               const SizedBox(width: 8),
               Expanded(child: Text(l10n.translate('close_session_title'))),
             ],
@@ -135,7 +137,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.blue.withValues(alpha: 0.08),
+                      color: cs.primaryContainer.withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Column(
@@ -144,15 +146,16 @@ Future<CloseSessionResult> showCloseSessionDialog({
                         Text(l10n.translate('expected_cash'),
                             style: TextStyle(
                                 fontSize: 13,
-                                color: Colors.grey[700],
+                                color: cs.onPrimaryContainer
+                                    .withValues(alpha: 0.8),
                                 fontWeight: FontWeight.w600)),
                         const SizedBox(height: 4),
                         Text(
                           currencyFmt.format(expected),
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 28,
                               fontWeight: FontWeight.bold,
-                              color: Colors.blue),
+                              color: cs.onPrimaryContainer),
                         ),
                       ],
                     ),
@@ -176,7 +179,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
                         Text(
                           '${l10n.translate('variance')}:',
                           style: TextStyle(
-                              color: Colors.grey[700],
+                              color: cs.onSurfaceVariant,
                               fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(width: 8),
@@ -216,16 +219,17 @@ Future<CloseSessionResult> showCloseSessionDialog({
             ElevatedButton.icon(
               onPressed: busy ? null : doConfirm,
               icon: busy
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: cs.onError),
                     )
                   : const Icon(Icons.stop_circle_outlined),
               label: Text(l10n.translate('end_session_and_print_z')),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
+                backgroundColor: cs.error,
+                foregroundColor: cs.onError,
               ),
             ),
           ],

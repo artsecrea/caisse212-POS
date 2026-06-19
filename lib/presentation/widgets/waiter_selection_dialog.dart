@@ -5,6 +5,7 @@ import '../../providers/order_provider.dart';
 import '../../data/database/app_database.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import 'waiter_profile_dialog.dart';
 
 class WaiterSelectionDialog extends ConsumerStatefulWidget {
   final int? currentTableId;
@@ -49,12 +50,14 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cs = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context)!;
     final areasAsync = ref.watch(areasProvider);
     final currentOrder = ref.watch(orderProvider);
 
     return Dialog(
-      backgroundColor: Theme.of(context).dialogBackgroundColor,
+      // Drop the deprecated `dialogBackgroundColor` — M3 DialogTheme handles
+      // surface tinting for both modes automatically.
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         width: 600,
@@ -66,22 +69,20 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
             // Header
             Row(
               children: [
-                Icon(
-                  Icons.person_pin,
-                  size: 28,
-                  color: Theme.of(context).primaryColor,
-                ),
+                Icon(Icons.person_pin, size: 28, color: cs.primary),
                 const SizedBox(width: 12),
                 Text(
                   l10n.translate('select_waiter'),
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
                 const Spacer(),
-                // Unselect button if waiter is selected
+                // Unselect button if waiter is selected. Treat "remove
+                // waiter from order" as a destructive-ish action — use the
+                // M3 errorContainer pair so it stands out without going
+                // full red (which would clash with cancel/delete buttons).
                 if (currentOrder.waiterId != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
@@ -92,19 +93,17 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
                       icon: const Icon(Icons.clear, size: 18),
                       label: Text(l10n.translate('unselect')),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: isDark ? Colors.orange[800] : Colors.orange[600],
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        backgroundColor: cs.errorContainer,
+                        foregroundColor: cs.onErrorContainer,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
                         minimumSize: const Size(0, 48),
                       ),
                     ),
                   ),
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  icon: Icon(
-                    Icons.close,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
+                  icon: const Icon(Icons.close),
                 ),
               ],
             ),
@@ -140,14 +139,12 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
                               onSelected: (selected) {
                                 setState(() => _selectedAreaId = null);
                               },
-                              selectedColor: Theme.of(context).primaryColor,
-                              backgroundColor: isDark
-                                  ? Theme.of(context).colorScheme.surfaceContainerHighest
-                                  : Colors.grey[200],
+                              selectedColor: cs.primary,
+                              backgroundColor: cs.surfaceContainerHigh,
                               labelStyle: TextStyle(
                                 color: _selectedAreaId == null
-                                    ? Colors.white
-                                    : Theme.of(context).colorScheme.onSurface,
+                                    ? cs.onPrimary
+                                    : cs.onSurface,
                                 fontWeight: _selectedAreaId == null
                                     ? FontWeight.bold
                                     : FontWeight.normal,
@@ -163,14 +160,12 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
                               onSelected: (selected) {
                                 setState(() => _selectedAreaId = selected ? area.id : null);
                               },
-                              selectedColor: Theme.of(context).primaryColor,
-                              backgroundColor: isDark
-                                  ? Theme.of(context).colorScheme.surfaceContainerHighest
-                                  : Colors.grey[200],
+                              selectedColor: cs.primary,
+                              backgroundColor: cs.surfaceContainerHigh,
                               labelStyle: TextStyle(
                                 color: _selectedAreaId == area.id
-                                    ? Colors.white
-                                    : Theme.of(context).colorScheme.onSurface,
+                                    ? cs.onPrimary
+                                    : cs.onSurface,
                                 fontWeight: _selectedAreaId == area.id
                                     ? FontWeight.bold
                                     : FontWeight.normal,
@@ -190,24 +185,19 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
 
             // Search bar
             TextField(
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
               decoration: InputDecoration(
                 hintText: l10n.translate('search_waiter'),
                 hintStyle: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                  color: cs.onSurfaceVariant,
                 ),
-                prefixIcon: Icon(
-                  Icons.search,
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                ),
+                prefixIcon: Icon(Icons.search, color: cs.onSurfaceVariant),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 14),
                 filled: true,
-                fillColor: isDark
-                    ? Theme.of(context).colorScheme.surfaceContainerHighest
-                    : Colors.grey[100],
+                fillColor: cs.surfaceContainerHigh,
               ),
               onChanged: (value) {
                 setState(() => _searchQuery = value.toLowerCase());
@@ -226,6 +216,7 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
   }
 
   Widget _buildWaiterGrid(BuildContext context, WidgetRef ref, bool isDark, AppLocalizations l10n) {
+    final cs = Theme.of(context).colorScheme;
     final waitersAsync = ref.watch(waitersByAreaProvider(_selectedAreaId));
 
     return waitersAsync.when(
@@ -245,14 +236,14 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
                 Icon(
                   Icons.person_off,
                   size: 64,
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.5),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   l10n.translate('no_waiters_found'),
                   style: TextStyle(
                     fontSize: 16,
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                    color: cs.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -285,12 +276,21 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
   }
 
   Widget _buildWaiterCard(BuildContext context, WidgetRef ref, Waiter waiter, bool isDark, AppLocalizations l10n) {
+    final cs = Theme.of(context).colorScheme;
     final currentOrder = ref.watch(orderProvider);
     final isSelected = currentOrder.waiterId == waiter.id;
     final isHovered = _hoveredWaiterId == waiter.id;
     final statsAsync = ref.watch(waiterStatsProvider(waiter.id));
     final waiterAreasAsync = ref.watch(waiterAreasProvider(waiter.id));
     final currencyFormatter = ref.watch(currencyFormatterProvider);
+
+    // Tonal stat colors — semantic (orange = pending, red = owed) with
+    // shade variants so contrast stays legible in both light and dark mode.
+    final ordersHotColor =
+        isDark ? Colors.orange.shade300 : Colors.orange.shade800;
+    final ordersIdleColor = cs.onSurfaceVariant.withValues(alpha: 0.6);
+    final unpaidColor =
+        isDark ? Colors.red.shade300 : Colors.red.shade700;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hoveredWaiterId = waiter.id),
@@ -304,27 +304,53 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
             'waiterName': waiterName,
           });
         },
+        // Long-press = open the waiter profile (balance / history / settle)
+        // instead of selecting them for the current order. Resolves area
+        // names off the cached areas + waiterAreas providers so the dialog
+        // header reads "Bar · Lounge" without a fresh fetch.
+        onLongPress: () async {
+          final waiterName =
+              '${waiter.firstName} ${waiter.lastName ?? ''}'.trim();
+          final areaIds = await ref.read(waiterAreasProvider(waiter.id).future);
+          final allAreas = await ref.read(areasProvider.future);
+          final areaNames = areaIds.isEmpty
+              ? <String>[]
+              : allAreas
+                  .where((a) => areaIds.contains(a.id))
+                  .map((a) => a.name)
+                  .toList();
+          if (!context.mounted) return;
+          await showDialog<void>(
+            context: context,
+            builder: (_) => WaiterProfileDialog(
+              waiterId: waiter.id,
+              waiterName: waiterName,
+              waiterImageUrl: waiter.imageUrl,
+              areaNames: areaNames,
+            ),
+          );
+        },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           decoration: BoxDecoration(
             color: isSelected
-                ? Theme.of(context).primaryColor.withOpacity(0.15)
+                ? cs.primaryContainer.withValues(alpha: 0.6)
                 : isHovered
-                    ? Theme.of(context).colorScheme.surfaceContainerHighest
-                    : Theme.of(context).cardColor,
+                    ? cs.surfaceContainerHigh
+                    : cs.surface,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isSelected
-                  ? Theme.of(context).primaryColor
+                  ? cs.primary
                   : isHovered
-                      ? Theme.of(context).primaryColor.withOpacity(0.5)
-                      : Theme.of(context).dividerColor,
+                      ? cs.primary.withValues(alpha: 0.5)
+                      : cs.outlineVariant,
               width: isSelected ? 2.5 : 1,
             ),
             boxShadow: isHovered || isSelected
                 ? [
                     BoxShadow(
-                      color: Theme.of(context).primaryColor.withOpacity(0.2),
+                      color: cs.primary.withValues(alpha: 0.2),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),
@@ -335,37 +361,40 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Avatar
-              CircleAvatar(
-                radius: 24,
-                backgroundColor: isSelected
-                    ? Theme.of(context).primaryColor
-                    : isDark
-                        ? Colors.grey[700]
-                        : Colors.grey[300],
-                backgroundImage: waiter.imageUrl != null
-                    ? NetworkImage(waiter.imageUrl!)
-                    : null,
-                child: waiter.imageUrl == null
-                    ? Text(
-                        waiter.firstName[0].toUpperCase(),
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+              // Avatar. Guard the URL — an empty string from `imageUrl`
+              // resolves to the working directory as `file:///…` and throws
+              // "No host specified in URI" deep in NetworkImage.
+              Builder(builder: (_) {
+                final raw = waiter.imageUrl?.trim() ?? '';
+                final hasValidUrl = raw.startsWith('http://') ||
+                    raw.startsWith('https://');
+                return CircleAvatar(
+                  radius: 24,
+                  backgroundColor: isSelected
+                      ? cs.primary
+                      : cs.surfaceContainerHighest,
+                  backgroundImage:
+                      hasValidUrl ? NetworkImage(raw) : null,
+                  child: hasValidUrl
+                      ? null
+                      : Text(
+                          waiter.firstName[0].toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: isSelected ? cs.onPrimary : cs.onSurface,
+                          ),
                         ),
-                      )
-                    : null,
-              ),
+                );
+              }),
               const SizedBox(height: 6),
 
               // Name
               Text(
                 '${waiter.firstName} ${waiter.lastName ?? ''}'.trim(),
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: Theme.of(context).colorScheme.onSurface,
                 ),
                 textAlign: TextAlign.center,
                 maxLines: 1,
@@ -390,8 +419,8 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
                             Icons.receipt_long,
                             size: 12,
                             color: totalOrders > 0
-                                ? Colors.orange[700]
-                                : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                                ? ordersHotColor
+                                : ordersIdleColor,
                           ),
                           const SizedBox(width: 3),
                           Text(
@@ -400,8 +429,8 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
                               fontSize: 10,
                               fontWeight: FontWeight.w500,
                               color: totalOrders > 0
-                                  ? Colors.orange[700]
-                                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                                  ? ordersHotColor
+                                  : ordersIdleColor,
                             ),
                           ),
                         ],
@@ -413,7 +442,7 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w500,
-                            color: Colors.red[700],
+                            color: unpaidColor,
                           ),
                         ),
                       ],
@@ -439,7 +468,11 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
                         style: TextStyle(
                           fontSize: 8,
                           fontStyle: FontStyle.italic,
-                          color: Colors.green[600],
+                          // Tonal "success" tone — switches per-mode so
+                          // contrast holds against the card surface.
+                          color: isDark
+                              ? Colors.green.shade300
+                              : Colors.green.shade700,
                         ),
                         textAlign: TextAlign.center,
                       ),

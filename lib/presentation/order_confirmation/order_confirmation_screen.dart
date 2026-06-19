@@ -7,6 +7,10 @@ import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/providers/external_order_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
 import 'package:caisse212/presentation/paymen_screen/payment_screen.dart';
+import 'package:caisse212/presentation/widgets/external_customer_review_dialog.dart';
+// TEMP-TIP-HIDDEN: restore together with the two commented blocks in
+// _confirmAndPay and _confirmExternalAndPay.
+// import 'package:caisse212/presentation/widgets/tip_flow.dart';
 import 'package:caisse212/utils/app_localizations.dart';
 import 'package:caisse212/utils/currency_formatter.dart';
 import 'package:caisse212/utils/snackbar_helper.dart';
@@ -126,6 +130,17 @@ class _OrderConfirmationScreenState
           sessionId: sessionId, userId: userId, waiterId: waiterId);
       final fullOrder = await orderRepo.getOrderById(order.id);
       if (fullOrder == null) throw Exception('Order not found');
+      // TEMP-TIP-HIDDEN: tip dialog before PaymentScreen disabled.
+      // Original kept the order in a `withTip` local so it could swap
+      // for the tipped copy; with the flow hidden we go straight to
+      // fullOrder.
+      // var withTip = fullOrder;
+      // if (mounted) {
+      //   withTip = await applyTipIfEnabled(context, ref, fullOrder);
+      //   if (withTip.tip != fullOrder.tip) {
+      //     await orderRepo.updateOrder(withTip);
+      //   }
+      // }
       if (mounted) {
         Navigator.of(context).pop();
         Navigator.of(context).push(
@@ -313,31 +328,85 @@ class _OrderConfirmationScreenState
       final product = await (db.select(db.products)
             ..where((p) => p.id.equals(qi.productId)))
           .getSingleOrNull();
-      final compNames = <String>[];
+      // Variant price wins when the queue item picked a variant — variants
+      // typically have a different price than the base product (e.g. Large
+      // size, special edition). Falls back to the product price otherwise.
+      double unitPrice = product?.finalPrice ?? 0.0;
+      String? variantName;
+      if (qi.variantId != null) {
+        final variant = await (db.select(db.productVariants)
+              ..where((v) => v.id.equals(qi.variantId!)))
+            .getSingleOrNull();
+        if (variant != null) {
+          unitPrice = variant.price;
+          variantName = variant.name;
+        }
+      }
+      // Components carry their own unit price + quantity per the
+      // OrderProductComponent contract; for the display layer we surface
+      // each one's per-unit cost and sum them into a per-item components
+      // total: Σ (component.price × component.quantity).
+      final comps = <Map<String, dynamic>>[];
+      double componentsPerItem = 0.0;
       for (final c in qi.components) {
         final comp = await (db.select(db.components)
               ..where((cc) => cc.id.equals(c.componentId)))
             .getSingleOrNull();
-        if (comp != null) compNames.add('${c.quantity}× ${comp.name}');
+        if (comp == null) continue;
+        final compPrice = comp.price;
+        componentsPerItem += compPrice * c.quantity;
+        comps.add({
+          'name': comp.name,
+          'quantity': c.quantity,
+          'price': compPrice,
+        });
       }
+      // Line total = quantity × (unit price + components total per unit).
+      final lineTotal = qi.quantity * (unitPrice + componentsPerItem);
+      final displayName = variantName != null
+          ? '${product?.name ?? 'Product #${qi.productId}'} — $variantName'
+          : (product?.name ?? 'Product #${qi.productId}');
       result.add({
-        'name': product?.name ?? 'Product #${qi.productId}',
+        'name': displayName,
         'quantity': qi.quantity,
         'note': qi.note,
-        'components': compNames,
-        'price': product?.finalPrice ?? 0.0,
+        'components': comps, // List<Map> now, not List<String>
+        'unitPrice': unitPrice,
+        'lineTotal': lineTotal,
       });
     }
     return result;
   }
 
+  /// Shows the customer review dialog before the server ack runs.
+  /// Returns the resolved local customer id, or null if the cashier
+  /// cancelled (in which case the confirm should abort entirely — no
+  /// server ack, no local row, queue item stays PENDING).
+  Future<int?> _resolveExternalCustomer(ExternalQueueItem item) {
+    return showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ExternalCustomerReviewDialog(
+        suggestedName: item.order.customerName,
+        suggestedPhone: item.order.customerPhone,
+      ),
+    );
+  }
+
   Future<void> _confirmExternalOrder(ExternalQueueItem item) async {
+    final overrideClientId = await _resolveExternalCustomer(item);
+    if (overrideClientId == null) return; // cashier cancelled
+    if (!mounted) return;
     setState(() => _isConfirmingExternal = true);
     try {
       final userId = ref.read(currentUserProvider)?.id;
       final orderId = await ref
           .read(externalOrderProvider.notifier)
-          .confirm(item.id, userId: userId);
+          .confirm(
+            item.id,
+            userId: userId,
+            overrideClientId: overrideClientId,
+          );
       if (mounted) {
         if (orderId != null) {
           SnackBarHelper.showSuccessSnackBar(context, ref,
@@ -347,10 +416,23 @@ class _OrderConfirmationScreenState
             _isConfirmingExternal = false;
           });
         } else {
-          final err = ref.read(externalOrderProvider).error ??
-              'Failed to confirm order';
-          SnackBarHelper.showErrorSnackBar(context, ref, err);
-          setState(() => _isConfirmingExternal = false);
+          // The notifier sets state.error to the literal "TAKEN" sentinel
+          // for the 409-already-taken case so we can translate it; any
+          // other error string flows through verbatim.
+          final l10n = AppLocalizations.of(context)!;
+          final err = ref.read(externalOrderProvider).error;
+          if (err == 'TAKEN') {
+            SnackBarHelper.showErrorSnackBar(
+                context, ref, l10n.translate('order_already_taken'));
+            setState(() {
+              _selectedExternalItem = null;
+              _isConfirmingExternal = false;
+            });
+          } else {
+            SnackBarHelper.showErrorSnackBar(
+                context, ref, err ?? 'Failed to confirm order');
+            setState(() => _isConfirmingExternal = false);
+          }
         }
       }
     } catch (e) {
@@ -361,13 +443,72 @@ class _OrderConfirmationScreenState
     }
   }
 
-  Future<void> _confirmExternalAndPay(ExternalQueueItem item) async {
+  Future<void> _cancelExternalOrder(ExternalQueueItem item) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('reject_order')),
+        content: Text(l10n.translate('cancel_order_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          FilledButton.tonal(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red[100],
+              foregroundColor: Colors.red[900],
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(l10n.translate('reject_order')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     setState(() => _isConfirmingExternal = true);
     try {
       final userId = ref.read(currentUserProvider)?.id;
       final orderId = await ref
           .read(externalOrderProvider.notifier)
-          .confirm(item.id, userId: userId);
+          .cancel(item.id, userId: userId);
+      if (!mounted) return;
+      if (orderId != null) {
+        SnackBarHelper.showSuccessSnackBar(context, ref,
+            'Order ${item.orderCode} rejected');
+        setState(() {
+          _selectedExternalItem = null;
+          _isConfirmingExternal = false;
+        });
+      } else {
+        final err = ref.read(externalOrderProvider).error ??
+            'Failed to reject order';
+        SnackBarHelper.showErrorSnackBar(context, ref, err);
+        setState(() => _isConfirmingExternal = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
+        setState(() => _isConfirmingExternal = false);
+      }
+    }
+  }
+
+  Future<void> _confirmExternalAndPay(ExternalQueueItem item) async {
+    final overrideClientId = await _resolveExternalCustomer(item);
+    if (overrideClientId == null) return; // cashier cancelled
+    if (!mounted) return;
+    setState(() => _isConfirmingExternal = true);
+    try {
+      final userId = ref.read(currentUserProvider)?.id;
+      final orderId = await ref
+          .read(externalOrderProvider.notifier)
+          .confirm(
+            item.id,
+            userId: userId,
+            overrideClientId: overrideClientId,
+          );
       if (!mounted) return;
       if (orderId == null) {
         final err =
@@ -384,6 +525,12 @@ class _OrderConfirmationScreenState
         setState(() => _isConfirmingExternal = false);
         return;
       }
+      // TEMP-TIP-HIDDEN: tip dialog before PaymentScreen disabled.
+      // final withTip = await applyTipIfEnabled(context, ref, fullOrder);
+      // if (withTip.tip != fullOrder.tip) {
+      //   await ref.read(orderRepositoryProvider).updateOrder(withTip);
+      // }
+      if (!mounted) return;
       Navigator.of(context).pop();
       Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => PaymentScreen(order: fullOrder)));
@@ -1079,7 +1226,7 @@ class _OrderConfirmationScreenState
               ),
             ),
 
-          // Items
+          // Items + totals
           Expanded(
             child: FutureBuilder<List<Map<String, dynamic>>>(
               future: _resolveExternalItems(item),
@@ -1095,22 +1242,82 @@ class _OrderConfirmationScreenState
                             color: cs.onSurface.withValues(alpha: 0.5))),
                   );
                 }
-                return ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                  itemCount: items.length,
-                  itemBuilder: (context, i) {
-                    final it = items[i];
-                    final comps =
-                        (it['components'] as List).cast<String>();
-                    return _ItemCard(
-                      quantityLabel: '${it['quantity']}x',
-                      name: it['name'] as String,
-                      note: it['note'] as String?,
-                      chips: comps
-                          .map((c) => _CompChip(label: c))
-                          .toList(),
-                    );
-                  },
+                // Sum every item's pre-computed line total. Each line total
+                // already factors in quantity and per-item components, so the
+                // total here is the queue order's grand subtotal — no extra
+                // multiplication or component math at this level.
+                final currency = ref.read(currencySymbolProvider);
+                final orderTotal = items.fold<double>(
+                    0.0, (sum, it) => sum + (it['lineTotal'] as double));
+                return Column(
+                  children: [
+                    Expanded(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                        itemCount: items.length,
+                        itemBuilder: (context, i) {
+                          final it = items[i];
+                          final comps = (it['components'] as List)
+                              .cast<Map<String, dynamic>>();
+                          return _ItemCard(
+                            quantityLabel: '${it['quantity']}x',
+                            name: it['name'] as String,
+                            note: it['note'] as String?,
+                            // Per-line currency total to the right of the
+                            // product name. Two decimals + currency symbol
+                            // for parity with the receipt printer.
+                            trailingLabel: CurrencyFormatter.formatWithCurrency(
+                                it['lineTotal'] as double, currency),
+                            chips: comps
+                                .map((c) => _CompChip(
+                                      label: _composeComponentLabel(
+                                          c, currency),
+                                      isSpecial:
+                                          (c['isSpecial'] as bool?) ?? false,
+                                    ))
+                                .toList(),
+                          );
+                        },
+                      ),
+                    ),
+                    // Totals row — Subtotal-equivalent (no discount /
+                    // tip context on an unconfirmed external order yet).
+                    Container(
+                      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: cs.primaryContainer.withValues(alpha: 0.35),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color:
+                                cs.primary.withValues(alpha: 0.25)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.receipt_long,
+                              size: 18, color: cs.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            l10n.translate('total'),
+                            style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600),
+                          ),
+                          const Spacer(),
+                          Text(
+                            CurrencyFormatter.formatWithCurrency(
+                                orderTotal, currency),
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: cs.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -1176,6 +1383,23 @@ class _OrderConfirmationScreenState
             ],
           ),
           const SizedBox(height: 6),
+          // Reject — destructive, full-width, between the accept row and
+          // "Back to list". Red 100/900 palette signals destructive
+          // without screaming; the dialog inside `_cancelExternalOrder`
+          // is what guards against misclicks.
+          ElevatedButton.icon(
+            onPressed: _isConfirmingExternal
+                ? null
+                : () => _cancelExternalOrder(item),
+            icon: const Icon(Icons.cancel_outlined, size: 18),
+            label: Text(l10n.translate('reject_order')),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red[100],
+              foregroundColor: Colors.red[900],
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+          const SizedBox(height: 6),
           OutlinedButton.icon(
             onPressed: _isConfirmingExternal
                 ? null
@@ -1191,6 +1415,19 @@ class _OrderConfirmationScreenState
         ],
       ),
     );
+  }
+
+  /// Build a chip label for a single component: "2× Cheese (+5.00 $)"
+  /// when the component is priced, "2× Cheese" when it's free. Keeps the
+  /// chip readable on a narrow column while still surfacing the cost so
+  /// the order total adds up.
+  String _composeComponentLabel(Map<String, dynamic> c, String currency) {
+    final qty = c['quantity'] as int;
+    final name = c['name'] as String;
+    final price = (c['price'] as num?)?.toDouble() ?? 0.0;
+    if (price <= 0) return '$qty× $name';
+    final lineExtra = price * qty;
+    return '$qty× $name (+${lineExtra.toStringAsFixed(2)} $currency)';
   }
 
   String _formatTimeAgo(DateTime dt) {
