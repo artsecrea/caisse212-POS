@@ -4,6 +4,7 @@ import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' as drift;
 import '../../providers/order_provider.dart';
+import '../../providers/held_orders_provider.dart';
 import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/app_localizations.dart';
@@ -40,10 +41,10 @@ class OrderPanel extends ConsumerWidget {
   ///     `item:remove`. Reducing extra units someone added this session,
   ///     i.e. staying at or above baseline, is free.
   ///   * Brand-new cart or freshly-added (unsaved) item → always free.
-  bool _canSetQuantity(WidgetRef ref, OrderItem item, int newQty) {
+  bool _canSetQuantity(WidgetRef ref, OrderItem item, double newQty) {
     final order = ref.read(orderProvider);
     if (order.orderId == null || item.id == null) return true;
-    final saved = item.savedQuantity ?? 0;
+    final saved = item.savedQuantity ?? 0.0;
     final oldQty = item.quantity;
     final perm = ref.read(permissionServiceProvider);
     final isAdding = newQty > oldQty && newQty > saved;
@@ -60,6 +61,100 @@ class OrderPanel extends ConsumerWidget {
   void _showPermissionDenied(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context)!;
     SnackBarHelper.showErrorSnackBar(context, ref, l10n.translate('no_permission'));
+  }
+
+  /// True when removing one line would empty an order that is already persisted
+  /// in the DB. Such a removal must delete the whole order rather than leave an
+  /// empty order row behind. Unsaved (draft) carts return false — emptying them
+  /// is harmless (RAM only).
+  bool _isLastItemOfSavedOrder(WidgetRef ref) {
+    final order = ref.read(orderProvider);
+    return order.isSaved() && order.items.length <= 1;
+  }
+
+  /// Confirms and deletes the whole saved order (used when the user removes its
+  /// last item). Returns true if the order was deleted — callers must then NOT
+  /// also remove the individual item.
+  ///
+  /// Requires [Permissions.ordersDelete] (honors admin elevation); without it
+  /// the removal is blocked and the order stays intact. Reuses
+  /// [OrderRepository.deleteOrder] for the DB cascade + server delete/queue +
+  /// closed-session (Z-report) guard.
+  Future<bool> _confirmDeleteWholeOrder(
+      BuildContext context, WidgetRef ref) async {
+    final l10n = AppLocalizations.of(context)!;
+    final orderId = ref.read(orderProvider).orderId;
+    if (orderId == null) return false; // only saved orders reach here
+
+    if (!ref
+        .read(permissionServiceProvider)
+        .hasPermission(Permissions.ordersDelete)) {
+      _showPermissionDenied(context, ref);
+      return false;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.translate('delete_order')),
+        content: Text(l10n.translate('remove_last_item_deletes_order')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(l10n.translate('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return false;
+
+    try {
+      await ref.read(orderRepositoryProvider).deleteOrder(orderId);
+    } catch (e) {
+      if (context.mounted) {
+        SnackBarHelper.showErrorSnackBar(
+            context, ref, '${l10n.translate('error_deleting_order')}: $e');
+      }
+      return false;
+    }
+
+    ref.read(orderProvider.notifier).clearOrder();
+    if (context.mounted) {
+      SnackBarHelper.showSuccessSnackBar(
+          context, ref, l10n.translate('order_deleted_successfully'));
+    }
+    return true;
+  }
+
+  /// Pushes the current cart onto the RAM-hold stack and clears the panel.
+  void _holdOrder(WidgetRef ref) {
+    final current = ref.read(orderProvider);
+    if (current.items.isEmpty) return;
+    ref.read(heldOrdersProvider.notifier).update((list) => [...list, current]);
+    ref.read(orderProvider.notifier).clearOrder();
+  }
+
+  /// Restores held order at [index]. If the panel currently has items they
+  /// are auto-pushed back onto the hold stack first.
+  void _resumeHeldOrder(WidgetRef ref, int index) {
+    final held = List<CurrentOrder>.from(ref.read(heldOrdersProvider));
+    final toRestore = held.removeAt(index);
+
+    final current = ref.read(orderProvider);
+    if (current.items.isNotEmpty) {
+      held.add(current);
+    }
+
+    ref.read(heldOrdersProvider.notifier).state = held;
+    ref.read(orderProvider.notifier).loadOrder(toRestore);
   }
 
   /// The trash/clear button. Only empties the in-memory working panel; the
@@ -102,7 +197,7 @@ class OrderPanel extends ConsumerWidget {
       // Closing the dialog's qty-edit loophole: a cashier with item:modify
       // but not item:remove could otherwise type a smaller qty here and slip
       // a below-baseline reduction past the gate.
-      final newQty = result['quantity'] as int? ?? item.quantity;
+      final newQty = (result['quantity'] as num?)?.toDouble() ?? item.quantity;
       if (newQty != item.quantity &&
           !_canSetQuantity(ref, item, newQty)) {
         if (context.mounted) _showPermissionDenied(context, ref);
@@ -113,7 +208,7 @@ class OrderPanel extends ConsumerWidget {
         components: result['components'] as List<OrderItemComponent>?,
         discount: result['discount'] as double?,
         manualDiscount: result['manualDiscount'] as double?,
-        quantity: result['quantity'] as int?,
+        quantity: (result['quantity'] as num?)?.toDouble(),
         note: result['note'] as String?,
         planStartAt: result['planStartAt'] as DateTime?,
         planEndAt: result['planEndAt'] as DateTime?,
@@ -330,6 +425,7 @@ class OrderPanel extends ConsumerWidget {
                       ticketId: orderProduct.ticketId,
                       state: orderProduct.state,
                       imageUrl: product.imageUrl,
+                      unitName: product.unitName,
                     ));
                   }
                 }
@@ -374,6 +470,7 @@ class OrderPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentOrder = ref.watch(orderProvider);
+    final heldOrders = ref.watch(heldOrdersProvider);
     final currencyFormatter = ref.watch(currencyFormatterProvider);
     final l10n = AppLocalizations.of(context)!;
 
@@ -408,6 +505,14 @@ class OrderPanel extends ConsumerWidget {
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
+                // Hold button — only when panel has items
+                if (currentOrder.items.isNotEmpty)
+                  IconButton(
+                    onPressed: () => _holdOrder(ref),
+                    icon: const Icon(Icons.pause_circle_outline, size: 28),
+                    tooltip: l10n.translate('hold_order'),
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 if (currentOrder.items.isNotEmpty)
                   IconButton(
                     onPressed: () => _handleClear(context, ref),
@@ -425,10 +530,14 @@ class OrderPanel extends ConsumerWidget {
           // Order Items
           Expanded(
             child: currentOrder.items.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
+                ? LayoutBuilder(
+                    builder: (ctx, constraints) => SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints:
+                            BoxConstraints(minHeight: constraints.maxHeight),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
                         Icon(
                           Icons.shopping_cart_outlined,
                           size: 80,
@@ -464,9 +573,116 @@ class OrderPanel extends ConsumerWidget {
                             ),
                           ),
                         ),
+                        // Held RAM orders
+                        if (heldOrders.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Row(
+                              children: [
+                                Icon(Icons.pause_circle_outline,
+                                    size: 14,
+                                    color: Theme.of(context).colorScheme.primary),
+                                const SizedBox(width: 4),
+                                Text(
+                                  l10n.translate('held_orders'),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(context).colorScheme.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          ...heldOrders.asMap().entries.map((entry) {
+                            final idx = entry.key;
+                            final held = entry.value;
+                            final itemCount = held.items
+                                .fold<double>(0, (s, i) => s + i.quantity);
+                            final total = held.total;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 3),
+                              child: InkWell(
+                                onTap: () => _resumeHeldOrder(ref, idx),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary
+                                            .withValues(alpha: 0.4)),
+                                    borderRadius: BorderRadius.circular(8),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primaryContainer
+                                        .withValues(alpha: 0.2),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.shopping_cart_outlined,
+                                          size: 16,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              held.orderCode != null
+                                                  ? held.orderCode!
+                                                  : '${l10n.translate('order')} #${idx + 1}',
+                                              style: const TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600),
+                                            ),
+                                            Text(
+                                              '$itemCount ${l10n.translate('items')}',
+                                              style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Text(
+                                        currencyFormatter.format(total),
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Icon(Icons.chevron_right,
+                                          size: 16,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
                       ],
-                    ),
-                  )
+                    ),       // Column
+                  ),         // ConstrainedBox
+                ),           // SingleChildScrollView
+              )              // LayoutBuilder
                 : ListView.builder(
                     padding: const EdgeInsets.all(2),
                     itemCount: currentOrder.items.length,
@@ -485,6 +701,16 @@ class OrderPanel extends ConsumerWidget {
                             : (direction) async {
                           if (!_canEditItem(ref, item, Permissions.ordersItemRemove)) {
                             _showPermissionDenied(context, ref);
+                            return false;
+                          }
+                          // Removing the last line of a saved order would leave
+                          // an empty order in the DB — delete the whole order
+                          // instead. Always return false: the clearOrder()
+                          // rebuild removes the tile on success, and on
+                          // cancel/denied the item must stay put (returning true
+                          // would let onDismissed double-remove it).
+                          if (_isLastItemOfSavedOrder(ref)) {
+                            await _confirmDeleteWholeOrder(context, ref);
                             return false;
                           }
                           return true;
@@ -544,7 +770,7 @@ class OrderPanel extends ConsumerWidget {
                                                     border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.5)),
                                                   ),
                                                   child: Text(
-                                                    '${item.quantity}',
+                                                    formatQty(item.quantity),
                                                     style: TextStyle(
                                                       fontWeight: FontWeight.bold,
                                                       fontSize: 12,
@@ -553,17 +779,41 @@ class OrderPanel extends ConsumerWidget {
                                                   ),
                                                 )
                                               : item.isWeighedItem
-                                                  // Weighed items — show scale icon badge instead of qty tap button.
-                                                  ? Container(
-                                                      width: 36,
-                                                      height: 36,
-                                                      alignment: Alignment.center,
-                                                      decoration: BoxDecoration(
-                                                        color: Colors.teal.withValues(alpha: 0.1),
-                                                        borderRadius: BorderRadius.circular(6),
-                                                        border: Border.all(color: Colors.teal.withValues(alpha: 0.5)),
+                                                  // Weighed items — show weight badge with long-press to edit.
+                                                  ? InkWell(
+                                                      onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
+                                                      borderRadius: BorderRadius.circular(6),
+                                                      child: Container(
+                                                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                                        alignment: Alignment.center,
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.teal.withValues(alpha: 0.1),
+                                                          borderRadius: BorderRadius.circular(6),
+                                                          border: Border.all(color: Colors.teal.withValues(alpha: 0.5)),
+                                                        ),
+                                                        child: Column(
+                                                          mainAxisAlignment: MainAxisAlignment.center,
+                                                          mainAxisSize: MainAxisSize.min,
+                                                          children: [
+                                                            Text(
+                                                              formatQty(item.quantity),
+                                                              style: const TextStyle(
+                                                                color: Colors.teal,
+                                                                fontWeight: FontWeight.bold,
+                                                                fontSize: 11,
+                                                              ),
+                                                            ),
+                                                            const Text(
+                                                              'kg',
+                                                              style: TextStyle(
+                                                                color: Colors.teal,
+                                                                fontSize: 9,
+                                                              ),
+                                                            ),
+                                                          ],
+                                                        ),
                                                       ),
-                                                      child: const Icon(Icons.scale, color: Colors.teal, size: 18),
                                                     )
                                                   : InkWell(
                                                       onTap: () {
@@ -579,8 +829,8 @@ class OrderPanel extends ConsumerWidget {
                                                       onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
                                                       borderRadius: BorderRadius.circular(6),
                                                       child: Container(
-                                                        width: 36,
-                                                        height: 36,
+                                                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                                         alignment: Alignment.center,
                                                         decoration: BoxDecoration(
                                                           color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.7),
@@ -590,7 +840,7 @@ class OrderPanel extends ConsumerWidget {
                                                           ),
                                                         ),
                                                         child: Text(
-                                                          '${item.quantity}',
+                                                          formatQty(item.quantity),
                                                           style: TextStyle(
                                                             fontWeight: FontWeight.bold,
                                                             fontSize: 16,
@@ -637,6 +887,20 @@ class OrderPanel extends ConsumerWidget {
                                                   ),
                                                 ],
                                               ),
+
+                                              // Unit name label
+                                              if (item.unitName != null && item.unitName!.isNotEmpty) ...[
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  item.unitName!,
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    color: Theme.of(context).colorScheme.primary,
+                                                    fontWeight: FontWeight.w500,
+                                                    height: 1.1,
+                                                  ),
+                                                ),
+                                              ],
 
                                               // Components (Compact)
                                               if (item.components.isNotEmpty) ...[
@@ -938,16 +1202,17 @@ class OrderPanel extends ConsumerWidget {
     // Note: no up-front _canEditItem gate. The qty dialog opens for any item.
     // The decrement floor is enforced on submit via _canSetQuantity.
     final TextEditingController controller =
-        TextEditingController(text: '${item.quantity}');
+        TextEditingController(text: formatQty(item.quantity));
 
     void trySubmit() {
-      final qty = int.tryParse(controller.text);
+      final qty = double.tryParse(controller.text.replaceAll(',', '.'));
       if (qty == null || qty <= 0) return;
-      if (!_canSetQuantity(ref, item, qty)) {
+      final rounded = double.parse(qty.toStringAsFixed(3));
+      if (!_canSetQuantity(ref, item, rounded)) {
         _showPermissionDenied(context, ref);
         return;
       }
-      ref.read(orderProvider.notifier).updateItemQuantity(index, qty);
+      ref.read(orderProvider.notifier).updateItemQuantity(index, rounded);
       Navigator.pop(context);
     }
 
@@ -958,7 +1223,7 @@ class OrderPanel extends ConsumerWidget {
         content: OnscreenKeyboardTextField(
           controller: controller,
           autofocus: true, // Auto-focus to show on-screen keyboard immediately
-          keyboardType: TextInputType.number,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
           decoration: InputDecoration(

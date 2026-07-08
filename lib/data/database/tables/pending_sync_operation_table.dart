@@ -26,7 +26,7 @@ class PendingSyncOperations extends Table {
   TextColumn get updateData => text().nullable()();
 
   /// Timestamp when the operation was queued
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
 
   /// Number of retry attempts
   IntColumn get retryCount => integer().withDefault(const Constant(0))();

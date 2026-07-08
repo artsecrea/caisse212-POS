@@ -23,6 +23,7 @@ class PendingOperationsService {
           entityType: 'ORDER',
           entityId: entityId,
           updateData: Value(jsonEncode({'_orderCode': orderCode})),
+          createdAt: Value(DateTime.now()),
         ),
       );
       _logger.info('Queued DELETE operation for ORDER code=$orderCode');
@@ -46,6 +47,7 @@ class PendingOperationsService {
           entityType: 'TICKET',
           entityId: entityId,
           updateData: Value(jsonEncode({'_orderCode': orderCode, '_ticketNum': ticketNum})),
+          createdAt: Value(DateTime.now()),
         ),
       );
       _logger.info('Queued DELETE operation for TICKET orderCode=$orderCode, ticketNum=$ticketNum');
@@ -67,6 +69,7 @@ class PendingOperationsService {
           entityType: 'SESSION',
           entityId: entityId,
           updateData: Value(jsonEncode({'_sessionCode': sessionCode})),
+          createdAt: Value(DateTime.now()),
         ),
       );
       _logger.info('Queued DELETE operation for SESSION code=$sessionCode');
@@ -92,6 +95,7 @@ class PendingOperationsService {
           entityType: 'SESSION',
           entityId: entityId,
           updateData: Value(jsonEncode(dataWithMeta)),
+          createdAt: Value(DateTime.now()),
         ),
       );
       _logger.info('Queued UPDATE operation for SESSION code=$sessionCode');
@@ -125,6 +129,7 @@ class PendingOperationsService {
           entityId: entityId,
           serverId: Value(serverId),
           updateData: metaData != null ? Value(jsonEncode(metaData)) : const Value.absent(),
+          createdAt: Value(DateTime.now()),
         ),
       );
       _logger.info('Queued DELETE operation for $entityType #$entityId');
@@ -151,6 +156,7 @@ class PendingOperationsService {
           entityType: 'ORDER',
           entityId: entityId,
           updateData: Value(jsonEncode(dataWithMeta)),
+          createdAt: Value(DateTime.now()),
         ),
       );
       _logger.info('Queued UPDATE operation for ORDER code=$orderCode');
@@ -179,6 +185,7 @@ class PendingOperationsService {
           entityType: 'TICKET',
           entityId: entityId,
           updateData: Value(jsonEncode(dataWithMeta)),
+          createdAt: Value(DateTime.now()),
         ),
       );
       _logger.info('Queued UPDATE operation for TICKET orderCode=$orderCode, ticketNum=$ticketNum');
@@ -210,6 +217,7 @@ class PendingOperationsService {
           entityId: entityId,
           serverId: Value(serverId),
           updateData: Value(jsonEncode(dataWithMeta)),
+          createdAt: Value(DateTime.now()),
         ),
       );
       _logger.info('Queued UPDATE operation for $entityType #$entityId');

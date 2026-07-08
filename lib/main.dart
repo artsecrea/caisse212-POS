@@ -2,12 +2,14 @@ import 'dart:io';
 import 'dart:async';
 import 'package:caisse212/presentation/widgets/printers_management_screen.dart';
 import 'package:caisse212/providers/desktop_update_provider.dart';
+import 'package:caisse212/services/update_service.dart';
 import 'package:caisse212/providers/localization_provider.dart';
 import 'package:caisse212/services/discovery_service.dart';
 import 'package:caisse212/services/sound_service.dart';
 import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,6 +35,12 @@ import 'presentation/login_screen/login_screen.dart';
 import 'presentation/main_screen/main_screen.dart';
 import 'providers/database_providers.dart';
 import 'providers/settings_provider.dart';import 'utils/app_localizations.dart';
+import 'services/app_exit_service.dart';
+
+/// Global navigator key — lets the desktop window-close handler (which runs
+/// outside any widget's build context) obtain a dialog-capable context to drive
+/// the app-exit flow.
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   // Initialize Flutter bindings in the root zone to avoid zone mismatch.
@@ -49,6 +57,10 @@ void main() async {
     _logError('PlatformError', error, stack);
     return false;
   };
+
+  // Apply any prepared update before the UI starts.
+  // If an update is ready, this launches the updater script and calls exit(0).
+  await UpdateService.applyPendingUpdateIfExists();
 
   // Call directly (same zone as ensureInitialized) to avoid zone mismatch.
   await _initializeApp();
@@ -85,28 +97,33 @@ class _BootScreen extends StatelessWidget {
 }
 
 Future<void> _initializeApp() async {
-    // Show a loading screen immediately to prevent blank white screen
-    runApp(const _BootScreen());
+    final isDesktop =
+        !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
 
-    // Initialize window manager for desktop platforms. We open the window
-    // maximized (filling the workArea) rather than borderless fullscreen so
-    // the OS title-bar and taskbar stay visible.
-    if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+    // Initialize window_manager so later calls work (the fullscreen toggle in
+    // the login screen, focus below). We deliberately do NOT resize or maximize
+    // the window from Dart: the native runner creates it already maximized (see
+    // win32_window.cpp), so the Flutter engine's view is built at the final size
+    // and there is no startup resize. Maximizing from Dart here would resize the
+    // window after the engine view already exists, which renders the UI at the
+    // old default size inside a full-screen window (compressed UI + black area)
+    // until a manual resize.
+    if (isDesktop) {
       try {
         await windowManager.ensureInitialized();
-        await windowManager.waitUntilReadyToShow(null, () async {
-          await windowManager.show();
-          await windowManager.maximize();
-          await windowManager.focus();
-        }).timeout(
-          const Duration(seconds: 5),
-          onTimeout: () {
-            debugPrint('⚠️ Window manager timed out, continuing anyway');
-          },
-        );
       } catch (e) {
         debugPrint('Window manager init failed: $e');
       }
+    }
+
+    // Show a loading screen immediately to prevent a blank white screen. Its
+    // first frame triggers the native show — the window is already maximized.
+    runApp(const _BootScreen());
+
+    // Bring the window to the foreground once it is shown. Fire-and-forget so
+    // it never blocks startup.
+    if (isDesktop) {
+      unawaited(windowManager.focus());
     }
 
 
@@ -337,13 +354,28 @@ class MyApp extends ConsumerStatefulWidget {
   ConsumerState<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
+class _MyAppState extends ConsumerState<MyApp>
+    with WidgetsBindingObserver, WindowListener {
 
   final logger = Logger.instance;
+
+  /// True while [onWindowClose] is driving the exit flow — guards against the
+  /// user clicking the window's X repeatedly and stacking dialogs.
+  bool _handlingExit = false;
+
+  bool get _isDesktop =>
+      !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Desktop: intercept the OS window-close (X) so we can confirm, offer to
+    // close the cash session, and sync before actually destroying the window.
+    if (_isDesktop) {
+      windowManager.addListener(this);
+      unawaited(windowManager.setPreventClose(true));
+    }
     // Initialize server after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
@@ -387,8 +419,34 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    if (_isDesktop) windowManager.removeListener(this);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// Desktop window-close (X) handler. Because we set `preventClose = true`,
+  /// the window won't close on its own — we run the shared exit flow and only
+  /// destroy the window if the user confirms.
+  @override
+  void onWindowClose() async {
+    if (_handlingExit) return;
+    _handlingExit = true;
+    try {
+      final ctx = appNavigatorKey.currentContext;
+      // No context yet (still booting) → just let it close.
+      final shouldExit = ctx == null ? true : await runAppExitFlow(ctx, ref);
+      if (shouldExit) {
+        await windowManager.setPreventClose(false);
+        await windowManager.destroy();
+      }
+    } catch (e) {
+      logger.error('Window-close exit flow failed: $e');
+      // Don't trap the user — allow the close.
+      await windowManager.setPreventClose(false);
+      await windowManager.destroy();
+    } finally {
+      _handlingExit = false;
+    }
   }
 
   @override
@@ -483,6 +541,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     final app = MaterialApp(
       title: 'caisse212',
+      navigatorKey: appNavigatorKey,
       builder: (context, child) {
         // Update localization provider whenever context changes
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -520,6 +579,24 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
               result,
               UpdateDialogListener(controller: desktopUpdaterController),
             ],
+          );
+        }
+
+        // Mobile back-to-exit: this PopScope sits ABOVE the Navigator, so
+        // in-app back is handled by the Navigator first and only a root-level
+        // back (nothing left to pop) bubbles up here to run the exit flow.
+        if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+          result = PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, _) async {
+              if (didPop) return;
+              final ctx = appNavigatorKey.currentContext ?? context;
+              final shouldExit = await runAppExitFlow(ctx, ref);
+              if (shouldExit) {
+                await SystemNavigator.pop();
+              }
+            },
+            child: result,
           );
         }
 

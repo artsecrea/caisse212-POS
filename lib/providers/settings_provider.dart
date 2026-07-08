@@ -78,6 +78,10 @@ class SettingsKeys {
   // Ticket printing settings
   static const String ticketHeader = 'ticket_header';
   static const String ticketFooter = 'ticket_footer';
+
+  // Favorites & sort
+  static const String showFavoritesCategory = 'show_favorites_category';
+  static const String sortByLastUsed = 'sort_by_last_used';
 }
 
 // Settings Notifier
@@ -209,6 +213,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       productCardSize: _prefs.getInt(SettingsKeys.productCardSize) ?? 2,
       ticketHeader: _prefs.getString(SettingsKeys.ticketHeader) ?? '',
       ticketFooter: _prefs.getString(SettingsKeys.ticketFooter) ?? '',
+      showFavoritesCategory: _prefs.getBool(SettingsKeys.showFavoritesCategory) ?? false,
+      sortByLastUsed: _prefs.getBool(SettingsKeys.sortByLastUsed) ?? false,
     );
   }
 
@@ -491,6 +497,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setTicketFooter(String footer) async {
     await _prefs.setString(SettingsKeys.ticketFooter, footer);
     state = state.copyWith(ticketFooter: footer);
+  }
+
+  Future<void> setShowFavoritesCategory(bool value) async {
+    await _prefs.setBool(SettingsKeys.showFavoritesCategory, value);
+    state = state.copyWith(showFavoritesCategory: value);
+  }
+
+  Future<void> setSortByLastUsed(bool value) async {
+    await _prefs.setBool(SettingsKeys.sortByLastUsed, value);
+    state = state.copyWith(sortByLastUsed: value);
   }
 
   /// Get the last data clear date

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../providers/settings_provider.dart';
+import '../../utils/currency_formatter.dart';
 import '../../utils/responsive_utils.dart';
 
 /// Model for Web Order Response (from API)
@@ -84,7 +85,7 @@ class WebOrderProductResponse {
   final String? productName;
   final String? stationName;
   final int? stationId;
-  final int quantity;
+  final double quantity;
   final double? price;
   final double? discountAmount;
   final double? manualDiscountAmount;
@@ -114,7 +115,7 @@ class WebOrderProductResponse {
       productName: json['productName'] as String?,
       stationName: json['stationName'] as String?,
       stationId: json['stationId'] as int?,
-      quantity: json['quantity'] as int,
+      quantity: (json['quantity'] as num?)?.toDouble() ?? 1.0,
       price: json['price'] != null ? (json['price'] as num).toDouble() : null,
       discountAmount: json['discountAmount'] != null ? (json['discountAmount'] as num).toDouble() : null,
       manualDiscountAmount: json['manualDiscountAmount'] != null ? (json['manualDiscountAmount'] as num).toDouble() : null,
@@ -150,7 +151,7 @@ class WebOrderProductOptionResponse {
       id: json['id'] as int,
       componentId: json['componentId'] as int,
       componentName: json['componentName'] as String?,
-      quantity: json['quantity'] as int,
+      quantity: (json['quantity'] as num?)?.toInt() ?? 1,
       isSpecial: json['isSpecial'] as bool? ?? false,
       price: json['price'] != null ? (json['price'] as num).toDouble() : null,
     );
@@ -419,7 +420,7 @@ class OrderDetailsDialog extends ConsumerWidget {
                   ),
                   child: Center(
                     child: Text(
-                      'x${product.quantity}',
+                      'x${formatQty(product.quantity)}',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: Theme.of(context).colorScheme.onPrimaryContainer,

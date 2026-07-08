@@ -3,6 +3,7 @@ import 'package:loggecrea/loggecrea.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'data_sync_service.dart';
 import 'activity_log_service.dart';
+import 'identity_fix_service.dart';
 
 /// Service that runs periodic sync jobs
 class SyncJobService {
@@ -10,6 +11,7 @@ class SyncJobService {
   final SharedPreferences _prefs;
   final bool Function() _isOnlineCallback;
   final ActivityLogService? _activityLog;
+  final IdentityFixService? _identityFix;
   final _logger = Logger.instance;
 
   Timer? _syncTimer;
@@ -23,7 +25,7 @@ class SyncJobService {
   static const String _bulkSyncSizeKey = 'bulk_sync_size';
 
   SyncJobService(this._syncService, this._prefs, this._isOnlineCallback,
-      [this._activityLog]);
+      [this._activityLog, this._identityFix]);
 
   /// Start the periodic sync job
   void start() {
@@ -77,6 +79,15 @@ class SyncJobService {
     _logger.info('Running sync job...');
 
     try {
+      // 0. Repair tenant/business identity BEFORE anything is pushed, so the
+      //    request headers (X-Tenant-ID) and any server-side scoping use the
+      //    corrected ids for the rest of this cycle. Guarded + non-blocking:
+      //    it self-skips once applied and never throws.
+      final identityFix = _identityFix;
+      if (identityFix != null) {
+        await identityFix.ensureIdentityBackfilled();
+      }
+
       // 1. Clear old synced data if enabled and needed
       await _clearOldDataIfNeeded();
 
@@ -110,6 +121,9 @@ class SyncJobService {
         _logger.info('Synced $customersSynced customers');
       }
 
+      // 7. Pull server-side deltas (admin edits, tombstones)
+      await _syncService.pullAllDeltas(_prefs);
+
       _logger.info('Sync job completed');
     } catch (e) {
       _logger.error('Sync job failed: $e');
@@ -141,6 +155,7 @@ class SyncJobService {
 
     if (shouldClear) {
       final retentionDays = _prefs.getInt(_dataRetentionDaysKey) ?? 7;
+      if (retentionDays <= 0) return; // 0 = never purge
       _logger.info('Clearing synced data older than $retentionDays days');
 
       try {

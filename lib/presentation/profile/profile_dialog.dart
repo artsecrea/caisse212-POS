@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:drift/drift.dart' show Value;
@@ -304,7 +305,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
 
                     if (_isEditingDisplayName) ...[
                       const SizedBox(height: 12),
-                      TextField(
+                      OnscreenKeyboardTextField(
                         controller: _displayNameController,
                         decoration: InputDecoration(
                           labelText: l10n.translate('display_name'),
@@ -396,7 +397,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                       const SizedBox(height: 12),
 
                       // Current Password
-                      TextField(
+                      OnscreenKeyboardTextField(
                         controller: _currentPasswordController,
                         obscureText: _obscureCurrent,
                         decoration: InputDecoration(
@@ -416,7 +417,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                       const SizedBox(height: 12),
 
                       // New Password
-                      TextField(
+                      OnscreenKeyboardTextField(
                         controller: _newPasswordController,
                         obscureText: _obscureNew,
                         decoration: InputDecoration(
@@ -436,7 +437,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                       const SizedBox(height: 12),
 
                       // Confirm Password
-                      TextField(
+                      OnscreenKeyboardTextField(
                         controller: _confirmPasswordController,
                         obscureText: _obscureConfirm,
                         decoration: InputDecoration(

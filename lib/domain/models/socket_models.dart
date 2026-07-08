@@ -105,7 +105,7 @@ class SocketOrderProductModel {
   final int? variantId;
   final String productName;
   final String? imageUrl;
-  final int quantity;
+  final double quantity;
   final double unitaryPrice;
   final String state;
   final int? stationId;
@@ -158,7 +158,7 @@ class SocketOrderProductModel {
       variantId: json['variantId'] as int?,
       productName: json['productName'] as String? ?? '',
       imageUrl: json['imageUrl'] as String?,
-      quantity: json['quantity'] as int? ?? 1,
+      quantity: (json['quantity'] as num?)?.toDouble() ?? 1.0,
       tvaAmount: (json['tvaAmount'] as num?)?.toDouble(),
       discountAmount: (json['discountAmount'] as num?)?.toDouble(),
       unitaryPrice: (json['unitaryPrice'] as num? ?? json['unitPrice'] as num? ?? 0).toDouble(),
@@ -399,7 +399,7 @@ extension SocketOrderProductToCurrentOrderItem on SocketOrderProductModel {
       variantId: variantId,
       imageUrl: imageUrl,
       finalPrice: unitaryPrice,
-      quantity: quantity,
+      quantity: quantity.toDouble(),
       note: note,
       tva: tvaAmount ?? 0,
       discount: discountAmount ?? 0,

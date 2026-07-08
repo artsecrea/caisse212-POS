@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:loggecrea/loggecrea.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:caisse212/providers/stat_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
@@ -14,15 +15,18 @@ import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
+import '../../services/app_exit_service.dart';
 import '../../utils/admin_auth.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/responsive_utils.dart';
 import '../settings/settings_screen.dart';
 import '../profile/profile_dialog.dart';
+import '../../providers/held_orders_provider.dart';
 import 'admin_mode_chip.dart';
 import 'close_session_dialog.dart';
 import 'report_issue_dialog.dart';
+import 'sync_inspector_dialog.dart';
 
 class TopBar extends ConsumerStatefulWidget {
   const TopBar({Key? key}) : super(key: key);
@@ -32,6 +36,7 @@ class TopBar extends ConsumerStatefulWidget {
 }
 
 class _TopBarState extends ConsumerState<TopBar> {
+  final _logger = Logger.instance;
   bool _isOnline = true;
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
@@ -317,7 +322,9 @@ class _TopBarState extends ConsumerState<TopBar> {
                 _buildSessionInfoRow(l10n?.translate('tickets') ?? 'Tickets', '${summary.ticketCount}'),
                 _buildSessionInfoRow(l10n?.translate('cash_sales') ?? 'Cash Sales', currencyFormatter.format(summary.totalCash)),
                 _buildSessionInfoRow(l10n?.translate('card_sales') ?? 'Card Sales', currencyFormatter.format(summary.totalCard)),
-                _buildSessionInfoRow(l10n?.translate('total_sales') ?? 'Total Sales', currencyFormatter.format(summary.totalAmount), Colors.blue),
+                if (summary.totalMobile > 0)
+                  _buildSessionInfoRow(l10n?.translate('mobile_total') ?? 'Mobile Sales', currencyFormatter.format(summary.totalMobile)),
+                _buildSessionInfoRow(l10n?.translate('total_paid') ?? 'Total Paid', currencyFormatter.format(summary.totalPaid), Colors.blue),
                 const Divider(height: 20),
                 _buildSessionInfoRow(l10n?.translate('expected_cash') ?? 'Expected Cash', currencyFormatter.format(summary.expectedCashAtEnd), Colors.green),
               ],
@@ -346,9 +353,44 @@ class _TopBarState extends ConsumerState<TopBar> {
   Future<void> _handleLogout() async {
     final l10n = AppLocalizations.of(context);
     try {
+      // Warn if there are unsaved held orders in RAM
+      final heldOrders = ref.read(heldOrdersProvider);
+      if (heldOrders.isNotEmpty && mounted) {
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.warning_amber, color: Colors.orange),
+                const SizedBox(width: 8),
+                Text(l10n?.translate('held_orders_warning_title') ??
+                    'Unsaved held orders'),
+              ],
+            ),
+            content: Text(
+              (l10n?.translate('held_orders_warning_body') ??
+                      'You have {0} held order(s) in memory that will be lost if you log out. Continue?')
+                  .replaceAll('{0}', heldOrders.length.toString()),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(l10n?.translate('cancel') ?? 'Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                child: Text(l10n?.translate('logout') ?? 'Logout'),
+              ),
+            ],
+          ),
+        );
+        if (proceed != true) return;
+      }
+
       final currentUser = ref.read(currentUserProvider);
       if (currentUser == null) {
-        _doLogout();
+        await _doLogout();
         return;
       }
 
@@ -358,7 +400,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
       if (session == null || session.status != 'active') {
         // No active session, just logout
-        _doLogout();
+        await _doLogout();
         return;
       }
 
@@ -421,7 +463,7 @@ class _TopBarState extends ConsumerState<TopBar> {
           );
         }
         await Future.delayed(const Duration(milliseconds: 500));
-        _doLogout();
+        await _doLogout();
       } else if (choice == 'end') {
         // End session via cash-count + Z-report dialog.
         final result = await showCloseSessionDialog(
@@ -439,10 +481,10 @@ class _TopBarState extends ConsumerState<TopBar> {
           );
         }
         await Future.delayed(const Duration(milliseconds: 500));
-        _doLogout();
+        await _doLogout();
       }
     } catch (e) {
-      print('Logout error: $e');
+      _logger.error('Logout error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -451,11 +493,36 @@ class _TopBarState extends ConsumerState<TopBar> {
           ),
         );
       }
-      _doLogout();
+      await _doLogout();
     }
   }
 
-  void _doLogout() {
+  /// Closes any still-open session for [userId] then pushes all local data
+  /// to the server before the user leaves. Errors are swallowed — logout
+  /// must never be blocked by a failed sync.
+  Future<void> _syncAndCloseBeforeLogout(int? userId) async {
+    try {
+      final database = ref.read(databaseProvider);
+      final syncService = ref.read(dataSyncServiceProvider);
+      if (userId != null) {
+        final session =
+            await SessionService(database).getActiveSession(userId);
+        if (session != null) {
+          await SessionService(database).endSession(sessionId: session.id);
+        }
+      }
+      await Future.wait([
+        syncService.syncPendingOperations(),
+        syncService.syncSessionsBulk(),
+        syncService.syncOrdersBulk(),
+        syncService.syncTicketsBulk(),
+      ]).timeout(const Duration(seconds: 15));
+    } catch (e) {
+      _logger.warning('Pre-logout sync failed (non-blocking): $e');
+    }
+  }
+
+  Future<void> _doLogout() async {
     // Record the logout before clearing the user.
     final user = ref.read(currentUserProvider);
     if (user != null) {
@@ -464,6 +531,25 @@ class _TopBarState extends ConsumerState<TopBar> {
             username: user.effectiveDisplayName,
           );
     }
+    // Show a non-dismissible progress dialog while we sync.
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          content: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(width: 16),
+              Text(AppLocalizations.of(context)?.translate('syncing_data') ??
+                  'Syncing data...'),
+            ],
+          ),
+        ),
+      );
+    }
+    await _syncAndCloseBeforeLogout(user?.id);
     // Clear user and session state
     ref.read(currentUserProvider.notifier).state = null;
     ref.read(currentSessionProvider.notifier).state = null;
@@ -472,7 +558,10 @@ class _TopBarState extends ConsumerState<TopBar> {
     // Clear current order state
     ref.read(orderProvider.notifier).clearOrder();
     if (mounted) {
-      Navigator.of(context).pushReplacementNamed('/login');
+      FocusManager.instance.primaryFocus?.unfocus();
+      // pushNamedAndRemoveUntil clears the dialog and all other routes.
+      Navigator.of(context)
+          .pushNamedAndRemoveUntil('/login', (route) => false);
     }
   }
 
@@ -681,6 +770,9 @@ class _TopBarState extends ConsumerState<TopBar> {
 
       // First upload local data
       await syncService.uploadLocalData();
+
+      // Pull server-side deltas (admin edits, tombstones) before full refresh
+      await syncService.pullAllDeltas(prefs);
 
       // Then download fresh data with data retention
       await syncService.syncAllData(dataRetentionDays: settings.dataRetentionDays);
@@ -914,14 +1006,20 @@ class _TopBarState extends ConsumerState<TopBar> {
                       onPressed: _showCurrentSessionDetails,
                     ),
                     const SizedBox(width: 6),
-                    ElevatedButton.icon(
-                      onPressed: _isOnline ? _handleSync : null,
-                      icon: const Icon(Icons.sync, size: 18),
-                      label: Text(l10n?.translate('update') ?? 'Update'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Theme.of(context).primaryColor,
-                        disabledBackgroundColor: Colors.grey[300],
+                    GestureDetector(
+                      onLongPress: () => showDialog(
+                        context: context,
+                        builder: (_) => const SyncInspectorDialog(),
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: _isOnline ? _handleSync : null,
+                        icon: const Icon(Icons.sync, size: 18),
+                        label: Text(l10n?.translate('update') ?? 'Update'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Theme.of(context).primaryColor,
+                          disabledBackgroundColor: Colors.grey[300],
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -976,6 +1074,8 @@ class _TopBarState extends ConsumerState<TopBar> {
                 await _handleLogout();
               } else if (value == 'full_logout') {
                 await _handleFullLogout();
+              } else if (value == 'exit_app') {
+                await requestAppExit(context, ref);
               }
             },
             itemBuilder: (context) {
@@ -1205,6 +1305,20 @@ class _TopBarState extends ConsumerState<TopBar> {
                 );
               }
 
+              // Exit app — confirm, offer to close the session, sync, then quit.
+              items.add(const PopupMenuDivider());
+              items.add(PopupMenuItem(
+                value: 'exit_app',
+                child: Row(
+                  children: [
+                    const Icon(Icons.power_settings_new, color: Colors.redAccent),
+                    const SizedBox(width: 8),
+                    Text(exitMenuLabel(context),
+                        style: const TextStyle(color: Colors.redAccent)),
+                  ],
+                ),
+              ));
+
               return items;
             },
           ),
@@ -1256,12 +1370,18 @@ class _TopBarState extends ConsumerState<TopBar> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  IconButton(
-                    icon: const Icon(Icons.sync, color: Colors.white, size: 18),
-                    tooltip: l10n?.translate('update') ?? 'Update',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    onPressed: _isOnline ? _handleSync : null,
+                  GestureDetector(
+                    onLongPress: () => showDialog(
+                      context: context,
+                      builder: (_) => const SyncInspectorDialog(),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.sync, color: Colors.white, size: 18),
+                      tooltip: l10n?.translate('update') ?? 'Update',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      onPressed: _isOnline ? _handleSync : null,
+                    ),
                   ),
                   if (ref.watch(settingsProvider).enableCustomerDisplay) ...[
                     const SizedBox(width: 4),

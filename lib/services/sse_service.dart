@@ -83,10 +83,10 @@ class SseService {
 
       final request = await _client!.getUrl(uri);
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      request.headers.set('X-Business-Id',
-          (_api.getTenantId() ?? '').toString()); // tenantId doubles as businessId
-      request.headers.set('X-Tenant-Id',
-          (_api.getTenantId() ?? '').toString());
+      // Do NOT send X-Business-Id: the server derives the business from
+      // X-POS-Name, and sending the tenant id here (the old "tenantId doubles
+      // as businessId" shortcut) is rejected with 403 "Business does not belong
+      // to the current tenant" per the POS API contract.
       request.headers.set('X-POS-Name',
           _api.getPosName() ?? 'POS-TERMINAL');
       request.headers.set(HttpHeaders.acceptHeader, 'text/event-stream');

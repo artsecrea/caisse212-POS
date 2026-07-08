@@ -8,10 +8,10 @@ import '../../services/session_service.dart';
 import '../../services/activity_log_service.dart';
 import '../../services/permission_service.dart';
 import '../../services/data_sync_service.dart';
-import '../../services/api_service.dart';
 import '../../services/pending_operations_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import 'admin_mode_chip.dart';
 import 'close_session_dialog.dart';
 import 'permission_guard.dart';
 
@@ -23,23 +23,57 @@ class SessionsManagementScreen extends ConsumerStatefulWidget {
 }
 
 class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScreen> {
-  List<CashSession> _sessions = [];
-  Map<int, SessionSummary> _summaries = {};
-  bool _isLoading = true;
-  bool _isSyncing = false;
-  int _pendingOperationsCount = 0;
+  // Filters
   String _statusFilter = 'ALL';
   String _searchQuery = '';
-  int _sortColumnIndex = 0;
-  bool _sortAscending = false;
+  DateTime? _startDate;
+  DateTime? _endDate;
+
+  // Pagination
   int _currentPage = 0;
   final int _rowsPerPage = 10;
+
+  // Sorting — default: startedAt DESC
+  int _sortColumnIndex = 2;
+  bool _sortAscending = false;
+
+  // Sync state
+  bool _isSyncing = false;
+  int _pendingOperationsCount = 0;
+
+  // DB-paged future — rebuilt on filter/sort/page change
+  late Future<(List<SessionWithCashier>, int)> _pageFuture;
+
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _loadSessions();
     _loadPendingOperationsCount();
+    _refreshFuture();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _refreshFuture() {
+    final db = ref.read(databaseProvider);
+    final sessionService = SessionService(db);
+    setState(() {
+      _pageFuture = sessionService.getSessionsPage(
+        offset: _currentPage * _rowsPerPage,
+        limit: _rowsPerPage,
+        statusFilter: _statusFilter,
+        searchQuery: _searchQuery,
+        startDate: _startDate,
+        endDate: _endDate,
+        sortColumn: _sortColumnIndex,
+        sortAscending: _sortAscending,
+      );
+    });
   }
 
   Future<void> _loadPendingOperationsCount() async {
@@ -47,47 +81,494 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       final database = ref.read(databaseProvider);
       final pendingOpsService = PendingOperationsService(database);
       final operations = await pendingOpsService.getPendingOperationsByType('SESSION');
-      setState(() {
-        _pendingOperationsCount = operations.length;
-      });
-    } catch (e) {
-      // Ignore errors
-    }
-  }
-
-  Future<void> _loadSessions() async {
-    setState(() => _isLoading = true);
-
-    try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
-      final sessions = await sessionService.getAllSessions();
-
-      // Load summaries for all sessions
-      final summaries = <int, SessionSummary>{};
-      for (final session in sessions) {
-        try {
-          summaries[session.id] = await sessionService.getSessionSummary(session.id);
-        } catch (e) {
-          // Skip if summary fails
-        }
-      }
-
-      setState(() {
-        _sessions = sessions;
-        _summaries = summaries;
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() => _isLoading = false);
       if (mounted) {
-        final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${l10n.translate('failed_to_load_sessions')}: $e')),
-        );
+        setState(() => _pendingOperationsCount = operations.length);
       }
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Scaffold(
+      appBar: _buildAppBar(l10n),
+      body: Column(
+        children: [
+          _buildFiltersBar(l10n),
+          Expanded(
+            child: FutureBuilder<(List<SessionWithCashier>, int)>(
+              future: _pageFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return _buildErrorView(snapshot.error.toString());
+                }
+                final (sessions, total) = snapshot.data ?? (<SessionWithCashier>[], 0);
+                if (sessions.isEmpty) {
+                  return _buildEmptyView(l10n);
+                }
+                return _buildSessionsTable(sessions, total, l10n);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar(AppLocalizations l10n) {
+    final isOnline = ref.watch(lastKnownOnlineStatusProvider);
+
+    return AppBar(
+      title: Text(l10n.translate('sessions_management')),
+      actions: [
+        const AdminModeChip(),
+        if (_pendingOperationsCount > 0)
+          Builder(
+            builder: (context) {
+              final permissionService = ref.watch(permissionServiceProvider);
+              final hasPermission = permissionService.hasPermission(Permissions.viewPendingOperations);
+              return IconButton(
+                icon: Badge(
+                  label: Text('$_pendingOperationsCount'),
+                  child: const Icon(Icons.pending_actions),
+                ),
+                onPressed: hasPermission ? _showPendingOperationsDialog : null,
+                tooltip: hasPermission
+                    ? l10n.translate('pending_operations')
+                    : l10n.translate('insufficient_permissions'),
+              );
+            },
+          ),
+        Builder(
+          builder: (context) {
+            final permissionService = ref.watch(permissionServiceProvider);
+            final hasPermission = permissionService.hasPermission(Permissions.syncSessions);
+            return IconButton(
+              icon: _isSyncing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      isOnline ? Icons.cloud_sync : Icons.cloud_off,
+                      color: isOnline ? null : Colors.grey,
+                    ),
+              onPressed: hasPermission && isOnline && !_isSyncing ? _syncAllSessions : null,
+              tooltip: !hasPermission
+                  ? l10n.translate('insufficient_permissions')
+                  : isOnline
+                      ? l10n.translate('sync_all_sessions')
+                      : l10n.translate('offline'),
+            );
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          onPressed: () {
+            _loadPendingOperationsCount();
+            _refreshFuture();
+          },
+          tooltip: l10n.translate('refresh'),
+        ),
+        const SizedBox(width: 8),
+      ],
+    );
+  }
+
+  Widget _buildFiltersBar(AppLocalizations l10n) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        boxShadow: [
+          BoxShadow(
+            color: Theme.of(context).shadowColor.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: l10n.translate('search_by_id'),
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+              onChanged: (value) {
+                _searchQuery = value;
+                _currentPage = 0;
+                _refreshFuture();
+              },
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              key: const ValueKey('sessions_filter_status'),
+              initialValue: _statusFilter,
+              decoration: InputDecoration(
+                labelText: l10n.translate('status'),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+              items: [
+                DropdownMenuItem(value: 'ALL', child: Text(l10n.translate('all_status'))),
+                DropdownMenuItem(value: 'active', child: Text(l10n.translate('active'))),
+                DropdownMenuItem(value: 'paused', child: Text(l10n.translate('paused'))),
+                DropdownMenuItem(value: 'ended', child: Text(l10n.translate('ended'))),
+              ],
+              onChanged: (value) {
+                _statusFilter = value!;
+                _currentPage = 0;
+                _refreshFuture();
+              },
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            flex: 2,
+            child: _buildDateRangeControl(l10n),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDateRangeControl(AppLocalizations l10n) {
+    final hasRange = _startDate != null || _endDate != null;
+    String label;
+    if (_startDate != null && _endDate != null) {
+      label = '${_formatShortDate(_startDate!)} - ${_formatShortDate(_endDate!)}';
+    } else if (_startDate != null) {
+      label = '${l10n.translate('date_from')} ${_formatShortDate(_startDate!)}';
+    } else if (_endDate != null) {
+      label = '${l10n.translate('date_to')} ${_formatShortDate(_endDate!)}';
+    } else {
+      label = l10n.translate('date_range');
+    }
+
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: l10n.translate('date_range'),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        prefixIcon: const Icon(Icons.date_range),
+        suffixIcon: hasRange
+            ? IconButton(
+                icon: const Icon(Icons.clear),
+                tooltip: l10n.translate('clear_dates'),
+                onPressed: () {
+                  _startDate = null;
+                  _endDate = null;
+                  _currentPage = 0;
+                  _refreshFuture();
+                },
+              )
+            : null,
+      ),
+      child: InkWell(
+        onTap: _pickDateRange,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(label, overflow: TextOverflow.ellipsis),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final initial = (_startDate != null && _endDate != null)
+        ? DateTimeRange(start: _startDate!, end: _endDate!)
+        : DateTimeRange(
+            start: DateTime(now.year, now.month, now.day),
+            end: DateTime(now.year, now.month, now.day),
+          );
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(now.year + 1, 12, 31),
+      initialDateRange: initial,
+    );
+    if (picked != null) {
+      _startDate = picked.start;
+      _endDate = picked.end;
+      _currentPage = 0;
+      _refreshFuture();
     }
   }
+
+  String _formatShortDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}';
+
+  Widget _buildSessionsTable(List<SessionWithCashier> rows, int totalCount, AppLocalizations l10n) {
+    final currencyFormatter = ref.read(currencyFormatterProvider);
+    final totalPages = (totalCount / _rowsPerPage).ceil().clamp(1, 99999);
+
+    return Column(
+      children: [
+        Expanded(
+          child: DataTable2(
+            key: ValueKey('${_statusFilter}_${_sortColumnIndex}_$_sortAscending'),
+            columnSpacing: 12,
+            horizontalMargin: 12,
+            minWidth: 1000,
+            sortColumnIndex: _sortColumnIndex,
+            sortAscending: _sortAscending,
+            headingRowColor: WidgetStateProperty.all(
+              Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            headingTextStyle: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+            columns: [
+              DataColumn2(
+                label: Text(l10n.translate('code')),
+                size: ColumnSize.M,
+                onSort: (i, asc) => _onSort(i, asc),
+              ),
+              DataColumn2(
+                label: Text(l10n.translate('cashier')),
+                size: ColumnSize.M,
+                onSort: (i, asc) => _onSort(i, asc),
+              ),
+              DataColumn2(
+                label: Text(l10n.translate('started_at')),
+                size: ColumnSize.M,
+                onSort: (i, asc) => _onSort(i, asc),
+              ),
+              DataColumn2(
+                label: Text(l10n.translate('status')),
+                size: ColumnSize.S,
+                onSort: (i, asc) => _onSort(i, asc),
+              ),
+              DataColumn2(
+                label: Text(l10n.translate('start_balance')),
+                size: ColumnSize.S,
+                numeric: true,
+                onSort: (i, asc) => _onSort(i, asc),
+              ),
+              DataColumn2(
+                label: Text(l10n.translate('total_sales')),
+                size: ColumnSize.S,
+                numeric: true,
+              ),
+              DataColumn2(
+                label: Text(l10n.translate('duration')),
+                size: ColumnSize.S,
+              ),
+              DataColumn2(
+                label: Text(l10n.translate('actions')),
+                size: ColumnSize.M,
+              ),
+            ],
+            rows: rows.map((row) => _buildDataRow(row, currencyFormatter, l10n)).toList(),
+          ),
+        ),
+        _buildPaginationControls(totalCount, totalPages),
+      ],
+    );
+  }
+
+  DataRow _buildDataRow(SessionWithCashier row, dynamic currencyFormatter, AppLocalizations l10n) {
+    final session = row.session;
+    final isEnded = session.status == 'ended';
+
+    Icon cloudIcon;
+    String cloudTooltip;
+    if (session.isSynced) {
+      cloudIcon = const Icon(Icons.cloud_done, size: 14, color: Colors.green);
+      cloudTooltip = l10n.translate('synced_to_server');
+    } else if (isEnded) {
+      cloudIcon = const Icon(Icons.cloud_off, size: 14, color: Colors.orange);
+      cloudTooltip = l10n.translate('not_synced_to_server');
+    } else {
+      cloudIcon = const Icon(Icons.cloud_queue, size: 14, color: Colors.grey);
+      cloudTooltip = 'Pending — will sync when session ends';
+    }
+
+    return DataRow(
+      cells: [
+        DataCell(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(child: Text('#${session.code}', overflow: TextOverflow.ellipsis)),
+              const SizedBox(width: 4),
+              Tooltip(message: cloudTooltip, child: cloudIcon),
+            ],
+          ),
+        ),
+        DataCell(Text(row.cashierName, overflow: TextOverflow.ellipsis)),
+        DataCell(Text(_formatDateTime(session.startedAt), overflow: TextOverflow.ellipsis)),
+        DataCell(_buildStatusChip(session.status)),
+        DataCell(Text(currencyFormatter.format(session.moneyAtStart), overflow: TextOverflow.ellipsis)),
+        DataCell(Text(currencyFormatter.format(row.summary?.totalAmount ?? 0), overflow: TextOverflow.ellipsis)),
+        DataCell(Text(_formatDuration(session.startedAt, session.endedAt), overflow: TextOverflow.ellipsis)),
+        DataCell(
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.visibility, size: 20),
+                color: Colors.blue,
+                tooltip: l10n.translate('view_details'),
+                onPressed: () => _showSessionDetails(row),
+              ),
+              if (session.status != 'ended')
+                PermissionIconButton(
+                  permission: Permissions.sessionsEnd,
+                  icon: const Icon(Icons.stop, size: 20),
+                  color: Colors.red,
+                  tooltip: l10n.translate('end_session_action'),
+                  onPressed: () => _endSession(session),
+                ),
+              PermissionIconButton(
+                permission: Permissions.sessionsDelete,
+                icon: const Icon(Icons.delete, size: 20),
+                color: Colors.grey,
+                tooltip: l10n.translate('delete'),
+                onPressed: () => _deleteSession(session),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatusChip(String status) {
+    final Color color;
+    switch (status.toLowerCase()) {
+      case 'active':
+        color = Colors.green;
+        break;
+      case 'paused':
+        color = Colors.orange;
+        break;
+      default:
+        color = Colors.grey;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        status.toUpperCase(),
+        style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _buildPaginationControls(int totalItems, int totalPages) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: Colors.grey[300]!)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            'Showing ${_currentPage * _rowsPerPage + 1}–${((_currentPage + 1) * _rowsPerPage).clamp(0, totalItems)} of $totalItems sessions',
+            style: TextStyle(color: Colors.grey[700]),
+          ),
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.first_page),
+                onPressed: _currentPage > 0 ? () { _currentPage = 0; _refreshFuture(); } : null,
+              ),
+              IconButton(
+                icon: const Icon(Icons.chevron_left),
+                onPressed: _currentPage > 0 ? () { _currentPage--; _refreshFuture(); } : null,
+              ),
+              Text(
+                'Page ${_currentPage + 1} of $totalPages',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              IconButton(
+                icon: const Icon(Icons.chevron_right),
+                onPressed: _currentPage < totalPages - 1 ? () { _currentPage++; _refreshFuture(); } : null,
+              ),
+              IconButton(
+                icon: const Icon(Icons.last_page),
+                onPressed: _currentPage < totalPages - 1
+                    ? () { _currentPage = totalPages - 1; _refreshFuture(); }
+                    : null,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyView(AppLocalizations l10n) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.access_time, size: 64, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          Text(
+            l10n.translate('no_sessions_found'),
+            style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Try adjusting your filters',
+            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorView(String error) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, size: 64, color: Colors.red[400]),
+          const SizedBox(height: 16),
+          const Text(
+            'Error loading sessions',
+            style: TextStyle(fontSize: 18, color: Colors.grey),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            error,
+            style: const TextStyle(fontSize: 14, color: Colors.grey),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _onSort(int columnIndex, bool ascending) {
+    _sortColumnIndex = columnIndex;
+    _sortAscending = ascending;
+    _currentPage = 0;
+    _refreshFuture();
+  }
+
+  // ── Action methods ────────────────────────────────────────────────────────
 
   Future<void> _deleteSession(CashSession session) async {
     final l10n = AppLocalizations.of(context)!;
@@ -95,7 +576,10 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       context: context,
       builder: (context) => AlertDialog(
         title: Text(l10n.translate('delete')),
-        content: Text('${l10n.translate('are_you_sure')} ${l10n.translate('session')} #${session.code}?\n${l10n.translate('delete_confirm')}'),
+        content: Text(
+          '${l10n.translate('are_you_sure')} ${l10n.translate('session')} #${session.code}?\n'
+          '${l10n.translate('delete_confirm')}',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -115,7 +599,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         final database = ref.read(databaseProvider);
         final sessionService = SessionService(database);
         await sessionService.deleteSession(session.id);
-        await _loadSessions();
+        _refreshFuture();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(l10n.translate('success'))),
@@ -131,69 +615,13 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     }
   }
 
-  Future<void> _pauseSession(CashSession session) async {
-    final l10n = AppLocalizations.of(context)!;
-    try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
-      await sessionService.pauseSession(session.id);
-      final actor = ref.read(currentUserProvider);
-      await ref.read(activityLogServiceProvider)
-          .logSessionPause(userId: actor?.id, username: actor?.effectiveDisplayName);
-      await _loadSessions();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('session_paused')),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${l10n.translate('failed_to_pause_session')}: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _resumeSession(CashSession session) async {
-    final l10n = AppLocalizations.of(context)!;
-    try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
-      await sessionService.resumeSession(session.id);
-      final actor = ref.read(currentUserProvider);
-      await ref.read(activityLogServiceProvider)
-          .logSessionResume(userId: actor?.id, username: actor?.effectiveDisplayName);
-      await _loadSessions();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('session_resumed_success')),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${l10n.translate('failed_to_resume_session')}: $e')),
-        );
-      }
-    }
-  }
-
   Future<void> _endSession(CashSession session) async {
     final l10n = AppLocalizations.of(context)!;
-    // Check if this is the current user's active session
     final currentUser = ref.read(currentUserProvider);
-    final isCurrentUserSession = currentUser != null && session.cashierId == currentUser.id &&
-                                  (session.status == 'active' || session.status == 'paused');
+    final isCurrentUserSession = currentUser != null &&
+        session.cashierId == currentUser.id &&
+        (session.status == 'active' || session.status == 'paused');
 
-    // Cash-count + Z-report dialog. endSession runs inside the dialog flow
-    // so we don't double-call it here.
     final result = await showCloseSessionDialog(
       context: context,
       ref: ref,
@@ -208,7 +636,6 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
             );
 
         if (isCurrentUserSession) {
-          // Clear current user and session
           ref.read(currentUserProvider.notifier).state = null;
           ref.read(currentSessionProvider.notifier).state = null;
 
@@ -220,16 +647,26 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
               ),
             );
 
+            // Sync all pending data to server before leaving.
+            try {
+              final syncService = ref.read(dataSyncServiceProvider);
+              await Future.wait([
+                syncService.syncPendingOperations(),
+                syncService.syncSessionsBulk(),
+                syncService.syncOrdersBulk(),
+                syncService.syncTicketsBulk(),
+              ]).timeout(const Duration(seconds: 15));
+            } catch (_) {}
+
             FocusManager.instance.primaryFocus?.unfocus();
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) {
-                Navigator.of(context)
-                    .pushNamedAndRemoveUntil('/login', (route) => false);
+                Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
               }
             });
           }
         } else {
-          await _loadSessions();
+          _refreshFuture();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(l10n.translate('session_ended_success'))),
@@ -246,9 +683,10 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     }
   }
 
-  void _showSessionDetails(CashSession session) {
+  void _showSessionDetails(SessionWithCashier row) {
+    final session = row.session;
     final l10n = AppLocalizations.of(context)!;
-    final summary = _summaries[session.id];
+    final summary = row.summary;
     final currencyFormatter = ref.read(currencyFormatterProvider);
 
     showDialog(
@@ -261,6 +699,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
             key: ValueKey('session_dialog_${session.id}'),
             shrinkWrap: true,
             children: [
+              _buildDetailRow(l10n.translate('cashier'), row.cashierName),
               _buildDetailRow(l10n.translate('status'), session.status.toUpperCase(), _getStatusColor(session.status)),
               _buildDetailRow(l10n.translate('started_at'), _formatDateTime(session.startedAt)),
               if (session.endedAt != null)
@@ -273,16 +712,28 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                 _buildDetailRow(l10n.translate('ending_balance'), currencyFormatter.format(session.moneyAtEnd!)),
               const Divider(height: 24),
               if (summary != null) ...[
-                Text(l10n.translate('ticket_summary'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Text(
+                  l10n.translate('ticket_summary'),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
                 const SizedBox(height: 8),
                 _buildDetailRow(l10n.translate('total_tickets'), '${summary.ticketCount}'),
                 _buildDetailRow(l10n.translate('cash_total'), currencyFormatter.format(summary.totalCash)),
                 _buildDetailRow(l10n.translate('card_total'), currencyFormatter.format(summary.totalCard)),
-                _buildDetailRow(l10n.translate('check_total'), currencyFormatter.format(summary.totalCheck)),
-                _buildDetailRow(l10n.translate('other_total'), currencyFormatter.format(summary.totalOther)),
+                _buildDetailRow(l10n.translate('mobile_total'), currencyFormatter.format(summary.totalMobile)),
+                if (summary.totalOther > 0)
+                  _buildDetailRow(l10n.translate('other_total'), currencyFormatter.format(summary.totalOther)),
                 const Divider(height: 16),
-                _buildDetailRow(l10n.translate('total_amount'), currencyFormatter.format(summary.totalAmount), Colors.blue),
-                _buildDetailRow(l10n.translate('expected_cash'), currencyFormatter.format(summary.expectedCashAtEnd), Colors.green),
+                _buildDetailRow(
+                  l10n.translate('total_paid'),
+                  currencyFormatter.format(summary.totalPaid),
+                  Colors.blue,
+                ),
+                _buildDetailRow(
+                  l10n.translate('expected_cash'),
+                  currencyFormatter.format(summary.expectedCashAtEnd),
+                  Colors.green,
+                ),
               ],
             ],
           ),
@@ -314,10 +765,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
           Text(label, style: TextStyle(color: Colors.grey[600])),
           Text(
             value,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: valueColor,
-            ),
+            style: TextStyle(fontWeight: FontWeight.bold, color: valueColor),
           ),
         ],
       ),
@@ -330,15 +778,14 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         return Colors.green;
       case 'paused':
         return Colors.orange;
-      case 'ended':
-        return Colors.grey;
       default:
         return Colors.grey;
     }
   }
 
   String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    return '${dateTime.day}/${dateTime.month}/${dateTime.year} '
+        '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
   String _formatDuration(DateTime start, DateTime? end) {
@@ -346,130 +793,6 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     final hours = duration.inHours;
     final minutes = duration.inMinutes % 60;
     return '${hours}h ${minutes}m';
-  }
-
-  List<CashSession> _filterSessions() {
-    var filtered = _sessions;
-
-    if (_statusFilter != 'ALL') {
-      filtered = filtered.where((s) => s.status.toLowerCase() == _statusFilter.toLowerCase()).toList();
-    }
-
-    if (_searchQuery.isNotEmpty) {
-      filtered = filtered.where((s) =>
-        s.id.toString().contains(_searchQuery) ||
-        s.cashierId.toString().contains(_searchQuery)
-      ).toList();
-    }
-
-    return filtered;
-  }
-
-  List<CashSession> _sortSessions(List<CashSession> sessions) {
-    sessions.sort((a, b) {
-      int comparison;
-      switch (_sortColumnIndex) {
-        case 0:
-          comparison = a.id.compareTo(b.id);
-          break;
-        case 1:
-          comparison = a.cashierId.compareTo(b.cashierId);
-          break;
-        case 2:
-          comparison = a.startedAt.compareTo(b.startedAt);
-          break;
-        case 3:
-          comparison = a.status.compareTo(b.status);
-          break;
-        case 4:
-          comparison = a.moneyAtStart.compareTo(b.moneyAtStart);
-          break;
-        case 5:
-          final aTotal = _summaries[a.id]?.totalAmount ?? 0;
-          final bTotal = _summaries[b.id]?.totalAmount ?? 0;
-          comparison = aTotal.compareTo(bTotal);
-          break;
-        default:
-          comparison = 0;
-      }
-      return _sortAscending ? comparison : -comparison;
-    });
-    return sessions;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isOnline = ref.watch(lastKnownOnlineStatusProvider);
-    final l10n = AppLocalizations.of(context)!;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.translate('sessions_management')),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
-        actions: [
-          // Pending operations indicator
-          if (_pendingOperationsCount > 0)
-            Builder(
-              builder: (context) {
-                final permissionService = ref.watch(permissionServiceProvider);
-                final hasPermission = permissionService.hasPermission(Permissions.viewPendingOperations);
-                return IconButton(
-                  icon: Badge(
-                    label: Text('$_pendingOperationsCount'),
-                    child: const Icon(Icons.pending_actions),
-                  ),
-                  onPressed: hasPermission ? _showPendingOperationsDialog : null,
-                  tooltip: hasPermission ? l10n.translate('pending_operations') : l10n.translate('insufficient_permissions'),
-                  color: Colors.white,
-                );
-              },
-            ),
-          // Sync all button
-          Builder(
-            builder: (context) {
-              final permissionService = ref.watch(permissionServiceProvider);
-              final hasPermission = permissionService.hasPermission(Permissions.syncSessions);
-              return IconButton(
-                icon: _isSyncing
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : Icon(
-                        isOnline ? Icons.cloud_sync : Icons.cloud_off,
-                        color: isOnline ? Colors.white : Colors.grey,
-                      ),
-                onPressed: hasPermission && isOnline && !_isSyncing ? _syncAllSessions : null,
-                tooltip: !hasPermission
-                    ? l10n.translate('insufficient_permissions')
-                    : isOnline
-                        ? l10n.translate('sync_all_sessions')
-                        : l10n.translate('offline'),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadSessions,
-            tooltip: l10n.translate('refresh'),
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  _buildFilters(),
-                  const SizedBox(height: 16),
-                  Expanded(child: _buildSessionsTable()),
-                ],
-              ),
-            ),
-    );
   }
 
   Future<void> _syncAllSessions() async {
@@ -481,16 +804,13 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       final apiService = ref.read(apiServiceProvider);
       final syncService = DataSyncService(database, apiService);
 
-      // Sync pending operations first
       await syncService.syncPendingOperations();
-
-      // Sync unsynced sessions
       final syncedCount = await syncService.syncSessionsBulk();
 
-      await _loadSessions();
       await _loadPendingOperationsCount();
 
       if (mounted) {
+        _refreshFuture();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(l10n.translate('synced_sessions').replaceAll('{0}', '$syncedCount')),
@@ -508,9 +828,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isSyncing = false);
-      }
+      if (mounted) setState(() => _isSyncing = false);
     }
   }
 
@@ -543,13 +861,14 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                       title: Text('${op.operationType} ${l10n.translate('session')} #${op.entityId}'),
                       subtitle: Text(
                         '${l10n.translate('created')}: ${_formatDateTime(op.createdAt)}\n'
-                        '${l10n.translate('retries')}: ${op.retryCount}${op.lastError != null ? '\n${l10n.translate('error')}: ${op.lastError}' : ''}',
+                        '${l10n.translate('retries')}: ${op.retryCount}'
+                        '${op.lastError != null ? '\n${l10n.translate('error')}: ${op.lastError}' : ''}',
                       ),
                       trailing: IconButton(
                         icon: const Icon(Icons.delete_forever, color: Colors.grey),
                         onPressed: () async {
                           await pendingOpsService.markCompleted(op.id);
-                          Navigator.of(context).pop();
+                          if (context.mounted) Navigator.of(context).pop();
                           _loadPendingOperationsCount();
                         },
                         tooltip: l10n.translate('remove_from_queue'),
@@ -575,311 +894,4 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       ),
     );
   }
-
-  Widget _buildFilters() {
-    final l10n = AppLocalizations.of(context)!;
-    return Row(
-      children: [
-        Expanded(
-          flex: 1,
-          child: TextField(
-            key: const ValueKey('sessions_filter_search'),
-            decoration: InputDecoration(
-              hintText: l10n.translate('search_by_id'),
-              prefixIcon: const Icon(Icons.search),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            ),
-            onChanged: (value) {
-              setState(() {
-                _searchQuery = value;
-                _currentPage = 0;
-              });
-            },
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          flex: 1,
-          child: DropdownButtonFormField<String>(
-            key: const ValueKey('sessions_filter_status'),
-            initialValue: _statusFilter,
-            decoration: InputDecoration(
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            ),
-            items: [
-              DropdownMenuItem(value: 'ALL', child: Text(l10n.translate('all_status'))),
-              DropdownMenuItem(value: 'active', child: Text(l10n.translate('active'))),
-              DropdownMenuItem(value: 'paused', child: Text(l10n.translate('paused'))),
-              DropdownMenuItem(value: 'ended', child: Text(l10n.translate('ended'))),
-            ],
-            onChanged: (value) {
-              setState(() {
-                _statusFilter = value!;
-                _currentPage = 0;
-              });
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSessionsTable() {
-    final l10n = AppLocalizations.of(context)!;
-    final currencyFormatter = ref.read(currencyFormatterProvider);
-    final filteredSessions = _filterSessions();
-    final sortedSessions = _sortSessions(filteredSessions);
-    final totalPages = (sortedSessions.length / _rowsPerPage).ceil();
-    final paginatedSessions = sortedSessions
-        .skip(_currentPage * _rowsPerPage)
-        .take(_rowsPerPage)
-        .toList();
-
-    if (sortedSessions.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.access_time, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(l10n.translate('no_sessions_found'), style: TextStyle(fontSize: 18, color: Colors.grey[600])),
-          ],
-        ),
-      );
-    }
-
-    return Column(
-      children: [
-        Expanded(
-          child: DataTable2(
-            columnSpacing: 12,
-            horizontalMargin: 12,
-            minWidth: 1000,
-            sortColumnIndex: _sortColumnIndex,
-            sortAscending: _sortAscending,
-            headingRowColor: WidgetStateProperty.all(
-              Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-            headingTextStyle: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-            columns: [
-              DataColumn2(
-                label: Text(l10n.translate('code'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                size: ColumnSize.S,
-                onSort: (columnIndex, ascending) {
-                  setState(() {
-                    _sortColumnIndex = columnIndex;
-                    _sortAscending = ascending;
-                  });
-                },
-              ),
-              DataColumn2(
-                label: Text(l10n.translate('cashier'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                size: ColumnSize.S,
-                onSort: (columnIndex, ascending) {
-                  setState(() {
-                    _sortColumnIndex = columnIndex;
-                    _sortAscending = ascending;
-                  });
-                },
-              ),
-              DataColumn2(
-                label: Text(l10n.translate('started_at'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                size: ColumnSize.M,
-                onSort: (columnIndex, ascending) {
-                  setState(() {
-                    _sortColumnIndex = columnIndex;
-                    _sortAscending = ascending;
-                  });
-                },
-              ),
-              DataColumn2(
-                label: Text(l10n.translate('status'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                size: ColumnSize.S,
-                onSort: (columnIndex, ascending) {
-                  setState(() {
-                    _sortColumnIndex = columnIndex;
-                    _sortAscending = ascending;
-                  });
-                },
-              ),
-              DataColumn2(
-                label: Text(l10n.translate('start_balance'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                size: ColumnSize.S,
-                numeric: true,
-                onSort: (columnIndex, ascending) {
-                  setState(() {
-                    _sortColumnIndex = columnIndex;
-                    _sortAscending = ascending;
-                  });
-                },
-              ),
-              DataColumn2(
-                label: Text(l10n.translate('total_sales'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                size: ColumnSize.S,
-                numeric: true,
-                onSort: (columnIndex, ascending) {
-                  setState(() {
-                    _sortColumnIndex = columnIndex;
-                    _sortAscending = ascending;
-                  });
-                },
-              ),
-              DataColumn2(
-                label: Text(l10n.translate('duration'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                size: ColumnSize.S,
-              ),
-              DataColumn2(
-                label: Text(l10n.translate('actions'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                size: ColumnSize.M,
-              ),
-            ],
-            rows: paginatedSessions.map((session) {
-              final summary = _summaries[session.id];
-              final isEnded = session.status == 'ended';
-              final needsSync = isEnded && !session.isSynced;
-
-              return DataRow2(
-                key: ValueKey('row_${session.id}'),
-                cells: [
-                  DataCell(
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            '#${session.code}',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        if (isEnded)
-                          Tooltip(
-                            message: needsSync ? l10n.translate('not_synced_to_server') : l10n.translate('synced_to_server'),
-                            child: Icon(
-                              needsSync ? Icons.cloud_off : Icons.cloud_done,
-                              size: 14,
-                              color: needsSync ? Colors.orange : Colors.green,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  DataCell(
-                    Text(
-                      '#${session.cashierId}',
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  DataCell(
-                    Text(
-                      _formatDateTime(session.startedAt),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  DataCell(
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _getStatusColor(session.status).withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        session.status.toUpperCase(),
-                        style: TextStyle(
-                          color: _getStatusColor(session.status),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  DataCell(
-                    Text(
-                      currencyFormatter.format(session.moneyAtStart),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  DataCell(
-                    Text(
-                      currencyFormatter.format(summary?.totalAmount ?? 0),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  DataCell(
-                    Text(
-                      _formatDuration(session.startedAt, session.endedAt),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  DataCell(
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.visibility, size: 20),
-                          color: Colors.blue,
-                          tooltip: l10n.translate('view_details'),
-                          onPressed: () => _showSessionDetails(session),
-                        ),
-                        if (session.status != 'ended')
-                          PermissionIconButton(
-                            permission: Permissions.sessionsEnd,
-                            icon: const Icon(Icons.stop, size: 20),
-                            color: Colors.red,
-                            tooltip: l10n.translate('end_session_action'),
-                            onPressed: () => _endSession(session),
-                          ),
-                        // Delete - Protected by permission
-                        PermissionIconButton(
-                          permission: Permissions.sessionsDelete,
-                          icon: const Icon(Icons.delete, size: 20),
-                          color: Colors.grey,
-                          tooltip: l10n.translate('delete'),
-                          onPressed: () => _deleteSession(session),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            }).toList(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        _buildPagination(totalPages),
-      ],
-    );
-  }
-
-  Widget _buildPagination(int totalPages) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        IconButton(
-          icon: const Icon(Icons.first_page),
-          onPressed: _currentPage > 0 ? () => setState(() => _currentPage = 0) : null,
-        ),
-        IconButton(
-          icon: const Icon(Icons.chevron_left),
-          onPressed: _currentPage > 0 ? () => setState(() => _currentPage--) : null,
-        ),
-        Text('Page ${_currentPage + 1} of ${totalPages == 0 ? 1 : totalPages}'),
-        IconButton(
-          icon: const Icon(Icons.chevron_right),
-          onPressed: _currentPage < totalPages - 1 ? () => setState(() => _currentPage++) : null,
-        ),
-        IconButton(
-          icon: const Icon(Icons.last_page),
-          onPressed: _currentPage < totalPages - 1 ? () => setState(() => _currentPage = totalPages - 1) : null,
-        ),
-      ],
-    );
-  }
 }
-

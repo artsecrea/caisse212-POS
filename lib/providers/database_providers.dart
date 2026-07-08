@@ -23,6 +23,18 @@ final apiServiceProvider = Provider<ApiService>((ref) {
   return ApiService(prefs);
 });
 
+// Fires whenever the server explicitly rejects the refresh token (4xx on
+// /pos/refresh). The main screen listens to this and navigates to login.
+final forceLogoutStreamProvider = StreamProvider<void>((ref) {
+  return ref.watch(apiServiceProvider).forceLogoutStream;
+});
+
+// Fires the local DB id of any order whose sync delta was just applied.
+// The main screen uses this to live-refresh the order currently open in the panel.
+final syncedOrderUpdatedProvider = StreamProvider<int>((ref) {
+  return ref.watch(dataSyncServiceProvider).syncedOrderUpdatedStream;
+});
+
 // Data Sync Service Provider
 final dataSyncServiceProvider = Provider<DataSyncService>((ref) {
   final database = ref.watch(databaseProvider);
@@ -69,8 +81,30 @@ enum BarcodeScanMode {
   products,  // Scan product barcodes
 }
 
-final barcodeScanModeProvider = StateProvider<BarcodeScanMode>((ref) {
-  return BarcodeScanMode.orders; // Default to scanning orders
+class BarcodeScanModeNotifier extends StateNotifier<BarcodeScanMode> {
+  static const _key = 'barcode_scan_mode';
+  final SharedPreferences _prefs;
+
+  BarcodeScanModeNotifier(this._prefs) : super(_load(_prefs));
+
+  static BarcodeScanMode _load(SharedPreferences prefs) {
+    switch (prefs.getString(_key)) {
+      case 'orders':   return BarcodeScanMode.orders;
+      case 'disabled': return BarcodeScanMode.disabled;
+      default:         return BarcodeScanMode.products;
+    }
+  }
+
+  @override
+  set state(BarcodeScanMode value) {
+    super.state = value;
+    _prefs.setString(_key, value.name);
+  }
+}
+
+final barcodeScanModeProvider =
+    StateNotifierProvider<BarcodeScanModeNotifier, BarcodeScanMode>((ref) {
+  return BarcodeScanModeNotifier(ref.watch(sharedPreferencesProvider));
 });
 
 // Session Service Provider
@@ -81,6 +115,20 @@ final sessionServiceProvider = Provider<SessionService>((ref) {
 
 // Current Session Provider
 final currentSessionProvider = StateProvider<db.CashSession?>((ref) => null);
+
+/// The "Z day" for all inserts while the active session is open.
+/// Returns the calendar day the session started, truncated to midnight.
+/// Falls back to today's midnight when no session is open.
+/// Zero DB hits — reads directly from the already-loaded currentSessionProvider.
+final currentZDayProvider = Provider<DateTime>((ref) {
+  final session = ref.watch(currentSessionProvider);
+  if (session != null) {
+    final d = session.startedAt;
+    return DateTime(d.year, d.month, d.day);
+  }
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day);
+});
 
 class CurrentUser{
   final int id;

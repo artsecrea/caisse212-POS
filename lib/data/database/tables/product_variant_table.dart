@@ -15,8 +15,8 @@ class ProductVariants extends Table {
   RealColumn get cost => real().nullable()();
   RealColumn get tvaAmount => real().withDefault(const Constant(0.0))();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -30,7 +30,7 @@ class VariantAttributeValues extends Table {
   TextColumn get attributeName => text().nullable()();
   IntColumn get valueId => integer()();
   TextColumn get value => text().nullable()();
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
 
   @override
   List<String> get customConstraints => [

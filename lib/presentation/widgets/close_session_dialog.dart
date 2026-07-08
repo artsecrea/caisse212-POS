@@ -1,9 +1,14 @@
+import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
+import 'package:loggecrea/loggecrea.dart';
+import 'package:uuid/uuid.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/settings_provider.dart';
+import '../../services/api_service.dart';
 import '../../services/daily_summary_service.dart';
+import '../../services/data_sync_service.dart';
 import '../../services/printing_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
@@ -72,24 +77,46 @@ Future<CloseSessionResult> showCloseSessionDialog({
           final c = counted();
           final notes = notesCtrl.text.trim();
           try {
+            // 1. Close the session locally.
             await sessionService.endSession(
               sessionId: sessionId,
               countedCash: c,
               countNotes: notes.isEmpty ? null : notes,
             );
 
-            // Z-report — same calc pipeline as the daily summary.
+            // 2. Print Z-report (swallow errors — session already closed).
             bool printed = false;
+            DailySummaryReport? zReport;
             try {
-              final report =
-                  await dailySummary.generateSessionReport(sessionId);
-              final ok = await ref
+              zReport = await dailySummary.generateSessionReport(sessionId);
+              printed = await ref
                   .read(printingServiceProvider)
-                  .printDailySummaryReport(report: report);
-              printed = ok;
-            } catch (_) {
-              // Swallow print errors — the session is already closed; the
-              // cashier can reprint later from the daily summary screen.
+                  .printDailySummaryReport(report: zReport);
+            } catch (_) {}
+
+            // 3. Push session + orders + tickets to the server so the
+            //    email-report payload reflects freshly synced data.
+            //    Best-effort: network errors are swallowed; the spinner
+            //    stays visible while this runs. If offline, the session
+            //    stays isSynced=false and syncSessionsBulk picks it up later.
+            try {
+              final syncService = DataSyncService(
+                ref.read(databaseProvider),
+                ref.read(apiServiceProvider),
+              );
+              await syncService.syncSingleSession(sessionId);
+              await syncService.syncOrdersBulk();
+              await syncService.syncTicketsBulk();
+            } catch (_) {}
+
+            // 4. Send the email report (awaited — after sync so the server
+            //    already has the session/orders/tickets it references).
+            await _sendEmailReport(ref, dailySummary, sessionId);
+
+            // 5. Fire-and-forget notification so admin devices get the Z summary.
+            final sessionReport = zReport?.sessions.firstOrNull;
+            if (sessionReport != null) {
+              unawaited(_sendClosedNotification(ref, sessionReport, sessionId));
             }
 
             if (ctx.mounted) {
@@ -241,4 +268,79 @@ Future<CloseSessionResult> showCloseSessionDialog({
   countedCtrl.dispose();
   notesCtrl.dispose();
   return result ?? CloseSessionResult.cancelled;
+}
+
+/// POSTs a POS_SESSION_CLOSED notification from the Z-report data.
+/// Never throws — best-effort only.
+Future<void> _sendClosedNotification(
+  WidgetRef ref,
+  SessionSummaryReport s,
+  int sessionId,
+) async {
+  try {
+    final currency = ref.read(settingsProvider).currency;
+    final posName = ref.read(apiServiceProvider).getPosName() ?? '';
+    final closedAt = s.endedAt ?? DateTime.now();
+    final durationMinutes =
+        closedAt.difference(s.startedAt).inMinutes.toString();
+    final moneyAtEnd =
+        (s.startingBalance + s.paidByCash).toStringAsFixed(2);
+
+    final params = <String, String>{
+      'v': '1',
+      'terminalName': posName,
+      'cashierName': s.cashierName ?? 'Cashier #${s.cashierId}',
+      'cashierId': s.cashierId.toString(),
+      'sessionCode': s.sessionCode,
+      'openedAt': s.startedAt.toIso8601String(),
+      'closedAt': closedAt.toIso8601String(),
+      'durationMinutes': durationMinutes,
+      'currency': currency,
+      'totalAmount': s.totalPaid.toStringAsFixed(2),
+      'totalCash': s.paidByCash.toStringAsFixed(2),
+      'totalCard': s.paidByCard.toStringAsFixed(2),
+      'totalPhone': s.paidByPhone.toStringAsFixed(2),
+      'totalOther': s.paidByOther.toStringAsFixed(2),
+      'ordersCount': s.totalOrders.toString(),
+      'ticketsCount': s.totalTickets.toString(),
+      'unpaidAmount': s.unpaidAmount.toStringAsFixed(2),
+      'cancelledAmount': s.cancelledAmount.toStringAsFixed(2),
+      'moneyAtStart': s.startingBalance.toStringAsFixed(2),
+      'moneyAtEnd': moneyAtEnd,
+      if (s.countedCash != null)
+        'countedCash': s.countedCash!.toStringAsFixed(2),
+      if (s.variance != null) 'variance': s.variance!.toStringAsFixed(2),
+      if (s.countNotes != null && s.countNotes!.isNotEmpty)
+        'countNotes': s.countNotes!,
+    };
+
+    await ref.read(apiServiceProvider).postNotification(
+      type: 'POS_SESSION_CLOSED',
+      params: params,
+      refId: sessionId.toString(),
+      clientRequestId: const Uuid().v4(),
+    );
+  } catch (e) {
+    Logger.instance.warning('session-closed notification failed: $e');
+  }
+}
+
+/// Builds and POSTs the session email-report payload.
+/// Never throws — failures are logged so the dialog close is never blocked.
+Future<void> _sendEmailReport(
+  WidgetRef ref,
+  DailySummaryService dailySummary,
+  int sessionId,
+) async {
+  try {
+    final currency = ref.read(settingsProvider).currency;
+    final payload = await dailySummary.buildEmailReportPayload(
+      sessionId,
+      currency: currency,
+    );
+    final sessionCode = (payload['session'] as Map)['code'] as String;
+    await ref.read(apiServiceProvider).sendSessionEmailReport(sessionCode, payload);
+  } catch (e) {
+    Logger.instance.warning('email-report: failed for session $sessionId: $e');
+  }
 }

@@ -70,7 +70,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 18;
+  int get schemaVersion => 24;
 
   @override
   MigrationStrategy get migration {
@@ -358,6 +358,187 @@ class AppDatabase extends _$AppDatabase {
               'WHERE pin IS NOT NULL;',
             );
           } catch (e) {/* duplicates exist — log + skip; admin must dedup */}
+        }
+        if (from < 19) {
+          // SQLite cannot change column type with ALTER TABLE, so we recreate
+          // order_products with quantity as REAL (was INTEGER).
+          // Explicit column list avoids positional mismatch caused by older
+          // installs that had columns appended via ALTER TABLE in different order.
+          await customStatement('''
+            CREATE TABLE order_products_new (
+              id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+              order_id INTEGER NOT NULL,
+              product_id INTEGER NOT NULL,
+              variant_id INTEGER,
+              ticket_id INTEGER,
+              quantity REAL NOT NULL DEFAULT 1.0,
+              unitary_price REAL NOT NULL,
+              unitary_discount REAL NOT NULL DEFAULT 0.0,
+              unitary_tva REAL NOT NULL DEFAULT 0.0,
+              manual_discount REAL NOT NULL DEFAULT 0.0,
+              note TEXT,
+              state TEXT NOT NULL DEFAULT \'PENDING\',
+              plan_start_at TEXT,
+              plan_end_at TEXT,
+              plan_waiter_id INTEGER,
+              kds_printed_at TEXT,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+          ''');
+          await customStatement('''
+            INSERT INTO order_products_new (
+              id, order_id, product_id, variant_id, ticket_id,
+              quantity, unitary_price, unitary_discount, unitary_tva, manual_discount,
+              note, state, plan_start_at, plan_end_at, plan_waiter_id,
+              kds_printed_at, updated_at
+            )
+            SELECT
+              id, order_id, product_id, variant_id, ticket_id,
+              CAST(quantity AS REAL), unitary_price, unitary_discount, unitary_tva, manual_discount,
+              note, state, plan_start_at, plan_end_at, plan_waiter_id,
+              kds_printed_at, updated_at
+            FROM order_products
+          ''');
+          await customStatement('DROP TABLE order_products');
+          await customStatement(
+            'ALTER TABLE order_products_new RENAME TO order_products',
+          );
+        }
+        if (from < 20) {
+          try {
+            await customStatement(
+              'ALTER TABLE products ADD COLUMN unit_name TEXT;',
+            );
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 21) {
+          // z_day: the calendar day the cash session opened.
+          // Derived at insert time from the active session so it never changes
+          // even when an order is created after midnight inside the same session.
+          // Backfill: use session.started_at when available, else fall back to
+          // the row's own creation timestamp.
+          try {
+            await customStatement('ALTER TABLE orders ADD COLUMN z_day TEXT;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement('''
+              UPDATE orders SET z_day =
+                COALESCE(
+                  (SELECT date(cs.started_at) || 'T00:00:00.000'
+                     FROM cash_sessions cs WHERE cs.id = orders.session_id),
+                  date(orders.created_at) || 'T00:00:00.000'
+                )
+              WHERE z_day IS NULL;
+            ''');
+          } catch (e) {/* non-fatal */}
+
+          try {
+            await customStatement('ALTER TABLE tickets ADD COLUMN z_day TEXT;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement('''
+              UPDATE tickets SET z_day =
+                COALESCE(
+                  (SELECT date(cs.started_at) || 'T00:00:00.000'
+                     FROM cash_sessions cs WHERE cs.id = tickets.session_id),
+                  date(tickets.date) || 'T00:00:00.000'
+                )
+              WHERE z_day IS NULL;
+            ''');
+          } catch (e) {/* non-fatal */}
+
+          try {
+            await customStatement('ALTER TABLE order_products ADD COLUMN z_day TEXT;');
+          } catch (e) {/* may already exist */}
+          try {
+            // Inherit z_day from the parent order (orders already backfilled above).
+            await customStatement('''
+              UPDATE order_products SET z_day =
+                (SELECT o.z_day FROM orders o WHERE o.id = order_products.order_id)
+              WHERE z_day IS NULL;
+            ''');
+          } catch (e) {/* non-fatal */}
+        }
+        if (from < 22) {
+          // kds_printed_quantity: how many units of a line have already been
+          // sent to the kitchen. Enables modifications-only delta printing so
+          // increasing an already-printed line's quantity fires a ticket for
+          // just the added units.
+          try {
+            await customStatement(
+              'ALTER TABLE order_products ADD COLUMN kds_printed_quantity REAL NOT NULL DEFAULT 0;',
+            );
+          } catch (e) {/* may already exist */}
+          try {
+            // Backfill: any line already sent to the kitchen counts its full
+            // current quantity as printed, so it does NOT re-fire as a
+            // modification on the next KDS print.
+            await customStatement(
+              'UPDATE order_products SET kds_printed_quantity = quantity WHERE kds_printed_at IS NOT NULL;',
+            );
+          } catch (e) {/* non-fatal */}
+        }
+        if (from < 23) {
+          // Normalise legacy datetime text.
+          //
+          // With store_date_time_values_as_text, the old `currentDateAndTime`
+          // column default emitted SQLite's CURRENT_TIMESTAMP — UTC, space
+          // separator, no fraction ('2026-07-06 13:38:33') — while every Dart
+          // insert wrote drift's local ISO form ('2026-07-06T15:09:42.000000
+          // +01:00'). Two incompatible encodings in one TEXT column break the
+          // string comparisons drift uses for date-range filters and retention
+          // cutoffs (space 0x20 < 'T' 0x54), which silently hid rows on the
+          // start day of any range. The column defaults are now clientDefault
+          // (local, 'T') so NEW rows are consistent; this backfill fixes the
+          // OLD space-format rows.
+          //
+          // We ONLY swap the space separator for 'T' — we do NOT rebase the
+          // instant to local time. Rebasing (datetime(col,'localtime')) would
+          // shift near-midnight historical rows onto a different calendar day
+          // and depends on the migrating machine's TZ/DST history — unsafe for
+          // past financial records. A pure separator swap makes the value
+          // string-comparable and re-parseable without changing what instant
+          // it represents. Only rows whose 11th char is a space (the legacy
+          // form) are touched; already-'T' rows are left alone.
+          Future<void> fixCol(String table, String col) async {
+            try {
+              await customStatement(
+                "UPDATE $table SET $col = "
+                "substr($col, 1, 10) || 'T' || substr($col, 12) "
+                "WHERE $col IS NOT NULL AND substr($col, 11, 1) = ' ';",
+              );
+            } catch (e) {/* non-fatal — leave the row as-is */}
+          }
+
+          // Transactional + reporting columns that get compared or synced.
+          await fixCol('tickets', 'date');
+          await fixCol('tickets', 'updated_at');
+          await fixCol('orders', 'date');
+          await fixCol('orders', 'created_at');
+          await fixCol('orders', 'updated_at');
+          await fixCol('order_products', 'updated_at');
+          await fixCol('payments', 'date');
+          await fixCol('payments', 'created_at');
+          await fixCol('payments', 'updated_at');
+          await fixCol('transactions', 'date');
+          await fixCol('transactions', 'created_at');
+          await fixCol('transactions', 'updated_at');
+          await fixCol('cash_sessions', 'started_at');
+          await fixCol('cash_sessions', 'ended_at');
+          await fixCol('cash_sessions', 'updated_at');
+        }
+        if (from < 24) {
+          // Session-close totals: full takings + per-method breakdown snapshot.
+          // `moneyAtEnd` stays the physical cash-drawer figure; these are added
+          // alongside it so the Z-report/close covers every payment method.
+          try {
+            await customStatement(
+                'ALTER TABLE cash_sessions ADD COLUMN total_paid REAL;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+                'ALTER TABLE cash_sessions ADD COLUMN details TEXT;');
+          } catch (e) {/* may already exist */}
         }
       },
     );

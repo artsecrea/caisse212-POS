@@ -187,7 +187,7 @@ class ExternalOrderQueueService {
                     orderId: localOrderId,
                     productId: qItem.productId,
                     variantId: Value(qItem.variantId),
-                    quantity: Value(qItem.quantity),
+                    quantity: Value(qItem.quantity.toDouble()),
                     unitaryPrice: price,
                     unitaryTva: Value(tva),
                     note: Value(qItem.note),

@@ -5,7 +5,7 @@ import 'package:drift/drift.dart';
 /// Distinct from [OrderLogs], which is reserved for sync delta tracking.
 class ActivityLogs extends Table {
   IntColumn get id => integer().autoIncrement()();
-  DateTimeColumn get timestamp => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get timestamp => dateTime().clientDefault(() => DateTime.now())();
   IntColumn get userId => integer().nullable()();
   TextColumn get username => text().nullable()();
 
@@ -35,4 +35,6 @@ class ActivityAction {
   // Session-level "admin mode" elevation toggle.
   static const String adminElevationGranted = 'ADMIN_ELEVATION_GRANTED';
   static const String adminElevationRevoked = 'ADMIN_ELEVATION_REVOKED';
+  // Remote command received via SSE from the server.
+  static const String posCommand = 'POS_COMMAND';
 }

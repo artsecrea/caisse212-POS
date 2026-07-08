@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
@@ -13,6 +14,13 @@ import '../../utils/button_styles.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
 import 'permission_guard.dart';
+
+String _fmtQtyLocal(double q) {
+  if (q == q.truncateToDouble()) return q.toInt().toString();
+  return q.toStringAsFixed(3)
+      .replaceAll(RegExp(r'0+$'), '')
+      .replaceAll(RegExp(r'\.$'), '');
+}
 
 class ProductModificationDialog extends ConsumerStatefulWidget {
   final dynamic product;
@@ -39,7 +47,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   bool _isPercentageDiscount = false;
   double _productDiscount = 0.0;
-  int _quantity = 1;
+  double _quantity = 1.0;
   String? _discountError;
 
   // Variant selection state
@@ -84,7 +92,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       final item = widget.product as OrderItem;
       _productDiscount = item.discount;
       _quantity = item.quantity;
-      _quantityController.text = item.quantity.toString();
+      _quantityController.text = _fmtQtyLocal(_quantity);
 
       for (var comp in item.components) {
         _componentQuantities[comp.componentId] = comp.quantity;
@@ -128,7 +136,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           }
           // Lock quantity to 1 if already in plannable+start-set state (edit mode)
           if (_isPlannable && _planStartAt != null) {
-            _quantity = 1;
+            _quantity = 1.0;
             _quantityController.text = '1';
           }
         });
@@ -348,7 +356,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       return;
     }
 
-    final quantity = _isQuantityLocked ? 1 : (int.tryParse(_quantityController.text) ?? 1);
+    final quantity = _isQuantityLocked ? 1.0 : (double.tryParse(_quantityController.text.replaceAll(',', '.')) ?? 1.0);
     if (quantity < 1) {
       SnackBarHelper.showErrorSnackBar(context, ref, 'Quantity must be at least 1');
       return;
@@ -410,10 +418,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       ));
     }
 
-    final productPrice = widget.product is OrderItem
+    final baseProductPrice = widget.product is OrderItem
         ? (widget.product as OrderItem).finalPrice
         : widget.product.price;
-    final manualDiscount = _calculateManualDiscount(productPrice);
+    final effectiveProductPrice = _variantPrice ?? baseProductPrice;
+    final selectedComponentTotal = selectedComponents.fold(
+        0.0, (sum, c) => sum + c.price * c.quantity);
+    final manualDiscount =
+        _calculateManualDiscount(effectiveProductPrice + selectedComponentTotal);
 
     int? variantId;
     String? variantName;
@@ -882,6 +894,98 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   // ─── Header ──────────────────────────────────────────────────────────────────
 
+  /// Touch-friendly combined date + time picker.
+  ///
+  /// Replaces the two-step Material date-dial + time-dial dialogs with a single
+  /// scrolling wheel ([CupertinoDatePicker]) in a bottom sheet — far quicker to
+  /// operate on a POS touch screen. Returns the chosen [DateTime], or null if
+  /// dismissed. [minimum] clamps the earliest selectable instant (used so an
+  /// end time can't precede its start).
+  Future<DateTime?> _pickWheelDateTime({
+    required BuildContext context,
+    required AppLocalizations l10n,
+    required DateTime initial,
+    DateTime? minimum,
+    String? title,
+  }) async {
+    final theme = Theme.of(context);
+    const interval = 5; // minute granularity for the wheel
+
+    // CupertinoDatePicker asserts the initial (and minimum) sit on the minute
+    // interval boundary, so snap both to it.
+    DateTime snap(DateTime d) =>
+        DateTime(d.year, d.month, d.day, d.hour, (d.minute ~/ interval) * interval);
+
+    final minDate = minimum == null ? null : snap(minimum);
+    var temp = snap(initial);
+    if (minDate != null && temp.isBefore(minDate)) temp = minDate;
+
+    return showModalBottomSheet<DateTime>(
+      context: context,
+      backgroundColor: theme.colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          top: false,
+          child: SizedBox(
+            height: 320,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Row(
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text(l10n.translate('cancel')),
+                      ),
+                      Expanded(
+                        child: Text(
+                          title ?? '',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, temp),
+                        child: Text(
+                          l10n.translate('done'),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: CupertinoTheme(
+                    data: CupertinoThemeData(
+                      brightness: theme.brightness,
+                      textTheme: CupertinoTextThemeData(
+                        dateTimePickerTextStyle: theme.textTheme.titleLarge,
+                      ),
+                    ),
+                    child: CupertinoDatePicker(
+                      mode: CupertinoDatePickerMode.dateAndTime,
+                      initialDateTime: temp,
+                      minimumDate: minDate,
+                      minuteInterval: interval,
+                      use24hFormat: MediaQuery.of(ctx).alwaysUse24HourFormat,
+                      onDateTimeChanged: (d) => temp = d,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // ─── Planning Section ────────────────────────────────────────────────────────
 
   Widget _buildPlanningSection(BuildContext context, AppLocalizations l10n) {
@@ -889,53 +993,39 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     final dateTimeFmt = DateFormat('dd/MM HH:mm');
 
     Future<void> pickStart() async {
-      final now = DateTime.now();
-      final pickedDate = await showDatePicker(
+      final picked = await _pickWheelDateTime(
         context: context,
-        initialDate: _planStartAt ?? now,
-        firstDate: DateTime(2020),
-        lastDate: DateTime(2030),
+        l10n: l10n,
+        initial: _planStartAt ?? DateTime.now(),
+        title: l10n.translate('select_start_time'),
       );
-      if (pickedDate == null || !context.mounted) return;
-      final pickedTime = await showTimePicker(
-        context: context,
-        initialTime: TimeOfDay.fromDateTime(_planStartAt ?? now),
-      );
-      if (pickedTime == null || !context.mounted) return;
-      final newStart = DateTime(pickedDate.year, pickedDate.month, pickedDate.day,
-          pickedTime.hour, pickedTime.minute);
+      if (picked == null || !context.mounted) return;
       setState(() {
-        _planStartAt = newStart;
+        _planStartAt = picked;
         if (_planDurationMinutes != null) {
-          _planEndAt = newStart.add(Duration(minutes: _planDurationMinutes!));
-        } else if (_planEndAt != null && _planEndAt!.isBefore(newStart)) {
-          _planEndAt = newStart.add(const Duration(hours: 1));
+          _planEndAt = picked.add(Duration(minutes: _planDurationMinutes!));
+        } else if (_planEndAt != null && _planEndAt!.isBefore(picked)) {
+          _planEndAt = picked.add(const Duration(hours: 1));
         }
-        // Enforce quantity = 1 as soon as a date is selected for plannable product
+        // Enforce quantity = 1 as soon as a time is selected for plannable product
         if (_isPlannable) {
-          _quantity = 1;
+          _quantity = 1.0;
           _quantityController.text = '1';
         }
       });
     }
 
     Future<void> pickEnd() async {
-      final now = _planStartAt ?? DateTime.now();
-      final pickedDate = await showDatePicker(
+      final start = _planStartAt ?? DateTime.now();
+      final picked = await _pickWheelDateTime(
         context: context,
-        initialDate: _planEndAt ?? now.add(const Duration(hours: 1)),
-        firstDate: DateTime(2020),
-        lastDate: DateTime(2030),
+        l10n: l10n,
+        initial: _planEndAt ?? start.add(const Duration(hours: 1)),
+        minimum: start, // end can never precede start
+        title: l10n.translate('select_end_time'),
       );
-      if (pickedDate == null || !context.mounted) return;
-      final pickedTime = await showTimePicker(
-        context: context,
-        initialTime: TimeOfDay.fromDateTime(_planEndAt ?? now.add(const Duration(hours: 1))),
-      );
-      if (pickedTime == null || !context.mounted) return;
-      final newEnd = DateTime(pickedDate.year, pickedDate.month, pickedDate.day,
-          pickedTime.hour, pickedTime.minute);
-      setState(() => _planEndAt = newEnd);
+      if (picked == null || !context.mounted) return;
+      setState(() => _planEndAt = picked);
     }
 
     return Container(
@@ -1104,7 +1194,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                     final componentTotal = _calculateComponentTotal(componentsData);
                     final total = (productPrice + componentTotal) * _quantity;
                     return Text(
-                      '${currencyFormatter.format(productPrice)}${componentTotal > 0 ? '  +${currencyFormatter.format(componentTotal)}' : ''}  ×$_quantity  =  ${currencyFormatter.format(total)}',
+                      '${currencyFormatter.format(productPrice)}${componentTotal > 0 ? '  +${currencyFormatter.format(componentTotal)}' : ''}  ×${_fmtQtyLocal(_quantity)}  =  ${currencyFormatter.format(total)}',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -1192,8 +1282,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           IconButton(
             onPressed: _quantity > 1
                 ? () => setState(() {
-                      _quantity--;
-                      _quantityController.text = _quantity.toString();
+                      _quantity -= 1;
+                      _quantityController.text = _fmtQtyLocal(_quantity);
                     })
                 : null,
             icon: Icon(
@@ -1210,7 +1300,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             width: 80,
             child: OnscreenKeyboardTextField(
               controller: _quantityController,
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 20,
@@ -1225,7 +1315,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 isDense: true,
               ),
               onChanged: (value) {
-                final parsed = int.tryParse(value);
+                final parsed = double.tryParse(value.replaceAll(',', '.'));
                 if (parsed != null && parsed > 0) {
                   setState(() => _quantity = parsed);
                 }
@@ -1234,8 +1324,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           ),
           IconButton(
             onPressed: () => setState(() {
-              _quantity++;
-              _quantityController.text = _quantity.toString();
+              _quantity += 1;
+              _quantityController.text = _fmtQtyLocal(_quantity);
             }),
             icon: Icon(Icons.add_circle,
                 color: Theme.of(context).primaryColor, size: 34),
@@ -1675,7 +1765,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      'x$_quantity',
+                      'x${_fmtQtyLocal(_quantity)}',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,

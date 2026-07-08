@@ -1450,6 +1450,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       children: [
         Expanded(
           child: DataTable2(
+            key: ValueKey(_showAllOrders),
             columnSpacing: 12,
             horizontalMargin: 12,
             minWidth: 1200,
@@ -1513,6 +1514,9 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     final isUnpaid = orderDetails.totalPaid < orderDetails.total;
 
     return DataRow(
+      color: isZLocked
+          ? WidgetStateProperty.all(Colors.purple.withValues(alpha: 0.04))
+          : null,
       onSelectChanged: (_) => isZLocked ? _showOrderDetails(order) : _editOrder(order),
       cells: [
         DataCell(

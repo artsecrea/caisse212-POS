@@ -11,8 +11,8 @@ class AreaTables extends Table {
   TextColumn get description => text().nullable()();
   IntColumn get capacity => integer().withDefault(const Constant(4))();
   IntColumn get areaId => integer().nullable()();
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
 
   IntColumn get orderId => integer().nullable()();
 }

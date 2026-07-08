@@ -2630,13 +2630,25 @@ class PrintingService {
         // Return all items
         return items;
       case KdsPrintMode.modificationsOnly:
-        // "Modifications" = things the kitchen hasn't seen AND that are still
-        // open business. A paid line (ticketId != null) is by definition not
-        // a modification — even if its kdsPrintedAt got lost. Including it
-        // here caused the "new items only (2)" ghost on fully-paid orders.
-        return items
-            .where((item) => item.ticketId == null && item.kdsPrintedAt == null)
-            .toList();
+        // "Modifications" = units the kitchen hasn't seen yet on still-open
+        // business. A paid line (ticketId != null) is by definition not a
+        // modification. For everything else the *delta* between the current
+        // quantity and what was already printed drives the ticket:
+        //   * never-printed line → kdsPrintedQuantity == 0 → delta == quantity
+        //     (prints in full, as before).
+        //   * increased line (e.g. qty 1 → 3, already printed 1) → delta == 2
+        //     → prints "2x" of just the added units.
+        // The delta is stashed in the transient kdsPrintQuantity so rendering
+        // uses it while quantity stays the true total for the printed-mark.
+        final out = <OrderItem>[];
+        for (final item in items) {
+          if (item.ticketId != null) continue;
+          final delta = item.quantity - item.kdsPrintedQuantity;
+          if (delta > 0.0001) {
+            out.add(item.copyWith(kdsPrintQuantity: delta));
+          }
+        }
+        return out;
     }
   }
 
@@ -2650,8 +2662,12 @@ class PrintingService {
             ..where((tbl) => tbl.id.equals(item.id!)))
             .write(OrderProductsCompanion(
               kdsPrintedAt: Value(now),
+              // Record the TRUE current total (not the delta) so a later
+              // quantity bump only re-prints the newly-added units. item.quantity
+              // stays the real total even when kdsPrintQuantity holds the delta.
+              kdsPrintedQuantity: Value(item.quantity),
             ));
-          debugPrint('Marked item ${item.id} as printed at $now');
+          debugPrint('Marked item ${item.id} as printed at $now (qty ${item.quantity})');
         } catch (e) {
           debugPrint('Error marking item ${item.id} as printed: $e');
         }
@@ -2783,8 +2799,11 @@ class PrintingService {
 
       // Items - large and clear for kitchen (only items for this station)
       for (final item in items) {
+        // In modifications-only mode kdsPrintQuantity carries the delta (added
+        // units); otherwise fall back to the full quantity.
+        final printQty = item.kdsPrintQuantity ?? item.quantity;
         bytes += generator.text(
-          '${item.quantity}x ${_safe(item.displayName)}',
+          '${formatQty(printQty)}x ${_safe(item.displayName)}',
           styles: PosStyles(
             align: PosAlign.left,
             bold: true,

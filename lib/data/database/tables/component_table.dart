@@ -10,7 +10,7 @@ class Components extends Table {
   TextColumn get imageUrl => text().nullable()();
   RealColumn get price => real().withDefault(const Constant(0.0))();
   IntColumn get componentGroupId => integer().nullable()();
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
 }
 

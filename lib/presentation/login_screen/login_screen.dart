@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,14 +16,17 @@ import '../../services/activity_log_service.dart';
 import '../../utils/tenant_auth.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/update_provider.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
 import '../../services/api_service.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/session_service.dart';
+import '../../providers/session_rules_provider.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/user_display.dart';
 import '../main_screen/main_screen.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../widgets/report_issue_dialog.dart';
 import '../widgets/update_dialog.dart';
 
@@ -47,6 +51,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   bool _isFullScreen = false;
   bool _isTogglingFullscreen = false;
   String? _errorMessage;
+  String? _appVersion;
   List<User> _availableUsers = [];
   String? _selectedUsername;
 
@@ -60,27 +65,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   late final Animation<double> _brandFade;
   late final Animation<Offset> _formSlide;
   late final Animation<double> _formFade;
-  late final List<Animation<double>> _featureFades;
-  late final List<Animation<Offset>> _featureSlides;
   late final Animation<double> _shakeAnim;
-
-  // Icons here, labels resolved per-build via L10n so language toggles update
-  // the brand panel without rebuilding the animation chain.
-  static const _featureIcons = [
-    Icons.speed_outlined,
-    Icons.receipt_long_outlined,
-    Icons.wifi_off_outlined,
-    Icons.table_restaurant_outlined,
-  ];
-
-  static const _featureKeys = [
-    'feature_fast_orders',
-    'feature_thermal_printing',
-    'feature_works_offline',
-    'feature_table_management',
-  ];
-
-  static const int _featureCount = 4;
 
   // ── Date-based config password ─────────────────────────────────────────────
   String get _configPassword {
@@ -95,8 +80,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     super.initState();
     _setupAnimations();
     _loadUsers();
+    _loadVersion();
     _checkFullScreenStatus();
     _entranceCtrl.forward();
+    // Check for updates and show dialog when one is found.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(updateProvider.notifier).checkOnly();
+    });
   }
 
   void _setupAnimations() {
@@ -152,30 +142,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       ),
     );
 
-    _featureFades = List.generate(
-      _featureCount,
-      (i) => Tween<double>(begin: 0.0, end: 1.0).animate(
-        CurvedAnimation(
-          parent: _entranceCtrl,
-          curve: Interval(0.35 + i * 0.08, 0.70 + i * 0.06,
-              curve: Curves.easeIn),
-        ),
-      ),
-    );
-    _featureSlides = List.generate(
-      _featureCount,
-      (i) => Tween<Offset>(
-        begin: const Offset(-0.18, 0),
-        end: Offset.zero,
-      ).animate(
-        CurvedAnimation(
-          parent: _entranceCtrl,
-          curve: Interval(0.35 + i * 0.08, 0.75 + i * 0.06,
-              curve: Curves.easeOutCubic),
-        ),
-      ),
-    );
-
     _shakeAnim = TweenSequence<double>([
       TweenSequenceItem(tween: Tween(begin: 0.0, end: -14.0), weight: 1),
       TweenSequenceItem(tween: Tween(begin: -14.0, end: 14.0), weight: 2),
@@ -205,6 +171,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     } catch (e) {
       debugPrint('Error loading users: $e');
     }
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _appVersion = 'v${info.version}');
+    } catch (_) {}
   }
 
   Future<void> _checkFullScreenStatus() async {
@@ -536,7 +509,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
       final database = ref.read(databaseProvider);
-      final syncService = DataSyncService(database, apiService);
+      final syncService = DataSyncService(database, apiService, prefs);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(l10n.translate('syncing_data')),
@@ -544,6 +517,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         ));
       }
       await syncService.syncAllData();
+      // Sync session rules in the background (best-effort — 404 is fine).
+      final rules = await syncService.syncSessionRules();
+      if (rules != null && mounted) {
+        ref.read(sessionRulesProvider.notifier).updateRules(rules);
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(l10n.translate('sync_complete')),
@@ -677,13 +655,43 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             ref.read(currentSessionProvider.notifier).state = existingSession;
           }
         } else {
+          // Enforce session-open rules (admin users are exempt).
+          final rules = ref.read(sessionRulesProvider);
+          final isAdmin = user.type.toLowerCase() == 'admin';
+          await sessionService.checkOpenRules(
+            rules,
+            isAdmin: isAdmin,
+            cashierId: user.id,
+          );
+
           final newSession = await sessionService.startSession(
             cashierId: user.id,
             moneyAtStart: startingBalance,
           );
           ref.read(currentSessionProvider.notifier).state = newSession;
+          // Push the new session to the server immediately (best-effort).
+          // If offline, isSynced stays false and syncSessionsBulk covers it later.
+          try {
+            final prefs = ref.read(sharedPreferencesProvider);
+            await DataSyncService(ref.read(databaseProvider), ApiService(prefs))
+                .syncSingleSession(newSession.id);
+          } catch (_) {}
           await ref.read(activityLogServiceProvider)
               .logSessionStart(userId: user.id, username: actorName);
+          // Fire-and-forget: notify admin devices that a session was opened.
+          unawaited(ref.read(apiServiceProvider).postNotification(
+            type: 'POS_SESSION_OPENED',
+            params: {
+              'v': '1',
+              'terminalName': ref.read(apiServiceProvider).getPosName() ?? '',
+              'cashierName': actorName,
+              'cashierId': user.id.toString(),
+              'openedAt': newSession.startedAt.toIso8601String(),
+              'startingBalance': startingBalance.toStringAsFixed(2),
+              'currency': ref.read(settingsProvider).currency,
+            },
+            refId: newSession.id.toString(),
+          ));
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(l10n
@@ -703,14 +711,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             backgroundColor: Colors.orange,
           ));
         }
+        // Session setup failed — do not navigate to main with a null session.
+        return;
       }
 
       if (mounted) {
-        await _checkForUpdates();
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const MainScreen()));
-        }
+        Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const MainScreen()));
       }
     } catch (e) {
       setState(() {
@@ -721,32 +728,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     }
 
     setState(() => _isLoading = false);
-  }
-
-  Future<void> _checkForUpdates() async {
-    if (!Platform.isAndroid) return;
-    try {
-      final updateNotifier = ref.read(updateProvider.notifier);
-      final hasUpdate = await updateNotifier.checkForUpdates();
-      if (hasUpdate && mounted) {
-        final updateState = ref.read(updateProvider);
-        final isMandatory = updateState.updateRequired;
-        final shouldProceed = await showDialog<bool>(
-          context: context,
-          barrierDismissible: !isMandatory,
-          builder: (context) => UpdateDialog(isMandatory: isMandatory),
-        );
-        if (isMandatory && shouldProceed != true) {
-          setState(() {
-            _errorMessage = 'A mandatory update is required to continue.';
-            _isLoading = false;
-          });
-          return;
-        }
-      }
-    } catch (e) {
-      Logger.instance.warning('Update check failed (non-blocking): $e');
-    }
   }
 
   Future<void> _performFullLogout(String message) async {
@@ -812,17 +793,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     final l10n = AppLocalizations.of(context)!;
     final isWide = MediaQuery.sizeOf(context).width >= 860;
 
+    // Show the update dialog the moment an available update is detected.
+    ref.listen<UpdateState>(updateProvider, (prev, next) {
+      if (prev?.availableUpdate == null &&
+          next.availableUpdate != null &&
+          !next.updateReady &&
+          mounted) {
+        showUpdateDialog(context, isMandatory: next.updateRequired);
+      }
+    });
+
     return Scaffold(
-      body: isWide
-          ? _buildWideLayout(context, l10n)
-          : _buildCompactLayout(context, l10n),
+      body: Stack(
+        children: [
+          isWide
+              ? _buildWideLayout(context, l10n)
+              : _buildCompactLayout(context, l10n),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _UpdateStatusBar(),
+          ),
+        ],
+      ),
     );
   }
 
   // ── Wide layout (desktop / landscape tablet) ───────────────────────────────
 
   Widget _buildWideLayout(BuildContext context, AppLocalizations l10n) {
-    final primary = Theme.of(context).colorScheme.primary;
     final bg = Theme.of(context).scaffoldBackgroundColor;
 
     return Stack(
@@ -836,19 +836,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 slideAnim: _brandSlide,
                 fadeAnim: _brandFade,
                 child: Container(
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
                       colors: [
-                        primary,
-                        primary.withValues(alpha: 0.78),
-                        primary.withValues(alpha: 0.55),
+                        Color(0xFFF5A369),
+                        Color(0xFFF59660),
+                        Color(0xFFF48655),
+                        Color(0xFFF07041),
                       ],
-                      stops: const [0.0, 0.55, 1.0],
+                      stops: [0.0, 0.33, 0.67, 1.0],
                     ),
                   ),
-                  child: _buildBrandPanel(context),
+                  child: Center(
+                    child: SvgPicture.asset(
+                      'assets/images/logo-white.svg',
+                      width: 360,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -972,84 +978,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     );
   }
 
-  // ── Brand panel ─────────────────────────────────────────────────────────────
-
-  Widget _buildBrandPanel(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(40, 72, 40, 48),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Animated logo
-          FadeTransition(
-            opacity: _logoFade,
-            child: ScaleTransition(
-              scale: _logoScale,
-              child: const Caisse212Logo(size: 64),
-            ),
-          ),
-          const SizedBox(height: 20),
-          FadeTransition(
-            opacity: _brandFade,
-            child: SlideTransition(
-              position: _brandSlide,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'CAISSE212',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 30,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    l10n.translate('pos_tagline'),
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.72),
-                      fontSize: 14,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 48),
-          // Staggered feature list
-          for (int i = 0; i < _featureCount; i++)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 18),
-              child: FadeTransition(
-                opacity: _featureFades[i],
-                child: SlideTransition(
-                  position: _featureSlides[i],
-                  child: _FeatureItem(
-                    icon: _featureIcons[i],
-                    label: l10n.translate(_featureKeys[i]),
-                  ),
-                ),
-              ),
-            ),
-          const Spacer(),
-          FadeTransition(
-            opacity: _brandFade,
-            child: Text(
-              '© ${DateTime.now().year} Caisse212',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.35),
-                fontSize: 11,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   // ── Form content ─────────────────────────────────────────────────────────────
 
@@ -1070,11 +998,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 opacity: _logoFade,
                 child: ScaleTransition(
                   scale: _logoScale,
-                  child: const Caisse212Logo(size: 56),
+                  child: const Caisse212Logo(size: 80),
                 ),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
           ],
           Text(
             l10n.translate('sign_in'),
@@ -1143,8 +1071,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             child: ElevatedButton(
               onPressed: _isLoading ? null : _handleLogin,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                backgroundColor: const Color(0xFFF07041),
+                foregroundColor: Colors.white,
                 elevation: 3,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14)),
@@ -1171,6 +1099,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     ),
             ),
           ),
+
+          if (_appVersion != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              _appVersion!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.38),
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1347,41 +1291,6 @@ class _AnimatedPanel extends StatelessWidget {
   }
 }
 
-class _FeatureItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-
-  const _FeatureItem({required this.icon, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(icon, color: Colors.white, size: 20),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.88),
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 
 class _ErrorBanner extends StatelessWidget {
   final String message;
@@ -1416,6 +1325,80 @@ class _ErrorBanner extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Slim bar pinned to the bottom of the login screen that shows update status
+/// without requiring the user to log in first.
+class _UpdateStatusBar extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final update = ref.watch(updateProvider);
+    final cs = Theme.of(context).colorScheme;
+
+    if (update.isDownloading) {
+      return Container(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.95),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.download_rounded, size: 14, color: cs.primary),
+                const SizedBox(width: 6),
+                Text(
+                  'Downloading update ${update.availableUpdate?.version ?? ""}… '
+                  '${(update.downloadProgress * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            LinearProgressIndicator(
+              value: update.downloadProgress,
+              minHeight: 3,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (update.updateReady) {
+      final isMandatory = update.updateRequired;
+      return Container(
+        color: isMandatory
+            ? Colors.orange.withValues(alpha: 0.15)
+            : cs.primaryContainer.withValues(alpha: 0.9),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
+            Icon(
+              isMandatory ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+              size: 16,
+              color: isMandatory ? Colors.orange[700] : cs.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                isMandatory
+                    ? 'Mandatory update ${update.pendingVersion} — restart required'
+                    : 'Update ${update.pendingVersion} ready — reopen the app to apply',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isMandatory ? Colors.orange[900] : cs.onPrimaryContainer,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 }
 

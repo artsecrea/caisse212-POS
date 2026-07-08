@@ -39,6 +39,8 @@ import '../../utils/responsive_utils.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/sse_provider.dart';
+import '../../providers/session_rules_provider.dart';
+import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
 import '../../services/scale_barcode_service.dart';
 import '../../domain/models/scale_config.dart';
@@ -55,6 +57,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   final _logger = Logger.instance;
   final _focusNode = FocusNode();
   StreamSubscription<String>? _barcodeSubscription;
+  Timer? _autoCloseTimer;
 
   // Responsive sizing — updated in build() from MediaQuery
   double _btnSize = 130;
@@ -71,6 +74,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     super.initState();
     _initializeBarcodeScanner();
     _requestSearchFocus();
+    _startAutoCloseTimer();
   }
 
   void _requestSearchFocus() {
@@ -210,21 +214,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       case WeightedItem():
         await _handleWeightedBarcode(result);
       case ConfigMismatch():
-        if (mounted) {
-          SnackBarHelper.showWarningSnackBar(
-            context,
-            ref,
-            'Scale config mismatch: expected ${result.expected} chars, got ${result.actual}',
-            duration: const Duration(seconds: 3),
-          );
-        }
+        // Wrong length for a scale label but starts with the scale prefix —
+        // fall back to a normal product lookup so regular product barcodes
+        // that share the prefix still work.
+        await _handleStaticBarcode(barcode);
       case MalformedWeightBarcode():
         if (mounted) {
-          SnackBarHelper.showErrorSnackBar(
+          SnackBarHelper.error(
             context,
-            ref,
             'Malformed scale barcode: ${result.reason}',
-            duration: const Duration(seconds: 3),
           );
         }
     }
@@ -245,8 +243,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         if (currentOrder.orderId != null &&
             !ref.read(permissionServiceProvider).hasPermission(Permissions.ordersItemAdd)) {
           if (mounted) {
-            SnackBarHelper.showErrorSnackBar(
-              context, ref, AppLocalizations.of(context)!.translate('no_permission'));
+            SnackBarHelper.error(
+              context, AppLocalizations.of(context)!.translate('no_permission'));
           }
           return;
         }
@@ -263,18 +261,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         );
 
         if (mounted) {
-          SnackBarHelper.showSuccessSnackBar(
+          SnackBarHelper.success(
             context,
-            ref,
             '${product.name} added to order',
             duration: const Duration(seconds: 1),
           );
         }
       } else {
+        _logger.warning('Barcode lookup: no active product found for barcode "$barcode"');
         if (mounted) {
-          SnackBarHelper.showWarningSnackBar(
+          SnackBarHelper.warning(
             context,
-            ref,
             'Product with barcode $barcode not found',
             duration: const Duration(seconds: 2),
           );
@@ -283,9 +280,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     } catch (e) {
       _logger.error('Error loading product from barcode: $e');
       if (mounted) {
-        SnackBarHelper.showErrorSnackBar(
+        SnackBarHelper.error(
           context,
-          ref,
           'Error: $e',
           duration: const Duration(seconds: 2),
         );
@@ -298,13 +294,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final scaleConfig = ref.read(scaleConfigProvider);
     final orderRepo = ref.read(orderRepositoryProvider);
 
-    // 5.1 Look up product by MBW/PLU code.
+    // Look up product by MBW/PLU code.
+    _logger.info('Scale barcode: PLU="${result.plu}" value=${result.extractedValue}');
     final product = await orderRepo.findByMbwCode(result.plu);
     if (product == null) {
+      _logger.warning('Scale barcode: no active product found for PLU "${result.plu}"');
       if (mounted) {
-        SnackBarHelper.showErrorSnackBar(
+        SnackBarHelper.error(
           context,
-          ref,
           l10n?.translate('scale_item_not_found') ?? 'Scale item not found. PLU: ${result.plu}',
           duration: const Duration(seconds: 4),
         );
@@ -312,39 +309,44 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       return;
     }
 
-    // 5.3 Compute line total.
+    // Compute line total.
     double lineTotal;
-    double? pricePerKgDisplay;
+    double pricePerKgDisplay;
+
+    if (product.pricePerKg != null && product.pricePerKg! > 0) {
+      pricePerKgDisplay = product.pricePerKg! / 100.0;
+    } else {
+      // Fall back to the product's default sale price as the per-kg rate.
+      pricePerKgDisplay = product.finalPrice;
+    }
+
+    if (pricePerKgDisplay <= 0) {
+      if (mounted) {
+        SnackBarHelper.error(
+          context,
+          l10n?.translate('scale_no_price_per_kg') ??
+              'Product "${product.name}" has no price configured.',
+          duration: const Duration(seconds: 4),
+        );
+      }
+      return;
+    }
 
     if (scaleConfig.barcodeType == ScaleBarcodeType.weightEmbedded) {
-      if (product.pricePerKg == null || product.pricePerKg == 0) {
-        if (mounted) {
-          SnackBarHelper.showErrorSnackBar(
-            context,
-            ref,
-            l10n?.translate('scale_no_price_per_kg') ??
-                'Product "${product.name}" has no price per kg configured.',
-            duration: const Duration(seconds: 4),
-          );
-        }
-        return;
-      }
-      // pricePerKg in centimes → convert to currency units, multiply by weight.
-      pricePerKgDisplay = product.pricePerKg! / 100.0;
+      // extractedValue IS the weight in kg.
       lineTotal = double.parse(
         (result.extractedValue * pricePerKgDisplay).toStringAsFixed(2),
       );
     } else {
-      // PRICE_EMBEDDED — extracted value IS the line total.
+      // PRICE_EMBEDDED — extractedValue IS the line total; derive weight from it.
       lineTotal = double.parse(result.extractedValue.toStringAsFixed(2));
     }
 
-    // 5.4 Hard stop on zero total.
+    // Hard stop on zero total.
     if (lineTotal <= 0 || result.extractedValue <= 0) {
       if (mounted) {
-        SnackBarHelper.showErrorSnackBar(
+        SnackBarHelper.error(
           context,
-          ref,
           l10n?.translate('scale_zero_total') ??
               'Zero weight or total — item not added.',
           duration: const Duration(seconds: 3),
@@ -353,33 +355,134 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       return;
     }
 
-    // 5.5 Add weighed line item.
+    // Both directions: quantity = weightKg, unitPrice = price/kg.
+    // WEIGHT_EMBEDDED: weight from barcode → derive total.
+    // PRICE_EMBEDDED:  total from barcode → derive weight = total / price/kg.
+    final double weightKg;
+    if (scaleConfig.barcodeType == ScaleBarcodeType.weightEmbedded) {
+      weightKg = result.extractedValue;
+    } else {
+      weightKg = double.parse(
+        (lineTotal / pricePerKgDisplay).toStringAsFixed(3),
+      );
+    }
+
     ref.read(orderProvider.notifier).addWeighedItem(
       productId: product.id,
       productName: product.name,
       imageUrl: product.imageUrl,
-      lineTotal: lineTotal,
-      weightKg: scaleConfig.barcodeType == ScaleBarcodeType.weightEmbedded
-          ? result.extractedValue
-          : 0.0,
+      quantity: weightKg,
+      unitPrice: pricePerKgDisplay,
+      weightKg: weightKg,
       pricePerKgDisplay: pricePerKgDisplay,
+      unitName: product.unitName,
     );
 
     if (mounted) {
-      final weightStr = scaleConfig.barcodeType == ScaleBarcodeType.weightEmbedded
-          ? '${result.extractedValue.toStringAsFixed(3)} kg'
-          : '';
-      SnackBarHelper.showSuccessSnackBar(
+      SnackBarHelper.success(
         context,
-        ref,
-        '${product.name} $weightStr added',
+        '${product.name} ${weightKg.toStringAsFixed(3)} kg added',
         duration: const Duration(seconds: 1),
       );
     }
   }
 
+  void _startAutoCloseTimer() {
+    _autoCloseTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) return;
+      final rules = ref.read(sessionRulesProvider);
+      if (rules.maxEndHour == null && rules.maxSessionDurationMinutes == null) {
+        return;
+      }
+      final session = ref.read(currentSessionProvider);
+      if (session == null) return;
+
+      // Only auto-close when the panel is truly empty.
+      final order = ref.read(orderProvider);
+      if (order.items.isNotEmpty) return;
+
+      final now = DateTime.now();
+
+      if (rules.maxEndHour != null && now.hour >= rules.maxEndHour!) {
+        _autoCloseSession(session, 'auto_close_max_end_hour');
+        return;
+      }
+
+      if (rules.maxSessionDurationMinutes != null) {
+        final elapsed = now.difference(session.startedAt).inMinutes;
+        if (elapsed >= rules.maxSessionDurationMinutes!) {
+          _autoCloseSession(session, 'auto_close_max_duration');
+        }
+      }
+    });
+  }
+
+  /// Called when the server pushes a close_session / close_all_sessions /
+  /// force_logout command via SSE. Syncs remaining data then navigates to login.
+  Future<void> _handleSseSessionClose() async {
+    try {
+      final syncService = ref.read(dataSyncServiceProvider);
+      await Future.wait([
+        syncService.syncPendingOperations(),
+        syncService.syncSessionsBulk(),
+        syncService.syncOrdersBulk(),
+        syncService.syncTicketsBulk(),
+      ]).timeout(const Duration(seconds: 15));
+    } catch (e) {
+      _logger.warning('SSE session-close pre-logout sync failed: $e');
+    }
+    ref.read(currentUserProvider.notifier).state = null;
+    ref.read(currentSessionProvider.notifier).state = null;
+    ref.read(orderProvider.notifier).clearOrder();
+    if (mounted) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      Navigator.of(context)
+          .pushNamedAndRemoveUntil('/login', (route) => false);
+    }
+  }
+
+  Future<void> _autoCloseSession(
+      CashSession session, String reasonKey) async {
+    _autoCloseTimer?.cancel();
+    try {
+      final db = ref.read(databaseProvider);
+      final sessionService = SessionService(db);
+      await sessionService.endSession(sessionId: session.id);
+      ref.read(currentSessionProvider.notifier).state = null;
+      // Sync all pending data to server before returning to login.
+      try {
+        final syncService = ref.read(dataSyncServiceProvider);
+        await Future.wait([
+          syncService.syncPendingOperations(),
+          syncService.syncSessionsBulk(),
+          syncService.syncOrdersBulk(),
+          syncService.syncTicketsBulk(),
+        ]).timeout(const Duration(seconds: 15));
+      } catch (e) {
+        _logger.warning('Pre-logout sync failed (non-blocking): $e');
+      }
+      if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate(reasonKey)),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
+        ));
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) Navigator.of(context).pushReplacementNamed('/login');
+        });
+      }
+    } catch (e) {
+      _logger.error('Auto-close session failed: $e');
+      // Restart the timer so we retry on the next tick.
+      _startAutoCloseTimer();
+    }
+  }
+
   @override
   void dispose() {
+    _autoCloseTimer?.cancel();
     _barcodeSubscription?.cancel();
     _focusNode.dispose();
     super.dispose();
@@ -396,6 +499,40 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
     // Activate SSE connection while MainScreen is mounted
     ref.watch(sseLifecycleProvider);
+
+    // Force-logout: fires when the server rejects the refresh token (4xx on
+    // /pos/refresh). Clears focus and navigates to login on the next frame.
+    ref.listen<AsyncValue<void>>(forceLogoutStreamProvider, (_, next) {
+      next.whenData((_) {
+        if (!mounted) return;
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) Navigator.of(context).pushReplacementNamed('/login');
+        });
+      });
+    });
+
+    // When sync updates an order that is currently open in the panel, reload
+    // it so the cashier sees the latest items/prices without manual refresh.
+    ref.listen<AsyncValue<int>>(syncedOrderUpdatedProvider, (_, next) {
+      next.whenData((updatedOrderId) async {
+        final panelOrderId = ref.read(orderProvider).orderId;
+        if (panelOrderId != updatedOrderId) return;
+        final refreshed = await ref
+            .read(orderRepositoryProvider)
+            .getOrderById(updatedOrderId);
+        if (refreshed != null && mounted) {
+          ref.read(orderProvider.notifier).setOrder(refreshed);
+        }
+      });
+    });
+
+    // When the server commands a session close or force-logout via SSE,
+    // sync remaining data and return to the login screen.
+    ref.listen<int>(sseSessionClosedProvider, (prev, next) {
+      if (prev == next) return;
+      _handleSseSessionClose();
+    });
 
     // Show SnackBar when admin pushes a DISPLAY_ALERT command
     ref.listen<String?>(sseAlertProvider, (_, message) {
@@ -699,23 +836,26 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     Color? color,
     bool isPrimary = false,
   }) {
-    final iconSize = _btnSize < 90 ? 20.0 : (_btnSize < 110 ? 26.0 : 32.0);
-    final showLabel = _btnSize >= 90;
+    // Keep the label visible even on the smallest buttons — just scale the
+    // icon and text down so both fit. A label too long to fit (e.g. a long
+    // table name) scrolls back and forth via [_MarqueeLabel] instead of being
+    // hidden or hard-cropped.
+    final iconSize = _btnSize < 80 ? 18.0 : (_btnSize < 100 ? 22.0 : 30.0);
+    final labelStyle = TextStyle(
+      fontSize: _btnSize < 80 ? 9.5 : (_btnSize < 100 ? 10.5 : 12.5),
+      fontWeight: FontWeight.w600,
+      height: 1.05,
+    );
 
     final child = Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(icon, size: iconSize),
-        if (showLabel) ...[
-          const SizedBox(height: 4),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
-            maxLines: 2,
-            style: TextStyle(fontSize: _btnSize < 110 ? 11.0 : 13.0),
-          ),
-        ],
+        SizedBox(height: _btnSize < 80 ? 2 : 4),
+        SizedBox(
+          width: double.infinity,
+          child: _MarqueeLabel(text: label, style: labelStyle),
+        ),
       ],
     );
 
@@ -1138,18 +1278,23 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   ? null
                   : () async {
                       final currentUser = ref.read(currentUserProvider);
+                      final printSession = ref.read(currentSessionProvider);
                       final orderRepo = ref.read(orderRepositoryProvider);
                       final settings = ref.read(settingsProvider);
 
                       int? orderId = currentOrder.orderId;
                       if (!currentOrder.isSaved() && currentUser != null) {
+                        if (printSession == null) {
+                          if (context.mounted) SnackBarHelper.showErrorSnackBar(context, ref, 'No active session');
+                          return;
+                        }
                         try {
                           _logger.debug('Print: Saving new order with ${currentOrder.items.length} items');
                           orderId = await orderRepo.saveOrder(
                             currentOrder,
                             currentUser.id,
                             status: settings.defaultOrderStatus,
-                            sessionId: ref.read(currentSessionProvider)?.id,
+                            sessionId: printSession.id,
                           );
 
                           if (currentOrder.tableId != null) {
@@ -1311,6 +1456,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     final printingService = ref.read(printingServiceProvider);
 
                     if (currentUser == null) return;
+                    final session = ref.read(currentSessionProvider);
+                    if (session == null) return;
 
                     final ok = await _resolveRuleViolations();
                     if (!ok) return;
@@ -1331,7 +1478,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           currentOrder,
                           currentUser.id,
                           status: settings.defaultOrderStatus,
-                          sessionId: ref.read(currentSessionProvider)?.id,
+                          sessionId: session.id,
                         );
 
                         if (currentOrder.tableId != null) {
@@ -1421,13 +1568,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
       if (button != null && shouldShow) {
         buttons.add(button);
-        buttons.add(const SizedBox(width: 8));
       }
-    }
-
-    // Remove trailing SizedBox if exists
-    if (buttons.isNotEmpty && buttons.last is SizedBox) {
-      buttons.removeLast();
     }
 
     return buttons;
@@ -1446,6 +1587,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final prefs = ref.read(sharedPreferencesProvider);
 
     if (currentUser == null) return;
+    if (session == null) {
+      if (mounted) SnackBarHelper.showErrorSnackBar(context, ref, 'No active session');
+      return;
+    }
 
     // Validate order has items
     if (currentOrder.items.isEmpty) {
@@ -1486,7 +1631,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           currentOrder,
           currentUser.id,
           status: settings.defaultOrderStatus,
-          sessionId: session?.id,
+          sessionId: session.id,
         );
         if (currentOrder.tableId != null) {
           await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
@@ -1529,9 +1674,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           orderId: orderId,
           paymentMethod: TransactionType.cash.value,
           amount: total,
-          sessionId: Value(session?.id),
+          sessionId: Value(session.id),
+          // z_day = the session's opening calendar day (constant across midnight).
+          zDay: Value(ref.read(currentZDayProvider)),
           isPaid: const Value(true),
           printCount: const Value(0),
+          date: Value(DateTime.now()),
         ),
       );
 
@@ -1680,6 +1828,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final settings = ref.read(settingsProvider);
 
     if (currentUser == null) return;
+    final session = ref.read(currentSessionProvider);
+    if (session == null) {
+      if (mounted) SnackBarHelper.showErrorSnackBar(context, ref, 'No active session');
+      return;
+    }
 
     final ok = await _resolveRuleViolations();
     if (!ok) return;
@@ -1706,7 +1859,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           currentOrder,
           currentUser.id,
           status: settings.defaultOrderStatus,
-          sessionId: ref.read(currentSessionProvider)?.id,
+          sessionId: session.id,
         );
         if (currentOrder.tableId != null) {
           await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
@@ -2022,6 +2175,112 @@ class _NumberOfPersonsDialogState extends State<_NumberOfPersonsDialog> {
           child: Text(l10n.translate('ok')),
         ),
       ],
+    );
+  }
+}
+
+/// A single-line label that shows its text in full whenever it fits, and
+/// gently scrolls it back and forth (marquee) when it's too wide for the
+/// available space — so action-button labels like a long table name stay
+/// readable on small screens instead of being hidden or cropped.
+class _MarqueeLabel extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+
+  const _MarqueeLabel({required this.text, required this.style});
+
+  @override
+  State<_MarqueeLabel> createState() => _MarqueeLabelState();
+}
+
+class _MarqueeLabelState extends State<_MarqueeLabel>
+    with SingleTickerProviderStateMixin {
+  final ScrollController _scroll = ScrollController();
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..addListener(_onTick);
+  }
+
+  void _onTick() {
+    if (!_scroll.hasClients) return;
+    final max = _scroll.position.maxScrollExtent;
+    if (max <= 0) return;
+    // easeInOut gives a slow start/stop at each end that reads as a short pause.
+    _scroll.jumpTo(max * Curves.easeInOut.transform(_ctrl.value));
+  }
+
+  @override
+  void didUpdateWidget(covariant _MarqueeLabel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Label text changed (e.g. table assigned/cleared) — restart from the head
+    // so the new text isn't left mid-scroll.
+    if (oldWidget.text != widget.text && _scroll.hasClients) {
+      _scroll.jumpTo(0);
+      _ctrl.reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dir = Directionality.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tp = TextPainter(
+          text: TextSpan(text: widget.text, style: widget.style),
+          maxLines: 1,
+          textDirection: dir,
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout();
+
+        final fits = tp.width <= constraints.maxWidth + 0.5;
+
+        if (fits) {
+          if (_ctrl.isAnimating) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _ctrl.isAnimating) _ctrl.stop();
+            });
+          }
+          return Text(
+            widget.text,
+            maxLines: 1,
+            softWrap: false,
+            textAlign: TextAlign.center,
+            style: widget.style,
+          );
+        }
+
+        // Overflows: kick off the ping-pong loop once we have a scroll extent.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_ctrl.isAnimating) {
+            _ctrl.repeat(reverse: true);
+          }
+        });
+
+        return SingleChildScrollView(
+          controller: _scroll,
+          scrollDirection: Axis.horizontal,
+          physics: const NeverScrollableScrollPhysics(),
+          child: Text(
+            widget.text,
+            maxLines: 1,
+            softWrap: false,
+            style: widget.style,
+          ),
+        );
+      },
     );
   }
 }

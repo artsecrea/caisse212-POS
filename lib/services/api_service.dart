@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
@@ -9,17 +10,39 @@ class ApiService {
   final SharedPreferences _prefs;
 
   static const String _accessTokenKey = 'server_access_token';
+  static const String _refreshTokenKey = 'server_refresh_token';
+  static const String _accessExpiresAtMsKey = 'server_access_expires_at_ms';
   static const String _posNameKey = 'pos_name';
+  static const String _posIdKey = 'pos_terminal_id';
   static const String _baseUrlKey = 'api_base_url';
   static const String _tenantIdKey = 'tenant_id';
+  static const String _businessIdKey = 'business_id';
   static const String _isDemoModeKey = 'is_demo_mode';
   static const String _businessNameKey = 'business_name';
   static const String _businessLogoKey = 'business_logo';
+
+  // In-memory access-token expiry (loaded from prefs on startup).
+  DateTime? _accessExpiresAt;
+
+  // Single-flight refresh: if a refresh is in progress all callers wait for
+  // the same Completer rather than firing parallel refresh requests.
+  Completer<void>? _refreshCompleter;
+
+  // Broadcast stream that fires when the refresh token is definitively
+  // rejected (4xx from /pos/refresh). Subscribers navigate to login.
+  final _forceLogoutController = StreamController<void>.broadcast();
+  Stream<void> get forceLogoutStream => _forceLogoutController.stream;
 
   // Public getter for Dio instance (for testing/debugging)
   Dio get dio => _dio;
 
   ApiService(this._prefs) {
+    // Restore persisted expiry into memory so pre-emptive refresh works
+    // after an app restart without needing a fresh login.
+    final storedMs = _prefs.getInt(_accessExpiresAtMsKey);
+    if (storedMs != null) {
+      _accessExpiresAt = DateTime.fromMillisecondsSinceEpoch(storedMs);
+    }
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 30),
@@ -29,7 +52,7 @@ class ApiService {
 
   void _setupInterceptors() {
     _dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) {
+      onRequest: (options, handler) async {
         // Add base URL
         final savedBaseUrl = _prefs.getString(_baseUrlKey);
         if (savedBaseUrl != null && savedBaseUrl.isNotEmpty && !options.path.startsWith('http')) {
@@ -37,10 +60,26 @@ class ApiService {
           options.path = '$baseUrl${options.path}';
         }
 
-        // Debug logging
-        print('API Request: ${options.method} ${options.path}');
-        if (options.data != null) {
-          print('Request data: ${options.data}');
+        // Pre-emptive token refresh: if the access token expires within 60 s,
+        // refresh now so the request goes out with a fresh token.
+        // Skip for auth endpoints and for requests that are themselves a retry.
+        final isAuthEndpoint = options.path.contains('/pos/login') ||
+            options.path.contains('/pos/refresh') ||
+            options.path.contains('/pos/logout');
+        final isRetry = options.extra['_retried'] == true;
+
+        if (!isAuthEndpoint && !isRetry) {
+          final exp = _accessExpiresAt;
+          if (exp != null &&
+              DateTime.now().isAfter(exp.subtract(const Duration(seconds: 60)))) {
+            try {
+              await _doRefresh();
+            } catch (_) {
+              // Pre-emptive refresh failed (network error). Let the request
+              // proceed anyway; if the token is truly dead the server returns
+              // 401 and the onError handler will retry.
+            }
+          }
         }
 
         // Add authorization token
@@ -55,42 +94,132 @@ class ApiService {
           options.headers['X-POS-Name'] = posName;
         }
 
+        // Add POS terminal ID header
+        final posId = getPosId();
+        if (posId != null) {
+          options.headers['X-Pos-Id'] = posId.toString();
+        }
+
         // Add tenant ID header
         final tenantId = getTenantId();
         if (tenantId != null) {
           options.headers['X-Tenant-ID'] = tenantId.toString();
         }
 
+        // Intentionally DO NOT send X-Business-Id. Per the POS API contract the
+        // server resolves the owning business from X-POS-Name; the header must
+        // be omitted. Sending anything other than the exact posTerminal
+        // businessId — in particular the tenant id, which this app historically
+        // conflated with the business id — triggers 403 "Business does not
+        // belong to the current tenant". Omitting it is the sanctioned path.
+
         return handler.next(options);
       },
       onError: (error, handler) async {
-        print('API Error: ${error.type}');
-        print('API Error message: ${error.message}');
-        print('API Error response: ${error.response?.data}');
-        print('API Error status code: ${error.response?.statusCode}');
-
-        // Additional debugging for connection errors
-        if (error.type == DioExceptionType.connectionError ||
-            error.type == DioExceptionType.unknown) {
-          print('Connection Error Details:');
-          print('  - Error: ${error.error}');
-          print('  - Request URI: ${error.requestOptions.uri}');
-          print('  - Request method: ${error.requestOptions.method}');
+        if (error.response?.statusCode != 401) {
+          return handler.next(error);
         }
 
-        if (error.response?.statusCode == 401) {
-          // Token expired - could implement refresh logic here
-          print('API Error 401: Unauthorized');
+        // Don't refresh for auth endpoints or if we already retried once.
+        final path = error.requestOptions.path;
+        final isAuthEndpoint = path.contains('/pos/login') ||
+            path.contains('/pos/refresh') ||
+            path.contains('/pos/logout');
+        if (isAuthEndpoint || error.requestOptions.extra['_retried'] == true) {
+          return handler.next(error);
         }
-        return handler.next(error);
+
+        try {
+          // Single-flight: if another 401 is already refreshing, wait for it.
+          await _doRefresh();
+
+          // Retry the original request once with the new access token.
+          final retryOpts = error.requestOptions;
+          retryOpts.headers['Authorization'] = 'Bearer ${getAccessToken()}';
+          retryOpts.extra['_retried'] = true;
+          final response = await _dio.fetch(retryOpts);
+          return handler.resolve(response);
+        } on DioException catch (e) {
+          // Only force-logout when the server explicitly rejected the refresh
+          // token (4xx). Network errors while offline mean "retry later".
+          if (e.response != null &&
+              e.response!.statusCode! >= 400 &&
+              e.response!.statusCode! < 500) {
+            await _handleForceLogout();
+          }
+          return handler.next(error);
+        } catch (_) {
+          return handler.next(error);
+        }
       },
     ));
+  }
+
+  // ── Refresh token flow ───────────────────────────────────────────────────
+
+  /// Single-flight internal refresh. All concurrent callers await the same
+  /// Completer so only one `POST /pos/refresh` is ever in flight at a time.
+  Future<void> _doRefresh() async {
+    if (_refreshCompleter != null) {
+      return _refreshCompleter!.future;
+    }
+    _refreshCompleter = Completer<void>();
+    try {
+      final refreshToken = _prefs.getString(_refreshTokenKey);
+      if (refreshToken == null) throw Exception('No refresh token stored');
+
+      final response = await _dio.post(
+        '/pos/refresh',
+        data: {'refreshToken': refreshToken},
+        // Mark so the onRequest interceptor skips the pre-emptive check.
+        options: Options(extra: {'_retried': true}),
+      );
+
+      final data = response.data as Map<String, dynamic>;
+      await _saveTokenPair(
+        accessToken: data['accessToken'] as String,
+        refreshToken: data['refreshToken'] as String,
+        expiresInMs: (data['expiresIn'] as num).toInt(),
+      );
+      _refreshCompleter!.complete();
+    } catch (e) {
+      _refreshCompleter!.completeError(e);
+      rethrow;
+    } finally {
+      _refreshCompleter = null;
+    }
+  }
+
+  Future<void> _saveTokenPair({
+    required String accessToken,
+    required String refreshToken,
+    required int expiresInMs,
+  }) async {
+    await _prefs.setString(_accessTokenKey, accessToken);
+    await _prefs.setString(_refreshTokenKey, refreshToken);
+    final expiresAt = DateTime.now().add(Duration(milliseconds: expiresInMs));
+    await _prefs.setInt(_accessExpiresAtMsKey, expiresAt.millisecondsSinceEpoch);
+    _accessExpiresAt = expiresAt;
+  }
+
+  /// Called when the server explicitly rejects the refresh token (4xx).
+  /// Clears auth tokens and signals the UI to show the login screen.
+  Future<void> _handleForceLogout() async {
+    await _prefs.remove(_accessTokenKey);
+    await _prefs.remove(_refreshTokenKey);
+    await _prefs.remove(_accessExpiresAtMsKey);
+    _accessExpiresAt = null;
+    if (!_forceLogoutController.isClosed) {
+      _forceLogoutController.add(null);
+    }
   }
 
   // Getters for stored values
   String? getAccessToken() => _prefs.getString(_accessTokenKey);
   String? getPosName() => _prefs.getString(_posNameKey);
+  int? getPosId() => _prefs.getInt(_posIdKey);
   int? getTenantId() => _prefs.getInt(_tenantIdKey);
+  int? getBusinessId() => _prefs.getInt(_businessIdKey);
   String? getBaseUrl() => _prefs.getString(_baseUrlKey);
   bool isDemoMode() => _prefs.getBool(_isDemoModeKey) ?? false;
   String? getBusinessName() => _prefs.getString(_businessNameKey);
@@ -105,8 +234,16 @@ class ApiService {
     await _prefs.setString(_posNameKey, name);
   }
 
+  Future<void> setPosId(int id) async {
+    await _prefs.setInt(_posIdKey, id);
+  }
+
   Future<void> setTenantId(int id) async {
     await _prefs.setInt(_tenantIdKey, id);
+  }
+
+  Future<void> setBusinessId(int id) async {
+    await _prefs.setInt(_businessIdKey, id);
   }
 
   Future<void> setBaseUrl(String url) async {
@@ -128,8 +265,13 @@ class ApiService {
   /// Clear all authentication data
   Future<void> clearAuthData() async {
     await _prefs.remove(_accessTokenKey);
+    await _prefs.remove(_refreshTokenKey);
+    await _prefs.remove(_accessExpiresAtMsKey);
+    _accessExpiresAt = null;
     await _prefs.remove(_posNameKey);
+    await _prefs.remove(_posIdKey);
     await _prefs.remove(_tenantIdKey);
+    await _prefs.remove(_businessIdKey);
     await _prefs.remove(_baseUrlKey);
     await _prefs.remove(_isDemoModeKey);
     await _prefs.remove(_businessNameKey);
@@ -154,11 +296,21 @@ class ApiService {
         'username': username,
         'posName': posName,
         'password': password,
+        'supportsRefresh': true,
       }, options: Options(headers: {'X-POS-Name': posName}));
 
       if (response.statusCode == 200) {
         final data = response.data;
+
+        // Save access token (and refresh token + expiry if the server sent them).
         await setAccessToken(data['accessToken']);
+        if (data['refreshToken'] != null && data['expiresIn'] != null) {
+          await _saveTokenPair(
+            accessToken: data['accessToken'] as String,
+            refreshToken: data['refreshToken'] as String,
+            expiresInMs: (data['expiresIn'] as num).toInt(),
+          );
+        }
         await setPosName(posName);
 
         // Handle tenant_id - it might come as String or int from server
@@ -169,6 +321,20 @@ class ApiService {
           } else if (tenantId is String) {
             await setTenantId(int.parse(tenantId));
           }
+        }
+
+        // Save POS terminal ID from posTerminal data
+        if (data['posTerminal'] != null && data['posTerminal']['id'] != null) {
+          final raw = data['posTerminal']['id'];
+          final id = raw is int ? raw : int.tryParse(raw.toString());
+          if (id != null) await setPosId(id);
+        }
+
+        // Save business ID from posTerminal data
+        if (data['posTerminal'] != null && data['posTerminal']['businessId'] != null) {
+          final raw = data['posTerminal']['businessId'];
+          final id = raw is int ? raw : int.tryParse(raw.toString());
+          if (id != null) await setBusinessId(id);
         }
 
         // Save business name from posTerminal data
@@ -317,7 +483,83 @@ class ApiService {
     }
   }
 
+  /// Pull a page of order deltas from the server. Returns the raw response
+  /// envelope: `{changes: List<Map>, nextCursor: String, hasMore: bool}`.
+  /// Cursor is **opaque** — pass back exactly what the previous response
+  /// gave you. Omit for a backfill from the beginning.
+  Future<Map<String, dynamic>> fetchOrderDeltas({
+    String? cursor,
+    int limit = 200,
+  }) async {
+    try {
+      final r = await _dio.get(
+        '/pos/sync/orders',
+        queryParameters: {
+          if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+          'limit': limit,
+        },
+      );
+      if (r.statusCode == 200) {
+        return Map<String, dynamic>.from(r.data as Map);
+      }
+      throw Exception('Failed to fetch order deltas (${r.statusCode})');
+    } on DioException catch (e) {
+      throw Exception(
+          'Network error: ${e.message ?? 'Failed to fetch order deltas. Check connection.'}');
+    } catch (e) {
+      throw Exception('Error fetching order deltas: ${e.toString()}');
+    }
+  }
+
+  /// Pull a page of payment (ticket) deltas. Same envelope as
+  /// [fetchOrderDeltas]; items keyed by (orderCode, ticketNumber).
+  Future<Map<String, dynamic>> fetchPaymentDeltas({
+    String? cursor,
+    int limit = 200,
+  }) async {
+    try {
+      final r = await _dio.get(
+        '/pos/sync/payments',
+        queryParameters: {
+          if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+          'limit': limit,
+        },
+      );
+      if (r.statusCode == 200) {
+        return Map<String, dynamic>.from(r.data as Map);
+      }
+      throw Exception('Failed to fetch payment deltas (${r.statusCode})');
+    } on DioException catch (e) {
+      throw Exception(
+          'Network error: ${e.message ?? 'Failed to fetch payment deltas. Check connection.'}');
+    } catch (e) {
+      throw Exception('Error fetching payment deltas: ${e.toString()}');
+    }
+  }
+
   /// Fetch categories from server
+  /// Fetch the authoritative tenant & business identity for THIS POS terminal.
+  ///
+  /// Read-only and idempotent. The server must resolve the terminal from the
+  /// auth token + `X-POS-Name` header (added by the interceptor) and must NOT
+  /// trust the `X-Tenant-ID` header — that value may be stale/wrong on the very
+  /// installs this call exists to repair.
+  ///
+  /// Backend contract — `GET /pos/identity` → 200:
+  /// ```json
+  /// { "tenantId": <int>, "businessId": <int>,
+  ///   "businessName": "<string?>" }
+  /// ```
+  /// Returns the decoded map, or null on any non-200 / unexpected shape so the
+  /// caller can safely retry later.
+  Future<Map<String, dynamic>?> fetchPosIdentity() async {
+    final response = await _dio.get('/pos/identity');
+    if (response.statusCode == 200 && response.data is Map) {
+      return Map<String, dynamic>.from(response.data as Map);
+    }
+    return null;
+  }
+
   Future<List<Map<String, dynamic>>> fetchCategories() async {
     try {
       final response = await _dio.get('/pos/categories');
@@ -827,12 +1069,7 @@ class ApiService {
   /// Returns all PENDING external queue items for this business.
   Future<List<Map<String, dynamic>>> fetchPendingQueueItems() async {
     try {
-      final response = await _dio.get(
-        '/pos/queue/pending',
-        options: Options(headers: {
-          'X-Business-Id': (getTenantId() ?? '').toString(),
-        }),
-      );
+      final response = await _dio.get('/pos/queue/pending');
       if (response.statusCode == 200) {
         return List<Map<String, dynamic>>.from(response.data as List);
       }
@@ -857,12 +1094,7 @@ class ApiService {
   /// view without surfacing a generic error.
   Future<Map<String, dynamic>> confirmQueueItem(int queueItemId) async {
     try {
-      final response = await _dio.post(
-        '/pos/queue/$queueItemId/confirm',
-        options: Options(headers: {
-          'X-Business-Id': (getTenantId() ?? '').toString(),
-        }),
-      );
+      final response = await _dio.post('/pos/queue/$queueItemId/confirm');
       if (response.statusCode == 200) {
         return response.data as Map<String, dynamic>;
       }
@@ -891,12 +1123,7 @@ class ApiService {
   /// treat it the same way as a fresh cancel.
   Future<Map<String, dynamic>> cancelQueueItem(int queueItemId) async {
     try {
-      final response = await _dio.post(
-        '/pos/queue/$queueItemId/cancel',
-        options: Options(headers: {
-          'X-Business-Id': (getTenantId() ?? '').toString(),
-        }),
-      );
+      final response = await _dio.post('/pos/queue/$queueItemId/cancel');
       if (response.statusCode == 200) {
         return response.data as Map<String, dynamic>;
       }
@@ -917,6 +1144,72 @@ class ApiService {
           'Failed to cancel: ${e.message ?? 'Check connection.'}');
     } catch (e) {
       throw Exception('Error cancelling order: $e');
+    }
+  }
+
+  // ========== NOTIFICATIONS ==========
+
+  /// POST /pos/notify — fire-and-forget admin notification.
+  /// Never throws; the caller should unawaited-call and not block on result.
+  Future<void> postNotification({
+    required String type,
+    required Map<String, String> params,
+    String? refId,
+    String? clientRequestId,
+  }) async {
+    try {
+      await _dio.post('/pos/notify', data: {
+        'type': type,
+        'params': params,
+        if (refId != null) 'refId': refId,
+        if (clientRequestId != null) 'clientRequestId': clientRequestId,
+      });
+    } catch (_) {
+      // Best-effort — never block the caller.
+    }
+  }
+
+  // ========== SESSION RULES ==========
+
+  /// Fetches server-configured session rules.
+  /// Returns null on 404 (not yet configured), auth errors, or any network
+  /// failure — the caller should keep the last cached value in that case.
+  Future<Map<String, dynamic>?> fetchSessionRules() async {
+    try {
+      final response = await _dio.get('/pos/session-rules');
+      if (response.statusCode == 200 && response.data != null) {
+        return response.data as Map<String, dynamic>;
+      }
+      return null;
+    } on DioException catch (_) {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ========== SESSION EMAIL REPORT ==========
+
+  /// POST /pos/cash-sessions/{sessionCode}/email-report
+  /// Fire-and-forget: caller should unawaited-call and swallow exceptions.
+  /// 4xx responses are logged and dropped (no retry); 5xx / network errors
+  /// are rethrown so the caller can decide whether to retry.
+  Future<void> sendSessionEmailReport(
+    String sessionCode,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await _dio.post(
+        '/pos/cash-sessions/$sessionCode/email-report',
+        data: payload,
+      );
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status != null && status >= 400 && status < 500) {
+        // Permanent failure — bad payload or auth. Don't retry.
+        return;
+      }
+      rethrow;
     }
   }
 }

@@ -10,12 +10,12 @@ class OrderItem {
   final String? variantName;
   final String? imageUrl;
   final double finalPrice; // final price per unit without components
-  final int quantity;
+  final double quantity;
   /// Quantity that was persisted to the DB at load time. `null` for items
   /// freshly added to the cart in this session. Used as the **decrement floor**:
   /// cashiers can take back only the quantity they added this session — going
   /// below this value requires `pos:orders:item:modify`.
-  final int? savedQuantity;
+  final double? savedQuantity;
   final List<OrderItemComponent> components;
   final String? note;
   final int? ticketId; // null = not paid, number = ticket ID (paid)
@@ -27,10 +27,19 @@ class OrderItem {
   final DateTime? planEndAt; // Planning end time
   final int? planWaiterId; // Assigned waiter for this booking
   final DateTime? kdsPrintedAt; // When item was sent to kitchen (KDS ticket printed)
+  /// Quantity that has already been sent to the kitchen. Persisted. Lets
+  /// `KdsPrintMode.modificationsOnly` fire a ticket for the *added* units when
+  /// an already-printed line's quantity increases (delta = quantity - this).
+  final double kdsPrintedQuantity;
+  /// Transient (never persisted) override for the quantity to render on the
+  /// *current* KDS ticket — the modifications-only delta. Null → use [quantity].
+  final double? kdsPrintQuantity;
   // Scale / weighed-item fields
   final bool isWeighedItem;
   final double? weightKg;
   final double? pricePerKgDisplay;
+  /// Unit label from the server (e.g. "kg", "pcs", "box") — nullable.
+  final String? unitName;
 
   OrderItem({
     this.id,
@@ -40,7 +49,7 @@ class OrderItem {
     this.variantName,
     this.imageUrl,
     required this.finalPrice, // final price per unit without components
-    this.quantity = 1,
+    this.quantity = 1.0,
     this.savedQuantity,
     this.components = const [],
     this.note,
@@ -53,9 +62,12 @@ class OrderItem {
     this.planEndAt,
     this.planWaiterId,
     this.kdsPrintedAt,
+    this.kdsPrintedQuantity = 0.0,
+    this.kdsPrintQuantity,
     this.isWeighedItem = false,
     this.weightKg,
     this.pricePerKgDisplay,
+    this.unitName,
   });
 
   /// Returns the display name - variant name if available, otherwise product name
@@ -95,8 +107,8 @@ class OrderItem {
     String? variantName,
     String? imageUrl,
     double? unitPrice,
-    int? quantity,
-    int? savedQuantity,
+    double? quantity,
+    double? savedQuantity,
     List<OrderItemComponent>? components,
     String? note,
     int? ticketId,
@@ -108,9 +120,12 @@ class OrderItem {
     DateTime? planEndAt,
     int? planWaiterId,
     DateTime? kdsPrintedAt,
+    double? kdsPrintedQuantity,
+    double? kdsPrintQuantity,
     bool? isWeighedItem,
     double? weightKg,
     double? pricePerKgDisplay,
+    String? unitName,
   }) {
     return OrderItem(
       id: id ?? this.id,
@@ -133,9 +148,12 @@ class OrderItem {
       planEndAt: planEndAt ?? this.planEndAt,
       planWaiterId: planWaiterId ?? this.planWaiterId,
       kdsPrintedAt: kdsPrintedAt ?? this.kdsPrintedAt,
+      kdsPrintedQuantity: kdsPrintedQuantity ?? this.kdsPrintedQuantity,
+      kdsPrintQuantity: kdsPrintQuantity ?? this.kdsPrintQuantity,
       isWeighedItem: isWeighedItem ?? this.isWeighedItem,
       weightKg: weightKg ?? this.weightKg,
       pricePerKgDisplay: pricePerKgDisplay ?? this.pricePerKgDisplay,
+      unitName: unitName ?? this.unitName,
     );
   }
 
@@ -166,9 +184,11 @@ class OrderItem {
       'planEndAt': planEndAt?.toIso8601String(),
       'planWaiterId': planWaiterId,
       'kdsPrintedAt': kdsPrintedAt?.toIso8601String(),
+      'kdsPrintedQuantity': kdsPrintedQuantity,
       'isWeighedItem': isWeighedItem,
       'weightKg': weightKg,
       'pricePerKgDisplay': pricePerKgDisplay,
+      'unitName': unitName,
     };
   }
 
@@ -403,7 +423,7 @@ class OrderItemDetails {
   final String productName;
   final int? variantId;
   final String? variantName;
-  final int quantity;
+  final double quantity;
   final double totalPrice;
   final bool isPaid;
   final String? ticketNum;

@@ -1,18 +1,18 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
-import '../services/update_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import '../services/update_service.dart';
+import 'database_providers.dart';
 
-/// Update state
 class UpdateState {
   final bool isChecking;
   final bool isDownloading;
   final double downloadProgress;
   final UpdateInfo? availableUpdate;
+  final bool updateReady;       // downloaded + extracted, waiting for restart
+  final String? pendingVersion; // version that's ready to apply
   final String? error;
-  final bool updateRequired;
+  final bool updateRequired;    // mandatory flag
   final String? currentVersion;
 
   UpdateState({
@@ -20,6 +20,8 @@ class UpdateState {
     this.isDownloading = false,
     this.downloadProgress = 0.0,
     this.availableUpdate,
+    this.updateReady = false,
+    this.pendingVersion,
     this.error,
     this.updateRequired = false,
     this.currentVersion,
@@ -30,160 +32,163 @@ class UpdateState {
     bool? isDownloading,
     double? downloadProgress,
     UpdateInfo? availableUpdate,
+    bool? updateReady,
+    String? pendingVersion,
     String? error,
     bool? updateRequired,
     String? currentVersion,
-    bool clearUpdate = false,
+    bool clearAvailableUpdate = false,
+    bool clearError = false,
   }) {
     return UpdateState(
       isChecking: isChecking ?? this.isChecking,
       isDownloading: isDownloading ?? this.isDownloading,
       downloadProgress: downloadProgress ?? this.downloadProgress,
-      availableUpdate: clearUpdate ? null : (availableUpdate ?? this.availableUpdate),
-      error: error,
+      availableUpdate:
+          clearAvailableUpdate ? null : (availableUpdate ?? this.availableUpdate),
+      updateReady: updateReady ?? this.updateReady,
+      pendingVersion: pendingVersion ?? this.pendingVersion,
+      error: clearError ? null : (error ?? this.error),
       updateRequired: updateRequired ?? this.updateRequired,
       currentVersion: currentVersion ?? this.currentVersion,
     );
   }
 
   bool get hasUpdate => availableUpdate != null;
+  bool get isBusy => isChecking || isDownloading;
 }
 
-/// Update notifier
 class UpdateNotifier extends StateNotifier<UpdateState> {
   final UpdateService _updateService;
   final _logger = Logger.instance;
 
   UpdateNotifier(this._updateService) : super(UpdateState());
 
-  /// Check for updates by calling the API and comparing versions
-  Future<bool> checkForUpdates() async {
-    state = state.copyWith(isChecking: true, error: null);
+  /// Checks the API for an update and surfaces it in state — does NOT start
+  /// downloading. The login screen listens and shows the dialog when
+  /// [UpdateState.availableUpdate] becomes non-null.
+  Future<void> checkOnly() async {
+    if (state.isBusy || state.updateReady || state.hasUpdate) return;
 
+    state = state.copyWith(isChecking: true, clearError: true);
     try {
-      // Get current app version
       final packageInfo = await PackageInfo.fromPlatform();
       final currentVersion = packageInfo.version;
-      
       state = state.copyWith(currentVersion: currentVersion);
 
-      // Call API to check for updates
-      final updateInfo = await _updateService.checkForUpdates();
-
-      if (updateInfo != null) {
-        // Compare remote version with local version
-        final comparisonResult = _compareVersions(updateInfo.version, currentVersion);
-
-        if (comparisonResult > 0) {
-          _logger.info('Update available: ${updateInfo.version} > $currentVersion');
-          state = state.copyWith(
-            isChecking: false,
-            availableUpdate: updateInfo,
-            updateRequired: updateInfo.isMandatory,
-          );
-          return true;
-        } else {
-          _logger.info('App is up to date: $currentVersion >= ${updateInfo.version}');
-          state = state.copyWith(
-            isChecking: false,
-            clearUpdate: true,
-          );
-          return false;
-        }
-      } else {
-        // No update info returned
-        state = state.copyWith(isChecking: false);
-        return false;
+      // A previous session already prepared an update — surface it immediately.
+      final pending = await UpdateService.pendingUpdateVersion();
+      if (pending != null) {
+        _logger.info('Pending update ready: $pending');
+        state = state.copyWith(
+          isChecking: false,
+          updateReady: true,
+          pendingVersion: pending,
+        );
+        return;
       }
-    } catch (e) {
-      _logger.error('Error checking for updates: $e');
+
+      final info = await _updateService.checkForUpdates();
+      if (info == null || _compareVersions(info.version, currentVersion) <= 0) {
+        state = state.copyWith(isChecking: false);
+        return;
+      }
+
+      _logger.info('Update available: ${info.version}');
       state = state.copyWith(
         isChecking: false,
-        error: 'Failed to check for updates: $e',
+        availableUpdate: info,
+        updateRequired: info.isMandatory,
       );
-      return false;
+
+      // Mandatory updates start downloading immediately — the user has no choice.
+      if (info.isMandatory) startDownload();
+    } catch (e) {
+      _logger.error('Update check failed: $e');
+      state = state.copyWith(isChecking: false, error: e.toString());
     }
   }
 
-  /// Download and install update
-  Future<bool> downloadAndInstall() async {
-    if (state.availableUpdate == null) return false;
+  /// Downloads and prepares the update in the background. Safe to call
+  /// multiple times — guards against duplicate downloads.
+  /// Called by "Update Now", by [dismissUpdate] ("Later"), and auto-called
+  /// for mandatory updates.
+  Future<void> startDownload() async {
+    final info = state.availableUpdate;
+    if (info == null || state.isDownloading || state.updateReady) return;
 
     state = state.copyWith(
-      isDownloading: true,
-      downloadProgress: 0.0,
-      error: null,
-    );
-
+        isDownloading: true, downloadProgress: 0.0, clearError: true);
     try {
-      bool success = false;
-
-      if (Platform.isAndroid) {
-        // Android: Download and open installer
-        success = await _updateService.downloadAndInstallUpdate(
-          state.availableUpdate!,
-          onProgress: (progress) {
-            state = state.copyWith(downloadProgress: progress);
-          },
-        );
-      } else if (!kIsWeb &&
-          (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
-        // Desktop: handled by desktop_updater via UpdateDialogListener /
-        // DesktopUpdateWidget in the widget tree. The controller (from
-        // desktopUpdaterControllerProvider) drives the download & restart.
-        // Nothing to do here – the user will see the update card / dialog
-        // automatically once the archive JSON is fetched.
-        state = state.copyWith(isDownloading: false);
-        return true;
-      }
-
+      await _updateService.downloadAndPrepare(
+        info,
+        onProgress: (p) => state = state.copyWith(downloadProgress: p),
+      );
       state = state.copyWith(
         isDownloading: false,
-        downloadProgress: success ? 1.0 : 0.0,
+        downloadProgress: 1.0,
+        updateReady: true,
+        pendingVersion: info.version,
       );
-
-      return success;
+      _logger.info('Update ${info.version} ready for next restart');
     } catch (e) {
-      state = state.copyWith(
-        isDownloading: false,
-        downloadProgress: 0.0,
-        error: 'Failed to download/install update: $e',
-      );
-      return false;
+      _logger.error('Download failed: $e');
+      state = state.copyWith(isDownloading: false, error: e.toString());
     }
   }
 
-  /// Dismiss update notification (only if not mandatory)
+  /// Applies a prepared update immediately: launches the updater script,
+  /// which closes this app, copies the new files, and relaunches. Called
+  /// from the dialog when the user chose "Update Now" (foreground apply).
+  /// If no update is prepared or the apply fails, returns silently.
+  Future<void> applyNow() => UpdateService.applyPendingUpdateIfExists();
+
+  /// "Later" — kicks off a silent background download then hides the dialog.
+  /// The status bar in the login screen shows download progress.
   void dismissUpdate() {
     if (!state.updateRequired) {
-      state = state.copyWith(clearUpdate: true);
+      // startDownload captures state.availableUpdate synchronously before the
+      // first await, so clearing it below does not interrupt the download.
+      startDownload();
+      state = state.copyWith(clearAvailableUpdate: true, clearError: true);
     }
   }
 
-  /// Compare semantic versions
-  /// Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal
+  // ── Legacy stubs (kept for existing callers) ──────────────────────────────
+
+  Future<void> checkAndDownloadInBackground() => checkOnly();
+
+  Future<bool> checkForUpdates() async {
+    await checkOnly();
+    return state.hasUpdate || state.updateReady;
+  }
+
+  Future<bool> downloadAndInstall() async {
+    await startDownload();
+    return state.updateReady;
+  }
+
+  // ── Version comparison ─────────────────────────────────────────────────────
+
   int _compareVersions(String v1, String v2) {
-    final parts1 = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    final parts2 = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-
+    final p1 = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    final p2 = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
     for (int i = 0; i < 3; i++) {
-      final p1 = i < parts1.length ? parts1[i] : 0;
-      final p2 = i < parts2.length ? parts2[i] : 0;
-
-      if (p1 > p2) return 1;
-      if (p1 < p2) return -1;
+      final a = i < p1.length ? p1[i] : 0;
+      final b = i < p2.length ? p2[i] : 0;
+      if (a > b) return 1;
+      if (a < b) return -1;
     }
-
     return 0;
   }
 }
 
-/// Update provider
 final updateServiceProvider = Provider<UpdateService>((ref) {
-  return UpdateService();
+  final apiService = ref.watch(apiServiceProvider);
+  return UpdateService(apiService);
 });
 
-final updateProvider = StateNotifierProvider<UpdateNotifier, UpdateState>((ref) {
-  final updateService = ref.watch(updateServiceProvider);
-  return UpdateNotifier(updateService);
+final updateProvider =
+    StateNotifierProvider<UpdateNotifier, UpdateState>((ref) {
+  return UpdateNotifier(ref.watch(updateServiceProvider));
 });

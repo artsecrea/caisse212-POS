@@ -117,6 +117,10 @@ class AppSettings {
   final String ticketHeader; // Header text to print at top of ticket
   final String ticketFooter; // Footer text to print at bottom of ticket
 
+  // Favorites & sort
+  final bool showFavoritesCategory; // Show a ★ Favorites virtual category chip
+  final bool sortByLastUsed; // Sort product grid by last-used recency (RAM only)
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -185,6 +189,8 @@ class AppSettings {
     this.productCardSize = 2,
     this.ticketHeader = '',
     this.ticketFooter = '',
+    this.showFavoritesCategory = false,
+    this.sortByLastUsed = false,
   });
 
   AppSettings copyWith({
@@ -241,6 +247,8 @@ class AppSettings {
     int? productCardSize,
     String? ticketHeader,
     String? ticketFooter,
+    bool? showFavoritesCategory,
+    bool? sortByLastUsed,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -306,6 +314,8 @@ class AppSettings {
       productCardSize: productCardSize ?? this.productCardSize,
       ticketHeader: ticketHeader ?? this.ticketHeader,
       ticketFooter: ticketFooter ?? this.ticketFooter,
+      showFavoritesCategory: showFavoritesCategory ?? this.showFavoritesCategory,
+      sortByLastUsed: sortByLastUsed ?? this.sortByLastUsed,
     );
   }
 
@@ -364,6 +374,8 @@ class AppSettings {
       'productCardSize': productCardSize,
       'ticketHeader': ticketHeader,
       'ticketFooter': ticketFooter,
+      'showFavoritesCategory': showFavoritesCategory,
+      'sortByLastUsed': sortByLastUsed,
     };
   }
 
@@ -445,6 +457,8 @@ class AppSettings {
       productCardSize: json['productCardSize'] as int? ?? 2,
       ticketHeader: json['ticketHeader'] as String? ?? '',
       ticketFooter: json['ticketFooter'] as String? ?? '',
+      showFavoritesCategory: json['showFavoritesCategory'] as bool? ?? false,
+      sortByLastUsed: json['sortByLastUsed'] as bool? ?? false,
     );
   }
 

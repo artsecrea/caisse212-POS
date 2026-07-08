@@ -32,6 +32,10 @@ final sseAlertProvider = StateProvider<String?>((ref) => null);
 final sseNewOrderProvider =
     StateProvider<Map<String, dynamic>?>((ref) => null);
 
+/// Increments whenever the server sends a `close_session`, `close_all_sessions`,
+/// `force_logout`, or `logout` command. UI listens and navigates to /login.
+final sseSessionClosedProvider = StateProvider<int>((ref) => 0);
+
 // ── Lifecycle provider ─────────────────────────────────────────────────────
 
 /// Watch this provider from a top-level widget (e.g. MainScreen) to activate
@@ -75,18 +79,28 @@ final sseLifecycleProvider = Provider<void>((ref) {
       case SseEventType.orderStateChanged:
         Logger.instance.info(
             'SSE: order-state-changed ${event.data['orderCode']} → ${event.data['newState']}');
-        // Trigger a background sync to pull the updated order
-        await commandHandler.handle({'type': 'reload_all'});
+        // Delta pull is intentionally NOT done here — use the manual update
+        // button in the top bar to pull order changes on demand.
         break;
 
       case SseEventType.posCommand:
         final handledType = await commandHandler.handle(event.data);
-        // If it's a DISPLAY_ALERT, push the message to UI
-        if (handledType?.toLowerCase() == 'display_alert') {
-          final msg = event.data['message'] as String?;
-          if (msg != null && msg.isNotEmpty) {
-            ref.read(sseAlertProvider.notifier).state = msg;
-          }
+        switch (handledType) {
+          case 'display_alert':
+            final msg = event.data['message'] as String?;
+            if (msg != null && msg.isNotEmpty) {
+              ref.read(sseAlertProvider.notifier).state = msg;
+            }
+
+          case 'close_session':
+          case 'close_current_session':
+          case 'close_all_sessions':
+          case 'force_logout':
+          case 'logout':
+            // Signal the UI (main_screen) to navigate to /login.
+            ref
+                .read(sseSessionClosedProvider.notifier)
+                .update((v) => v + 1);
         }
         break;
 

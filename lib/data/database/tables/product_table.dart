@@ -25,7 +25,9 @@ class Products extends Table {
   TextColumn get mbwCode => text().nullable()();
   /// Price per kg stored in centimes (nullable — only set for weighed products).
   IntColumn get pricePerKg => integer().nullable()();
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  /// Unit label from the server (e.g. "kg", "pcs", "box") — nullable.
+  TextColumn get unitName => text().nullable()();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
 }
 

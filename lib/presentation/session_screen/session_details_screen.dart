@@ -356,13 +356,15 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
                                       const SizedBox(height: 8),
                                       _buildInfoRow('Cash Sales', '\$${_sessionSummary!.totalCash.toStringAsFixed(2)}'),
                                       _buildInfoRow('Card Sales', '\$${_sessionSummary!.totalCard.toStringAsFixed(2)}'),
-                                      _buildInfoRow('Check Sales', '\$${_sessionSummary!.totalCheck.toStringAsFixed(2)}'),
+                                      _buildInfoRow('Mobile Sales', '\$${_sessionSummary!.totalMobile.toStringAsFixed(2)}'),
                                       if (_sessionSummary!.totalOther > 0)
                                         _buildInfoRow('Other Sales', '\$${_sessionSummary!.totalOther.toStringAsFixed(2)}'),
+                                      if (_sessionSummary!.cancelledAmount > 0)
+                                        _buildInfoRow('Cancelled', '\$${_sessionSummary!.cancelledAmount.toStringAsFixed(2)}'),
                                       const Divider(height: 24),
                                       _buildInfoRow(
-                                        'Total Sales',
-                                        '\$${_sessionSummary!.totalAmount.toStringAsFixed(2)}',
+                                        'Total Paid',
+                                        '\$${_sessionSummary!.totalPaid.toStringAsFixed(2)}',
                                         valueColor: Colors.blue,
                                         bold: true,
                                       ),

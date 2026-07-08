@@ -1,4 +1,5 @@
-import 'dart:io' show Platform;
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,6 +20,7 @@ import '../../services/discovery_service.dart';
 import '../../domain/models/scale_config.dart';
 import '../../providers/scale_config_provider.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/session_rules_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -40,6 +42,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     NavItem(icon: Icons.dns, label: l10n.translate('server_settings')),
     NavItem(icon: Icons.scale, label: l10n.translate('scale_config')),
     NavItem(icon: Icons.info_outline, label: l10n.translate('about')),
+    NavItem(icon: Icons.schedule, label: l10n.translate('session_rules')),
     if (isAdmin)
       NavItem(icon: Icons.badge, label: l10n.translate('cashier_role_defaults')),
   ];
@@ -281,6 +284,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       case 8:
         return _buildAboutContent(context);
       case 9:
+        return _buildSessionRulesContent(context);
+      case 10:
         return _buildCashierDefaultsContent(settings, settingsNotifier, context);
       default:
         return const SizedBox.shrink();
@@ -475,7 +480,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           currentMode: settings.categoryDisplayMode,
           onChanged: (value) => notifier.setCategoryDisplayMode(value),
         ),
-        const SizedBox(height: 12,),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.star,
+          title: l10n.translate('show_favorites_category'),
+          subtitle: l10n.translate('show_favorites_category_subtitle'),
+          value: settings.showFavoritesCategory,
+          onChanged: (value) => notifier.setShowFavoritesCategory(value),
+        ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.history,
+          title: l10n.translate('sort_by_last_used'),
+          subtitle: l10n.translate('sort_by_last_used_subtitle'),
+          value: settings.sortByLastUsed,
+          onChanged: (value) => notifier.setSortByLastUsed(value),
+        ),
+        const SizedBox(height: 12),
         _buildOrderPanelPositionSwitch(
           context: context,
           value: settings.orderPanelOnRight,
@@ -866,7 +889,75 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           max: 200,
           onChanged: (value) => notifier.setBulkSyncSize(value),
         ),
+        const SizedBox(height: 12),
+        _buildRetentionSelector(context, settings, notifier, l10n),
       ],
+    );
+  }
+
+  Widget _buildRetentionSelector(
+    BuildContext context,
+    AppSettings settings,
+    SettingsNotifier notifier,
+    AppLocalizations l10n,
+  ) {
+    const options = [0, 7, 14, 30, 60, 90, 180, 365];
+    final cs = Theme.of(context).colorScheme;
+
+    String label(int days) {
+      if (days == 0) return l10n.translate('never');
+      return '$days ${l10n.translate('days')}';
+    }
+
+    // Snap stored value to nearest option so the dropdown always has a match.
+    final current = options.contains(settings.dataRetentionDays)
+        ? settings.dataRetentionDays
+        : 7;
+
+    return Card(
+      elevation: 0,
+      color: cs.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(Icons.delete_sweep_outlined, color: cs.onSurface),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    l10n.translate('data_retention'),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    l10n.translate('data_retention_subtitle'),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+            DropdownButton<int>(
+              value: current,
+              underline: const SizedBox.shrink(),
+              borderRadius: BorderRadius.circular(8),
+              items: options
+                  .map((d) => DropdownMenuItem(
+                        value: d,
+                        child: Text(label(d)),
+                      ))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) notifier.setDataRetentionDays(v);
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2295,6 +2386,93 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  // ── Session Rules (read-only, configured by server) ──────────────────
+
+  Widget _buildSessionRulesContent(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final rules = ref.watch(sessionRulesProvider);
+    final cs = Theme.of(context).colorScheme;
+
+    String hourLabel(int? h) =>
+        h == null ? '—' : '${h.toString().padLeft(2, '0')}:00';
+    String minutesLabel(int? m) => m == null ? '—' : '$m min';
+    String countLabel(int? n) => n == null ? '—' : '$n';
+
+    Widget row(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(label,
+                  style: const TextStyle(fontWeight: FontWeight.w500)),
+            ),
+            Text(value,
+                style: TextStyle(
+                    color: value == '—' ? cs.outline : cs.primary,
+                    fontWeight: FontWeight.bold)),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.translate('session_rules'),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          l10n.translate('session_rules_subtitle'),
+          style: const TextStyle(color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: cs.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                row(l10n.translate('rule_min_start_hour'),
+                    hourLabel(rules.minStartHour)),
+                const Divider(height: 1),
+                row(l10n.translate('rule_cant_open_after_hour'),
+                    hourLabel(rules.cantOpenAfterHour)),
+                const Divider(height: 1),
+                row(l10n.translate('rule_max_session_duration'),
+                    minutesLabel(rules.maxSessionDurationMinutes)),
+                const Divider(height: 1),
+                row(l10n.translate('rule_max_end_hour'),
+                    hourLabel(rules.maxEndHour)),
+                const Divider(height: 1),
+                row(l10n.translate('rule_max_sessions_per_day'),
+                    countLabel(rules.maxSessionsPerUserPerDay)),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Icon(Icons.info_outline, size: 14, color: cs.outline),
+            const SizedBox(width: 6),
+            Text(
+              l10n.translate('session_rules_server_note'),
+              style: TextStyle(fontSize: 12, color: cs.outline),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   // ── About + update check ──────────────────────────────────────────────
 
   Widget _buildAboutContent(BuildContext context) {
@@ -2453,6 +2631,69 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
   void dispose() {
     _testBarcodeCtrl.dispose();
     super.dispose();
+  }
+
+  // ── CSV export ────────────────────────────────────────────────────────────
+
+  Future<void> _showExportCsvDialog() async {
+    final columns = await showDialog<List<_CsvColumnDef>>(
+      context: context,
+      builder: (_) => const _ExportCsvDialog(),
+    );
+    if (columns == null || !mounted) return;
+    await _exportProductsCsv(columns);
+  }
+
+  Future<void> _exportProductsCsv(List<_CsvColumnDef> columns) async {
+    final enabled = columns.where((c) => c.enabled).toList();
+    if (enabled.isEmpty) return;
+
+    try {
+      final db = ref.read(databaseProvider);
+      final all = await db.select(db.products).get();
+      final products = all.where((p) => p.isActive).toList()
+        ..sort((a, b) => a.name.compareTo(b.name));
+
+      final sb = StringBuffer();
+      sb.writeln(enabled.map((c) => _csvEscape(c.header)).join(','));
+      for (final p in products) {
+        final row = enabled.map((c) => switch (c.key) {
+          'id'          => p.id.toString(),
+          'mbw'         => _csvEscape(p.mbwCode ?? ''),
+          'name'        => _csvEscape(p.name),
+          'description' => _csvEscape(p.description ?? ''),
+          'price'       => p.price.toStringAsFixed(2),
+          _             => '',
+        });
+        sb.writeln(row.join(','));
+      }
+
+      Directory? dir;
+      try { dir = await getDownloadsDirectory(); } catch (_) {}
+      dir ??= await getApplicationDocumentsDirectory();
+
+      final ts = DateTime.now();
+      final stamp =
+          '${ts.year}${ts.month.toString().padLeft(2, '0')}${ts.day.toString().padLeft(2, '0')}'
+          '_${ts.hour.toString().padLeft(2, '0')}${ts.minute.toString().padLeft(2, '0')}';
+      final file = File('${dir.path}${Platform.pathSeparator}products_$stamp.csv');
+      await file.writeAsString(sb.toString());
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Exported ${products.length} products → ${file.path}'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 6),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Export failed: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -2840,6 +3081,25 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
             foregroundColor: Colors.white,
           ),
         ),
+
+        const SizedBox(height: 32),
+        const Divider(),
+        const SizedBox(height: 16),
+
+        // ── Export Products CSV ──────────────────────────────────────
+        const Text('Export Products CSV',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        Text(
+          'Choose which columns to include, set their order and header names, then save as CSV.',
+          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _showExportCsvDialog,
+          icon: const Icon(Icons.table_chart_outlined),
+          label: const Text('Configure & Export'),
+        ),
       ],
     );
   }
@@ -2847,6 +3107,174 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
 
 double _pow10(int n) {
   double result = 1.0;
-  for (int i = 0; i < n; i++) result *= 10.0;
+  for (int i = 0; i < n; i++) {
+    result *= 10.0;
+  }
   return result;
+}
+
+// ─── CSV export helpers ──────────────────────────────────────────────────────
+
+String _csvEscape(String v) {
+  if (v.contains(',') || v.contains('"') || v.contains('\n') || v.contains('\r')) {
+    return '"${v.replaceAll('"', '""')}"';
+  }
+  return v;
+}
+
+class _CsvColumnDef {
+  final String key;
+  String header;
+  bool enabled = true;
+  _CsvColumnDef({required this.key, required this.header});
+}
+
+class _ExportCsvDialog extends StatefulWidget {
+  const _ExportCsvDialog();
+
+  @override
+  State<_ExportCsvDialog> createState() => _ExportCsvDialogState();
+}
+
+class _ExportCsvDialogState extends State<_ExportCsvDialog> {
+  late final List<_CsvColumnDef> _columns;
+  late final Map<String, TextEditingController> _controllers;
+
+  @override
+  void initState() {
+    super.initState();
+    _columns = [
+      _CsvColumnDef(key: 'id',          header: 'ID'),
+      _CsvColumnDef(key: 'mbw',         header: 'MBW'),
+      _CsvColumnDef(key: 'name',        header: 'Name'),
+      _CsvColumnDef(key: 'description', header: 'Description'),
+      _CsvColumnDef(key: 'price',       header: 'Price'),
+    ];
+    _controllers = {
+      for (final c in _columns) c.key: TextEditingController(text: c.header),
+    };
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final anyEnabled = _columns.any((c) => c.enabled);
+
+    return AlertDialog(
+      title: const Row(children: [
+        Icon(Icons.table_chart_outlined),
+        SizedBox(width: 8),
+        Text('Export Products CSV'),
+      ]),
+      content: SizedBox(
+        width: 500,
+        height: 360,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Drag  ≡  to reorder. Uncheck to exclude. Edit the header name.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ReorderableListView(
+                buildDefaultDragHandles: false,
+                onReorder: (oldIndex, newIndex) {
+                  setState(() {
+                    if (newIndex > oldIndex) newIndex--;
+                    final item = _columns.removeAt(oldIndex);
+                    _columns.insert(newIndex, item);
+                  });
+                },
+                children: [
+                  for (int i = 0; i < _columns.length; i++)
+                    _ColumnRow(
+                      key: ValueKey(_columns[i].key),
+                      index: i,
+                      col: _columns[i],
+                      controller: _controllers[_columns[i].key]!,
+                      onToggle: (v) => setState(() => _columns[i].enabled = v),
+                      onHeaderChanged: (v) => _columns[i].header = v,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton.icon(
+          onPressed: anyEnabled ? () => Navigator.pop(context, _columns) : null,
+          icon: const Icon(Icons.download),
+          label: const Text('Export'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ColumnRow extends StatelessWidget {
+  final int index;
+  final _CsvColumnDef col;
+  final TextEditingController controller;
+  final ValueChanged<bool> onToggle;
+  final ValueChanged<String> onHeaderChanged;
+
+  const _ColumnRow({
+    super.key,
+    required this.index,
+    required this.col,
+    required this.controller,
+    required this.onToggle,
+    required this.onHeaderChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          ReorderableDragStartListener(
+            index: index,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4),
+              child: Icon(Icons.drag_handle, color: Colors.grey),
+            ),
+          ),
+          Checkbox(value: col.enabled, onChanged: (v) => onToggle(v ?? false)),
+          const SizedBox(width: 4),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                labelText: col.key,
+                isDense: true,
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              onChanged: onHeaderChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

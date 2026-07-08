@@ -24,7 +24,7 @@ class Customers extends Table {
 
   TextColumn get email => text().nullable()();
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
 }
 

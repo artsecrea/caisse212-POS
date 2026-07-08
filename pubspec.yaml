@@ -4,7 +4,7 @@ description: "A new Flutter project."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.0.2+3
+version: 1.0.7+5
 environment:
   sdk: ^3.9.2
 
@@ -68,6 +68,7 @@ dependencies:
   open_filex: ^4.5.0
   permission_handler: ^11.3.0
   crypto: ^3.0.3
+  archive: ^4.0.9
   http: ^1.2.0
   bonsoir: ^5.0.0
   file_picker: ^10.3.10
@@ -103,10 +104,10 @@ flutter:
   assets:
     - assets/sounds/button_tap.mp3
     - assets/images/logo.svg
-    - assets/images/app_logo.png
     - assets/images/caisse212.svg
     - assets/images/caisse212_icon.svg
     - assets/images/caisse212_icon.png
+    - assets/images/logo-white.svg
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see

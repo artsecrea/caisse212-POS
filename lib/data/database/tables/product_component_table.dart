@@ -11,8 +11,8 @@ class ProductComponents extends Table {
   BoolColumn get isRequired => boolean().withDefault(const Constant(false))(); // If component is required for this product
   IntColumn get minQuantity => integer().withDefault(const Constant(0))(); // Minimum quantity required
   IntColumn get maxQuantity => integer().withDefault(const Constant(10))(); // Maximum quantity allowed
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
 }
 
 // run flutter pub run build_runner build --delete-conflicting-outputs to generate the code for this table

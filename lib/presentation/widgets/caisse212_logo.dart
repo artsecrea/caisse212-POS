@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
-/// CAISSE212 branded logo widget with "by artecrea" subtitle.
-/// Uses the app_logo PNG.
+/// Caisse212 branded logo widget.
+/// [size] controls the height of the main logo; width scales proportionally.
+/// [showByLine] toggles the "by artecrea" line below.
 class Caisse212Logo extends StatelessWidget {
   final double size;
   final bool showByLine;
@@ -15,48 +17,57 @@ class Caisse212Logo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bylineColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Image.asset(
-          'assets/images/app_logo.png',
-          width: size,
+        // Full caisse212 logo (icon + wordmark in one SVG)
+        SvgPicture.asset(
+          'assets/images/caisse212.svg',
           height: size,
           fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => Icon(
-            Icons.point_of_sale,
-            size: size * 0.8,
-            color: const Color(0xFF7B1FA2),
-          ),
-        ),
-        SizedBox(height: size * 0.15),
-        // CAISSE212 text
-        Text(
-          'CAISSE212',
-          style: TextStyle(
-            fontSize: size * 0.35,
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF7B1FA2), // Purple 700
-            letterSpacing: 2,
-          ),
         ),
         if (showByLine) ...[
-          SizedBox(height: size * 0.05),
-          Text(
-            'by artecrea',
-            style: TextStyle(
-              fontSize: size * 0.14,
-              fontWeight: FontWeight.w400,
-              color: isDark ? Colors.grey[400] : Colors.grey[600],
-              letterSpacing: 1.5,
-              fontStyle: FontStyle.italic,
-            ),
+          SizedBox(height: size * 0.12),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'by ',
+                style: TextStyle(
+                  fontSize: size * 0.16,
+                  color: bylineColor,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+              SvgPicture.asset(
+                'assets/images/logo.svg',
+                height: size * 0.22,
+                colorFilter: ColorFilter.mode(
+                  isDark
+                      ? Colors.grey[400]!
+                      : const Color(0xFF7B1FA2),
+                  BlendMode.srcIn,
+                ),
+              ),
+              const SizedBox(width: 3),
+              Text(
+                'artecrea',
+                style: TextStyle(
+                  fontSize: size * 0.16,
+                  color: isDark
+                      ? Colors.grey[400]
+                      : const Color(0xFF7B1FA2),
+                  fontStyle: FontStyle.italic,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ],
       ],
     );
   }
 }
-
-

@@ -1,27 +1,143 @@
+import 'dart:convert';
 import 'package:drift/drift.dart';
+import '../core/enums.dart';
 import '../data/database/app_database.dart';
+import '../domain/models/session_rules.dart';
 import 'pending_operations_service.dart';
 
-/// Session summary with calculated totals
+/// Per-method money breakdown for a set of tickets.
+///
+/// Single source of truth so the close-session drawer figure and the Z-report
+/// can never diverge. Rules:
+///  - Cancelled tickets are excluded from every method bucket and tallied
+///    separately in [cancelled] / [cancelledCount].
+///  - Only paid tickets (`isPaid == true`) contribute to the method totals.
+///  - Methods are matched via the [TransactionType] enum (not stringly-typed
+///    lowercase literals) so a renamed enum value can't silently misfile money.
+class PaymentBreakdown {
+  final double cash;
+  final double card;
+  final double mobile;
+  final double other;
+  final double cancelled;
+  final int cancelledCount;
+  final int paidCount;
+
+  const PaymentBreakdown({
+    this.cash = 0,
+    this.card = 0,
+    this.mobile = 0,
+    this.other = 0,
+    this.cancelled = 0,
+    this.cancelledCount = 0,
+    this.paidCount = 0,
+  });
+
+  /// Total takings across every payment method (paid, non-cancelled tickets).
+  double get totalPaid => cash + card + mobile + other;
+
+  Map<String, dynamic> toJson() => {
+        'cash': cash,
+        'card': card,
+        'mobile': mobile,
+        'other': other,
+        'cancelled': cancelled,
+        'cancelledCount': cancelledCount,
+        'paidCount': paidCount,
+        'totalPaid': totalPaid,
+      };
+
+  static PaymentBreakdown fromTickets(Iterable<Ticket> tickets) {
+    double cash = 0, card = 0, mobile = 0, other = 0, cancelled = 0;
+    int cancelledCount = 0, paidCount = 0;
+    for (final t in tickets) {
+      if (t.isCancelled) {
+        cancelled += t.amount;
+        cancelledCount++;
+        continue;
+      }
+      if (!t.isPaid) continue;
+      paidCount++;
+      switch (TransactionType.fromString(t.paymentMethod)) {
+        case TransactionType.cash:
+          cash += t.amount;
+          break;
+        case TransactionType.card:
+          card += t.amount;
+          break;
+        case TransactionType.mobile:
+          mobile += t.amount;
+          break;
+        case TransactionType.other:
+          other += t.amount;
+          break;
+      }
+    }
+    return PaymentBreakdown(
+      cash: cash,
+      card: card,
+      mobile: mobile,
+      other: other,
+      cancelled: cancelled,
+      cancelledCount: cancelledCount,
+      paidCount: paidCount,
+    );
+  }
+}
+
+/// Session summary with calculated totals.
+///
+/// Backward-compatible getters (`totalCash`, `totalCard`, `totalCheck`,
+/// `totalOther`, `totalAmount`, `expectedCashAtEnd`) are preserved for existing
+/// UI callers. `totalCheck` is retained for compatibility only — the CHECK
+/// payment method no longer exists, so it is always 0.
 class SessionSummary {
   final CashSession session;
-  final double totalCash;
-  final double totalCard;
-  final double totalCheck;
-  final double totalOther;
+  final PaymentBreakdown breakdown;
   final int ticketCount;
 
   SessionSummary({
     required this.session,
-    required this.totalCash,
-    required this.totalCard,
-    required this.totalCheck,
-    required this.totalOther,
+    required this.breakdown,
     required this.ticketCount,
   });
 
-  double get totalAmount => totalCash + totalCard + totalCheck + totalOther;
-  double get expectedCashAtEnd => session.moneyAtStart + totalCash;
+  double get totalCash => breakdown.cash;
+  double get totalCard => breakdown.card;
+  double get totalMobile => breakdown.mobile;
+  double get totalOther => breakdown.other;
+  double get totalCheck => 0; // legacy — CHECK method removed
+  double get cancelledAmount => breakdown.cancelled;
+  int get cancelledCount => breakdown.cancelledCount;
+
+  /// Full takings across every payment method.
+  double get totalPaid => breakdown.totalPaid;
+
+  /// Backward-compatible alias for [totalPaid].
+  double get totalAmount => breakdown.totalPaid;
+
+  /// Physical cash expected in the drawer: opening float + cash takings only.
+  double get expectedCashAtEnd => session.moneyAtStart + breakdown.cash;
+
+  /// Key/value snapshot persisted on the session at close.
+  Map<String, dynamic> get details => {
+        ...breakdown.toJson(),
+        'ticketCount': ticketCount,
+        'moneyAtStart': session.moneyAtStart,
+        'expectedCashAtEnd': expectedCashAtEnd,
+      };
+}
+
+class SessionWithCashier {
+  final CashSession session;
+  final String cashierName;
+  final SessionSummary? summary;
+
+  const SessionWithCashier({
+    required this.session,
+    required this.cashierName,
+    this.summary,
+  });
 }
 
 /// cash session service
@@ -55,6 +171,7 @@ class SessionService {
         cashierId: cashierId,
         moneyAtStart: moneyAtStart,
         status: const Value('active'),
+        startedAt: Value(DateTime.now()),
       ),
     );
 
@@ -72,21 +189,21 @@ class SessionService {
   /// preserving the old single-arg behaviour.
   Future<void> endSession({
     required int sessionId,
-    bool queueSyncOperation = true,
     double? countedCash,
     String? countNotes,
   }) async {
-    // Check if session was synced before ending
     final session = await getSessionById(sessionId);
     if (session == null) {
       throw Exception('Session not found');
     }
-    final wasSynced = session.isSynced;
 
-    // Calculate total cash from session tickets
+    // Calculate totals from session tickets.
     final summary = await getSessionSummary(sessionId);
     final expectedCash = summary.expectedCashAtEnd;
     final endedAt = DateTime.now();
+    // `moneyAtEnd` remains the physical cash-drawer figure (counted if the
+    // cashier entered a count, else the expected cash). `totalPaid`/`details`
+    // capture the full multi-method takings alongside it.
     final moneyAtEnd = countedCash ?? expectedCash;
     final variance =
         countedCash == null ? null : countedCash - expectedCash;
@@ -97,37 +214,19 @@ class SessionService {
         CashSessionsCompanion(
           endedAt: Value(endedAt),
           moneyAtEnd: Value(moneyAtEnd),
+          totalPaid: Value(summary.totalPaid),
+          details: Value(jsonEncode(summary.details)),
           status: const Value('ended'),
           countedCash: Value(countedCash),
           variance: Value(variance),
           countedAt: Value(countedCash == null ? null : endedAt),
           countNotes: Value(countNotes),
+          // Always mark unsynced so syncSessionsBulk / syncSingleSession
+          // can push the closed state to the server on next opportunity.
+          isSynced: const Value(false),
           updatedAt: Value(DateTime.now()),
         ),
       );
-
-    // Queue update operation if session was synced
-    if (wasSynced && queueSyncOperation) {
-      try {
-        final pendingOpsService = PendingOperationsService(_database);
-        await pendingOpsService.queueSessionUpdate(
-          entityId: sessionId,
-          sessionCode: session.code,
-          updateData: {
-            'status': 'ended',
-            'moneyAtEnd': moneyAtEnd,
-            'endedAt': endedAt.toIso8601String(),
-            if (countedCash != null) 'countedCash': countedCash,
-            if (variance != null) 'variance': variance,
-            if (countNotes != null && countNotes.isNotEmpty)
-              'countNotes': countNotes,
-          },
-        );
-        print('Queued update operation for ended session code=${session.code}');
-      } catch (e) {
-        print('Failed to queue session update operation: $e');
-      }
-    }
   }
 
   /// Pause a session
@@ -177,6 +276,46 @@ class SessionService {
     return await (_database.select(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(sessionId)))
       .getSingleOrNull();
+  }
+
+  /// Checks whether [rules] allow a new session to be opened right now.
+  ///
+  /// Pass [isAdmin: true] to bypass all checks (admin users are exempt).
+  /// Throws [SessionRuleViolation] with a human-readable message on failure.
+  Future<void> checkOpenRules(
+    SessionRules rules, {
+    required bool isAdmin,
+    required int cashierId,
+  }) async {
+    if (isAdmin) return;
+    if (!rules.hasAnyRule) return;
+
+    final hour = DateTime.now().hour;
+
+    if (rules.minStartHour != null && hour < rules.minStartHour!) {
+      throw SessionRuleViolation(
+          'Sessions cannot be opened before ${rules.minStartHour!.toString().padLeft(2, '0')}:00');
+    }
+
+    if (rules.cantOpenAfterHour != null && hour >= rules.cantOpenAfterHour!) {
+      throw SessionRuleViolation(
+          'Sessions cannot be opened at or after ${rules.cantOpenAfterHour!.toString().padLeft(2, '0')}:00');
+    }
+
+    if (rules.maxSessionsPerUserPerDay != null) {
+      final today = DateTime.now();
+      final startOfDay = DateTime(today.year, today.month, today.day);
+      final endOfDay = startOfDay.add(const Duration(days: 1));
+      final allSessions = await getUserSessions(cashierId);
+      final todayCount = allSessions.where((s) {
+        return s.startedAt.isAfter(startOfDay) &&
+            s.startedAt.isBefore(endOfDay);
+      }).length;
+      if (todayCount >= rules.maxSessionsPerUserPerDay!) {
+        throw SessionRuleViolation(
+            'Maximum ${rules.maxSessionsPerUserPerDay} session(s) per day reached');
+      }
+    }
   }
 
   /// Get all sessions for a user
@@ -239,36 +378,86 @@ class SessionService {
 
     final tickets = await getSessionTickets(sessionId);
 
-    double totalCash = 0;
-    double totalCard = 0;
-    double totalCheck = 0;
-    double totalOther = 0;
-
-    for (final ticket in tickets) {
-      if (ticket.isPaid) {
-        switch (ticket.paymentMethod.toLowerCase()) {
-          case 'cash':
-            totalCash += ticket.amount;
-            break;
-          case 'card':
-            totalCard += ticket.amount;
-            break;
-          case 'check':
-            totalCheck += ticket.amount;
-            break;
-          default:
-            totalOther += ticket.amount;
-        }
-      }
-    }
-
     return SessionSummary(
       session: session,
-      totalCash: totalCash,
-      totalCard: totalCard,
-      totalCheck: totalCheck,
-      totalOther: totalOther,
+      breakdown: PaymentBreakdown.fromTickets(tickets),
       ticketCount: tickets.length,
     );
+  }
+
+  /// Paginated, filtered, sorted sessions with resolved cashier names and summaries.
+  Future<(List<SessionWithCashier>, int)> getSessionsPage({
+    required int offset,
+    required int limit,
+    String statusFilter = 'ALL',
+    String searchQuery = '',
+    DateTime? startDate,
+    DateTime? endDate,
+    int sortColumn = 2,
+    bool sortAscending = false,
+  }) async {
+    final users = await _database.select(_database.users).get();
+    String resolveName(int cashierId) {
+      final u = users.where((u) => u.id == cashierId).firstOrNull;
+      if (u == null) return '#$cashierId';
+      final dn = u.displayName;
+      return (dn != null && dn.isNotEmpty) ? dn : '${u.firstName} ${u.lastName}'.trim();
+    }
+
+    final query = _database.select(_database.cashSessions);
+    if (statusFilter != 'ALL') {
+      query.where((tbl) => tbl.status.equals(statusFilter));
+    }
+    if (searchQuery.isNotEmpty) {
+      query.where((tbl) => tbl.code.contains(searchQuery));
+    }
+    if (startDate != null) {
+      query.where((tbl) => tbl.startedAt.isBiggerOrEqualValue(startDate));
+    }
+    if (endDate != null) {
+      final endOfDay = DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
+      query.where((tbl) => tbl.startedAt.isSmallerOrEqualValue(endOfDay));
+    }
+
+    final all = await query.get();
+
+    all.sort((a, b) {
+      int cmp;
+      switch (sortColumn) {
+        case 0:
+          cmp = a.code.compareTo(b.code);
+          break;
+        case 1:
+          cmp = resolveName(a.cashierId).compareTo(resolveName(b.cashierId));
+          break;
+        case 3:
+          cmp = a.status.compareTo(b.status);
+          break;
+        case 4:
+          cmp = a.moneyAtStart.compareTo(b.moneyAtStart);
+          break;
+        default: // 2 = startedAt
+          cmp = a.startedAt.compareTo(b.startedAt);
+      }
+      return sortAscending ? cmp : -cmp;
+    });
+
+    final total = all.length;
+    final page = all.skip(offset).take(limit).toList();
+
+    final rows = <SessionWithCashier>[];
+    for (final session in page) {
+      SessionSummary? summary;
+      try {
+        summary = await getSessionSummary(session.id);
+      } catch (_) {}
+      rows.add(SessionWithCashier(
+        session: session,
+        cashierName: resolveName(session.cashierId),
+        summary: summary,
+      ));
+    }
+
+    return (rows, total);
   }
 }

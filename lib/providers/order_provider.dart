@@ -44,23 +44,27 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
   }
 
   /// Adds a weighed (scale) item — always as a distinct line.
+  /// quantity=weightKg, unitPrice=pricePerKg for both barcode types.
   void addWeighedItem({
     required int productId,
     required String productName,
     String? imageUrl,
-    required double lineTotal,
+    required double quantity,
+    required double unitPrice,
     double weightKg = 0.0,
     double? pricePerKgDisplay,
+    String? unitName,
   }) {
     final item = OrderItem(
       productId: productId,
       productName: productName,
       imageUrl: imageUrl,
-      finalPrice: lineTotal,
-      quantity: 1,
+      finalPrice: unitPrice,
+      quantity: quantity,
       isWeighedItem: true,
       weightKg: weightKg,
       pricePerKgDisplay: pricePerKgDisplay,
+      unitName: unitName,
     );
     state = state.copyWith(items: [...state.items, item]);
   }
@@ -149,7 +153,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = state.copyWith(items: items);
   }
 
-  void updateItemQuantity(int index, int quantity) {
+  void updateItemQuantity(int index, double quantity) {
     if (quantity <= 0) {
       removeItem(index);
       return;
@@ -379,17 +383,25 @@ class OrderRepository {
     }
   }
 
+  // Returns z_day from the active session (O(1) state read — no DB hit).
+  DateTime _currentZDay() {
+    final ref = _ref;
+    if (ref != null) return ref.read(currentZDayProvider);
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
+
   Future<int> saveOrder(CurrentOrder order, int userId, {String status = 'PENDING', int? sessionId}) async {
 
     if (order.orderId != null) {
       throw Exception("Order already has an order code, use updateOrder instead.");
     }
-    
+
     // Check if order has items
     if (order.items.isEmpty) {
       throw Exception("Cannot save order with no items");
     }
-    
+
     _logger.debug('saveOrder: ${order.items.length} items, first item: ${order.items.first.toJson()}');
     // Generate order code — short uppercase alphanumeric (e.g. RGH7IE3H3LR),
     // consistent with the waiter-app path. Uniqueness is checked just below.
@@ -400,6 +412,9 @@ class OrderRepository {
       if (existingOrder != null) {
         throw Exception("Order with code $orderCode already exists.");
       }
+
+    final zDay = _currentZDay();
+
     // Insert order
     final orderId = await _database.into(_database.orders).insert(
       OrdersCompanion.insert(
@@ -421,10 +436,11 @@ class OrderRepository {
         takenBy: Value(userId),
         waiterId: Value(order.waiterId),
         persons: Value(order.numberOfPersons),
-
         clientId: Value(order.customerId),
         commercialId: Value(order.commercialId),
         sessionId: Value(sessionId),
+        zDay: Value(zDay),
+        date: Value(DateTime.now()),
         createdAt: Value(DateTime.now()),
         updatedAt: Value(DateTime.now()),
       ),
@@ -444,10 +460,12 @@ class OrderRepository {
           note: Value(item.note),
           unitaryTva: Value(item.tva),
           state: Value(itemState),
+          zDay: Value(zDay),
           planStartAt: Value(item.planStartAt),
           planEndAt: Value(item.planEndAt),
           planWaiterId: Value(item.planWaiterId),
           kdsPrintedAt: Value(item.kdsPrintedAt),
+          kdsPrintedQuantity: Value(item.kdsPrintedQuantity),
         ),
       );
 
@@ -571,7 +589,10 @@ class OrderRepository {
 
     final wasAlreadySynced = existingOrder?.isSynced ?? false;
     final orderCode = existingOrder?.code ?? order.orderCode ?? '';
-    
+    // Preserve the original z_day — re-inserted products must stay on the
+    // same Z-day as the order even if the update happens after midnight.
+    final orderZDay = existingOrder?.zDay ?? _currentZDay();
+
     // Count unpaid items to be updated
     final unpaidItems = order.items.where((item) => item.ticketId == null).toList();
     _logger.debug('updateOrder: total items=${order.items.length}, unpaid items=${unpaidItems.length}');
@@ -610,7 +631,7 @@ class OrderRepository {
     // Key = (productId, variantId ?? -1). Two lines with the same product +
     // variant collapse into one entry whose value is the summed quantity, so
     // a partial reduction (e.g. removing one of two Pizzas) still surfaces.
-    final removedSnapshot = <String, int>{};
+    final removedSnapshot = <String, double>{};
     final existingUnpaidRows = await (_database.select(_database.orderProducts)
           ..where((t) => t.orderId.equals(orderId) & t.ticketId.isNull()))
         .get();
@@ -641,10 +662,12 @@ class OrderRepository {
           note: Value(item.note),
           unitaryTva: Value(item.tva),
           state: Value('PENDING'),
+          zDay: Value(orderZDay),
           planStartAt: Value(item.planStartAt),
           planEndAt: Value(item.planEndAt),
           planWaiterId: Value(item.planWaiterId),
           kdsPrintedAt: Value(item.kdsPrintedAt),
+          kdsPrintedQuantity: Value(item.kdsPrintedQuantity),
         ),
       );
 
@@ -724,7 +747,7 @@ class OrderRepository {
   /// writes both the technical (`OrderLogs`) and audit (`ActivityLogs`) lines.
   /// Wrapped in try/catch — a logging failure must never abort an order save.
   Future<void> _logRemovedItems(
-      int orderId, String orderCode, Map<String, int> removed) async {
+      int orderId, String orderCode, Map<String, double> removed) async {
     try {
       final productIds = <int>{};
       final variantIds = <int>{};
@@ -984,6 +1007,7 @@ class OrderRepository {
           planEndAt: orderProduct.planEndAt,
           planWaiterId: orderProduct.planWaiterId,
           kdsPrintedAt: orderProduct.kdsPrintedAt,
+          kdsPrintedQuantity: orderProduct.kdsPrintedQuantity,
         ));
       }
     }
@@ -1293,6 +1317,23 @@ class OrderRepository {
     return result;
   }
 
+  /// Local calendar day as 'YYYY-MM-DD' — the stable prefix shared by every
+  /// datetime text encoding (legacy UTC/space and current local/'T'). Used to
+  /// range-filter on the day rather than the full timestamp, which sorts
+  /// inconsistently across encodings.
+  static String _dayStr(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
+
+  Expression<bool> _dateOnOrAfterDay(
+          GeneratedColumn<DateTime> col, DateTime day) =>
+      CustomExpression<bool>("substr(${col.name}, 1, 10) >= '${_dayStr(day)}'");
+
+  Expression<bool> _dateOnOrBeforeDay(
+          GeneratedColumn<DateTime> col, DateTime day) =>
+      CustomExpression<bool>("substr(${col.name}, 1, 10) <= '${_dayStr(day)}'");
+
   // Get paginated orders with full details - real database-level pagination
   Future<PaginatedOrders> getPaginatedOrdersWithFullDetails({
     required int page,
@@ -1345,13 +1386,15 @@ class OrderRepository {
         query = query..where((tbl) => tbl.sessionId.equals(sessionId));
       }
 
+      // Day-prefix comparison — dates are stored as TEXT and legacy rows may
+      // use the UTC/space encoding that sorts before 'T', which would drop
+      // same-day orders on the range's start day. See _dayStr / ticket filter.
       if (startDate != null) {
-        query = query..where((tbl) => tbl.date.isBiggerOrEqualValue(startDate));
+        query = query..where((tbl) => _dateOnOrAfterDay(tbl.date, startDate));
       }
 
       if (endDate != null) {
-        final endOfDay = DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
-        query = query..where((tbl) => tbl.date.isSmallerOrEqualValue(endOfDay));
+        query = query..where((tbl) => _dateOnOrBeforeDay(tbl.date, endDate));
       }
 
       final allOrders = await query.get();
@@ -1449,12 +1492,11 @@ class OrderRepository {
     }
 
     if (startDate != null) {
-      query = query..where((tbl) => tbl.date.isBiggerOrEqualValue(startDate));
+      query = query..where((tbl) => _dateOnOrAfterDay(tbl.date, startDate));
     }
 
     if (endDate != null) {
-      final endOfDay = DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
-      query = query..where((tbl) => tbl.date.isSmallerOrEqualValue(endOfDay));
+      query = query..where((tbl) => _dateOnOrBeforeDay(tbl.date, endDate));
     }
 
     // Apply sorting
@@ -1529,10 +1571,25 @@ class OrderRepository {
         ? ordersToProcess.sublist(start, end)
         : <Order>[];
 
+    // Batch Z-lock: one query for all session IDs on this page (like tickets' _enrichTickets)
+    final sessionIds = paginatedOrders
+        .where((o) => o.sessionId != null)
+        .map((o) => o.sessionId!)
+        .toSet();
+    final endedSessionIds = <int>{};
+    if (sessionIds.isNotEmpty) {
+      final sessions = await (_database.select(_database.cashSessions)
+            ..where((s) => s.id.isIn(sessionIds.toList())))
+          .get();
+      for (final s in sessions) {
+        if (s.status == 'ended') endedSessionIds.add(s.id);
+      }
+    }
+
     // Build full details for each order
     final result = <OrderFullDetails>[];
     for (final order in paginatedOrders) {
-      final fullDetails = await _buildOrderFullDetails(order);
+      final fullDetails = await _buildOrderFullDetails(order, endedSessionIds: endedSessionIds);
       result.add(fullDetails);
     }
 
@@ -1702,7 +1759,7 @@ class OrderRepository {
   }
 
   // Helper method to build OrderFullDetails from an Order
-  Future<OrderFullDetails> _buildOrderFullDetails(Order order) async {
+  Future<OrderFullDetails> _buildOrderFullDetails(Order order, {Set<int>? endedSessionIds}) async {
     // Get order products
     final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
 
@@ -1804,7 +1861,7 @@ class OrderRepository {
         variantId: product.variantId,
         variantName: variantName,
         quantity: product.quantity,
-        totalPrice: itemSubtotal - productDiscount,
+        totalPrice: itemSubtotal + itemTva - productDiscount,
         isPaid: isPaid,
         ticketNum: ticketNum,
         components: components,
@@ -1821,10 +1878,14 @@ class OrderRepository {
 
     bool isZLocked = false;
     if (order.sessionId != null) {
-      final session = await (_database.select(_database.cashSessions)
-            ..where((tbl) => tbl.id.equals(order.sessionId!)))
-          .getSingleOrNull();
-      isZLocked = session?.status == 'ended';
+      if (endedSessionIds != null) {
+        isZLocked = endedSessionIds.contains(order.sessionId!);
+      } else {
+        final session = await (_database.select(_database.cashSessions)
+              ..where((tbl) => tbl.id.equals(order.sessionId!)))
+            .getSingleOrNull();
+        isZLocked = session?.status == 'ended';
+      }
     }
 
     return OrderFullDetails(

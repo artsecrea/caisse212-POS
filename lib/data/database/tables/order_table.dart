@@ -8,7 +8,7 @@ class Orders extends Table {
   IntColumn get priority => integer().withDefault(const Constant(0))();
   TextColumn get coupon => text().nullable()();
   IntColumn get persons => integer().withDefault(const Constant(1))();
-  DateTimeColumn get date => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get date => dateTime().clientDefault(() => DateTime.now())();
   IntColumn get paymentId => integer().nullable()();
   IntColumn get tableId => integer().nullable()();
   TextColumn get source => text().nullable()(); // Source of the order (table, kiosk, etc.)
@@ -29,8 +29,9 @@ class Orders extends Table {
   TextColumn get address => text().nullable()(); // Delivery address (for DELIVERY order type)
   TextColumn get cancellationReason => text().nullable()(); // Reason for cancellation when status is CANCELED
   IntColumn get sessionId => integer().nullable()(); // Cash session this order was created in (for Z-report locking)
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get zDay => dateTime().nullable()(); // Calendar day the session opened — stays constant even if order crosses midnight
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server
 }
 

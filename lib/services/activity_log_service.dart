@@ -60,6 +60,7 @@ class ActivityLogService {
               phrase: phrase,
               userId: Value(userId),
               username: Value(name),
+              timestamp: Value(DateTime.now()),
             ),
           );
     } catch (e) {
@@ -189,6 +190,17 @@ class ActivityLogService {
       log(ActivityAction.adminElevationRevoked, 'audit_admin_elevation_revoked',
           [username ?? ''],
           userId: userId, username: username);
+
+  /// Records a remote POS command received via SSE.
+  /// [commandType] is the normalised command name (e.g. `sync_menu`).
+  /// [details] is any extra context (e.g. which entity was synced, which
+  /// session was closed, which admin granted elevation).
+  Future<void> logPosCommand(String commandType, {String? details}) {
+    final label = details != null && details.isNotEmpty
+        ? '$commandType — $details'
+        : commandType;
+    return log(ActivityAction.posCommand, 'audit_pos_command', [label]);
+  }
 
   // ── Queries ────────────────────────────────────────────────────────────
 

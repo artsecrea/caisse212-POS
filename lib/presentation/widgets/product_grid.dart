@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/favorites_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/order_models.dart';
@@ -19,7 +20,7 @@ class ProductGrid extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final productsAsync = ref.watch(filteredProductsProvider);
+    final productsAsync = ref.watch(displayedProductsProvider);
     final showImages = ref.watch(showProductImagesProvider);
     final cardSize = ref.watch(productCardSizeProvider);
     final searchQuery = ref.watch(productSearchQueryProvider);
@@ -136,6 +137,8 @@ class _ProductCard extends ConsumerWidget {
     final showImages = ref.watch(showProductImagesProvider);
     final cardSize = ref.watch(productCardSizeProvider);
     final componentsDataAsync = ref.watch(productComponentsProvider(product.id));
+    final showFavStar = ref.watch(settingsProvider.select((s) => s.showFavoritesCategory));
+    final isFavorite = ref.watch(favoriteProductsProvider.select((s) => s.contains(product.id)));
 
     // Font sizes scale with card size setting
     final nameFontSize = cardSize == 1 ? 11.0 : (cardSize == 2 ? 13.0 : 14.0);
@@ -209,15 +212,40 @@ class _ProductCard extends ConsumerWidget {
         // Show modification dialog
         _showModificationDialog(context, ref);
       },
-      child: Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(4),
-        ),
-        color: _parseColor(product.color) ?? Theme.of(context).cardColor,
-        child: showImages
-            ? _buildWithImage(context, ref, nameFontSize, priceFontSize, cardPadding)
-            : _buildCompact(context, ref, nameFontSize, priceFontSize, cardPadding),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            color: _parseColor(product.color) ?? Theme.of(context).cardColor,
+            child: showImages
+                ? _buildWithImage(context, ref, nameFontSize, priceFontSize, cardPadding)
+                : _buildCompact(context, ref, nameFontSize, priceFontSize, cardPadding),
+          ),
+          if (showFavStar)
+            Positioned(
+              top: 2,
+              right: 2,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () =>
+                    ref.read(favoriteProductsProvider.notifier).toggle(product.id),
+                child: Padding(
+                  padding: const EdgeInsets.all(3),
+                  child: Icon(
+                    isFavorite ? Icons.star : Icons.star_border,
+                    size: 14,
+                    color: isFavorite
+                        ? Colors.amber
+                        : Colors.grey.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -338,19 +366,19 @@ class _ProductCard extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.max,
+                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    Expanded(
-                      child: Text(
-                        product.name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: nameFontSize,
-                          color: cardColor != null ? textColor : null,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      product.name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: nameFontSize,
+                        color: cardColor != null ? textColor : null,
                       ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    const SizedBox(height: 2),
                     Text(
                       currencyFormatter.format(displayPrice),
                       style: TextStyle(
@@ -511,7 +539,7 @@ class _ProductCard extends ConsumerWidget {
     final discount = modifications['discount'] as double? ?? product.discountAmount;
     final manualDiscount = modifications['manualDiscount'] as double? ?? 0.0;
     final note = modifications['note'] as String?;
-    final quantity = modifications['quantity'] as int? ?? 1;
+    final quantity = (modifications['quantity'] as num?)?.toDouble() ?? 1.0;
 
     // Variant data
     final variantId = modifications['variantId'] as int?;
@@ -541,9 +569,17 @@ class _ProductCard extends ConsumerWidget {
       planStartAt: planStartAt,
       planEndAt: planEndAt,
       planWaiterId: planWaiterId,
+      unitName: product.unitName,
     );
 
     ref.read(orderProvider.notifier).addItem(orderItem);
+
+    // Track last-used order (RAM only, most recent first)
+    final lastUsed = ref.read(lastUsedProductIdsProvider);
+    ref.read(lastUsedProductIdsProvider.notifier).state = [
+      product.id,
+      ...lastUsed.where((id) => id != product.id),
+    ];
 
     SnackBarHelper.showSuccessSnackBar(
       context,

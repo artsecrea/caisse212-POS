@@ -5,17 +5,32 @@ import 'package:caisse212/services/pending_operations_service.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import '../domain/models/session_rules.dart';
 
 /// Data Sync Service for fetching data from API and storing in local database
 class DataSyncService {
   final AppDatabase _database;
   final ApiService _apiService;
+  final SharedPreferences? _prefs;
   late final PendingOperationsService _pendingOpsService;
   final _logger = Logger.instance;
 
-  DataSyncService(this._database, this._apiService) {
+  final _syncedOrderController = StreamController<int>.broadcast();
+
+  /// Emits the local DB id of any order that was just updated by a sync delta.
+  Stream<int> get syncedOrderUpdatedStream => _syncedOrderController.stream;
+
+  static const _kOrdersCursor        = 'sync_orders_cursor';
+  static const _kPaymentsCursor      = 'sync_payments_cursor';
+  static const _kOrdersLastSyncAt    = 'sync_orders_last_at';
+  static const _kPaymentsLastSyncAt  = 'sync_payments_last_at';
+  static const _kLastDeltaError      = 'sync_last_delta_error';
+
+  DataSyncService(this._database, this._apiService, [this._prefs]) {
     _pendingOpsService = PendingOperationsService(_database);
   }
 
@@ -537,6 +552,7 @@ class DataSyncService {
           // Scale / weighed-product fields — null when absent in API response.
           mbwCode: Value(product['mbwCode'] as String?),
           pricePerKg: Value(product['pricePerKg'] as int?),
+          unitName: Value(product['unitName'] as String?),
         ),
         mode: InsertMode.insertOrReplace,
       );
@@ -870,6 +886,7 @@ class DataSyncService {
         'manualDiscount': product.manualDiscount,
         'note': product.note,
         'state': product.state,
+        'zDay': product.zDay?.toIso8601String(),
         'components': componentsList,
       });
     }
@@ -881,7 +898,7 @@ class DataSyncService {
         for (int i = 0; i < productDataList.length; i++) {
           final proportion = effectivePrices[i] / totalEffective;
           final productShareOfDiscount = orderDiscountAmount * proportion;
-          final qty = productDataList[i]['quantity'] as int;
+          final qty = (productDataList[i]['quantity'] as num).toDouble();
           final perUnitShare = qty > 0 ? productShareOfDiscount / qty : 0.0;
           final existingManualDiscount = productDataList[i]['manualDiscount'] as double;
           productDataList[i]['manualDiscount'] = existingManualDiscount + perUnitShare;
@@ -984,6 +1001,7 @@ class DataSyncService {
         'sessionCode': order.sessionId == null
             ? null
             : sessionCodeById[order.sessionId!],
+        'zDay': order.zDay?.toIso8601String(),
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),
         'updatedAt': order.updatedAt.toIso8601String(),
@@ -1029,6 +1047,7 @@ class DataSyncService {
         'isPaid': t.isPaid,
         'isCancelled': t.isCancelled,
         'printCount': t.printCount,
+        'zDay': t.zDay?.toIso8601String(),
         'date': t.date.toIso8601String(),
         'createdAt': t.date.toIso8601String(),
       });
@@ -1048,6 +1067,8 @@ class DataSyncService {
       'cashierId': s.cashierId,
       'moneyAtStart': s.moneyAtStart,
       'moneyAtEnd': s.moneyAtEnd,
+      'totalPaid': s.totalPaid,
+      'details': s.details == null ? null : jsonDecode(s.details!),
       'status': s.status,
       'startedAt': s.startedAt.toIso8601String(),
       'endedAt': s.endedAt?.toIso8601String(),
@@ -1133,6 +1154,60 @@ class DataSyncService {
     });
   }
 
+  // ── Targeted pull-sync helpers (no full master-data wipe) ─────────────────
+
+  /// Pull + persist categories, products, variants and components without
+  /// touching orders, sessions, or any other unrelated table.
+  Future<void> syncMenu() async {
+    final categories = await _apiService.fetchCategories();
+    final products = await _apiService.fetchProducts();
+    final variants = await _apiService.fetchVariants();
+    final componentGroups = await _apiService.fetchComponentGroups();
+    final components = await _apiService.fetchComponents();
+    final productComponents = await _apiService.fetchProductComponents();
+    await _database.transaction(() async {
+      await _persistCategories(categories);
+      await _persistStations(await _apiService.fetchStations());
+      await _persistProducts(products);
+      await _persistVariants(variants);
+      await _persistComponentGroups(componentGroups);
+      await _persistComponents(components);
+      await _persistProductComponents(productComponents);
+    });
+  }
+
+  /// Pull + persist users only (preserves local lastLogin / displayName).
+  Future<void> syncUsersOnly() async {
+    final existing = await _database.select(_database.users).get();
+    final byId = {for (final u in existing) u.id: u};
+    final users = await _apiService.fetchUsers();
+    await _persistUsers(users, byId);
+  }
+
+  /// Pull + persist areas and tables only.
+  Future<void> syncAreasOnly() async {
+    final snapshot = await _snapshotTableOrders();
+    final areas = await _apiService.fetchAreas();
+    final tables = await _apiService.fetchTables();
+    await _database.transaction(() async {
+      await _persistAreas(areas);
+      await _persistTables(tables);
+    });
+    await _restoreTableOrders(snapshot);
+  }
+
+  /// Upload all unsynced local data to the server (sessions, orders, tickets,
+  /// customers, pending ops). Does not pull anything from the server.
+  Future<void> syncUpload({int batchSize = 50}) async {
+    await syncPendingOperations();
+    await syncSessionsBulk(batchSize: batchSize);
+    await syncOrdersBulk(batchSize: batchSize);
+    await syncTicketsBulk(batchSize: batchSize * 2);
+    await syncCustomersBulk(batchSize: batchSize);
+  }
+
+  // ── Upload flow ────────────────────────────────────────────────────────────
+
   /// Sync all local data to server
   /// Each entity type is synced independently so a failure in one does not
   /// block the others.  Mark-as-synced only runs when the API call succeeds.
@@ -1201,6 +1276,8 @@ class DataSyncService {
         'cashierId': session.cashierId,
         'moneyAtStart': session.moneyAtStart,
         'moneyAtEnd': session.moneyAtEnd,
+        'totalPaid': session.totalPaid,
+        'details': session.details == null ? null : jsonDecode(session.details!),
         'status': session.status,
         'startedAt': session.startedAt.toIso8601String(),
         'endedAt': session.endedAt?.toIso8601String(),
@@ -1218,6 +1295,23 @@ class DataSyncService {
     } catch (e) {
       _logger.error('Error syncing single session: $e');
       return false;
+    }
+  }
+
+  /// Fetches session rules from the server and persists them to SharedPrefs.
+  /// Returns the parsed rules, or null if the server returned 404 / error
+  /// (in which case the cached rules are left untouched).
+  Future<SessionRules?> syncSessionRules() async {
+    try {
+      final raw = await _apiService.fetchSessionRules();
+      if (raw == null) return null;
+      final rules = SessionRules.fromJson(raw);
+      final prefs = _prefs ?? await SharedPreferences.getInstance();
+      await prefs.setString('session_rules_json', jsonEncode(rules.toJson()));
+      return rules;
+    } catch (e) {
+      _logger.warning('syncSessionRules: $e');
+      return null;
     }
   }
 
@@ -1290,6 +1384,7 @@ class DataSyncService {
         'servedBy': order.waiterId,
         'sessionId': order.sessionId,
         'sessionCode': sessionCode,
+        'zDay': order.zDay?.toIso8601String(),
         'note': order.note,
         'address': order.address,
         'cancellationReason': order.cancellationReason,
@@ -1915,6 +2010,557 @@ class DataSyncService {
     } else {
       await _pendingOpsService.queueSessionUpdate(entityId: entityId, sessionCode: sessionCode, updateData: updateData);
     }
+  }
+
+  // ── Delta pull (server → POS) ─────────────────────────────────────────────
+
+  /// Pull order deltas from the server, looping through all pages until
+  /// `hasMore = false`. Applies each item as an upsert or tombstone delete.
+  /// Persists the cursor to [prefs] after each page so partial progress
+  /// survives a crash. On exception, stores the error string and returns the
+  /// counts accumulated so far.
+  Future<({int applied, int deleted, int pages})> pullOrderDeltas(
+      SharedPreferences prefs) async {
+    var cursor = prefs.getString(_kOrdersCursor);
+    var applied = 0, deleted = 0, pages = 0;
+
+    try {
+      bool hasMore = true;
+      while (hasMore) {
+        final result = await _apiService.fetchOrderDeltas(cursor: cursor);
+        final changes =
+            ((result['changes'] as List?) ?? []).cast<Map<String, dynamic>>();
+        final nextCursor = result['nextCursor'] as String?;
+        hasMore = (result['hasMore'] as bool?) ?? false;
+
+        for (final item in changes) {
+          try {
+            if (item['deletedAt'] != null) {
+              await _applyOrderTombstone(item['code'] as String);
+              deleted++;
+            } else {
+              await _applyOrderDelta(item);
+              applied++;
+            }
+          } catch (e) {
+            _logger.error('pullOrderDeltas: item ${item['code']}: $e');
+          }
+        }
+
+        if (nextCursor != null && nextCursor.isNotEmpty) {
+          cursor = nextCursor;
+          await prefs.setString(_kOrdersCursor, nextCursor);
+        }
+        pages++;
+        if (!hasMore) break;
+      }
+
+      await prefs.setString(
+          _kOrdersLastSyncAt, DateTime.now().toIso8601String());
+      _logger.info(
+          'pullOrderDeltas: applied=$applied deleted=$deleted pages=$pages');
+    } catch (e) {
+      await prefs.setString(
+          _kLastDeltaError, '${DateTime.now().toIso8601String()}  $e');
+      _logger.error('pullOrderDeltas failed: $e');
+    }
+
+    return (applied: applied, deleted: deleted, pages: pages);
+  }
+
+  /// Pull payment (ticket) deltas from the server, same pagination logic as
+  /// [pullOrderDeltas]. Skips items whose order doesn't exist locally yet.
+  Future<({int applied, int deleted, int pages})> pullPaymentDeltas(
+      SharedPreferences prefs) async {
+    var cursor = prefs.getString(_kPaymentsCursor);
+    var applied = 0, deleted = 0, pages = 0;
+
+    try {
+      bool hasMore = true;
+      while (hasMore) {
+        final result = await _apiService.fetchPaymentDeltas(cursor: cursor);
+        final changes =
+            ((result['changes'] as List?) ?? []).cast<Map<String, dynamic>>();
+        final nextCursor = result['nextCursor'] as String?;
+        hasMore = (result['hasMore'] as bool?) ?? false;
+
+        for (final item in changes) {
+          try {
+            final orderCode =
+                (item['orderCode'] ?? item['order_code']) as String?;
+            if (orderCode == null) continue;
+
+            final order = await (_database.select(_database.orders)
+                  ..where((o) => o.code.equals(orderCode)))
+                .getSingleOrNull();
+            if (order == null) {
+              _logger.warning(
+                  'pullPaymentDeltas: order $orderCode not local, skipping');
+              continue;
+            }
+
+            final ticketNum = (item['num'] as String?) ?? '';
+            if (item['deletedAt'] != null) {
+              await (_database.delete(_database.tickets)
+                    ..where((t) =>
+                        t.orderId.equals(order.id) & t.num.equals(ticketNum)))
+                  .go();
+              deleted++;
+            } else {
+              await _applyPaymentDelta(item, order.id);
+              applied++;
+            }
+          } catch (e) {
+            _logger.error('pullPaymentDeltas: item ${item['num']}: $e');
+          }
+        }
+
+        if (nextCursor != null && nextCursor.isNotEmpty) {
+          cursor = nextCursor;
+          await prefs.setString(_kPaymentsCursor, nextCursor);
+        }
+        pages++;
+        if (!hasMore) break;
+      }
+
+      await prefs.setString(
+          _kPaymentsLastSyncAt, DateTime.now().toIso8601String());
+      _logger.info(
+          'pullPaymentDeltas: applied=$applied deleted=$deleted pages=$pages');
+    } catch (e) {
+      await prefs.setString(
+          _kLastDeltaError, '${DateTime.now().toIso8601String()}  $e');
+      _logger.error('pullPaymentDeltas failed: $e');
+    }
+
+    return (applied: applied, deleted: deleted, pages: pages);
+  }
+
+  /// Run both delta streams in sequence: orders first (so payments can
+  /// resolve their `orderCode` FK), then payments.
+  Future<void> pullAllDeltas(SharedPreferences prefs) async {
+    await pullOrderDeltas(prefs);
+    await pullPaymentDeltas(prefs);
+  }
+
+  Future<void> _applyOrderDelta(Map<String, dynamic> item) async {
+    final code = item['code'] as String;
+
+    // Log the raw incoming order so we can inspect server-sent prices.
+    _logger.info('pullOrderDelta incoming order=$code '
+        'products_count=${((item['products'] as List?) ?? []).length} '
+        'raw_products=${item['products']}');
+
+    final existing = await (_database.select(_database.orders)
+          ..where((o) => o.code.equals(code)))
+        .getSingleOrNull();
+
+    final int orderId;
+    if (existing != null) {
+      await (_database.update(_database.orders)
+            ..where((o) => o.id.equals(existing.id)))
+          .write(_orderCompanionFromDelta(item, existing));
+      orderId = existing.id;
+    } else {
+      orderId = await _database
+          .into(_database.orders)
+          .insert(_orderCompanionFromDelta(item, null));
+    }
+
+    // Snapshot existing products + components BEFORE deleting so we can
+    // restore client-only fields (ticketId, components) when the server delta
+    // omits them.
+    final existingProductsList = await (_database.select(_database.orderProducts)
+          ..where((op) => op.orderId.equals(orderId)))
+        .get();
+    final existingOpIds = existingProductsList.map((op) => op.id).toList();
+
+    // Per (productId, variantId): queues so duplicate product lines are
+    // matched in insertion order.
+    final quantityQueue = <(int, int?), List<double>>{};
+    final priceQueue = <(int, int?), List<double>>{};
+    final ticketIdQueue = <(int, int?), List<int?>>{};
+    final stateQueue = <(int, int?), List<String?>>{};
+    final unitaryDiscountQueue = <(int, int?), List<double>>{};
+    final manualDiscountQueue = <(int, int?), List<double>>{};
+    final componentQueue = <(int, int?), List<List<OrderProductComponent>>>{};
+
+    for (final op in existingProductsList) {
+      final key = (op.productId, op.variantId);
+      quantityQueue.putIfAbsent(key, () => []).add(op.quantity);
+      priceQueue.putIfAbsent(key, () => []).add(op.unitaryPrice);
+      ticketIdQueue.putIfAbsent(key, () => []).add(op.ticketId);
+      stateQueue.putIfAbsent(key, () => []).add(op.state);
+      unitaryDiscountQueue.putIfAbsent(key, () => []).add(op.unitaryDiscount);
+      manualDiscountQueue.putIfAbsent(key, () => []).add(op.manualDiscount);
+      componentQueue.putIfAbsent(key, () => []).add([]);
+    }
+
+    // Load all components in one query and slot them into componentQueue.
+    if (existingOpIds.isNotEmpty) {
+      final allComps = await (_database.select(_database.orderProductComponents)
+              ..where((c) => c.orderProductId.isIn(existingOpIds)))
+          .get();
+      final opById = {for (final op in existingProductsList) op.id: op};
+      for (final comp in allComps) {
+        final op = opById[comp.orderProductId];
+        if (op == null) continue;
+        final key = (op.productId, op.variantId);
+        componentQueue[key]?.last.add(comp);
+      }
+    }
+
+    // Delete and re-insert atomically — a crash between the two steps would
+    // leave the order with zero products.
+    await _database.transaction(() async {
+    // Delete existing products + components.
+    if (existingOpIds.isNotEmpty) {
+      await (_database.delete(_database.orderProductComponents)
+            ..where((c) => c.orderProductId.isIn(existingOpIds)))
+          .go();
+    }
+    await (_database.delete(_database.orderProducts)
+          ..where((op) => op.orderId.equals(orderId)))
+        .go();
+
+    // Re-insert from server payload, falling back to local data where the
+    // server omits client-only fields.
+    final products =
+        ((item['products'] as List?) ?? []).cast<Map<String, dynamic>>();
+    for (final p in products) {
+      final productId = ((p['productId'] ?? p['product_id']) as num).toInt();
+      final variantId = ((p['variantId'] ?? p['variant_id']) as num?)?.toInt();
+      final key = (productId, variantId);
+
+      // Pop the oldest entry for this (productId, variantId) pair.
+      final existingQty =
+          quantityQueue[key]?.isNotEmpty == true ? quantityQueue[key]!.removeAt(0) : null;
+      final existingPrice =
+          priceQueue[key]?.isNotEmpty == true ? priceQueue[key]!.removeAt(0) : null;
+      final existingTicketId =
+          ticketIdQueue[key]?.isNotEmpty == true ? ticketIdQueue[key]!.removeAt(0) : null;
+      final existingState =
+          stateQueue[key]?.isNotEmpty == true ? stateQueue[key]!.removeAt(0) : null;
+      final existingComponents =
+          componentQueue[key]?.isNotEmpty == true ? componentQueue[key]!.removeAt(0) : <OrderProductComponent>[];
+      final existingUnitaryDiscount =
+          unitaryDiscountQueue[key]?.isNotEmpty == true ? unitaryDiscountQueue[key]!.removeAt(0) : null;
+      final existingManualDiscount =
+          manualDiscountQueue[key]?.isNotEmpty == true ? manualDiscountQueue[key]!.removeAt(0) : null;
+
+      final serverPrice =
+          ((p['unitaryPrice'] ?? p['unitary_price'] ?? p['price']) as num?)?.toDouble();
+
+      // Log every product whose server price is absent or zero so we can
+      // trace the origin of 0-price order lines in production.
+      if (serverPrice == null || serverPrice == 0.0) {
+        _logger.warning(
+          'pullOrderDelta[$code] productId=$productId variantId=$variantId '
+          'serverPrice=$serverPrice existingLocalPrice=$existingPrice '
+          '→ raw payload keys=${p.keys.toList()} '
+          'unitaryPrice_raw=${p['unitaryPrice']} unitary_price_raw=${p['unitary_price']} '
+          'full_product=$p',
+        );
+      }
+
+      // Preserve local price when server omits or zeros it.
+      final unitaryPrice = (serverPrice != null && serverPrice > 0)
+          ? serverPrice
+          : existingPrice ?? 0.0;
+
+      if (unitaryPrice == 0.0) {
+        _logger.warning(
+          'pullOrderDelta[$code] productId=$productId → RESOLVED TO 0.0 '
+          '(serverPrice=$serverPrice existingLocalPrice=$existingPrice)',
+        );
+      }
+
+      // ticketId is client-only — server never sets it, so always keep local.
+      final serverTicketId =
+          ((p['ticketId'] ?? p['ticket_id']) as num?)?.toInt();
+      final ticketId = serverTicketId ?? existingTicketId;
+
+      final serverUnitaryDiscount =
+          ((p['unitaryDiscount'] ?? p['unitary_discount'] ?? p['discountAmount'] ?? p['discount_amount']) as num?)?.toDouble();
+      final serverManualDiscount =
+          ((p['manualDiscount'] ?? p['manual_discount'] ?? p['manualDiscountAmount'] ?? p['manual_discount_amount']) as num?)?.toDouble();
+
+      // Preserve local quantity when server sends 0 — protects weighed/MBw
+      // items whose decimal quantity (e.g. 0.405 kg) may be truncated to 0
+      // by a server backend that stores quantity as integer.
+      final serverQty = (p['quantity'] as num?)?.toDouble();
+      final qty = (serverQty != null && serverQty > 0) ? serverQty : existingQty ?? 1.0;
+
+      final opRow = await _database
+          .into(_database.orderProducts)
+          .insertReturning(OrderProductsCompanion(
+            orderId: Value(orderId),
+            productId: Value(productId),
+            variantId: Value(variantId),
+            ticketId: Value(ticketId),
+            quantity: Value(qty),
+            unitaryPrice: Value(unitaryPrice),
+            unitaryDiscount: Value(
+                serverUnitaryDiscount ?? existingUnitaryDiscount ?? 0.0),
+            unitaryTva: Value(
+                ((p['unitaryTva'] ?? p['unitary_tva'] ?? p['totalTva'] ?? p['total_tva']) as num?)
+                        ?.toDouble() ??
+                    0.0),
+            manualDiscount: Value(
+                serverManualDiscount ?? existingManualDiscount ?? 0.0),
+            note: Value(p['note'] as String?),
+            // Prevent a stale server response from downgrading a locally-paid
+            // item back to PENDING (e.g. SSE fires before the push completes).
+            state: Value(() {
+              final serverState = p['state'] as String? ?? 'PENDING';
+              return (existingState == 'PAID' && serverState == 'PENDING')
+                  ? 'PAID'
+                  : serverState;
+            }()),
+            planStartAt: Value(
+                _parseDateTime(p['planStartAt'] ?? p['plan_start_at'])),
+            planEndAt:
+                Value(_parseDateTime(p['planEndAt'] ?? p['plan_end_at'])),
+            planWaiterId: Value(
+                ((p['planWaiterId'] ?? p['plan_waiter_id']) as num?)
+                    ?.toInt()),
+            updatedAt: Value(DateTime.now()),
+          ));
+
+      final serverComponents =
+          ((p['components'] ?? p['options'] as List?) ?? []).cast<Map<String, dynamic>>();
+      if (serverComponents.isNotEmpty) {
+        // Server provided components — use them.
+        for (final c in serverComponents) {
+          await _database.into(_database.orderProductComponents).insert(
+                OrderProductComponentsCompanion(
+                  orderProductId: Value(opRow.id),
+                  componentId: Value(
+                      ((c['componentId'] ?? c['component_id']) as num).toInt()),
+                  quantity: Value((c['quantity'] as num?)?.toInt() ?? 1),
+                  price: Value((c['price'] as num?)?.toDouble() ?? 0.0),
+                  isSpecial: Value(
+                      (c['isSpecial'] ?? c['is_special']) as bool? ?? false),
+                  createdAt: Value(DateTime.now()),
+                  updatedAt: Value(DateTime.now()),
+                ),
+                mode: InsertMode.insertOrReplace,
+              );
+        }
+      } else if (existingComponents.isNotEmpty) {
+        // Server omitted components — restore from local snapshot.
+        for (final comp in existingComponents) {
+          await _database.into(_database.orderProductComponents).insert(
+                OrderProductComponentsCompanion(
+                  orderProductId: Value(opRow.id),
+                  componentId: Value(comp.componentId),
+                  quantity: Value(comp.quantity),
+                  price: Value(comp.price),
+                  isSpecial: Value(comp.isSpecial),
+                  createdAt: Value(DateTime.now()),
+                  updatedAt: Value(DateTime.now()),
+                ),
+                mode: InsertMode.insertOrReplace,
+              );
+        }
+      }
+    }
+    }); // end transaction
+
+    _syncedOrderController.add(orderId);
+  }
+
+  /// Returns the status to persist, preventing a stale server response from
+  /// regressing a locally-completed order back to an in-progress status.
+  /// "Base" statuses are the standard OrderStatus enum values — any other value
+  /// (e.g. 'COMPLETED', 'DONE', 'PAID') is treated as a terminal/custom status
+  /// that must not be overwritten by a stale server in-flow status.
+  String _resolveOrderStatus(String? serverStatus, String? localStatus) {
+    const baseStatuses = {'ONHOLD', 'PENDING', 'PREPARING', 'READY', 'DELIVERED'};
+    final server = serverStatus ?? localStatus ?? 'ONHOLD';
+    if (localStatus != null &&
+        !baseStatuses.contains(localStatus) &&
+        baseStatuses.contains(server)) {
+      return localStatus;
+    }
+    return server;
+  }
+
+  OrdersCompanion _orderCompanionFromDelta(
+      Map<String, dynamic> item, Order? existing) {
+    final now = DateTime.now();
+    return OrdersCompanion(
+      code: Value(item['code'] as String),
+      status: Value(
+          _resolveOrderStatus(item['status'] as String?, existing?.status)),
+      type: Value(
+          item['type'] as String? ?? existing?.type ?? 'DINE_IN'),
+      priority: Value(
+          (item['priority'] as num?)?.toInt() ??
+              existing?.priority ??
+              0),
+      coupon: Value(item['coupon'] as String?),
+      persons: Value(
+          (item['persons'] as num?)?.toInt() ?? existing?.persons ?? 1),
+      date: Value(
+          _parseDateTime(item['date'] ?? item['createdAt']) ??
+              existing?.date ??
+              now),
+      tableId: Value(
+          ((item['tableId'] ?? item['table_id']) as num?)?.toInt()
+          ?? existing?.tableId),
+      source: Value(item['source'] as String?),
+      sourceId: Value(
+          ((item['sourceId'] ?? item['source_id']) as num?)?.toInt()),
+      discountPercentage: Value(
+          ((item['discountPercentage'] ?? item['discount_percentage'])
+                      as num?)
+                  ?.toDouble() ??
+              existing?.discountPercentage ??
+              0.0),
+      tip: Value((item['tip'] as num?)?.toDouble()),
+      createdBy: Value(
+          ((item['createdBy'] ?? item['created_by']) as num?)?.toInt()
+          ?? existing?.createdBy),
+      takenBy: Value(
+          ((item['takenBy'] ?? item['taken_by']) as num?)?.toInt()
+          ?? existing?.takenBy),
+      waiterId: Value(
+          ((item['servedBy'] ?? item['waiterId'] ?? item['waiter_id'])
+                  as num?)
+              ?.toInt()),
+      clientId: Value(
+          ((item['clientId'] ?? item['client_id']) as num?)?.toInt()),
+      commercialId: Value(
+          ((item['commercialId'] ?? item['commercial_id']) as num?)
+              ?.toInt()),
+      note: Value(item['note'] as String?),
+      address: Value(item['address'] as String?),
+      cancellationReason: Value(
+          (item['cancellationReason'] ?? item['cancellation_reason'])
+              as String?),
+      sessionId: Value(
+          ((item['sessionId'] ?? item['session_id']) as num?)?.toInt()
+          ?? existing?.sessionId),
+      zDay: Value(() {
+        // Prefer the server-sent zDay; fall back to deriving from the order date.
+        final raw = item['zDay'] ?? item['z_day'];
+        if (raw != null) return _parseDateTime(raw);
+        final orderDate = _parseDateTime(item['date'] ?? item['createdAt']) ??
+            existing?.date ??
+            now;
+        return DateTime(orderDate.year, orderDate.month, orderDate.day);
+      }()),
+      createdAt: Value(
+          _parseDateTime(item['createdAt'] ?? item['created_at']) ??
+              existing?.createdAt ??
+              now),
+      updatedAt: Value(
+          _parseDateTime(item['updatedAt'] ?? item['updated_at']) ?? now),
+      isSynced: const Value(true),
+    );
+  }
+
+  Future<void> _applyOrderTombstone(String code) async {
+    final existing = await (_database.select(_database.orders)
+          ..where((o) => o.code.equals(code)))
+        .getSingleOrNull();
+    if (existing == null) return;
+
+    final orderId = existing.id;
+    await (_database.delete(_database.tickets)
+          ..where((t) => t.orderId.equals(orderId)))
+        .go();
+    final opIds = await (_database.select(_database.orderProducts)
+          ..where((op) => op.orderId.equals(orderId)))
+        .map((op) => op.id)
+        .get();
+    if (opIds.isNotEmpty) {
+      await (_database.delete(_database.orderProductComponents)
+            ..where((c) => c.orderProductId.isIn(opIds)))
+          .go();
+    }
+    await (_database.delete(_database.orderProducts)
+          ..where((op) => op.orderId.equals(orderId)))
+        .go();
+    await (_database.delete(_database.orders)
+          ..where((o) => o.id.equals(orderId)))
+        .go();
+
+    _logger.info('pullOrderDeltas: tombstone order code=$code');
+  }
+
+  Future<void> _applyPaymentDelta(
+      Map<String, dynamic> item, int orderId) async {
+    final ticketNum = (item['num'] as String?) ?? '';
+    final existing = await (_database.select(_database.tickets)
+          ..where((t) => t.orderId.equals(orderId) & t.num.equals(ticketNum)))
+        .getSingleOrNull();
+
+    final companion = TicketsCompanion(
+      num: Value(ticketNum),
+      date: Value(_parseDateTime(item['date'] ?? item['createdAt']) ??
+          DateTime.now()),
+      orderId: Value(orderId),
+      sessionId: Value(
+          ((item['sessionId'] ?? item['session_id']) as num?)?.toInt()),
+      paymentMethod: Value(
+          (item['paymentMethod'] ?? item['payment_method']) as String? ??
+              'CASH'),
+      // Preserve existing non-zero amount when server sends 0 or null — the
+      // ticket may have been created locally before the server received it.
+      amount: Value(() {
+        final serverAmount = (item['amount'] as num?)?.toDouble() ?? 0.0;
+        return serverAmount > 0 ? serverAmount : (existing?.amount ?? 0.0);
+      }()),
+      isPaid:
+          Value((item['isPaid'] ?? item['is_paid']) as bool? ?? true),
+      isCancelled: Value(
+          (item['isCancelled'] ?? item['is_cancelled']) as bool? ?? false),
+      zDay: Value(() {
+        // Prefer the server-sent zDay; fall back to deriving from the ticket date.
+        final raw = item['zDay'] ?? item['z_day'];
+        if (raw != null) return _parseDateTime(raw);
+        final ticketDate = _parseDateTime(item['date'] ?? item['createdAt']) ??
+            DateTime.now();
+        return DateTime(ticketDate.year, ticketDate.month, ticketDate.day);
+      }()),
+      isSynced: const Value(true),
+    );
+
+    if (existing != null) {
+      await (_database.update(_database.tickets)
+            ..where((t) => t.id.equals(existing.id)))
+          .write(companion);
+    } else {
+      await _database
+          .into(_database.tickets)
+          .insert(companion, mode: InsertMode.insertOrIgnore);
+    }
+  }
+
+  // ── Sync-inspector helpers (read-only, no DB side effects) ───────────────
+
+  /// Returns the current cursor / last-sync-at / last-error strings for the
+  /// inspector dialog. All values may be null when no sync has run yet.
+  Future<Map<String, String?>> getDeltaSyncMeta(SharedPreferences prefs) async {
+    return {
+      'ordersCursor':    prefs.getString(_kOrdersCursor),
+      'paymentsCursor':  prefs.getString(_kPaymentsCursor),
+      'ordersLastSync':  prefs.getString(_kOrdersLastSyncAt),
+      'paymentsLastSync': prefs.getString(_kPaymentsLastSyncAt),
+      'lastError':       prefs.getString(_kLastDeltaError),
+    };
+  }
+
+  Future<void> resetOrdersCursor(SharedPreferences prefs) async {
+    await prefs.remove(_kOrdersCursor);
+    _logger.info('pullOrderDeltas: cursor reset');
+  }
+
+  Future<void> resetPaymentsCursor(SharedPreferences prefs) async {
+    await prefs.remove(_kPaymentsCursor);
+    _logger.info('pullPaymentDeltas: cursor reset');
   }
 }
 

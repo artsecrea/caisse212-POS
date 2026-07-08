@@ -134,7 +134,7 @@ class KdsOrder {
 class KdsProduct {
   final int id;
   final String name;
-  final int quantity;
+  final double quantity;
   final List<String> options;
 
   KdsProduct({
@@ -157,7 +157,7 @@ class KdsProduct {
     return KdsProduct(
       id : json['id'] as int,
       name: json['name'] as String,
-      quantity: json['quantity'] as int,
+      quantity: (json['quantity'] as num?)?.toDouble() ?? 1.0,
       options: (json['options'] as List<String>?) ??
           [],
     );

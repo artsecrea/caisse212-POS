@@ -11,9 +11,9 @@ double orderPanelWidth(double screenWidth) {
 }
 
 double actionButtonSize(double screenWidth) {
-  if (screenWidth < kBreakpointCompact) return 80.0;
-  if (screenWidth < kBreakpointMedium) return 100.0;
-  return 130.0;
+  if (screenWidth < kBreakpointCompact) return 68.0;
+  if (screenWidth < kBreakpointMedium) return 84.0;
+  return 105.0;
 }
 
 double actionBarHeight(double screenWidth) => actionButtonSize(screenWidth) + 20.0;

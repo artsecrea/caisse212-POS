@@ -14,6 +14,7 @@ class OrderLogService {
         orderId: orderId,
         action: 'CREATED',
         description: Value(description),
+        timestamp: Value(DateTime.now()),
       ),
     );
   }
@@ -25,6 +26,7 @@ class OrderLogService {
         orderId: orderId,
         action: 'UPDATED',
         description: Value(description),
+        timestamp: Value(DateTime.now()),
       ),
     );
   }
@@ -36,6 +38,7 @@ class OrderLogService {
         orderId: orderId,
         action: 'DELETED',
         description: Value(description),
+        timestamp: Value(DateTime.now()),
       ),
     );
   }

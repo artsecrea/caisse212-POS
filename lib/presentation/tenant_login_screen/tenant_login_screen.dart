@@ -10,6 +10,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
 import '../widgets/report_issue_dialog.dart';
 import '../widgets/update_dialog.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
 
 class TenantLoginScreen extends ConsumerStatefulWidget {
@@ -569,17 +570,25 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         Expanded(
           flex: 4,
           child: Container(
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
                 colors: [
-                  Theme.of(context).primaryColor,
-                  Theme.of(context).primaryColor.withValues(alpha: 0.75),
+                  Color(0xFFF5A369),
+                  Color(0xFFF59660),
+                  Color(0xFFF48655),
+                  Color(0xFFF07041),
                 ],
+                stops: [0.0, 0.33, 0.67, 1.0],
               ),
             ),
-            child: _buildBrandPanel(context),
+            child: Center(
+              child: SvgPicture.asset(
+                'assets/images/logo-white.svg',
+                width: 360,
+              ),
+            ),
           ),
         ),
         Expanded(
@@ -634,87 +643,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     );
   }
 
-  Widget _buildBrandPanel(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(48, 80, 48, 48),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Caisse212Logo(size: 72),
-            const SizedBox(height: 24),
-            const Text(
-              'CAISSE212',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.5,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Point of Sale System',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.75),
-                fontSize: 15,
-              ),
-            ),
-            const SizedBox(height: 48),
-            Text(
-              'First-time Setup',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.6),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 1.2,
-              ),
-            ),
-            const SizedBox(height: 20),
-            for (final item in <MapEntry<int, String>>[
-              MapEntry(1, 'Connect to server'),
-              MapEntry(2, 'Sign in as admin'),
-              MapEntry(3, 'Set security password'),
-              MapEntry(4, 'Sync all data'),
-            ])
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Text(
-                        '${item.key}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Text(
-                      item.value,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildFormContent(BuildContext context, {required bool showLogo}) {
     return Form(
@@ -901,7 +829,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                 ),
               ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).primaryColor,
+                backgroundColor: const Color(0xFFF07041),
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -912,52 +840,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
           ),
 
           const SizedBox(height: 20),
-
-          Row(
-            children: [
-              Expanded(
-                child: Divider(color: Colors.grey[400], thickness: 1),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  'OR',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: Divider(color: Colors.grey[400], thickness: 1),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 20),
-
-          SizedBox(
-            height: 56,
-            child: OutlinedButton.icon(
-              onPressed: _isLoading ? null : _handleDemoMode,
-              icon: const Icon(Icons.science, size: 22),
-              label: const Text(
-                'Use Demo Mode',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Theme.of(context).primaryColor,
-                side: BorderSide(
-                  color: Theme.of(context).primaryColor,
-                  width: 1.5,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
 
           const SizedBox(height: 16),
 

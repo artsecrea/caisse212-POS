@@ -20,7 +20,7 @@ import '../providers/network_provider.dart' show lastKnownOnlineStatusProvider;
 import '../providers/sync_manager_provider.dart' show syncManagerProvider;
 import 'activity_log_service.dart' show activityLogServiceProvider;
 import 'order_log_service.dart';
-import 'printing_service.dart' show PrintOutput, KdsPrintMode;
+import 'printing_service.dart' show PrintOutput, KdsPrintMode, printingServiceProvider;
 import '../utils/order_code.dart';
 import 'package:drift/drift.dart' as drift;
 
@@ -390,6 +390,9 @@ class ServerService {
         }
       }
 
+      // z_day from active session — O(1) state read
+      final _createZDay = _ref.read(currentZDayProvider);
+
       // Convert to database order
       final orderId = await database.into(database.orders).insert(
         OrdersCompanion.insert(
@@ -404,6 +407,7 @@ class ServerService {
           createdBy: drift.Value(createdBy),
           takenBy: drift.Value(takenBy),
           note: drift.Value(socketOrder.note),
+          zDay: drift.Value(_createZDay),
           createdAt: drift.Value(socketOrder.date),
           updatedAt: drift.Value(DateTime.now()),
         ),
@@ -453,6 +457,7 @@ class ServerService {
             unitaryTva: drift.Value(unitTva),
             note: drift.Value(product.note),
             state: drift.Value(product.state),
+            zDay: drift.Value(_createZDay),
           ),
         );
 
@@ -1630,6 +1635,8 @@ class ServerService {
       // column above still records which waiter raised it (for the waiter
       // app's own order list / dashboard). Null when no cashier is logged in.
       final posUser = _ref.read(currentUserProvider);
+      // z_day from active session — O(1) state read, no DB hit
+      final waiterZDay = _ref.read(currentZDayProvider);
       final orderId = await database.into(database.orders).insert(
         OrdersCompanion.insert(
           code: orderCode,
@@ -1642,6 +1649,7 @@ class ServerService {
           createdBy: drift.Value(posUser?.id),
           takenBy: drift.Value(posUser?.id),
           sessionId: drift.Value(session?.id),
+          zDay: drift.Value(waiterZDay),
           createdAt: drift.Value(now),
           updatedAt: drift.Value(now),
         ),
@@ -1651,7 +1659,7 @@ class ServerService {
       for (final productJson in products) {
         final productId = productJson['productId'] as int;
         final variantId = productJson['variantId'] as int?;
-        final quantity = productJson['quantity'] as int? ?? 1;
+        final quantity = (productJson['quantity'] as num?)?.toDouble() ?? 1.0;
         final productNote = productJson['note'] as String?;
         final components = productJson['components'] as List<dynamic>? ?? [];
 
@@ -1689,6 +1697,7 @@ class ServerService {
             unitaryTva: drift.Value(unitTva),
             note: drift.Value(productNote),
             state: const drift.Value('PENDING'),
+            zDay: drift.Value(waiterZDay),
           ),
         );
 
@@ -1735,8 +1744,10 @@ class ServerService {
             paymentMethod: TransactionType.cash.value,
             amount: orderTotal,
             sessionId: drift.Value(session?.id),
+            zDay: drift.Value(waiterZDay),
             isPaid: const drift.Value(true),
             printCount: const drift.Value(0),
+            date: drift.Value(DateTime.now()),
           ),
         );
         await (database.update(database.orderProducts)
@@ -2179,7 +2190,7 @@ class ServerService {
       final waiterId = json['waiterId'] as int?;
       final productId = json['productId'] as int?;
       final variantId = json['variantId'] as int?;
-      final quantity = json['quantity'] as int? ?? 1;
+      final quantity = (json['quantity'] as num?)?.toDouble() ?? 1.0;
       final productNote = json['note'] as String?;
       final components = json['components'] as List<dynamic>? ?? [];
 

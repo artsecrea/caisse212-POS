@@ -189,8 +189,6 @@ class _WaiterSettlementDialogState
                 .map((t) => int.tryParse(t.num) ?? 0)
                 .reduce((a, b) => a > b ? a : b);
         final ticketNumStr = (maxNum + 1).toString().padLeft(4, '0');
-        final ticketCreatedAt = DateTime.now();
-
         // Cash ticket covering the remaining due.
         final ticketId = await database.into(database.tickets).insert(
               TicketsCompanion.insert(
@@ -199,8 +197,12 @@ class _WaiterSettlementDialogState
                 paymentMethod: 'CASH',
                 amount: due,
                 sessionId: Value(session?.id),
+                // z_day = the session's opening calendar day (falls back to
+                // today's midnight when no session is open).
+                zDay: Value(ref.read(currentZDayProvider)),
                 isPaid: const Value(true),
                 printCount: const Value(0),
+                date: Value(DateTime.now()),
               ),
             );
 
@@ -250,7 +252,7 @@ class _WaiterSettlementDialogState
             ticketNumber: ticketNumStr,
             amount: due,
             paymentMethod: 'CASH',
-            createdAt: ticketCreatedAt,
+            createdAt: DateTime.now(),
             items: itemsForPrint,
             orderType: o.order.type,
             hasTable: o.order.tableId != null,

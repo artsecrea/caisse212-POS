@@ -134,8 +134,16 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  // Create the window already in the maximized state (WS_MAXIMIZE). This is
+  // critical: FlutterWindow::OnCreate() builds the FlutterViewController using
+  // GetClientArea() immediately after this call, so the engine's view is sized
+  // to the *final* (maximized) client area from the very first frame. Sizing/
+  // maximizing later — from native or from Dart — resizes the window after the
+  // engine view already exists, which intermittently renders the UI at the old
+  // 1280x720 size inside a full-screen window (compressed UI, black remainder)
+  // until a manual resize. The window stays hidden (no WS_VISIBLE) until Show().
   HWND window = CreateWindow(
-      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
+      window_class, title.c_str(), WS_OVERLAPPEDWINDOW | WS_MAXIMIZE,
       Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
       Scale(size.width, scale_factor), Scale(size.height, scale_factor),
       nullptr, nullptr, GetModuleHandle(nullptr), this);
@@ -150,7 +158,11 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  // SW_SHOW (not SW_SHOWNORMAL) so the window is displayed in its CURRENT
+  // state. The app maximizes the window before the first frame; SW_SHOWNORMAL
+  // would restore it back to the default 1280x720 here, causing a visible
+  // resize on startup and intermittent stale/duplicated framebuffer content.
+  return ShowWindow(window_handle_, SW_SHOW);
 }
 
 // static

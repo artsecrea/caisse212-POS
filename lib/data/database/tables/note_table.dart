@@ -11,7 +11,7 @@ class Notes extends Table {
   RealColumn get height => real().withDefault(const Constant(180.0))();
   IntColumn get orderId => integer().nullable().references(Orders, #id, onDelete: KeyAction.setNull)();
   TextColumn get orderCode => text().nullable()(); // Denormalized for display without join
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
 }
 

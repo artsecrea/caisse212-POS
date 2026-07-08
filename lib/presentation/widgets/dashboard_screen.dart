@@ -200,7 +200,7 @@ final _dashboardStatsProvider =
   final Map<int, _MutableProduct> prodMap = {};
   for (final op in orderProducts) {
     prodMap[op.productId] ??= _MutableProduct();
-    prodMap[op.productId]!.qty += op.quantity;
+    prodMap[op.productId]!.qty += op.quantity.round();
     prodMap[op.productId]!.rev += opLineTotal(op);
   }
   // Resolve names
@@ -214,7 +214,7 @@ final _dashboardStatsProvider =
   }
   topProds.sort((a, b) => b.qty.compareTo(a.qty));
 
-  final totalItems = orderProducts.fold<int>(0, (s, op) => s + op.quantity);
+  final totalItems = orderProducts.fold<int>(0, (s, op) => s + op.quantity.round());
 
   return DashboardStats(
     totalOrders: allOrders.length,

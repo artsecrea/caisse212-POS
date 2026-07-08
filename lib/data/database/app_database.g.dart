@@ -95,7 +95,7 @@ class $CategoriesTable extends Categories
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -107,7 +107,7 @@ class $CategoriesTable extends Categories
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -771,6 +771,17 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _unitNameMeta = const VerificationMeta(
+    'unitName',
+  );
+  @override
+  late final GeneratedColumn<String> unitName = GeneratedColumn<String>(
+    'unit_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -781,7 +792,7 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -793,7 +804,7 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -816,6 +827,7 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     planDurationMinutes,
     mbwCode,
     pricePerKg,
+    unitName,
     createdAt,
     updatedAt,
   ];
@@ -963,6 +975,12 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         ),
       );
     }
+    if (data.containsKey('unit_name')) {
+      context.handle(
+        _unitNameMeta,
+        unitName.isAcceptableOrUnknown(data['unit_name']!, _unitNameMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -1060,6 +1078,10 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         DriftSqlType.int,
         data['${effectivePrefix}price_per_kg'],
       ),
+      unitName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}unit_name'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -1101,6 +1123,9 @@ class Product extends DataClass implements Insertable<Product> {
 
   /// Price per kg stored in centimes (nullable — only set for weighed products).
   final int? pricePerKg;
+
+  /// Unit label from the server (e.g. "kg", "pcs", "box") — nullable.
+  final String? unitName;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Product({
@@ -1123,6 +1148,7 @@ class Product extends DataClass implements Insertable<Product> {
     this.planDurationMinutes,
     this.mbwCode,
     this.pricePerKg,
+    this.unitName,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -1165,6 +1191,9 @@ class Product extends DataClass implements Insertable<Product> {
     }
     if (!nullToAbsent || pricePerKg != null) {
       map['price_per_kg'] = Variable<int>(pricePerKg);
+    }
+    if (!nullToAbsent || unitName != null) {
+      map['unit_name'] = Variable<String>(unitName);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -1210,6 +1239,9 @@ class Product extends DataClass implements Insertable<Product> {
       pricePerKg: pricePerKg == null && nullToAbsent
           ? const Value.absent()
           : Value(pricePerKg),
+      unitName: unitName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(unitName),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -1242,6 +1274,7 @@ class Product extends DataClass implements Insertable<Product> {
       ),
       mbwCode: serializer.fromJson<String?>(json['mbwCode']),
       pricePerKg: serializer.fromJson<int?>(json['pricePerKg']),
+      unitName: serializer.fromJson<String?>(json['unitName']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -1269,6 +1302,7 @@ class Product extends DataClass implements Insertable<Product> {
       'planDurationMinutes': serializer.toJson<int?>(planDurationMinutes),
       'mbwCode': serializer.toJson<String?>(mbwCode),
       'pricePerKg': serializer.toJson<int?>(pricePerKg),
+      'unitName': serializer.toJson<String?>(unitName),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -1294,6 +1328,7 @@ class Product extends DataClass implements Insertable<Product> {
     Value<int?> planDurationMinutes = const Value.absent(),
     Value<String?> mbwCode = const Value.absent(),
     Value<int?> pricePerKg = const Value.absent(),
+    Value<String?> unitName = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Product(
@@ -1318,6 +1353,7 @@ class Product extends DataClass implements Insertable<Product> {
         : this.planDurationMinutes,
     mbwCode: mbwCode.present ? mbwCode.value : this.mbwCode,
     pricePerKg: pricePerKg.present ? pricePerKg.value : this.pricePerKg,
+    unitName: unitName.present ? unitName.value : this.unitName,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -1356,6 +1392,7 @@ class Product extends DataClass implements Insertable<Product> {
       pricePerKg: data.pricePerKg.present
           ? data.pricePerKg.value
           : this.pricePerKg,
+      unitName: data.unitName.present ? data.unitName.value : this.unitName,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -1383,6 +1420,7 @@ class Product extends DataClass implements Insertable<Product> {
           ..write('planDurationMinutes: $planDurationMinutes, ')
           ..write('mbwCode: $mbwCode, ')
           ..write('pricePerKg: $pricePerKg, ')
+          ..write('unitName: $unitName, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -1410,6 +1448,7 @@ class Product extends DataClass implements Insertable<Product> {
     planDurationMinutes,
     mbwCode,
     pricePerKg,
+    unitName,
     createdAt,
     updatedAt,
   ]);
@@ -1436,6 +1475,7 @@ class Product extends DataClass implements Insertable<Product> {
           other.planDurationMinutes == this.planDurationMinutes &&
           other.mbwCode == this.mbwCode &&
           other.pricePerKg == this.pricePerKg &&
+          other.unitName == this.unitName &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -1460,6 +1500,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
   final Value<int?> planDurationMinutes;
   final Value<String?> mbwCode;
   final Value<int?> pricePerKg;
+  final Value<String?> unitName;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const ProductsCompanion({
@@ -1482,6 +1523,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.planDurationMinutes = const Value.absent(),
     this.mbwCode = const Value.absent(),
     this.pricePerKg = const Value.absent(),
+    this.unitName = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -1505,6 +1547,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.planDurationMinutes = const Value.absent(),
     this.mbwCode = const Value.absent(),
     this.pricePerKg = const Value.absent(),
+    this.unitName = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : name = Value(name),
@@ -1530,6 +1573,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Expression<int>? planDurationMinutes,
     Expression<String>? mbwCode,
     Expression<int>? pricePerKg,
+    Expression<String>? unitName,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -1554,6 +1598,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
         'plan_duration_minutes': planDurationMinutes,
       if (mbwCode != null) 'mbw_code': mbwCode,
       if (pricePerKg != null) 'price_per_kg': pricePerKg,
+      if (unitName != null) 'unit_name': unitName,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -1579,6 +1624,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Value<int?>? planDurationMinutes,
     Value<String?>? mbwCode,
     Value<int?>? pricePerKg,
+    Value<String?>? unitName,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -1602,6 +1648,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       planDurationMinutes: planDurationMinutes ?? this.planDurationMinutes,
       mbwCode: mbwCode ?? this.mbwCode,
       pricePerKg: pricePerKg ?? this.pricePerKg,
+      unitName: unitName ?? this.unitName,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -1667,6 +1714,9 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     if (pricePerKg.present) {
       map['price_per_kg'] = Variable<int>(pricePerKg.value);
     }
+    if (unitName.present) {
+      map['unit_name'] = Variable<String>(unitName.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -1698,6 +1748,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
           ..write('planDurationMinutes: $planDurationMinutes, ')
           ..write('mbwCode: $mbwCode, ')
           ..write('pricePerKg: $pricePerKg, ')
+          ..write('unitName: $unitName, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -1855,7 +1906,7 @@ class $ProductVariantsTable extends ProductVariants
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -1867,7 +1918,7 @@ class $ProductVariantsTable extends ProductVariants
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -2610,7 +2661,7 @@ class $VariantAttributeValuesTable extends VariantAttributeValues
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -3118,7 +3169,7 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -3130,7 +3181,7 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _lastLoginMeta = const VerificationMeta(
     'lastLogin',
@@ -3879,7 +3930,7 @@ class $ComponentsTable extends Components
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -3891,7 +3942,7 @@ class $ComponentsTable extends Components
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -4362,7 +4413,7 @@ class $ComponentGroupsTable extends ComponentGroups
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -4374,7 +4425,7 @@ class $ComponentGroupsTable extends ComponentGroups
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -4818,7 +4869,7 @@ class $ProductComponentsTable extends ProductComponents
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -4830,7 +4881,7 @@ class $ProductComponentsTable extends ProductComponents
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -5363,7 +5414,7 @@ class $AreasTable extends Areas with TableInfo<$AreasTable, Area> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -5375,7 +5426,7 @@ class $AreasTable extends Areas with TableInfo<$AreasTable, Area> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -5744,7 +5795,7 @@ class $AreaTablesTable extends AreaTables
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -5756,7 +5807,7 @@ class $AreaTablesTable extends AreaTables
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _orderIdMeta = const VerificationMeta(
     'orderId',
@@ -6254,7 +6305,7 @@ class $StationsTable extends Stations with TableInfo<$StationsTable, Station> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -6266,7 +6317,7 @@ class $StationsTable extends Stations with TableInfo<$StationsTable, Station> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -6645,7 +6696,7 @@ class $KiosksTable extends Kiosks with TableInfo<$KiosksTable, Kiosk> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -6657,7 +6708,7 @@ class $KiosksTable extends Kiosks with TableInfo<$KiosksTable, Kiosk> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -7194,7 +7245,7 @@ class $KDSsTable extends KDSs with TableInfo<$KDSsTable, KDS> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -7206,7 +7257,7 @@ class $KDSsTable extends KDSs with TableInfo<$KDSsTable, KDS> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -7739,7 +7790,7 @@ class $CommercialsTable extends Commercials
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -7751,7 +7802,7 @@ class $CommercialsTable extends Commercials
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -8166,7 +8217,7 @@ class $CustomersTable extends Customers
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -8178,7 +8229,7 @@ class $CustomersTable extends Customers
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -8708,7 +8759,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _paymentIdMeta = const VerificationMeta(
     'paymentId',
@@ -8870,6 +8921,15 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _zDayMeta = const VerificationMeta('zDay');
+  @override
+  late final GeneratedColumn<DateTime> zDay = GeneratedColumn<DateTime>(
+    'z_day',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -8880,7 +8940,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -8892,7 +8952,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _isSyncedMeta = const VerificationMeta(
     'isSynced',
@@ -8934,6 +8994,7 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     address,
     cancellationReason,
     sessionId,
+    zDay,
     createdAt,
     updatedAt,
     isSynced,
@@ -9096,6 +9157,12 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
       );
     }
+    if (data.containsKey('z_day')) {
+      context.handle(
+        _zDayMeta,
+        zDay.isAcceptableOrUnknown(data['z_day']!, _zDayMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -9215,6 +9282,10 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         DriftSqlType.int,
         data['${effectivePrefix}session_id'],
       ),
+      zDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}z_day'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -9260,6 +9331,7 @@ class Order extends DataClass implements Insertable<Order> {
   final String? address;
   final String? cancellationReason;
   final int? sessionId;
+  final DateTime? zDay;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isSynced;
@@ -9287,6 +9359,7 @@ class Order extends DataClass implements Insertable<Order> {
     this.address,
     this.cancellationReason,
     this.sessionId,
+    this.zDay,
     required this.createdAt,
     required this.updatedAt,
     required this.isSynced,
@@ -9347,6 +9420,9 @@ class Order extends DataClass implements Insertable<Order> {
     if (!nullToAbsent || sessionId != null) {
       map['session_id'] = Variable<int>(sessionId);
     }
+    if (!nullToAbsent || zDay != null) {
+      map['z_day'] = Variable<DateTime>(zDay);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     map['is_synced'] = Variable<bool>(isSynced);
@@ -9404,6 +9480,7 @@ class Order extends DataClass implements Insertable<Order> {
       sessionId: sessionId == null && nullToAbsent
           ? const Value.absent()
           : Value(sessionId),
+      zDay: zDay == null && nullToAbsent ? const Value.absent() : Value(zDay),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
       isSynced: Value(isSynced),
@@ -9443,6 +9520,7 @@ class Order extends DataClass implements Insertable<Order> {
         json['cancellationReason'],
       ),
       sessionId: serializer.fromJson<int?>(json['sessionId']),
+      zDay: serializer.fromJson<DateTime?>(json['zDay']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
@@ -9475,6 +9553,7 @@ class Order extends DataClass implements Insertable<Order> {
       'address': serializer.toJson<String?>(address),
       'cancellationReason': serializer.toJson<String?>(cancellationReason),
       'sessionId': serializer.toJson<int?>(sessionId),
+      'zDay': serializer.toJson<DateTime?>(zDay),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'isSynced': serializer.toJson<bool>(isSynced),
@@ -9505,6 +9584,7 @@ class Order extends DataClass implements Insertable<Order> {
     Value<String?> address = const Value.absent(),
     Value<String?> cancellationReason = const Value.absent(),
     Value<int?> sessionId = const Value.absent(),
+    Value<DateTime?> zDay = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? isSynced,
@@ -9534,6 +9614,7 @@ class Order extends DataClass implements Insertable<Order> {
         ? cancellationReason.value
         : this.cancellationReason,
     sessionId: sessionId.present ? sessionId.value : this.sessionId,
+    zDay: zDay.present ? zDay.value : this.zDay,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     isSynced: isSynced ?? this.isSynced,
@@ -9569,6 +9650,7 @@ class Order extends DataClass implements Insertable<Order> {
           ? data.cancellationReason.value
           : this.cancellationReason,
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
+      zDay: data.zDay.present ? data.zDay.value : this.zDay,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
@@ -9601,6 +9683,7 @@ class Order extends DataClass implements Insertable<Order> {
           ..write('address: $address, ')
           ..write('cancellationReason: $cancellationReason, ')
           ..write('sessionId: $sessionId, ')
+          ..write('zDay: $zDay, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('isSynced: $isSynced')
@@ -9633,6 +9716,7 @@ class Order extends DataClass implements Insertable<Order> {
     address,
     cancellationReason,
     sessionId,
+    zDay,
     createdAt,
     updatedAt,
     isSynced,
@@ -9664,6 +9748,7 @@ class Order extends DataClass implements Insertable<Order> {
           other.address == this.address &&
           other.cancellationReason == this.cancellationReason &&
           other.sessionId == this.sessionId &&
+          other.zDay == this.zDay &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.isSynced == this.isSynced);
@@ -9693,6 +9778,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
   final Value<String?> address;
   final Value<String?> cancellationReason;
   final Value<int?> sessionId;
+  final Value<DateTime?> zDay;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<bool> isSynced;
@@ -9720,6 +9806,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.address = const Value.absent(),
     this.cancellationReason = const Value.absent(),
     this.sessionId = const Value.absent(),
+    this.zDay = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.isSynced = const Value.absent(),
@@ -9748,6 +9835,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.address = const Value.absent(),
     this.cancellationReason = const Value.absent(),
     this.sessionId = const Value.absent(),
+    this.zDay = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.isSynced = const Value.absent(),
@@ -9776,6 +9864,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Expression<String>? address,
     Expression<String>? cancellationReason,
     Expression<int>? sessionId,
+    Expression<DateTime>? zDay,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<bool>? isSynced,
@@ -9804,6 +9893,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       if (address != null) 'address': address,
       if (cancellationReason != null) 'cancellation_reason': cancellationReason,
       if (sessionId != null) 'session_id': sessionId,
+      if (zDay != null) 'z_day': zDay,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (isSynced != null) 'is_synced': isSynced,
@@ -9834,6 +9924,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Value<String?>? address,
     Value<String?>? cancellationReason,
     Value<int?>? sessionId,
+    Value<DateTime?>? zDay,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<bool>? isSynced,
@@ -9862,6 +9953,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       address: address ?? this.address,
       cancellationReason: cancellationReason ?? this.cancellationReason,
       sessionId: sessionId ?? this.sessionId,
+      zDay: zDay ?? this.zDay,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isSynced: isSynced ?? this.isSynced,
@@ -9940,6 +10032,9 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     if (sessionId.present) {
       map['session_id'] = Variable<int>(sessionId.value);
     }
+    if (zDay.present) {
+      map['z_day'] = Variable<DateTime>(zDay.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -9978,6 +10073,7 @@ class OrdersCompanion extends UpdateCompanion<Order> {
           ..write('address: $address, ')
           ..write('cancellationReason: $cancellationReason, ')
           ..write('sessionId: $sessionId, ')
+          ..write('zDay: $zDay, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('isSynced: $isSynced')
@@ -10053,13 +10149,13 @@ class $OrderProductsTable extends OrderProducts
     'quantity',
   );
   @override
-  late final GeneratedColumn<int> quantity = GeneratedColumn<int>(
+  late final GeneratedColumn<double> quantity = GeneratedColumn<double>(
     'quantity',
     aliasedName,
     false,
-    type: DriftSqlType.int,
+    type: DriftSqlType.double,
     requiredDuringInsert: false,
-    defaultValue: const Constant(1),
+    defaultValue: const Constant(1.0),
   );
   static const VerificationMeta _unitaryPriceMeta = const VerificationMeta(
     'unitaryPrice',
@@ -10171,6 +10267,27 @@ class $OrderProductsTable extends OrderProducts
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _kdsPrintedQuantityMeta =
+      const VerificationMeta('kdsPrintedQuantity');
+  @override
+  late final GeneratedColumn<double> kdsPrintedQuantity =
+      GeneratedColumn<double>(
+        'kds_printed_quantity',
+        aliasedName,
+        false,
+        type: DriftSqlType.double,
+        requiredDuringInsert: false,
+        defaultValue: const Constant(0.0),
+      );
+  static const VerificationMeta _zDayMeta = const VerificationMeta('zDay');
+  @override
+  late final GeneratedColumn<DateTime> zDay = GeneratedColumn<DateTime>(
+    'z_day',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
   );
@@ -10181,7 +10298,7 @@ class $OrderProductsTable extends OrderProducts
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -10201,6 +10318,8 @@ class $OrderProductsTable extends OrderProducts
     planEndAt,
     planWaiterId,
     kdsPrintedAt,
+    kdsPrintedQuantity,
+    zDay,
     updatedAt,
   ];
   @override
@@ -10332,6 +10451,21 @@ class $OrderProductsTable extends OrderProducts
         ),
       );
     }
+    if (data.containsKey('kds_printed_quantity')) {
+      context.handle(
+        _kdsPrintedQuantityMeta,
+        kdsPrintedQuantity.isAcceptableOrUnknown(
+          data['kds_printed_quantity']!,
+          _kdsPrintedQuantityMeta,
+        ),
+      );
+    }
+    if (data.containsKey('z_day')) {
+      context.handle(
+        _zDayMeta,
+        zDay.isAcceptableOrUnknown(data['z_day']!, _zDayMeta),
+      );
+    }
     if (data.containsKey('updated_at')) {
       context.handle(
         _updatedAtMeta,
@@ -10368,7 +10502,7 @@ class $OrderProductsTable extends OrderProducts
         data['${effectivePrefix}ticket_id'],
       ),
       quantity: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
+        DriftSqlType.double,
         data['${effectivePrefix}quantity'],
       )!,
       unitaryPrice: attachedDatabase.typeMapping.read(
@@ -10411,6 +10545,14 @@ class $OrderProductsTable extends OrderProducts
         DriftSqlType.dateTime,
         data['${effectivePrefix}kds_printed_at'],
       ),
+      kdsPrintedQuantity: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}kds_printed_quantity'],
+      )!,
+      zDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}z_day'],
+      ),
       updatedAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
@@ -10430,7 +10572,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
   final int productId;
   final int? variantId;
   final int? ticketId;
-  final int quantity;
+  final double quantity;
   final double unitaryPrice;
   final double unitaryDiscount;
   final double unitaryTva;
@@ -10441,6 +10583,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
   final DateTime? planEndAt;
   final int? planWaiterId;
   final DateTime? kdsPrintedAt;
+  final double kdsPrintedQuantity;
+  final DateTime? zDay;
   final DateTime updatedAt;
   const OrderProduct({
     required this.id,
@@ -10459,6 +10603,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     this.planEndAt,
     this.planWaiterId,
     this.kdsPrintedAt,
+    required this.kdsPrintedQuantity,
+    this.zDay,
     required this.updatedAt,
   });
   @override
@@ -10473,7 +10619,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     if (!nullToAbsent || ticketId != null) {
       map['ticket_id'] = Variable<int>(ticketId);
     }
-    map['quantity'] = Variable<int>(quantity);
+    map['quantity'] = Variable<double>(quantity);
     map['unitary_price'] = Variable<double>(unitaryPrice);
     map['unitary_discount'] = Variable<double>(unitaryDiscount);
     map['unitary_tva'] = Variable<double>(unitaryTva);
@@ -10493,6 +10639,10 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     }
     if (!nullToAbsent || kdsPrintedAt != null) {
       map['kds_printed_at'] = Variable<DateTime>(kdsPrintedAt);
+    }
+    map['kds_printed_quantity'] = Variable<double>(kdsPrintedQuantity);
+    if (!nullToAbsent || zDay != null) {
+      map['z_day'] = Variable<DateTime>(zDay);
     }
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -10528,6 +10678,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       kdsPrintedAt: kdsPrintedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(kdsPrintedAt),
+      kdsPrintedQuantity: Value(kdsPrintedQuantity),
+      zDay: zDay == null && nullToAbsent ? const Value.absent() : Value(zDay),
       updatedAt: Value(updatedAt),
     );
   }
@@ -10543,7 +10695,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       productId: serializer.fromJson<int>(json['productId']),
       variantId: serializer.fromJson<int?>(json['variantId']),
       ticketId: serializer.fromJson<int?>(json['ticketId']),
-      quantity: serializer.fromJson<int>(json['quantity']),
+      quantity: serializer.fromJson<double>(json['quantity']),
       unitaryPrice: serializer.fromJson<double>(json['unitaryPrice']),
       unitaryDiscount: serializer.fromJson<double>(json['unitaryDiscount']),
       unitaryTva: serializer.fromJson<double>(json['unitaryTva']),
@@ -10554,6 +10706,10 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       planEndAt: serializer.fromJson<DateTime?>(json['planEndAt']),
       planWaiterId: serializer.fromJson<int?>(json['planWaiterId']),
       kdsPrintedAt: serializer.fromJson<DateTime?>(json['kdsPrintedAt']),
+      kdsPrintedQuantity: serializer.fromJson<double>(
+        json['kdsPrintedQuantity'],
+      ),
+      zDay: serializer.fromJson<DateTime?>(json['zDay']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
   }
@@ -10566,7 +10722,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       'productId': serializer.toJson<int>(productId),
       'variantId': serializer.toJson<int?>(variantId),
       'ticketId': serializer.toJson<int?>(ticketId),
-      'quantity': serializer.toJson<int>(quantity),
+      'quantity': serializer.toJson<double>(quantity),
       'unitaryPrice': serializer.toJson<double>(unitaryPrice),
       'unitaryDiscount': serializer.toJson<double>(unitaryDiscount),
       'unitaryTva': serializer.toJson<double>(unitaryTva),
@@ -10577,6 +10733,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       'planEndAt': serializer.toJson<DateTime?>(planEndAt),
       'planWaiterId': serializer.toJson<int?>(planWaiterId),
       'kdsPrintedAt': serializer.toJson<DateTime?>(kdsPrintedAt),
+      'kdsPrintedQuantity': serializer.toJson<double>(kdsPrintedQuantity),
+      'zDay': serializer.toJson<DateTime?>(zDay),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
   }
@@ -10587,7 +10745,7 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     int? productId,
     Value<int?> variantId = const Value.absent(),
     Value<int?> ticketId = const Value.absent(),
-    int? quantity,
+    double? quantity,
     double? unitaryPrice,
     double? unitaryDiscount,
     double? unitaryTva,
@@ -10598,6 +10756,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     Value<DateTime?> planEndAt = const Value.absent(),
     Value<int?> planWaiterId = const Value.absent(),
     Value<DateTime?> kdsPrintedAt = const Value.absent(),
+    double? kdsPrintedQuantity,
+    Value<DateTime?> zDay = const Value.absent(),
     DateTime? updatedAt,
   }) => OrderProduct(
     id: id ?? this.id,
@@ -10616,6 +10776,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     planEndAt: planEndAt.present ? planEndAt.value : this.planEndAt,
     planWaiterId: planWaiterId.present ? planWaiterId.value : this.planWaiterId,
     kdsPrintedAt: kdsPrintedAt.present ? kdsPrintedAt.value : this.kdsPrintedAt,
+    kdsPrintedQuantity: kdsPrintedQuantity ?? this.kdsPrintedQuantity,
+    zDay: zDay.present ? zDay.value : this.zDay,
     updatedAt: updatedAt ?? this.updatedAt,
   );
   OrderProduct copyWithCompanion(OrderProductsCompanion data) {
@@ -10650,6 +10812,10 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
       kdsPrintedAt: data.kdsPrintedAt.present
           ? data.kdsPrintedAt.value
           : this.kdsPrintedAt,
+      kdsPrintedQuantity: data.kdsPrintedQuantity.present
+          ? data.kdsPrintedQuantity.value
+          : this.kdsPrintedQuantity,
+      zDay: data.zDay.present ? data.zDay.value : this.zDay,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
@@ -10673,6 +10839,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           ..write('planEndAt: $planEndAt, ')
           ..write('planWaiterId: $planWaiterId, ')
           ..write('kdsPrintedAt: $kdsPrintedAt, ')
+          ..write('kdsPrintedQuantity: $kdsPrintedQuantity, ')
+          ..write('zDay: $zDay, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
@@ -10696,6 +10864,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
     planEndAt,
     planWaiterId,
     kdsPrintedAt,
+    kdsPrintedQuantity,
+    zDay,
     updatedAt,
   );
   @override
@@ -10718,6 +10888,8 @@ class OrderProduct extends DataClass implements Insertable<OrderProduct> {
           other.planEndAt == this.planEndAt &&
           other.planWaiterId == this.planWaiterId &&
           other.kdsPrintedAt == this.kdsPrintedAt &&
+          other.kdsPrintedQuantity == this.kdsPrintedQuantity &&
+          other.zDay == this.zDay &&
           other.updatedAt == this.updatedAt);
 }
 
@@ -10727,7 +10899,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
   final Value<int> productId;
   final Value<int?> variantId;
   final Value<int?> ticketId;
-  final Value<int> quantity;
+  final Value<double> quantity;
   final Value<double> unitaryPrice;
   final Value<double> unitaryDiscount;
   final Value<double> unitaryTva;
@@ -10738,6 +10910,8 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
   final Value<DateTime?> planEndAt;
   final Value<int?> planWaiterId;
   final Value<DateTime?> kdsPrintedAt;
+  final Value<double> kdsPrintedQuantity;
+  final Value<DateTime?> zDay;
   final Value<DateTime> updatedAt;
   const OrderProductsCompanion({
     this.id = const Value.absent(),
@@ -10756,6 +10930,8 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     this.planEndAt = const Value.absent(),
     this.planWaiterId = const Value.absent(),
     this.kdsPrintedAt = const Value.absent(),
+    this.kdsPrintedQuantity = const Value.absent(),
+    this.zDay = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
   OrderProductsCompanion.insert({
@@ -10775,6 +10951,8 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     this.planEndAt = const Value.absent(),
     this.planWaiterId = const Value.absent(),
     this.kdsPrintedAt = const Value.absent(),
+    this.kdsPrintedQuantity = const Value.absent(),
+    this.zDay = const Value.absent(),
     this.updatedAt = const Value.absent(),
   }) : orderId = Value(orderId),
        productId = Value(productId),
@@ -10785,7 +10963,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Expression<int>? productId,
     Expression<int>? variantId,
     Expression<int>? ticketId,
-    Expression<int>? quantity,
+    Expression<double>? quantity,
     Expression<double>? unitaryPrice,
     Expression<double>? unitaryDiscount,
     Expression<double>? unitaryTva,
@@ -10796,6 +10974,8 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Expression<DateTime>? planEndAt,
     Expression<int>? planWaiterId,
     Expression<DateTime>? kdsPrintedAt,
+    Expression<double>? kdsPrintedQuantity,
+    Expression<DateTime>? zDay,
     Expression<DateTime>? updatedAt,
   }) {
     return RawValuesInsertable({
@@ -10815,6 +10995,9 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       if (planEndAt != null) 'plan_end_at': planEndAt,
       if (planWaiterId != null) 'plan_waiter_id': planWaiterId,
       if (kdsPrintedAt != null) 'kds_printed_at': kdsPrintedAt,
+      if (kdsPrintedQuantity != null)
+        'kds_printed_quantity': kdsPrintedQuantity,
+      if (zDay != null) 'z_day': zDay,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
   }
@@ -10825,7 +11008,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Value<int>? productId,
     Value<int?>? variantId,
     Value<int?>? ticketId,
-    Value<int>? quantity,
+    Value<double>? quantity,
     Value<double>? unitaryPrice,
     Value<double>? unitaryDiscount,
     Value<double>? unitaryTva,
@@ -10836,6 +11019,8 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     Value<DateTime?>? planEndAt,
     Value<int?>? planWaiterId,
     Value<DateTime?>? kdsPrintedAt,
+    Value<double>? kdsPrintedQuantity,
+    Value<DateTime?>? zDay,
     Value<DateTime>? updatedAt,
   }) {
     return OrderProductsCompanion(
@@ -10855,6 +11040,8 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       planEndAt: planEndAt ?? this.planEndAt,
       planWaiterId: planWaiterId ?? this.planWaiterId,
       kdsPrintedAt: kdsPrintedAt ?? this.kdsPrintedAt,
+      kdsPrintedQuantity: kdsPrintedQuantity ?? this.kdsPrintedQuantity,
+      zDay: zDay ?? this.zDay,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -10878,7 +11065,7 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
       map['ticket_id'] = Variable<int>(ticketId.value);
     }
     if (quantity.present) {
-      map['quantity'] = Variable<int>(quantity.value);
+      map['quantity'] = Variable<double>(quantity.value);
     }
     if (unitaryPrice.present) {
       map['unitary_price'] = Variable<double>(unitaryPrice.value);
@@ -10910,6 +11097,12 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
     if (kdsPrintedAt.present) {
       map['kds_printed_at'] = Variable<DateTime>(kdsPrintedAt.value);
     }
+    if (kdsPrintedQuantity.present) {
+      map['kds_printed_quantity'] = Variable<double>(kdsPrintedQuantity.value);
+    }
+    if (zDay.present) {
+      map['z_day'] = Variable<DateTime>(zDay.value);
+    }
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
@@ -10935,6 +11128,8 @@ class OrderProductsCompanion extends UpdateCompanion<OrderProduct> {
           ..write('planEndAt: $planEndAt, ')
           ..write('planWaiterId: $planWaiterId, ')
           ..write('kdsPrintedAt: $kdsPrintedAt, ')
+          ..write('kdsPrintedQuantity: $kdsPrintedQuantity, ')
+          ..write('zDay: $zDay, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
@@ -11029,7 +11224,7 @@ class $OrderProductComponentsTable extends OrderProductComponents
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -11041,7 +11236,7 @@ class $OrderProductComponentsTable extends OrderProductComponents
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -11474,7 +11669,7 @@ class $PaymentsTable extends Payments with TableInfo<$PaymentsTable, Payment> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _codeMeta = const VerificationMeta('code');
   @override
@@ -11516,7 +11711,7 @@ class $PaymentsTable extends Payments with TableInfo<$PaymentsTable, Payment> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -11528,7 +11723,7 @@ class $PaymentsTable extends Payments with TableInfo<$PaymentsTable, Payment> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -11942,7 +12137,7 @@ class $TransactionsTable extends Transactions
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _typeMeta = const VerificationMeta('type');
   @override
@@ -11974,7 +12169,7 @@ class $TransactionsTable extends Transactions
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -11986,7 +12181,7 @@ class $TransactionsTable extends Transactions
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -12475,7 +12670,7 @@ class $CashSessionsTable extends CashSessions
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _endedAtMeta = const VerificationMeta(
     'endedAt',
@@ -12556,7 +12751,7 @@ class $CashSessionsTable extends CashSessions
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _countedCashMeta = const VerificationMeta(
     'countedCash',
@@ -12602,6 +12797,28 @@ class $CashSessionsTable extends CashSessions
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _totalPaidMeta = const VerificationMeta(
+    'totalPaid',
+  );
+  @override
+  late final GeneratedColumn<double> totalPaid = GeneratedColumn<double>(
+    'total_paid',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _detailsMeta = const VerificationMeta(
+    'details',
+  );
+  @override
+  late final GeneratedColumn<String> details = GeneratedColumn<String>(
+    'details',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -12619,6 +12836,8 @@ class $CashSessionsTable extends CashSessions
     variance,
     countedAt,
     countNotes,
+    totalPaid,
+    details,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -12734,6 +12953,18 @@ class $CashSessionsTable extends CashSessions
         countNotes.isAcceptableOrUnknown(data['count_notes']!, _countNotesMeta),
       );
     }
+    if (data.containsKey('total_paid')) {
+      context.handle(
+        _totalPaidMeta,
+        totalPaid.isAcceptableOrUnknown(data['total_paid']!, _totalPaidMeta),
+      );
+    }
+    if (data.containsKey('details')) {
+      context.handle(
+        _detailsMeta,
+        details.isAcceptableOrUnknown(data['details']!, _detailsMeta),
+      );
+    }
     return context;
   }
 
@@ -12803,6 +13034,14 @@ class $CashSessionsTable extends CashSessions
         DriftSqlType.string,
         data['${effectivePrefix}count_notes'],
       ),
+      totalPaid: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}total_paid'],
+      ),
+      details: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}details'],
+      ),
     );
   }
 
@@ -12828,6 +13067,8 @@ class CashSession extends DataClass implements Insertable<CashSession> {
   final double? variance;
   final DateTime? countedAt;
   final String? countNotes;
+  final double? totalPaid;
+  final String? details;
   const CashSession({
     required this.id,
     required this.code,
@@ -12844,6 +13085,8 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     this.variance,
     this.countedAt,
     this.countNotes,
+    this.totalPaid,
+    this.details,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -12876,6 +13119,12 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     }
     if (!nullToAbsent || countNotes != null) {
       map['count_notes'] = Variable<String>(countNotes);
+    }
+    if (!nullToAbsent || totalPaid != null) {
+      map['total_paid'] = Variable<double>(totalPaid);
+    }
+    if (!nullToAbsent || details != null) {
+      map['details'] = Variable<String>(details);
     }
     return map;
   }
@@ -12911,6 +13160,12 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       countNotes: countNotes == null && nullToAbsent
           ? const Value.absent()
           : Value(countNotes),
+      totalPaid: totalPaid == null && nullToAbsent
+          ? const Value.absent()
+          : Value(totalPaid),
+      details: details == null && nullToAbsent
+          ? const Value.absent()
+          : Value(details),
     );
   }
 
@@ -12935,6 +13190,8 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       variance: serializer.fromJson<double?>(json['variance']),
       countedAt: serializer.fromJson<DateTime?>(json['countedAt']),
       countNotes: serializer.fromJson<String?>(json['countNotes']),
+      totalPaid: serializer.fromJson<double?>(json['totalPaid']),
+      details: serializer.fromJson<String?>(json['details']),
     );
   }
   @override
@@ -12956,6 +13213,8 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       'variance': serializer.toJson<double?>(variance),
       'countedAt': serializer.toJson<DateTime?>(countedAt),
       'countNotes': serializer.toJson<String?>(countNotes),
+      'totalPaid': serializer.toJson<double?>(totalPaid),
+      'details': serializer.toJson<String?>(details),
     };
   }
 
@@ -12975,6 +13234,8 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     Value<double?> variance = const Value.absent(),
     Value<DateTime?> countedAt = const Value.absent(),
     Value<String?> countNotes = const Value.absent(),
+    Value<double?> totalPaid = const Value.absent(),
+    Value<String?> details = const Value.absent(),
   }) => CashSession(
     id: id ?? this.id,
     code: code ?? this.code,
@@ -12991,6 +13252,8 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     variance: variance.present ? variance.value : this.variance,
     countedAt: countedAt.present ? countedAt.value : this.countedAt,
     countNotes: countNotes.present ? countNotes.value : this.countNotes,
+    totalPaid: totalPaid.present ? totalPaid.value : this.totalPaid,
+    details: details.present ? details.value : this.details,
   );
   CashSession copyWithCompanion(CashSessionsCompanion data) {
     return CashSession(
@@ -13017,6 +13280,8 @@ class CashSession extends DataClass implements Insertable<CashSession> {
       countNotes: data.countNotes.present
           ? data.countNotes.value
           : this.countNotes,
+      totalPaid: data.totalPaid.present ? data.totalPaid.value : this.totalPaid,
+      details: data.details.present ? data.details.value : this.details,
     );
   }
 
@@ -13037,7 +13302,9 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           ..write('countedCash: $countedCash, ')
           ..write('variance: $variance, ')
           ..write('countedAt: $countedAt, ')
-          ..write('countNotes: $countNotes')
+          ..write('countNotes: $countNotes, ')
+          ..write('totalPaid: $totalPaid, ')
+          ..write('details: $details')
           ..write(')'))
         .toString();
   }
@@ -13059,6 +13326,8 @@ class CashSession extends DataClass implements Insertable<CashSession> {
     variance,
     countedAt,
     countNotes,
+    totalPaid,
+    details,
   );
   @override
   bool operator ==(Object other) =>
@@ -13078,7 +13347,9 @@ class CashSession extends DataClass implements Insertable<CashSession> {
           other.countedCash == this.countedCash &&
           other.variance == this.variance &&
           other.countedAt == this.countedAt &&
-          other.countNotes == this.countNotes);
+          other.countNotes == this.countNotes &&
+          other.totalPaid == this.totalPaid &&
+          other.details == this.details);
 }
 
 class CashSessionsCompanion extends UpdateCompanion<CashSession> {
@@ -13097,6 +13368,8 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
   final Value<double?> variance;
   final Value<DateTime?> countedAt;
   final Value<String?> countNotes;
+  final Value<double?> totalPaid;
+  final Value<String?> details;
   const CashSessionsCompanion({
     this.id = const Value.absent(),
     this.code = const Value.absent(),
@@ -13113,6 +13386,8 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     this.variance = const Value.absent(),
     this.countedAt = const Value.absent(),
     this.countNotes = const Value.absent(),
+    this.totalPaid = const Value.absent(),
+    this.details = const Value.absent(),
   });
   CashSessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -13130,6 +13405,8 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     this.variance = const Value.absent(),
     this.countedAt = const Value.absent(),
     this.countNotes = const Value.absent(),
+    this.totalPaid = const Value.absent(),
+    this.details = const Value.absent(),
   }) : code = Value(code),
        cashierId = Value(cashierId),
        moneyAtStart = Value(moneyAtStart);
@@ -13149,6 +13426,8 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     Expression<double>? variance,
     Expression<DateTime>? countedAt,
     Expression<String>? countNotes,
+    Expression<double>? totalPaid,
+    Expression<String>? details,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -13166,6 +13445,8 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
       if (variance != null) 'variance': variance,
       if (countedAt != null) 'counted_at': countedAt,
       if (countNotes != null) 'count_notes': countNotes,
+      if (totalPaid != null) 'total_paid': totalPaid,
+      if (details != null) 'details': details,
     });
   }
 
@@ -13185,6 +13466,8 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     Value<double?>? variance,
     Value<DateTime?>? countedAt,
     Value<String?>? countNotes,
+    Value<double?>? totalPaid,
+    Value<String?>? details,
   }) {
     return CashSessionsCompanion(
       id: id ?? this.id,
@@ -13202,6 +13485,8 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
       variance: variance ?? this.variance,
       countedAt: countedAt ?? this.countedAt,
       countNotes: countNotes ?? this.countNotes,
+      totalPaid: totalPaid ?? this.totalPaid,
+      details: details ?? this.details,
     );
   }
 
@@ -13253,6 +13538,12 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
     if (countNotes.present) {
       map['count_notes'] = Variable<String>(countNotes.value);
     }
+    if (totalPaid.present) {
+      map['total_paid'] = Variable<double>(totalPaid.value);
+    }
+    if (details.present) {
+      map['details'] = Variable<String>(details.value);
+    }
     return map;
   }
 
@@ -13273,7 +13564,9 @@ class CashSessionsCompanion extends UpdateCompanion<CashSession> {
           ..write('countedCash: $countedCash, ')
           ..write('variance: $variance, ')
           ..write('countedAt: $countedAt, ')
-          ..write('countNotes: $countNotes')
+          ..write('countNotes: $countNotes, ')
+          ..write('totalPaid: $totalPaid, ')
+          ..write('details: $details')
           ..write(')'))
         .toString();
   }
@@ -13314,7 +13607,7 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _orderIdMeta = const VerificationMeta(
     'orderId',
@@ -13339,6 +13632,15 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     aliasedName,
     true,
     type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _zDayMeta = const VerificationMeta('zDay');
+  @override
+  late final GeneratedColumn<DateTime> zDay = GeneratedColumn<DateTime>(
+    'z_day',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
   );
   static const VerificationMeta _printCountMeta = const VerificationMeta(
@@ -13426,7 +13728,7 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -13435,6 +13737,7 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     date,
     orderId,
     sessionId,
+    zDay,
     printCount,
     paymentMethod,
     amount,
@@ -13484,6 +13787,12 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
       context.handle(
         _sessionIdMeta,
         sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
+      );
+    }
+    if (data.containsKey('z_day')) {
+      context.handle(
+        _zDayMeta,
+        zDay.isAcceptableOrUnknown(data['z_day']!, _zDayMeta),
       );
     }
     if (data.containsKey('print_count')) {
@@ -13567,6 +13876,10 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
         DriftSqlType.int,
         data['${effectivePrefix}session_id'],
       ),
+      zDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}z_day'],
+      ),
       printCount: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}print_count'],
@@ -13610,6 +13923,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
   final DateTime date;
   final int orderId;
   final int? sessionId;
+  final DateTime? zDay;
   final int printCount;
   final String paymentMethod;
   final double amount;
@@ -13623,6 +13937,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     required this.date,
     required this.orderId,
     this.sessionId,
+    this.zDay,
     required this.printCount,
     required this.paymentMethod,
     required this.amount,
@@ -13640,6 +13955,9 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     map['order_id'] = Variable<int>(orderId);
     if (!nullToAbsent || sessionId != null) {
       map['session_id'] = Variable<int>(sessionId);
+    }
+    if (!nullToAbsent || zDay != null) {
+      map['z_day'] = Variable<DateTime>(zDay);
     }
     map['print_count'] = Variable<int>(printCount);
     map['payment_method'] = Variable<String>(paymentMethod);
@@ -13660,6 +13978,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       sessionId: sessionId == null && nullToAbsent
           ? const Value.absent()
           : Value(sessionId),
+      zDay: zDay == null && nullToAbsent ? const Value.absent() : Value(zDay),
       printCount: Value(printCount),
       paymentMethod: Value(paymentMethod),
       amount: Value(amount),
@@ -13681,6 +14000,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       date: serializer.fromJson<DateTime>(json['date']),
       orderId: serializer.fromJson<int>(json['orderId']),
       sessionId: serializer.fromJson<int?>(json['sessionId']),
+      zDay: serializer.fromJson<DateTime?>(json['zDay']),
       printCount: serializer.fromJson<int>(json['printCount']),
       paymentMethod: serializer.fromJson<String>(json['paymentMethod']),
       amount: serializer.fromJson<double>(json['amount']),
@@ -13699,6 +14019,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       'date': serializer.toJson<DateTime>(date),
       'orderId': serializer.toJson<int>(orderId),
       'sessionId': serializer.toJson<int?>(sessionId),
+      'zDay': serializer.toJson<DateTime?>(zDay),
       'printCount': serializer.toJson<int>(printCount),
       'paymentMethod': serializer.toJson<String>(paymentMethod),
       'amount': serializer.toJson<double>(amount),
@@ -13715,6 +14036,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     DateTime? date,
     int? orderId,
     Value<int?> sessionId = const Value.absent(),
+    Value<DateTime?> zDay = const Value.absent(),
     int? printCount,
     String? paymentMethod,
     double? amount,
@@ -13728,6 +14050,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     date: date ?? this.date,
     orderId: orderId ?? this.orderId,
     sessionId: sessionId.present ? sessionId.value : this.sessionId,
+    zDay: zDay.present ? zDay.value : this.zDay,
     printCount: printCount ?? this.printCount,
     paymentMethod: paymentMethod ?? this.paymentMethod,
     amount: amount ?? this.amount,
@@ -13743,6 +14066,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       date: data.date.present ? data.date.value : this.date,
       orderId: data.orderId.present ? data.orderId.value : this.orderId,
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
+      zDay: data.zDay.present ? data.zDay.value : this.zDay,
       printCount: data.printCount.present
           ? data.printCount.value
           : this.printCount,
@@ -13767,6 +14091,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           ..write('date: $date, ')
           ..write('orderId: $orderId, ')
           ..write('sessionId: $sessionId, ')
+          ..write('zDay: $zDay, ')
           ..write('printCount: $printCount, ')
           ..write('paymentMethod: $paymentMethod, ')
           ..write('amount: $amount, ')
@@ -13785,6 +14110,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     date,
     orderId,
     sessionId,
+    zDay,
     printCount,
     paymentMethod,
     amount,
@@ -13802,6 +14128,7 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           other.date == this.date &&
           other.orderId == this.orderId &&
           other.sessionId == this.sessionId &&
+          other.zDay == this.zDay &&
           other.printCount == this.printCount &&
           other.paymentMethod == this.paymentMethod &&
           other.amount == this.amount &&
@@ -13817,6 +14144,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
   final Value<DateTime> date;
   final Value<int> orderId;
   final Value<int?> sessionId;
+  final Value<DateTime?> zDay;
   final Value<int> printCount;
   final Value<String> paymentMethod;
   final Value<double> amount;
@@ -13830,6 +14158,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     this.date = const Value.absent(),
     this.orderId = const Value.absent(),
     this.sessionId = const Value.absent(),
+    this.zDay = const Value.absent(),
     this.printCount = const Value.absent(),
     this.paymentMethod = const Value.absent(),
     this.amount = const Value.absent(),
@@ -13844,6 +14173,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     this.date = const Value.absent(),
     required int orderId,
     this.sessionId = const Value.absent(),
+    this.zDay = const Value.absent(),
     this.printCount = const Value.absent(),
     required String paymentMethod,
     required double amount,
@@ -13861,6 +14191,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Expression<DateTime>? date,
     Expression<int>? orderId,
     Expression<int>? sessionId,
+    Expression<DateTime>? zDay,
     Expression<int>? printCount,
     Expression<String>? paymentMethod,
     Expression<double>? amount,
@@ -13875,6 +14206,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       if (date != null) 'date': date,
       if (orderId != null) 'order_id': orderId,
       if (sessionId != null) 'session_id': sessionId,
+      if (zDay != null) 'z_day': zDay,
       if (printCount != null) 'print_count': printCount,
       if (paymentMethod != null) 'payment_method': paymentMethod,
       if (amount != null) 'amount': amount,
@@ -13891,6 +14223,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Value<DateTime>? date,
     Value<int>? orderId,
     Value<int?>? sessionId,
+    Value<DateTime?>? zDay,
     Value<int>? printCount,
     Value<String>? paymentMethod,
     Value<double>? amount,
@@ -13905,6 +14238,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       date: date ?? this.date,
       orderId: orderId ?? this.orderId,
       sessionId: sessionId ?? this.sessionId,
+      zDay: zDay ?? this.zDay,
       printCount: printCount ?? this.printCount,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       amount: amount ?? this.amount,
@@ -13932,6 +14266,9 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     }
     if (sessionId.present) {
       map['session_id'] = Variable<int>(sessionId.value);
+    }
+    if (zDay.present) {
+      map['z_day'] = Variable<DateTime>(zDay.value);
     }
     if (printCount.present) {
       map['print_count'] = Variable<int>(printCount.value);
@@ -13965,6 +14302,7 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
           ..write('date: $date, ')
           ..write('orderId: $orderId, ')
           ..write('sessionId: $sessionId, ')
+          ..write('zDay: $zDay, ')
           ..write('printCount: $printCount, ')
           ..write('paymentMethod: $paymentMethod, ')
           ..write('amount: $amount, ')
@@ -14091,7 +14429,7 @@ class $PendingSyncOperationsTable extends PendingSyncOperations
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _retryCountMeta = const VerificationMeta(
     'retryCount',
@@ -14728,7 +15066,7 @@ class $OrderLogsTable extends OrderLogs
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -15125,7 +15463,7 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -15137,7 +15475,7 @@ class $WaitersTable extends Waiters with TableInfo<$WaitersTable, Waiter> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -15948,7 +16286,7 @@ class $NotesTable extends Notes with TableInfo<$NotesTable, Note> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _updatedAtMeta = const VerificationMeta(
     'updatedAt',
@@ -15960,7 +16298,7 @@ class $NotesTable extends Notes with TableInfo<$NotesTable, Note> {
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -16487,7 +16825,7 @@ class $ActivityLogsTable extends ActivityLogs
     false,
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
-    defaultValue: currentDateAndTime,
+    clientDefault: () => DateTime.now(),
   );
   static const VerificationMeta _userIdMeta = const VerificationMeta('userId');
   @override
@@ -17465,6 +17803,7 @@ typedef $$ProductsTableCreateCompanionBuilder =
       Value<int?> planDurationMinutes,
       Value<String?> mbwCode,
       Value<int?> pricePerKg,
+      Value<String?> unitName,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -17489,6 +17828,7 @@ typedef $$ProductsTableUpdateCompanionBuilder =
       Value<int?> planDurationMinutes,
       Value<String?> mbwCode,
       Value<int?> pricePerKg,
+      Value<String?> unitName,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -17594,6 +17934,11 @@ class $$ProductsTableFilterComposer
 
   ColumnFilters<int> get pricePerKg => $composableBuilder(
     column: $table.pricePerKg,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get unitName => $composableBuilder(
+    column: $table.unitName,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -17712,6 +18057,11 @@ class $$ProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get unitName => $composableBuilder(
+    column: $table.unitName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -17803,6 +18153,9 @@ class $$ProductsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get unitName =>
+      $composableBuilder(column: $table.unitName, builder: (column) => column);
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -17857,6 +18210,7 @@ class $$ProductsTableTableManager
                 Value<int?> planDurationMinutes = const Value.absent(),
                 Value<String?> mbwCode = const Value.absent(),
                 Value<int?> pricePerKg = const Value.absent(),
+                Value<String?> unitName = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => ProductsCompanion(
@@ -17879,6 +18233,7 @@ class $$ProductsTableTableManager
                 planDurationMinutes: planDurationMinutes,
                 mbwCode: mbwCode,
                 pricePerKg: pricePerKg,
+                unitName: unitName,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -17903,6 +18258,7 @@ class $$ProductsTableTableManager
                 Value<int?> planDurationMinutes = const Value.absent(),
                 Value<String?> mbwCode = const Value.absent(),
                 Value<int?> pricePerKg = const Value.absent(),
+                Value<String?> unitName = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => ProductsCompanion.insert(
@@ -17925,6 +18281,7 @@ class $$ProductsTableTableManager
                 planDurationMinutes: planDurationMinutes,
                 mbwCode: mbwCode,
                 pricePerKg: pricePerKg,
+                unitName: unitName,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -21455,6 +21812,7 @@ typedef $$OrdersTableCreateCompanionBuilder =
       Value<String?> address,
       Value<String?> cancellationReason,
       Value<int?> sessionId,
+      Value<DateTime?> zDay,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> isSynced,
@@ -21484,6 +21842,7 @@ typedef $$OrdersTableUpdateCompanionBuilder =
       Value<String?> address,
       Value<String?> cancellationReason,
       Value<int?> sessionId,
+      Value<DateTime?> zDay,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<bool> isSynced,
@@ -21671,6 +22030,11 @@ class $$OrdersTableFilterComposer
 
   ColumnFilters<int> get sessionId => $composableBuilder(
     column: $table.sessionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get zDay => $composableBuilder(
+    column: $table.zDay,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -21889,6 +22253,11 @@ class $$OrdersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get zDay => $composableBuilder(
+    column: $table.zDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -21988,6 +22357,9 @@ class $$OrdersTableAnnotationComposer
 
   GeneratedColumn<int> get sessionId =>
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get zDay =>
+      $composableBuilder(column: $table.zDay, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -22129,6 +22501,7 @@ class $$OrdersTableTableManager
                 Value<String?> address = const Value.absent(),
                 Value<String?> cancellationReason = const Value.absent(),
                 Value<int?> sessionId = const Value.absent(),
+                Value<DateTime?> zDay = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
@@ -22156,6 +22529,7 @@ class $$OrdersTableTableManager
                 address: address,
                 cancellationReason: cancellationReason,
                 sessionId: sessionId,
+                zDay: zDay,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 isSynced: isSynced,
@@ -22185,6 +22559,7 @@ class $$OrdersTableTableManager
                 Value<String?> address = const Value.absent(),
                 Value<String?> cancellationReason = const Value.absent(),
                 Value<int?> sessionId = const Value.absent(),
+                Value<DateTime?> zDay = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
@@ -22212,6 +22587,7 @@ class $$OrdersTableTableManager
                 address: address,
                 cancellationReason: cancellationReason,
                 sessionId: sessionId,
+                zDay: zDay,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 isSynced: isSynced,
@@ -22322,7 +22698,7 @@ typedef $$OrderProductsTableCreateCompanionBuilder =
       required int productId,
       Value<int?> variantId,
       Value<int?> ticketId,
-      Value<int> quantity,
+      Value<double> quantity,
       required double unitaryPrice,
       Value<double> unitaryDiscount,
       Value<double> unitaryTva,
@@ -22333,6 +22709,8 @@ typedef $$OrderProductsTableCreateCompanionBuilder =
       Value<DateTime?> planEndAt,
       Value<int?> planWaiterId,
       Value<DateTime?> kdsPrintedAt,
+      Value<double> kdsPrintedQuantity,
+      Value<DateTime?> zDay,
       Value<DateTime> updatedAt,
     });
 typedef $$OrderProductsTableUpdateCompanionBuilder =
@@ -22342,7 +22720,7 @@ typedef $$OrderProductsTableUpdateCompanionBuilder =
       Value<int> productId,
       Value<int?> variantId,
       Value<int?> ticketId,
-      Value<int> quantity,
+      Value<double> quantity,
       Value<double> unitaryPrice,
       Value<double> unitaryDiscount,
       Value<double> unitaryTva,
@@ -22353,6 +22731,8 @@ typedef $$OrderProductsTableUpdateCompanionBuilder =
       Value<DateTime?> planEndAt,
       Value<int?> planWaiterId,
       Value<DateTime?> kdsPrintedAt,
+      Value<double> kdsPrintedQuantity,
+      Value<DateTime?> zDay,
       Value<DateTime> updatedAt,
     });
 
@@ -22390,7 +22770,7 @@ class $$OrderProductsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<int> get quantity => $composableBuilder(
+  ColumnFilters<double> get quantity => $composableBuilder(
     column: $table.quantity,
     builder: (column) => ColumnFilters(column),
   );
@@ -22445,6 +22825,16 @@ class $$OrderProductsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<double> get kdsPrintedQuantity => $composableBuilder(
+    column: $table.kdsPrintedQuantity,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get zDay => $composableBuilder(
+    column: $table.zDay,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
     builder: (column) => ColumnFilters(column),
@@ -22485,7 +22875,7 @@ class $$OrderProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get quantity => $composableBuilder(
+  ColumnOrderings<double> get quantity => $composableBuilder(
     column: $table.quantity,
     builder: (column) => ColumnOrderings(column),
   );
@@ -22540,6 +22930,16 @@ class $$OrderProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get kdsPrintedQuantity => $composableBuilder(
+    column: $table.kdsPrintedQuantity,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get zDay => $composableBuilder(
+    column: $table.zDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
@@ -22570,7 +22970,7 @@ class $$OrderProductsTableAnnotationComposer
   GeneratedColumn<int> get ticketId =>
       $composableBuilder(column: $table.ticketId, builder: (column) => column);
 
-  GeneratedColumn<int> get quantity =>
+  GeneratedColumn<double> get quantity =>
       $composableBuilder(column: $table.quantity, builder: (column) => column);
 
   GeneratedColumn<double> get unitaryPrice => $composableBuilder(
@@ -22617,6 +23017,14 @@ class $$OrderProductsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<double> get kdsPrintedQuantity => $composableBuilder(
+    column: $table.kdsPrintedQuantity,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get zDay =>
+      $composableBuilder(column: $table.zDay, builder: (column) => column);
+
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
@@ -22657,7 +23065,7 @@ class $$OrderProductsTableTableManager
                 Value<int> productId = const Value.absent(),
                 Value<int?> variantId = const Value.absent(),
                 Value<int?> ticketId = const Value.absent(),
-                Value<int> quantity = const Value.absent(),
+                Value<double> quantity = const Value.absent(),
                 Value<double> unitaryPrice = const Value.absent(),
                 Value<double> unitaryDiscount = const Value.absent(),
                 Value<double> unitaryTva = const Value.absent(),
@@ -22668,6 +23076,8 @@ class $$OrderProductsTableTableManager
                 Value<DateTime?> planEndAt = const Value.absent(),
                 Value<int?> planWaiterId = const Value.absent(),
                 Value<DateTime?> kdsPrintedAt = const Value.absent(),
+                Value<double> kdsPrintedQuantity = const Value.absent(),
+                Value<DateTime?> zDay = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrderProductsCompanion(
                 id: id,
@@ -22686,6 +23096,8 @@ class $$OrderProductsTableTableManager
                 planEndAt: planEndAt,
                 planWaiterId: planWaiterId,
                 kdsPrintedAt: kdsPrintedAt,
+                kdsPrintedQuantity: kdsPrintedQuantity,
+                zDay: zDay,
                 updatedAt: updatedAt,
               ),
           createCompanionCallback:
@@ -22695,7 +23107,7 @@ class $$OrderProductsTableTableManager
                 required int productId,
                 Value<int?> variantId = const Value.absent(),
                 Value<int?> ticketId = const Value.absent(),
-                Value<int> quantity = const Value.absent(),
+                Value<double> quantity = const Value.absent(),
                 required double unitaryPrice,
                 Value<double> unitaryDiscount = const Value.absent(),
                 Value<double> unitaryTva = const Value.absent(),
@@ -22706,6 +23118,8 @@ class $$OrderProductsTableTableManager
                 Value<DateTime?> planEndAt = const Value.absent(),
                 Value<int?> planWaiterId = const Value.absent(),
                 Value<DateTime?> kdsPrintedAt = const Value.absent(),
+                Value<double> kdsPrintedQuantity = const Value.absent(),
+                Value<DateTime?> zDay = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => OrderProductsCompanion.insert(
                 id: id,
@@ -22724,6 +23138,8 @@ class $$OrderProductsTableTableManager
                 planEndAt: planEndAt,
                 planWaiterId: planWaiterId,
                 kdsPrintedAt: kdsPrintedAt,
+                kdsPrintedQuantity: kdsPrintedQuantity,
+                zDay: zDay,
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
@@ -23540,6 +23956,8 @@ typedef $$CashSessionsTableCreateCompanionBuilder =
       Value<double?> variance,
       Value<DateTime?> countedAt,
       Value<String?> countNotes,
+      Value<double?> totalPaid,
+      Value<String?> details,
     });
 typedef $$CashSessionsTableUpdateCompanionBuilder =
     CashSessionsCompanion Function({
@@ -23558,6 +23976,8 @@ typedef $$CashSessionsTableUpdateCompanionBuilder =
       Value<double?> variance,
       Value<DateTime?> countedAt,
       Value<String?> countNotes,
+      Value<double?> totalPaid,
+      Value<String?> details,
     });
 
 class $$CashSessionsTableFilterComposer
@@ -23641,6 +24061,16 @@ class $$CashSessionsTableFilterComposer
 
   ColumnFilters<String> get countNotes => $composableBuilder(
     column: $table.countNotes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get totalPaid => $composableBuilder(
+    column: $table.totalPaid,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get details => $composableBuilder(
+    column: $table.details,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -23728,6 +24158,16 @@ class $$CashSessionsTableOrderingComposer
     column: $table.countNotes,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<double> get totalPaid => $composableBuilder(
+    column: $table.totalPaid,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get details => $composableBuilder(
+    column: $table.details,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$CashSessionsTableAnnotationComposer
@@ -23791,6 +24231,12 @@ class $$CashSessionsTableAnnotationComposer
     column: $table.countNotes,
     builder: (column) => column,
   );
+
+  GeneratedColumn<double> get totalPaid =>
+      $composableBuilder(column: $table.totalPaid, builder: (column) => column);
+
+  GeneratedColumn<String> get details =>
+      $composableBuilder(column: $table.details, builder: (column) => column);
 }
 
 class $$CashSessionsTableTableManager
@@ -23839,6 +24285,8 @@ class $$CashSessionsTableTableManager
                 Value<double?> variance = const Value.absent(),
                 Value<DateTime?> countedAt = const Value.absent(),
                 Value<String?> countNotes = const Value.absent(),
+                Value<double?> totalPaid = const Value.absent(),
+                Value<String?> details = const Value.absent(),
               }) => CashSessionsCompanion(
                 id: id,
                 code: code,
@@ -23855,6 +24303,8 @@ class $$CashSessionsTableTableManager
                 variance: variance,
                 countedAt: countedAt,
                 countNotes: countNotes,
+                totalPaid: totalPaid,
+                details: details,
               ),
           createCompanionCallback:
               ({
@@ -23873,6 +24323,8 @@ class $$CashSessionsTableTableManager
                 Value<double?> variance = const Value.absent(),
                 Value<DateTime?> countedAt = const Value.absent(),
                 Value<String?> countNotes = const Value.absent(),
+                Value<double?> totalPaid = const Value.absent(),
+                Value<String?> details = const Value.absent(),
               }) => CashSessionsCompanion.insert(
                 id: id,
                 code: code,
@@ -23889,6 +24341,8 @@ class $$CashSessionsTableTableManager
                 variance: variance,
                 countedAt: countedAt,
                 countNotes: countNotes,
+                totalPaid: totalPaid,
+                details: details,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
@@ -23922,6 +24376,7 @@ typedef $$TicketsTableCreateCompanionBuilder =
       Value<DateTime> date,
       required int orderId,
       Value<int?> sessionId,
+      Value<DateTime?> zDay,
       Value<int> printCount,
       required String paymentMethod,
       required double amount,
@@ -23937,6 +24392,7 @@ typedef $$TicketsTableUpdateCompanionBuilder =
       Value<DateTime> date,
       Value<int> orderId,
       Value<int?> sessionId,
+      Value<DateTime?> zDay,
       Value<int> printCount,
       Value<String> paymentMethod,
       Value<double> amount,
@@ -23995,6 +24451,11 @@ class $$TicketsTableFilterComposer
 
   ColumnFilters<int> get sessionId => $composableBuilder(
     column: $table.sessionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get zDay => $composableBuilder(
+    column: $table.zDay,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -24086,6 +24547,11 @@ class $$TicketsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get zDay => $composableBuilder(
+    column: $table.zDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get printCount => $composableBuilder(
     column: $table.printCount,
     builder: (column) => ColumnOrderings(column),
@@ -24165,6 +24631,9 @@ class $$TicketsTableAnnotationComposer
 
   GeneratedColumn<int> get sessionId =>
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get zDay =>
+      $composableBuilder(column: $table.zDay, builder: (column) => column);
 
   GeneratedColumn<int> get printCount => $composableBuilder(
     column: $table.printCount,
@@ -24250,6 +24719,7 @@ class $$TicketsTableTableManager
                 Value<DateTime> date = const Value.absent(),
                 Value<int> orderId = const Value.absent(),
                 Value<int?> sessionId = const Value.absent(),
+                Value<DateTime?> zDay = const Value.absent(),
                 Value<int> printCount = const Value.absent(),
                 Value<String> paymentMethod = const Value.absent(),
                 Value<double> amount = const Value.absent(),
@@ -24263,6 +24733,7 @@ class $$TicketsTableTableManager
                 date: date,
                 orderId: orderId,
                 sessionId: sessionId,
+                zDay: zDay,
                 printCount: printCount,
                 paymentMethod: paymentMethod,
                 amount: amount,
@@ -24278,6 +24749,7 @@ class $$TicketsTableTableManager
                 Value<DateTime> date = const Value.absent(),
                 required int orderId,
                 Value<int?> sessionId = const Value.absent(),
+                Value<DateTime?> zDay = const Value.absent(),
                 Value<int> printCount = const Value.absent(),
                 required String paymentMethod,
                 required double amount,
@@ -24291,6 +24763,7 @@ class $$TicketsTableTableManager
                 date: date,
                 orderId: orderId,
                 sessionId: sessionId,
+                zDay: zDay,
                 printCount: printCount,
                 paymentMethod: paymentMethod,
                 amount: amount,

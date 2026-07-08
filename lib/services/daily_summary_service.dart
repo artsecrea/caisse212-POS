@@ -1,6 +1,9 @@
 import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
+import '../core/enums.dart';
 import '../data/database/app_database.dart';
 import '../utils/user_display.dart';
+import 'session_service.dart' show PaymentBreakdown;
 
 /// Per-waiter rollup inside a session or across a full report.
 ///
@@ -378,47 +381,38 @@ class DailySummaryService {
         acc.ordersCount++;
         acc.expected += orderTotal;
         for (final t in orderTickets) {
+          if (!t.isPaid) continue;
           acc.paid += t.amount;
-          switch (t.paymentMethod.toLowerCase()) {
-            case 'cash':
+          switch (TransactionType.fromString(t.paymentMethod)) {
+            case TransactionType.cash:
               acc.paidByCash += t.amount;
               break;
-            case 'card':
+            case TransactionType.card:
               acc.paidByCard += t.amount;
               break;
-            case 'phone':
+            case TransactionType.mobile:
               acc.paidByPhone += t.amount;
               break;
-            default:
+            case TransactionType.other:
               acc.paidByOther += t.amount;
+              break;
           }
         }
       }
     }
 
-    // Calculate ticket totals by payment method (excluding cancelled)
-    double paidByCash = 0;
-    double paidByCard = 0;
-    double paidByPhone = 0;
-    double paidByOther = 0;
+    // Calculate ticket totals by payment method (excluding cancelled).
+    // Single source of truth with the session-close drawer figure: buckets
+    // paid, non-cancelled tickets via the TransactionType enum. `paidByPhone`
+    // carries mobile-money takings (the enum's MOBILE method).
+    final breakdown = PaymentBreakdown.fromTickets(tickets);
+    final double paidByCash = breakdown.cash;
+    final double paidByCard = breakdown.card;
+    final double paidByPhone = breakdown.mobile;
+    final double paidByOther = breakdown.other;
     double expectedFromTickets = 0;
-
     for (final ticket in tickets) {
       expectedFromTickets += ticket.amount;
-
-      switch (ticket.paymentMethod.toLowerCase()) {
-        case 'cash':
-          paidByCash += ticket.amount;
-          break;
-        case 'card':
-          paidByCard += ticket.amount;
-          break;
-        case 'phone':
-          paidByPhone += ticket.amount;
-          break;
-        default:
-          paidByOther += ticket.amount;
-      }
     }
 
     // Calculate cancelled ticket totals
@@ -504,6 +498,141 @@ class DailySummaryService {
       sessionIds: [sessionId],
     );
   }
+
+  /// Build the JSON payload for `POST /pos/cash-sessions/{code}/email-report`.
+  /// Includes session financials and per-product breakdown.
+  /// [currency] should come from [AppSettings.currency].
+  Future<Map<String, dynamic>> buildEmailReportPayload(
+    int sessionId, {
+    String currency = 'MAD',
+  }) async {
+    final report = await generateSessionReport(sessionId);
+    final session = report.sessions.first;
+
+    // Non-cancelled tickets for this session → order IDs (mirrors _getSessionSummary)
+    final allTickets = await (_db.select(_db.tickets)
+          ..where((t) => t.sessionId.equals(sessionId)))
+        .get();
+    final ticketOrderIds = allTickets
+        .where((t) => !t.isCancelled)
+        .map((t) => t.orderId)
+        .toSet()
+        .toList();
+
+    // Resolve orders, skip CANCELED — single batch fetch.
+    final orders = ticketOrderIds.isNotEmpty
+        ? (await (_db.select(_db.orders)
+                ..where((o) => o.id.isIn(ticketOrderIds)))
+              .get())
+            .where((o) => o.status != 'CANCELED')
+            .toList()
+        : <Order>[];
+    final orderIds = orders.map((o) => o.id).toList();
+
+    // Product-level accumulator
+    final Map<int, _EmailProductAcc> productAcc = {};
+    double discountTotal = 0.0;
+
+    // Fetch all order_products for this session in one query, then group in Dart.
+    final allOps = orderIds.isNotEmpty
+        ? await (_db.select(_db.orderProducts)
+              ..where((op) => op.orderId.isIn(orderIds)))
+            .get()
+        : <OrderProduct>[];
+    for (final op in allOps) {
+      final acc =
+          productAcc.putIfAbsent(op.productId, () => _EmailProductAcc());
+      acc.quantity += op.quantity;
+      final gross = op.unitaryPrice * op.quantity;
+      final disc = (op.unitaryDiscount + op.manualDiscount) * op.quantity;
+      acc.grossRevenue += gross;
+      acc.discountTotal += disc;
+      acc.netRevenue += gross - disc;
+      discountTotal += disc;
+    }
+
+    // Resolve product metadata
+    final productIds = productAcc.keys.toList();
+    final productsDb = productIds.isNotEmpty
+        ? await (_db.select(_db.products)
+              ..where((p) => p.id.isIn(productIds)))
+            .get()
+        : <Product>[];
+    final productById = {for (final p in productsDb) p.id: p};
+
+    // Resolve category names (used in product rows only)
+    final categoryIds =
+        productsDb.map((p) => p.categoryId).whereType<int>().toSet().toList();
+    final categoriesDb = categoryIds.isNotEmpty
+        ? await (_db.select(_db.categories)
+              ..where((c) => c.id.isIn(categoryIds)))
+            .get()
+        : <Category>[];
+    final categoryById = {for (final c in categoriesDb) c.id: c};
+
+    final productRows = productAcc.entries.map((e) {
+      final p = productById[e.key];
+      final catId = p?.categoryId;
+      return {
+        'productId': e.key,
+        'productName': p?.name ?? 'Unknown',
+        'categoryId': catId,
+        'categoryName': catId != null ? categoryById[catId]?.name : null,
+        'quantity': e.value.quantity,
+        'grossRevenue': _round2(e.value.grossRevenue),
+        'discountTotal': _round2(e.value.discountTotal),
+        'netRevenue': _round2(e.value.netRevenue),
+      };
+    }).toList()
+      ..sort((a, b) =>
+          (b['netRevenue'] as double).compareTo(a['netRevenue'] as double));
+
+    final moneyAtEnd = session.startingBalance + session.paidByCash;
+
+    return {
+      'clientRequestId': const Uuid().v4(),
+      'session': {
+        'code': session.sessionCode,
+        'cashierId': session.cashierId,
+        'cashierName': session.cashierName ?? 'Cashier #${session.cashierId}',
+        'startedAt': session.startedAt.toUtc().toIso8601String(),
+        'endedAt':
+            (session.endedAt ?? DateTime.now()).toUtc().toIso8601String(),
+        'moneyAtStart': _round2(session.startingBalance),
+        'moneyAtEnd': _round2(moneyAtEnd),
+        'countedCash':
+            session.countedCash != null ? _round2(session.countedCash!) : null,
+        'variance':
+            session.variance != null ? _round2(session.variance!) : null,
+        'countNotes': session.countNotes,
+      },
+      'totals': {
+        'currency': currency,
+        'ordersCount': session.totalOrders,
+        'ticketsCount': session.totalTickets,
+        'unpaidAmount': _round2(session.unpaidAmount),
+        'discountTotal': _round2(discountTotal),
+        'byPaymentMethod': {
+          'CASH': _round2(session.paidByCash),
+          'CARD': _round2(session.paidByCard),
+          'PHONE': _round2(session.paidByPhone),
+          'OTHER': _round2(session.paidByOther),
+        },
+      },
+      'products': productRows,
+      'categories': [],
+      'stations': [],
+      'zReport': {
+        'issuedAt': DateTime.now().toUtc().toIso8601String(),
+        'zNumber': 1,
+        'refundsTotal': 0.0,
+        'voidedTotal': _round2(session.cancelledAmount),
+      },
+    };
+  }
+
+  static double _round2(double v) =>
+      double.parse(v.toStringAsFixed(2));
 }
 
 /// Private mutable accumulator used by `_getSessionSummary` and
@@ -520,4 +649,10 @@ class _WaiterAcc {
   double paidByOther = 0;
 }
 
+class _EmailProductAcc {
+  double quantity = 0;
+  double grossRevenue = 0;
+  double discountTotal = 0;
+  double netRevenue = 0;
+}
 

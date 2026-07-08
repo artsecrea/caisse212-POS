@@ -36,13 +36,16 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   int _currentPage = 0;
   final int _rowsPerPage = 10;
 
-  // Sorting
-  int? _sortColumnIndex;
-  bool _sortAscending = true;
+  // Sorting — default: id DESC (newest first)
+  int _sortColumnIndex = 0;
+  bool _sortAscending = false;
 
   // Sync state
   bool _isSyncing = false;
   int _pendingOperationsCount = 0;
+
+  // DB-paged future — rebuilt whenever filters / sort / page change
+  late Future<(List<TicketWithDetails>, int)> _pageFuture;
 
   final TextEditingController _searchController = TextEditingController();
 
@@ -50,12 +53,29 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   void initState() {
     super.initState();
     _loadPendingOperationsCount();
+    _refreshFuture();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _refreshFuture() {
+    final repo = ref.read(ticketRepositoryProvider);
+    setState(() {
+      _pageFuture = repo.getTicketsPage(
+        offset: _currentPage * _rowsPerPage,
+        limit: _rowsPerPage,
+        statusFilter: _statusFilter,
+        searchQuery: _searchQuery,
+        startDate: _startDate,
+        endDate: _endDate,
+        sortColumn: _sortColumnIndex,
+        sortAscending: _sortAscending,
+      );
+    });
   }
 
   Future<void> _loadPendingOperationsCount() async {
@@ -75,16 +95,14 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
   @override
   Widget build(BuildContext context) {
-    final ticketRepo = ref.watch(ticketRepositoryProvider);
-
     return Scaffold(
       appBar: _buildAppBar(),
       body: Column(
         children: [
           _buildFiltersBar(),
           Expanded(
-            child: FutureBuilder<List<TicketWithDetails>>(
-              future: ticketRepo.getTicketsWithDetails(),
+            child: FutureBuilder<(List<TicketWithDetails>, int)>(
+              future: _pageFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -94,15 +112,13 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                   return _buildErrorView(snapshot.error.toString());
                 }
 
-                List<TicketWithDetails> tickets = snapshot.data ?? [];
-                tickets = _applyFilters(tickets);
-                tickets = _applySorting(tickets);
+                final (tickets, total) = snapshot.data ?? (<TicketWithDetails>[], 0);
 
                 if (tickets.isEmpty) {
                   return _buildEmptyView();
                 }
 
-                return _buildTicketsTable(tickets);
+                return _buildTicketsTable(tickets, total);
               },
             ),
           ),
@@ -186,8 +202,8 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         IconButton(
           icon: const Icon(Icons.refresh),
           onPressed: () {
-            setState(() {});
             _loadPendingOperationsCount();
+            _refreshFuture();
           },
           tooltip: 'Refresh',
         ),
@@ -213,7 +229,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       await _loadPendingOperationsCount();
 
       if (mounted) {
-        setState(() {}); // Refresh the list
+        _refreshFuture();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Synced $syncedCount tickets'),
@@ -330,10 +346,9 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               ),
               onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                  _currentPage = 0;
-                });
+                _searchQuery = value;
+                _currentPage = 0;
+                _refreshFuture();
               },
             ),
           ),
@@ -376,11 +391,12 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
             ? IconButton(
                 icon: const Icon(Icons.clear),
                 tooltip: l10n.translate('clear_dates'),
-                onPressed: () => setState(() {
+                onPressed: () {
                   _startDate = null;
                   _endDate = null;
                   _currentPage = 0;
-                }),
+                  _refreshFuture();
+                },
               )
             : null,
       ),
@@ -409,11 +425,10 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       initialDateRange: initial,
     );
     if (picked != null) {
-      setState(() {
-        _startDate = picked.start;
-        _endDate = picked.end;
-        _currentPage = 0;
-      });
+      _startDate = picked.start;
+      _endDate = picked.end;
+      _currentPage = 0;
+      _refreshFuture();
     }
   }
 
@@ -437,17 +452,15 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         DropdownMenuItem(value: 'CANCELLED', child: Text('Cancelled')),
       ],
       onChanged: (value) {
-        setState(() {
-          _statusFilter = value!;
-          _currentPage = 0;
-        });
+        _statusFilter = value!;
+        _currentPage = 0;
+        _refreshFuture();
       },
     );
   }
 
-  Widget _buildTicketsTable(List<TicketWithDetails> tickets) {
-    final paginatedTickets = _paginateTickets(tickets);
-    final totalPages = (tickets.length / _rowsPerPage).ceil();
+  Widget _buildTicketsTable(List<TicketWithDetails> tickets, int totalCount) {
+    final totalPages = (totalCount / _rowsPerPage).ceil().clamp(1, 99999);
 
     return Column(
       children: [
@@ -508,10 +521,10 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                 fixedWidth: 120,
               ),
             ],
-            rows: paginatedTickets.map((ticketDetails) => _buildDataRow(ticketDetails)).toList(),
+            rows: tickets.map((ticketDetails) => _buildDataRow(ticketDetails)).toList(),
           ),
         ),
-        _buildPaginationControls(tickets.length, totalPages),
+        _buildPaginationControls(totalCount, totalPages),
       ],
     );
   }
@@ -671,11 +684,11 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
             children: [
               IconButton(
                 icon: const Icon(Icons.first_page),
-                onPressed: _currentPage > 0 ? () => setState(() => _currentPage = 0) : null,
+                onPressed: _currentPage > 0 ? () { _currentPage = 0; _refreshFuture(); } : null,
               ),
               IconButton(
                 icon: const Icon(Icons.chevron_left),
-                onPressed: _currentPage > 0 ? () => setState(() => _currentPage--) : null,
+                onPressed: _currentPage > 0 ? () { _currentPage--; _refreshFuture(); } : null,
               ),
               Text(
                 'Page ${_currentPage + 1} of $totalPages',
@@ -683,11 +696,11 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
               ),
               IconButton(
                 icon: const Icon(Icons.chevron_right),
-                onPressed: _currentPage < totalPages - 1 ? () => setState(() => _currentPage++) : null,
+                onPressed: _currentPage < totalPages - 1 ? () { _currentPage++; _refreshFuture(); } : null,
               ),
               IconButton(
                 icon: const Icon(Icons.last_page),
-                onPressed: _currentPage < totalPages - 1 ? () => setState(() => _currentPage = totalPages - 1) : null,
+                onPressed: _currentPage < totalPages - 1 ? () { _currentPage = totalPages - 1; _refreshFuture(); } : null,
               ),
             ],
           ),
@@ -739,90 +752,11 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     );
   }
 
-  // Helper Functions
-
-  List<TicketWithDetails> _applyFilters(List<TicketWithDetails> tickets) {
-    var filtered = tickets;
-
-    if (_statusFilter != 'ALL') {
-      if (_statusFilter == 'CANCELLED') {
-        filtered = filtered.where((t) => t.ticket.isCancelled).toList();
-      } else if (_statusFilter == 'PAID') {
-        filtered = filtered.where((t) => t.ticket.isPaid && !t.ticket.isCancelled).toList();
-      } else if (_statusFilter == 'UNPAID') {
-        filtered = filtered.where((t) => !t.ticket.isPaid && !t.ticket.isCancelled).toList();
-      }
-    }
-
-    if (_searchQuery.isNotEmpty) {
-      final query = _searchQuery.toLowerCase();
-      filtered = filtered.where((t) {
-        return t.ticket.num.toLowerCase().contains(query) ||
-            t.ticket.orderId.toString().contains(query);
-      }).toList();
-    }
-
-    if (_startDate != null) {
-      final start = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
-      filtered = filtered.where((t) => !t.ticket.date.isBefore(start)).toList();
-    }
-    if (_endDate != null) {
-      // Inclusive end-of-day
-      final end = DateTime(
-          _endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59, 999);
-      filtered = filtered.where((t) => !t.ticket.date.isAfter(end)).toList();
-    }
-
-    return filtered;
-  }
-
-  List<TicketWithDetails> _applySorting(List<TicketWithDetails> tickets) {
-    if (_sortColumnIndex == null) return tickets;
-
-    tickets.sort((a, b) {
-      int comparison = 0;
-      switch (_sortColumnIndex) {
-        case 0: // ID
-          comparison = a.ticket.id.compareTo(b.ticket.id);
-          break;
-        case 1: // Ticket #
-          comparison = a.ticket.num.compareTo(b.ticket.num);
-          break;
-        case 2: // Order ID
-          comparison = a.ticket.orderId.compareTo(b.ticket.orderId);
-          break;
-        case 3: // Items
-          comparison = a.itemCount.compareTo(b.itemCount);
-          break;
-        case 4: // Amount
-          comparison = a.ticket.amount.compareTo(b.ticket.amount);
-          break;
-        case 5: // Payment Method
-          comparison = a.ticket.paymentMethod.compareTo(b.ticket.paymentMethod);
-          break;
-        case 6: // Status
-          comparison = (a.ticket.isPaid ? 1 : 0).compareTo(b.ticket.isPaid ? 1 : 0);
-          break;
-        case 7: // Date
-          comparison = a.ticket.date.compareTo(b.ticket.date);
-          break;
-      }
-      return _sortAscending ? comparison : -comparison;
-    });
-    return tickets;
-  }
-
-  List<TicketWithDetails> _paginateTickets(List<TicketWithDetails> tickets) {
-    final start = _currentPage * _rowsPerPage;
-    final end = (start + _rowsPerPage).clamp(0, tickets.length);
-    return tickets.sublist(start, end);
-  }
-
   void _onSort(int columnIndex, bool ascending) {
-    setState(() {
-      _sortColumnIndex = columnIndex;
-      _sortAscending = ascending;
-    });
+    _sortColumnIndex = columnIndex;
+    _sortAscending = ascending;
+    _currentPage = 0;
+    _refreshFuture();
   }
 
   String _formatDate(DateTime date) {
@@ -899,10 +833,13 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   Future<void> _reprintAllFiltered() async {
     final l10n = AppLocalizations.of(context)!;
     final ticketRepo = ref.read(ticketRepositoryProvider);
-    final all = await ticketRepo.getTicketsWithDetails();
-    final filtered = _applyFilters(all);
-    // Print in the order they were created
-    filtered.sort((a, b) => a.ticket.date.compareTo(b.ticket.date));
+    // getAllFilteredTickets already sorts by date ASC
+    final filtered = await ticketRepo.getAllFilteredTickets(
+      statusFilter: _statusFilter,
+      searchQuery: _searchQuery,
+      startDate: _startDate,
+      endDate: _endDate,
+    );
 
     if (filtered.isEmpty) {
       if (mounted) {
@@ -937,8 +874,8 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     setState(() => _isReprintingAll = true);
     var printed = 0;
     try {
-      for (final t in filtered) {
-        final ok = await _reprintSingleTicket(t.ticket);
+      for (final ticket in filtered) {
+        final ok = await _reprintSingleTicket(ticket);
         if (ok) printed++;
       }
     } finally {
@@ -1015,7 +952,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
           ),
         );
 
-        setState(() {});
+        _refreshFuture();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Ticket updated successfully')),
@@ -1055,7 +992,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       try {
         final ticketRepo = ref.read(ticketRepositoryProvider);
         await ticketRepo.deleteTicket(ticket.id);
-        setState(() {});
+        _refreshFuture();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Ticket deleted successfully')),

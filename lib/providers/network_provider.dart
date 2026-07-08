@@ -3,6 +3,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'database_providers.dart';
 import '../services/sync_job_service.dart';
 import '../services/activity_log_service.dart';
+import '../services/identity_fix_service.dart';
 
 /// Provider for network connectivity status
 final connectivityProvider = StreamProvider<ConnectivityResult>((ref) async* {
@@ -64,5 +65,7 @@ final syncJobServiceWithNetworkProvider = Provider<SyncJobService>((ref) {
   final prefs = ref.watch(sharedPreferencesProvider);
   final isOnline = ref.watch(lastKnownOnlineStatusProvider);
   final activityLog = ref.watch(activityLogServiceProvider);
-  return SyncJobService(syncService, prefs, () => isOnline, activityLog);
+  final identityFix = IdentityFixService(ref.watch(apiServiceProvider), prefs);
+  return SyncJobService(
+      syncService, prefs, () => isOnline, activityLog, identityFix);
 });

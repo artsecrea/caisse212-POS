@@ -6,8 +6,16 @@ import 'database_providers.dart';
 
 class TicketRepository {
   final AppDatabase _database;
+  final Ref? _ref;
 
-  TicketRepository(this._database);
+  TicketRepository(this._database, [this._ref]);
+
+  DateTime _currentZDay() {
+    final ref = _ref;
+    if (ref != null) return ref.read(currentZDayProvider);
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
 
   // Get all tickets
   Future<List<Ticket>> getAllTickets() async {
@@ -29,9 +37,13 @@ class TicketRepository {
         .getSingleOrNull();
   }
 
-  // Create a new ticket
+  // Create a new ticket — auto-fills zDay from the active session if the
+  // caller didn't set it explicitly.
   Future<int> createTicket(TicketsCompanion ticket) async {
-    return await _database.into(_database.tickets).insert(ticket);
+    final companion = ticket.zDay.present
+        ? ticket
+        : ticket.copyWith(zDay: Value(_currentZDay()));
+    return await _database.into(_database.tickets).insert(companion);
   }
 
   // Update a ticket
@@ -110,38 +122,199 @@ class TicketRepository {
   // Get tickets with full details (including items)
   Future<List<TicketWithDetails>> getTicketsWithDetails() async {
     final tickets = await getAllTickets();
-    final List<TicketWithDetails> result = [];
+    return _enrichTickets(tickets);
+  }
 
-    // Cache ended session IDs to avoid N+1 lookups
-    final endedSessionIds = <int>{};
-    final checkedSessionIds = <int>{};
+  // ---------------------------------------------------------------------------
+  // DB-side filter / sort / paginate
+  // ---------------------------------------------------------------------------
 
-    for (final ticket in tickets) {
-      final items = await (_database.select(_database.orderProducts)
-            ..where((tbl) => tbl.ticketId.equals(ticket.id)))
-          .get();
+  /// Builds a WHERE expression from filter params. All column references go
+  /// through `_database.tickets` so the expression can be reused across
+  /// SimpleSelectStatement and selectOnly queries on the same table.
+  /// Local calendar day as 'YYYY-MM-DD' — the stable prefix shared by every
+  /// datetime text encoding in the DB (see [_buildFilter]).
+  static String _dayStr(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
 
-      bool isZLocked = false;
-      if (ticket.sessionId != null) {
-        final sid = ticket.sessionId!;
-        if (!checkedSessionIds.contains(sid)) {
-          checkedSessionIds.add(sid);
-          final session = await (_database.select(_database.cashSessions)
-                ..where((tbl) => tbl.id.equals(sid)))
-              .getSingleOrNull();
-          if (session?.status == 'ended') endedSessionIds.add(sid);
-        }
-        isZLocked = endedSessionIds.contains(sid);
+  Expression<bool> _buildFilter({
+    required String statusFilter,
+    required String searchQuery,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) {
+    final t = _database.tickets;
+    final parts = <Expression<bool>>[];
+
+    switch (statusFilter) {
+      case 'PAID':
+        parts
+          ..add(t.isPaid.equals(true))
+          ..add(t.isCancelled.equals(false));
+      case 'UNPAID':
+        parts
+          ..add(t.isPaid.equals(false))
+          ..add(t.isCancelled.equals(false));
+      case 'CANCELLED':
+        parts.add(t.isCancelled.equals(true));
+    }
+
+    if (searchQuery.isNotEmpty) {
+      final q = '%$searchQuery%';
+      final parsedId = int.tryParse(searchQuery);
+      Expression<bool> textMatch = t.num.like(q);
+      if (parsedId != null) {
+        // Exact match on ticket id or orderId when query is numeric
+        textMatch = textMatch | t.id.equals(parsedId) | t.orderId.equals(parsedId);
       }
+      parts.add(textMatch);
+    }
 
-      result.add(TicketWithDetails(
-        ticket: ticket,
-        itemCount: items.length,
-        isZLocked: isZLocked,
+    // Compare on the calendar-day prefix (YYYY-MM-DD) rather than the full
+    // timestamp. Dates are stored as TEXT, and historical rows may carry the
+    // legacy UTC/space encoding whose separator sorts before 'T'; a raw
+    // timestamp comparison silently drops same-day rows on the range's start
+    // day. The day prefix is identical across every encoding, so it's exact
+    // and timezone-stable. (Column name is unambiguous — single-table query.)
+    if (startDate != null) {
+      parts.add(CustomExpression<bool>(
+        "substr(date, 1, 10) >= '${_dayStr(startDate)}'",
+      ));
+    }
+    if (endDate != null) {
+      parts.add(CustomExpression<bool>(
+        "substr(date, 1, 10) <= '${_dayStr(endDate)}'",
       ));
     }
 
-    return result;
+    if (parts.isEmpty) return const Constant(true);
+    return parts.reduce((a, b) => a & b);
+  }
+
+  /// Returns one page of tickets (already enriched with item count + Z-lock)
+  /// and the total count of matching rows.
+  Future<(List<TicketWithDetails>, int)> getTicketsPage({
+    required int offset,
+    required int limit,
+    String statusFilter = 'ALL',
+    String searchQuery = '',
+    DateTime? startDate,
+    DateTime? endDate,
+    int sortColumn = 0,
+    bool sortAscending = false,
+  }) async {
+    final filter = _buildFilter(
+      statusFilter: statusFilter,
+      searchQuery: searchQuery,
+      startDate: startDate,
+      endDate: endDate,
+    );
+
+    // ── count ──────────────────────────────────────────────────────────────
+    final countExpr = _database.tickets.id.count();
+    final countQ = _database.selectOnly(_database.tickets)
+      ..addColumns([countExpr])
+      ..where(filter);
+    final countRow = await countQ.getSingle();
+    final total = countRow.read(countExpr) ?? 0;
+
+    // ── page ───────────────────────────────────────────────────────────────
+    final mode = sortAscending ? OrderingMode.asc : OrderingMode.desc;
+    final pageQ = _database.select(_database.tickets)
+      ..where((_) => filter)
+      ..limit(limit, offset: offset);
+
+    switch (sortColumn) {
+      case 0:
+        pageQ.orderBy([(t) => OrderingTerm(expression: t.id, mode: mode)]);
+      case 1:
+        pageQ.orderBy([(t) => OrderingTerm(expression: t.num, mode: mode)]);
+      case 2:
+        pageQ.orderBy([(t) => OrderingTerm(expression: t.orderId, mode: mode)]);
+      case 3: // item count — no cheap DB expression; fall back to id order
+        pageQ.orderBy([(t) => OrderingTerm(expression: t.id, mode: mode)]);
+      case 4:
+        pageQ.orderBy([(t) => OrderingTerm(expression: t.amount, mode: mode)]);
+      case 5:
+        pageQ.orderBy([(t) => OrderingTerm(expression: t.paymentMethod, mode: mode)]);
+      case 6: // status: sort cancelled / paid flags
+        pageQ.orderBy([
+          (t) => OrderingTerm(expression: t.isCancelled, mode: mode),
+          (t) => OrderingTerm(expression: t.isPaid, mode: mode),
+        ]);
+      case 7:
+        pageQ.orderBy([(t) => OrderingTerm(expression: t.date, mode: mode)]);
+      default:
+        pageQ.orderBy([(t) => OrderingTerm(expression: t.id, mode: OrderingMode.desc)]);
+    }
+
+    final tickets = await pageQ.get();
+    return (await _enrichTickets(tickets), total);
+  }
+
+  /// Returns all tickets matching the filters (no pagination), sorted by date
+  /// ascending. Used for bulk-reprint operations.
+  Future<List<Ticket>> getAllFilteredTickets({
+    String statusFilter = 'ALL',
+    String searchQuery = '',
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final filter = _buildFilter(
+      statusFilter: statusFilter,
+      searchQuery: searchQuery,
+      startDate: startDate,
+      endDate: endDate,
+    );
+    return (_database.select(_database.tickets)
+          ..where((_) => filter)
+          ..orderBy([(t) => OrderingTerm(expression: t.date, mode: OrderingMode.asc)]))
+        .get();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /// Enriches a list of Ticket rows with item counts and Z-lock flags using
+  /// batch queries (2 DB round-trips regardless of list size).
+  Future<List<TicketWithDetails>> _enrichTickets(List<Ticket> tickets) async {
+    if (tickets.isEmpty) return [];
+
+    // Batch item counts
+    final ticketIds = tickets.map((t) => t.id).toList();
+    final itemCounts = <int, int>{};
+    final ops = await (_database.select(_database.orderProducts)
+          ..where((op) => op.ticketId.isIn(ticketIds)))
+        .get();
+    for (final op in ops) {
+      if (op.ticketId != null) {
+        itemCounts[op.ticketId!] = (itemCounts[op.ticketId!] ?? 0) + 1;
+      }
+    }
+
+    // Batch Z-lock status
+    final sessionIds =
+        tickets.where((t) => t.sessionId != null).map((t) => t.sessionId!).toSet();
+    final endedSessionIds = <int>{};
+    if (sessionIds.isNotEmpty) {
+      final sessions = await (_database.select(_database.cashSessions)
+            ..where((s) => s.id.isIn(sessionIds.toList())))
+          .get();
+      for (final s in sessions) {
+        if (s.status == 'ended') endedSessionIds.add(s.id);
+      }
+    }
+
+    return tickets
+        .map((t) => TicketWithDetails(
+              ticket: t,
+              itemCount: itemCounts[t.id] ?? 0,
+              isZLocked: t.sessionId != null && endedSessionIds.contains(t.sessionId),
+            ))
+        .toList();
   }
 
   // Get tickets grouped by order
@@ -198,6 +371,6 @@ class TicketWithDetails {
 
 final ticketRepositoryProvider = Provider<TicketRepository>((ref) {
   final database = ref.watch(databaseProvider);
-  return TicketRepository(database);
+  return TicketRepository(database, ref);
 });
 

@@ -727,7 +727,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 : null,
           ),
           child: Text(
-            '${item.quantity}x',
+            '${formatQty(item.quantity)}x',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
@@ -1484,12 +1484,34 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
 
+    // Require an active cash session so the ticket is linked to a Z-report.
+    if (session == null) {
+      if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.translate('no_active_session')),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      setState(() => _isProcessing = false);
+      return;
+    }
+
+    // Guard: payment screen must always be opened for a saved order.
+    final orderId = widget.order.orderId;
+    if (orderId == null) {
+      _logger.error('_processPayment: orderId is null — order was not saved before payment');
+      setState(() => _isProcessing = false);
+      return;
+    }
+
     try {
       // Get next ticket number — query fresh from DB to avoid collisions in batch pay
-      final orderId = widget.order.orderId;
-      final existingTickets = orderId != null
-          ? await (database.select(database.tickets)..where((t) => t.orderId.equals(orderId))).get()
-          : <Ticket>[];
+      final existingTickets = await (database.select(database.tickets)
+            ..where((t) => t.orderId.equals(orderId)))
+          .get();
 
       final maxTicketNum = existingTickets.isEmpty
           ? 0
@@ -1498,31 +1520,39 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       final newTicketNum = maxTicketNum + 1;
       final ticketNumStr = newTicketNum.toString().padLeft(4, '0');
 
-      // Insert ticket
-      final ticketId = await database.into(database.tickets).insert(
-        TicketsCompanion.insert(
-          num: ticketNumStr,
-          orderId: widget.order.orderId ?? 0,
-          paymentMethod: ticket.paymentMethod.value,
-          amount: ticket.total,
-          sessionId: Value(session?.id),
-          isPaid: const Value(true),
-          printCount: const Value(0),
-        ),
-      );
+      // Insert ticket + mark products PAID atomically — a crash between the
+      // two steps would leave an orphaned ticket with products still PENDING.
+      late final int ticketId;
+      await database.transaction(() async {
+        ticketId = await database.into(database.tickets).insert(
+          TicketsCompanion.insert(
+            num: ticketNumStr,
+            orderId: orderId,
+            paymentMethod: ticket.paymentMethod.value,
+            amount: ticket.total,
+            sessionId: Value(session.id),
+            // z_day = the session's opening calendar day (stays constant even
+            // if the ticket is cut after midnight). Same source order_provider
+            // and server_service use.
+            zDay: Value(ref.read(currentZDayProvider)),
+            isPaid: const Value(true),
+            printCount: const Value(0),
+            date: Value(DateTime.now()),
+          ),
+        );
 
-      // Update order items in DB
-      for (final item in ticket.items) {
-        if (item.id != null) {
-          await (database.update(database.orderProducts)..where((tbl) => tbl.id.equals(item.id!))).write(
-            OrderProductsCompanion(
-              ticketId: Value(ticketId),
-              state: const Value('PAID'),
-              updatedAt: Value(DateTime.now()),
-            ),
-          );
+        for (final item in ticket.items) {
+          if (item.id != null) {
+            await (database.update(database.orderProducts)..where((tbl) => tbl.id.equals(item.id!))).write(
+              OrderProductsCompanion(
+                ticketId: Value(ticketId),
+                state: const Value('PAID'),
+                updatedAt: Value(DateTime.now()),
+              ),
+            );
+          }
         }
-      }
+      });
 
       // Update UI state immediately (synchronous, no frame callback)
       // This is critical for _payAllTickets to see the correct state on next iteration.
@@ -1604,9 +1634,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           );
 
       // Check if all order products are now paid -> mark order as COMPLETED and sync
-      if (orderId != null) {
-        await _checkAndCompleteOrder(orderId);
-      }
+      await _checkAndCompleteOrder(orderId);
     } catch (e) {
       _logger.error('Payment failed: $e');
       if (mounted) {
@@ -1716,7 +1744,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   Future<void> _quickSplitOne(int ticketIndex, int itemIndex, OrderItem item) async {
     if (item.quantity <= 1) return;
 
-    final newId = await _splitInDatabase(item, item.quantity - 1, 1);
+    final newId = await _splitInDatabase(item, item.quantity - 1, 1.0);
     if (newId == null) return;
 
     if (!mounted) return;
@@ -1728,7 +1756,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     updatedTickets[ticketIndex].items[itemIndex] = item.copyWith(quantity: item.quantity - 1);
 
-    final newItem = item.copyWith(id: newId, quantity: 1);
+    final newItem = item.copyWith(id: newId, quantity: 1.0);
 
     // Prefer an existing empty unpaid ticket instead of creating a new one
     final emptyIdx = updatedTickets.indexWhere((t) => !t.isPaid && t.items.isEmpty);
@@ -1808,7 +1836,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   /// - Updates the original order_product row to [keepQty]
   /// - Inserts a new order_product row with [splitQty] (including duplicating components)
   /// Returns the new row's id, or null on failure.
-  Future<int?> _splitInDatabase(OrderItem item, int keepQty, int splitQty) async {
+  Future<int?> _splitInDatabase(OrderItem item, double keepQty, double splitQty) async {
     if (item.id == null) return null;
     final database = ref.read(databaseProvider);
 
@@ -1900,8 +1928,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
   }
 
-  /// Long press: Custom divide dialog with slider and constraints
+  /// Long press: Custom divide dialog with slider and constraints.
+  /// Only works for whole-number quantities — fractional (weighed) items
+  /// cannot be split sensibly with an integer slider.
   void _showCustomDivideDialog(OrderItem item, int ticketIndex, int itemIndex) {
+    if (item.quantity < 2 || item.quantity != item.quantity.truncateToDouble()) return;
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final currencyFormatter = ref.read(currencyFormatterProvider);
@@ -1952,7 +1983,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
-                              '${item.quantity}x',
+                              '${formatQty(item.quantity)}x',
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -1997,8 +2028,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                             child: Slider(
                               value: splitQty.toDouble(),
                               min: 1,
-                              max: (item.quantity - 1).toDouble(),
-                              divisions: item.quantity - 2 > 0 ? item.quantity - 2 : 1,
+                              max: item.quantity - 1,
+                              divisions: item.quantity.toInt() - 2 > 0 ? item.quantity.toInt() - 2 : 1,
                               onChanged: (val) {
                                 setDialogState(() => splitQty = val.round());
                               },
@@ -2029,7 +2060,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 FilledButton.icon(
                   onPressed: () {
                     Navigator.pop(dialogContext);
-                    _divideItemQuantity(item, qty1, qty2, ticketIndex, itemIndex);
+                    _divideItemQuantity(item, qty1.toDouble(), qty2, ticketIndex, itemIndex);
                   },
                   icon: const Icon(Icons.call_split_rounded, size: 18),
                   label: Text('${l10n.translate('split_into_quantities')}: $qty1 + $qty2'),
@@ -2042,7 +2073,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     );
   }
 
-  Widget _buildSplitPreview(ThemeData theme, CurrencyFormatter formatter, int qty, double price, Color color) {
+  Widget _buildSplitPreview(ThemeData theme, CurrencyFormatter formatter, num qty, double price, Color color) {
     return Container(
       width: 64,
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -2068,8 +2099,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   List<Widget> _buildQuickSplitChips(OrderItem item, StateSetter setDialogState, Function(int) onSplitChanged, int currentSplit) {
+    // Guard already enforced by _showCustomDivideDialog, but be defensive.
+    if (item.quantity != item.quantity.truncateToDouble()) return [];
     final chips = <Widget>[];
-    final qty = item.quantity;
+    final qty = item.quantity.toInt();
 
     // Half split
     if (qty % 2 == 0) {
@@ -2114,7 +2147,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     );
   }
 
-  Future<void> _divideItemQuantity(OrderItem item, int quantity1, int quantity2, int ticketIndex, int itemIndex) async {
+  Future<void> _divideItemQuantity(OrderItem item, double quantity1, double quantity2, int ticketIndex, int itemIndex) async {
     final newId = await _splitInDatabase(item, quantity1, quantity2);
     if (newId == null) return;
 

@@ -48,7 +48,12 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
   // surprising the cashier with a "(2)" badge on an order they didn't touch
   // is what the customer complaint was about. Reprinting those paid lines
   // is still possible via `KdsPrintMode.full`.
-  bool _isUnprinted(item) => item.ticketId == null && item.kdsPrintedAt == null;
+  // A line is a pending modification when it's unpaid AND its current quantity
+  // exceeds what has already been sent to the kitchen (0 for never-printed
+  // lines, so those still count in full). Matches the delta logic in
+  // PrintingService._filterItemsByMode.
+  bool _isUnprinted(item) =>
+      item.ticketId == null && item.quantity > item.kdsPrintedQuantity;
 
   void _checkUnprintedItems() {
     final hasUnprinted = widget.order.items.any(_isUnprinted);

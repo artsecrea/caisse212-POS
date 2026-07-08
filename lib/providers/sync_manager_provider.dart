@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../providers/database_providers.dart';
 import '../providers/settings_provider.dart';
+import '../providers/session_rules_provider.dart';
 import '../services/api_service.dart';
 import '../services/data_sync_service.dart';
 
@@ -334,13 +335,19 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
     final prefs = ref.read(sharedPreferencesProvider);
     final apiService = ApiService(prefs);
     final database = ref.read(databaseProvider);
-    final syncService = DataSyncService(database, apiService);
+    final syncService = DataSyncService(database, apiService, prefs);
 
     // Upload local data first
     await syncService.uploadLocalData();
 
     // Download fresh data with retention
     await syncService.syncAllData(dataRetentionDays: settings.dataRetentionDays);
+
+    // Refresh session rules (best-effort — 404 is fine).
+    final rules = await syncService.syncSessionRules();
+    if (rules != null) {
+      ref.read(sessionRulesProvider.notifier).updateRules(rules);
+    }
 
     state = state.copyWith(lastFullSyncTime: DateTime.now());
   }

@@ -8,7 +8,7 @@ class Commercials extends Table {
   Set<Column> get primaryKey => {id};
   TextColumn get firstName => text()();
   TextColumn get lastName => text()();
-  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
-  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
 }
 

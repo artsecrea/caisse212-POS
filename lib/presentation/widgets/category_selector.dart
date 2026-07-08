@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/favorites_provider.dart';
 import '../../domain/models/app_settings.dart';
 
 class CategorySelector extends ConsumerWidget {
@@ -12,6 +13,7 @@ class CategorySelector extends ConsumerWidget {
     final categoriesAsync = ref.watch(categoriesProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final displayMode = ref.watch(categoryDisplayModeProvider);
+    final showFavorites = ref.watch(settingsProvider.select((s) => s.showFavoritesCategory));
 
     return Container(
       height: 70,
@@ -73,8 +75,8 @@ class CategorySelector extends ConsumerWidget {
           // Categories list or "Select Category" button based on display mode
           Expanded(
             child: displayMode == CategoryDisplayMode.topBar
-                ? _buildTopBarCategories(context, ref, categoriesAsync, selectedCategory)
-                : _buildFullPageModeButton(context, ref, categoriesAsync, selectedCategory),
+                ? _buildTopBarCategories(context, ref, categoriesAsync, selectedCategory, showFavorites)
+                : _buildFullPageModeButton(context, ref, categoriesAsync, selectedCategory, showFavorites),
           ),
         ],
       ),
@@ -82,16 +84,29 @@ class CategorySelector extends ConsumerWidget {
   }
 
   Widget _buildTopBarCategories(BuildContext context, WidgetRef ref,
-      AsyncValue<List<dynamic>> categoriesAsync, int? selectedCategory) {
+      AsyncValue<List<dynamic>> categoriesAsync, int? selectedCategory, bool showFavorites) {
     return categoriesAsync.when(
       data: (categories) {
+        // prefix chips: optional Favorites + always All
+        final prefixCount = showFavorites ? 2 : 1;
         return ListView.builder(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
-          itemCount: categories.length + 1, // +1 for "All" category
+          itemCount: categories.length + prefixCount,
           itemBuilder: (context, index) {
-            if (index == 0) {
-              // "All" category
+            if (showFavorites && index == 0) {
+              return _CategoryChip(
+                name: '★',
+                imageUrl: null,
+                isSelected: selectedCategory == kFavoritesCategoryId,
+                icon: Icons.star,
+                iconColor: Colors.amber,
+                onTap: () {
+                  ref.read(selectedCategoryProvider.notifier).state = kFavoritesCategoryId;
+                },
+              );
+            }
+            if (index == (showFavorites ? 1 : 0)) {
               return _CategoryChip(
                 name: 'All',
                 imageUrl: null,
@@ -102,7 +117,7 @@ class CategorySelector extends ConsumerWidget {
               );
             }
 
-            final category = categories[index - 1];
+            final category = categories[index - prefixCount];
             return _CategoryChip(
               name: category.name,
               imageUrl: category.imageUrl,
@@ -123,7 +138,7 @@ class CategorySelector extends ConsumerWidget {
   }
 
   Widget _buildFullPageModeButton(BuildContext context, WidgetRef ref,
-      AsyncValue<List<dynamic>> categoriesAsync, int? selectedCategory) {
+      AsyncValue<List<dynamic>> categoriesAsync, int? selectedCategory, bool showFavorites) {
     return Padding(
       padding: const EdgeInsets.only(right: 16, top: 12, bottom: 12),
       child: categoriesAsync.when(
@@ -131,7 +146,9 @@ class CategorySelector extends ConsumerWidget {
           String selectedCategoryName = 'All Categories';
 
           if (selectedCategory != null && categories.isNotEmpty) {
-            if (selectedCategory == -1) {
+            if (selectedCategory == kFavoritesCategoryId) {
+              selectedCategoryName = '★ Favorites';
+            } else if (selectedCategory == -1) {
               selectedCategoryName = 'All Products';
             } else {
               final foundCategory = categories.where((c) => c.id == selectedCategory).firstOrNull;
@@ -251,6 +268,8 @@ class _CategoryChip extends StatelessWidget {
   final bool isSelected;
   final String? colorHex;
   final VoidCallback onTap;
+  final IconData? icon;
+  final Color? iconColor;
 
   const _CategoryChip({
     required this.name,
@@ -258,6 +277,8 @@ class _CategoryChip extends StatelessWidget {
     required this.isSelected,
     this.colorHex,
     required this.onTap,
+    this.icon,
+    this.iconColor,
   });
 
   Color? _parseColor(String? colorStr) {
@@ -313,6 +334,10 @@ class _CategoryChip extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (icon != null) ...[
+                Icon(icon, size: 18, color: isSelected ? Colors.white : iconColor),
+                const SizedBox(height: 2),
+              ],
               Flexible(
                 child: Text(
                   name,
