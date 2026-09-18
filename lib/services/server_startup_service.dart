@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/server_provider.dart';
 import '../providers/settings_provider.dart';
+import '../utils/pos_log.dart';
+import 'package:loggecrea/loggecrea.dart';
 
 /// Service to initialize and manage server startup
 class ServerStartupService {
@@ -13,28 +15,28 @@ class ServerStartupService {
     final settings = _ref.read(settingsProvider);
 
     if (settings.autoStartServer) {
-      print('🚀 Auto-starting HTTP server...');
+      posLog('🚀 Auto-starting HTTP server...');
       try {
         await startServerWithRef(_ref);
-        print('✅ HTTP server started successfully');
+        posLog('✅ HTTP server started successfully');
       } catch (e) {
-        print('❌ Failed to auto-start server: $e');
+        Logger.instance.error('Failed to auto-start server: $e');
       }
     } else {
-      print('ℹ️ Auto-start server is disabled');
+      posLog('ℹ️ Auto-start server is disabled');
     }
   }
 
   /// Restart server with new settings
   Future<void> restartServer() async {
-    print('🔄 Restarting HTTP server...');
+    posLog('🔄 Restarting HTTP server...');
     try {
       await stopServerWithRef(_ref);
       await Future.delayed(const Duration(milliseconds: 500));
       await startServerWithRef(_ref);
-      print('✅ HTTP server restarted successfully');
+      posLog('✅ HTTP server restarted successfully');
     } catch (e) {
-      print('❌ Failed to restart server: $e');
+      Logger.instance.error('Failed to restart server: $e');
       rethrow;
     }
   }

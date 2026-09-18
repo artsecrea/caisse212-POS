@@ -1,20 +1,27 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' as drift;
 import '../../providers/order_provider.dart';
 import '../../providers/held_orders_provider.dart';
+import '../../domain/models/order_course.dart';
 import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../services/permission_service.dart';
+import '../../services/activity_log_service.dart';
+import '../../providers/settings_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../data/database/app_database.dart';
 import 'product_modification_dialog.dart' show ProductModificationDialog;
 import 'unpaid_orders_dialog.dart';
+import '../../utils/button_styles.dart';
+import '../../utils/order_permissions.dart';
+import './adaptive_text_field.dart';
+import '../../core/theme/app_theme.dart';
+import 'order_note_dialog.dart';
 
 
 class OrderPanel extends ConsumerWidget {
@@ -27,6 +34,10 @@ class OrderPanel extends ConsumerWidget {
   bool _canEditItem(WidgetRef ref, OrderItem item, String permission) {
     final order = ref.read(orderProvider);
     if (order.orderId == null || item.id == null) return true;
+    // A waiter's order is not the cashier's to rewrite — see
+    // canEditWaiterOrder. Checked before the granular permission because it
+    // gates the whole order, not this one line.
+    if (!canEditWaiterOrder(ref)) return false;
     return ref.read(permissionServiceProvider).hasPermission(permission);
   }
 
@@ -44,6 +55,7 @@ class OrderPanel extends ConsumerWidget {
   bool _canSetQuantity(WidgetRef ref, OrderItem item, double newQty) {
     final order = ref.read(orderProvider);
     if (order.orderId == null || item.id == null) return true;
+    if (!canEditWaiterOrder(ref)) return false;
     final saved = item.savedQuantity ?? 0.0;
     final oldQty = item.quantity;
     final perm = ref.read(permissionServiceProvider);
@@ -98,18 +110,34 @@ class OrderPanel extends ConsumerWidget {
       builder: (dialogContext) => AlertDialog(
         title: Text(l10n.translate('delete_order')),
         content: Text(l10n.translate('remove_last_item_deletes_order')),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        // Full-width, large touch targets stacked vertically (POS screens).
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(l10n.translate('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: Text(l10n.translate('delete')),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: AppButtonStyles.elevatedButtonStyle(
+                    isLarge: true,
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(l10n.translate('delete')),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  style: AppButtonStyles.textButtonStyle(isLarge: true),
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(l10n.translate('cancel')),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -203,6 +231,9 @@ class OrderPanel extends ConsumerWidget {
         if (context.mounted) _showPermissionDenied(context, ref);
         return;
       }
+      // Manual unit-price override (only present when a permitted user set it).
+      final priceOverride = (result['priceOverride'] as num?)?.toDouble();
+
       // Update the item with new modifications
       final updatedItem = item.copyWith(
         components: result['components'] as List<OrderItemComponent>?,
@@ -210,10 +241,30 @@ class OrderPanel extends ConsumerWidget {
         manualDiscount: result['manualDiscount'] as double?,
         quantity: (result['quantity'] as num?)?.toDouble(),
         note: result['note'] as String?,
+        unitPrice: priceOverride != null && priceOverride >= 0
+            ? priceOverride
+            : null,
         planStartAt: result['planStartAt'] as DateTime?,
         planEndAt: result['planEndAt'] as DateTime?,
         planWaiterId: result['planWaiterId'] as int?,
       );
+
+      // Audit any unit-price override (anti-fraud trail): only when a permitted
+      // user actually changed the price from the item's current unit price.
+      if (priceOverride != null &&
+          priceOverride >= 0 &&
+          priceOverride != item.finalPrice) {
+        final actor = ref.read(currentUserProvider);
+        final currency = ref.read(settingsProvider).currency;
+        ref.read(activityLogServiceProvider).logPriceChanged(
+              item.displayName,
+              CurrencyFormatter.formatWithCurrency(item.finalPrice, currency),
+              CurrencyFormatter.formatWithCurrency(priceOverride, currency),
+              orderCode: ref.read(orderProvider).orderCode,
+              userId: actor?.id,
+            );
+      }
+
       ref.read(orderProvider.notifier).updateItem(index, updatedItem);
     }
   }
@@ -401,9 +452,15 @@ class OrderPanel extends ConsumerWidget {
                         orderItemComponents.add(OrderItemComponent(
                           componentId: component.id,
                           name: component.name,
-                          price: component.price,
+                          // The price as sold, not as the catalogue reads
+                          // today — a removal charge is whatever it was when
+                          // the customer agreed to it.
+                          price: comp.removalCharge
+                              ? comp.price
+                              : component.price,
                           quantity: comp.quantity,
                           isSpecial: comp.isSpecial,
+                          removalCharge: comp.removalCharge,
                         ));
                       }
                     }
@@ -500,11 +557,60 @@ class OrderPanel extends ConsumerWidget {
                   Icons.shopping_cart,
                   color: Theme.of(context).colorScheme.primary,
                 ),
-                Text(
-                  currentOrder.orderCode?.toString() ?? l10n.translate('current_order'),
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                const SizedBox(width: 6),
+                // Flexible, not fixed: an unconstrained Text here grew with a
+                // long order code until it squeezed the Spacer to nothing and
+                // pushed the clear and note buttons off the edge of the panel.
+                // The title is the least important thing in this row — it can
+                // give ground; the buttons cannot.
+                Flexible(
+                  child: Text(
+                    currentOrder.orderCode?.toString() ??
+                        l10n.translate('current_order'),
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                  ),
                 ),
                 const Spacer(),
+                // Order note. Lives here rather than in the action bar because
+                // it belongs to the order, not to the till: the cashier reads
+                // it off this panel and it prints to the kitchen from here.
+                //
+                // Shown while a note exists even on an emptied cart, so a note
+                // can never become unreachable — it would otherwise still be
+                // attached and still print, with no way to open it.
+                if (currentOrder.items.isNotEmpty || currentOrder.hasNote)
+                  IconButton(
+                    onPressed: () async {
+                      final result = await showOrderNoteDialog(
+                        context: context,
+                        ref: ref,
+                        currentNote: currentOrder.note,
+                      );
+                      // null = cancelled (leave as-is); '' = cleared.
+                      if (result == null) return;
+                      ref
+                          .read(orderProvider.notifier)
+                          .setNote(result.isEmpty ? null : result);
+                    },
+                    icon: Icon(
+                      currentOrder.hasNote
+                          ? Icons.sticky_note_2
+                          : Icons.sticky_note_2_outlined,
+                      size: 28,
+                    ),
+                    tooltip: currentOrder.hasNote
+                        ? currentOrder.note
+                        : l10n.translate('order_note'),
+                    // Filled + coloured when set, so "there is a note" reads at
+                    // a glance without the banner below being in view.
+                    color: currentOrder.hasNote
+                        ? Colors.deepPurple
+                        : Theme.of(context).colorScheme.primary,
+                  ),
                 // Hold button — only when panel has items
                 if (currentOrder.items.isNotEmpty)
                   IconButton(
@@ -526,6 +632,79 @@ class OrderPanel extends ConsumerWidget {
               ],
             ),
           ),
+
+          // Order-level note. Surfaced here, under the header, because it goes
+          // to the kitchen — the cashier needs to see that one is attached
+          // without reopening the dialog. Tinted like the KDS banner so the two
+          // read as the same thing.
+          if (currentOrder.hasNote)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              color: const Color(0xFFFFE4E6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.sticky_note_2,
+                      size: 16, color: Color(0xFF9F1239)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      currentOrder.note!,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF881337),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Ticket-division hint. The actual split (which line goes to which
+          // ticket) is drawn and edited on the payment screen — this is just
+          // "the cashier should know this order is already divided" while
+          // looking at the same order here, on the table/cart panel, before
+          // ever opening Pay. Local-only (see [ticketDraftGroupsProvider]):
+          // never a fact the server or the printed ticket carries.
+          if (currentOrder.orderId != null)
+            Consumer(builder: (context, ref, _) {
+              final ticketCount = ref
+                      .watch(ticketDraftTicketCountProvider(
+                          currentOrder.orderId!))
+                      .valueOrNull ??
+                  0;
+              if (ticketCount <= 1) return const SizedBox.shrink();
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                color: Theme.of(context)
+                    .colorScheme
+                    .primaryContainer
+                    .withValues(alpha: 0.5),
+                child: Row(
+                  children: [
+                    Icon(Icons.call_split_rounded,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        l10n
+                            .translate('order_already_split')
+                            .replaceAll('{0}', '$ticketCount'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
 
           // Order Items
           Expanded(
@@ -567,7 +746,7 @@ class OrderPanel extends ConsumerWidget {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 20, vertical: 14),
                               shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
+                                  borderRadius: AppTheme.brMd),
                               textStyle: const TextStyle(
                                   fontSize: 14, fontWeight: FontWeight.w600),
                             ),
@@ -599,15 +778,39 @@ class OrderPanel extends ConsumerWidget {
                           ...heldOrders.asMap().entries.map((entry) {
                             final idx = entry.key;
                             final held = entry.value;
-                            final itemCount = held.items
+                            // Units, not lines: "3 articles" should mean three
+                            // things to hand over. Formatted so a whole count
+                            // reads "3" rather than "3.0", while a weighed line
+                            // keeps its decimals.
+                            final unitCount = held.items
                                 .fold<double>(0, (s, i) => s + i.quantity);
+                            final itemCount = unitCount == unitCount.roundToDouble()
+                                ? unitCount.toStringAsFixed(0)
+                                : unitCount.toStringAsFixed(3);
+                            // What is actually in it. A held order is otherwise
+                            // just a code and a total — the waiter has no way to
+                            // tell two parked tables apart without resuming one.
+                            const previewLimit = 3;
+                            final preview = held.items
+                                .take(previewLimit)
+                                .map((i) {
+                                  final q = i.quantity == i.quantity.roundToDouble()
+                                      ? i.quantity.toStringAsFixed(0)
+                                      : i.quantity.toStringAsFixed(3);
+                                  return '${q}x ${i.productName}';
+                                })
+                                .join(' · ');
+                            // Count the REMAINING lines explicitly rather than
+                            // relying on the ellipsis: "+4" tells the waiter how
+                            // much they cannot see, which a fade does not.
+                            final hidden = held.items.length - previewLimit;
                             final total = held.total;
                             return Padding(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16, vertical: 3),
                               child: InkWell(
                                 onTap: () => _resumeHeldOrder(ref, idx),
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: AppTheme.brMd,
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 12, vertical: 8),
@@ -617,7 +820,7 @@ class OrderPanel extends ConsumerWidget {
                                             .colorScheme
                                             .primary
                                             .withValues(alpha: 0.4)),
-                                    borderRadius: BorderRadius.circular(8),
+                                    borderRadius: AppTheme.brMd,
                                     color: Theme.of(context)
                                         .colorScheme
                                         .primaryContainer
@@ -652,6 +855,26 @@ class OrderPanel extends ConsumerWidget {
                                                       .colorScheme
                                                       .onSurfaceVariant),
                                             ),
+                                            if (preview.isNotEmpty)
+                                              Text(
+                                                hidden > 0
+                                                    ? '$preview  +$hidden'
+                                                    : preview,
+                                                // Two lines then ellipsis: the
+                                                // card must stay a fixed, glanceable
+                                                // size no matter how big the order
+                                                // is, so a 40-line table cannot
+                                                // push the list off screen.
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                    fontSize: 10,
+                                                    height: 1.25,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant
+                                                        .withValues(alpha: 0.85)),
+                                              ),
                                           ],
                                         ),
                                       ),
@@ -683,11 +906,29 @@ class OrderPanel extends ConsumerWidget {
                   ),         // ConstrainedBox
                 ),           // SingleChildScrollView
               )              // LayoutBuilder
-                : ListView.builder(
+                : Builder(builder: (context) {
+                  final layout = orderPanelRowOrder(currentOrder.items);
+                  final ordered = layout.ordered;
+                  final showSeparator = layout.showSeparator;
+                  final separatorAt = layout.separatorAt;
+
+                  return ListView.builder(
                     padding: const EdgeInsets.all(2),
-                    itemCount: currentOrder.items.length,
+                    itemCount:
+                        currentOrder.items.length + (showSeparator ? 1 : 0),
                     itemBuilder: (context, index) {
-                      final invertedIndex = currentOrder.items.length - 1 - index;
+                      if (showSeparator && index == separatorAt) {
+                        return _SentToKitchenSeparator(
+                          label: l10n.translate('already_sent_to_kitchen'),
+                        );
+                      }
+                      final pos = showSeparator && index > separatorAt
+                          ? index - 1
+                          : index;
+                      // Index into currentOrder.items — removeItem,
+                      // _showItemOptions and _CourseChip all address the order
+                      // by it, so it must stay the REAL position, not the row.
+                      final invertedIndex = ordered[pos];
                       final item = currentOrder.items[invertedIndex];
                       final isPaid = item.ticketId != null;
                       final isHeld = item.state == 'ONHOLD';
@@ -736,29 +977,42 @@ class OrderPanel extends ConsumerWidget {
                               color: isPaid
                                   ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
                                   : isHeld
-                                      ? Colors.orange[50]
+                                      ? AppTheme.tintFill(context, Colors.orange)
                                       : Theme.of(context).cardColor,
                               margin: const EdgeInsets.symmetric(vertical: 1.5, horizontal: 3),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6),
+                                borderRadius: AppTheme.brSm,
                                 side: BorderSide(
                                   color: isPaid
                                       ? Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)
                                       : isHeld
-                                          ? Colors.orange[200]!
+                                          ? AppTheme.tintBorder(context, Colors.orange)
                                           : Theme.of(context).dividerColor.withValues(alpha: 0.5),
                                   width: isPaid ? 0.5 : (isHeld ? 1.5 : 0.5),
                                 ),
                               ),
                               child: InkWell(
                                 onTap: isPaid ? null : () => _showItemOptions(context, ref, invertedIndex, item),
-                                borderRadius: BorderRadius.circular(6),
+                                borderRadius: AppTheme.brSm,
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                   child: IntrinsicHeight(
                                     child: Row(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
+                                        // 0. Course chip — only when the shop
+                                        // works in courses, and never on a
+                                        // paid line (its ticket is printed).
+                                        if (ref
+                                                .watch(settingsProvider)
+                                                .coursesEnabled &&
+                                            !isPaid) ...[
+                                          _CourseChip(
+                                            item: item,
+                                            index: invertedIndex,
+                                          ),
+                                          const SizedBox(width: 4),
+                                        ],
                                         // 1. Quantity Section (Left)
                                         Center(
                                           child: isPaid
@@ -766,7 +1020,7 @@ class OrderPanel extends ConsumerWidget {
                                                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                                                   decoration: BoxDecoration(
                                                     color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                                    borderRadius: BorderRadius.circular(4),
+                                                    borderRadius: AppTheme.brSm,
                                                     border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.5)),
                                                   ),
                                                   child: Text(
@@ -782,14 +1036,14 @@ class OrderPanel extends ConsumerWidget {
                                                   // Weighed items — show weight badge with long-press to edit.
                                                   ? InkWell(
                                                       onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
-                                                      borderRadius: BorderRadius.circular(6),
+                                                      borderRadius: AppTheme.brSm,
                                                       child: Container(
                                                         constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                                                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                                         alignment: Alignment.center,
                                                         decoration: BoxDecoration(
                                                           color: Colors.teal.withValues(alpha: 0.1),
-                                                          borderRadius: BorderRadius.circular(6),
+                                                          borderRadius: AppTheme.brSm,
                                                           border: Border.all(color: Colors.teal.withValues(alpha: 0.5)),
                                                         ),
                                                         child: Column(
@@ -827,14 +1081,14 @@ class OrderPanel extends ConsumerWidget {
                                                         );
                                                       },
                                                       onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
-                                                      borderRadius: BorderRadius.circular(6),
+                                                      borderRadius: AppTheme.brSm,
                                                       child: Container(
                                                         constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                                                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                                         alignment: Alignment.center,
                                                         decoration: BoxDecoration(
                                                           color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.7),
-                                                          borderRadius: BorderRadius.circular(6),
+                                                          borderRadius: AppTheme.brSm,
                                                           border: Border.all(
                                                             color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
                                                           ),
@@ -908,10 +1162,24 @@ class OrderPanel extends ConsumerWidget {
                                                 Wrap(
                                                   spacing: 4,
                                                   runSpacing: 2,
-                                                  children: item.components.map((comp) => Text(
-                                                    '+ ${comp.name} (${comp.quantity})',
+                                                  // A removed default reads as
+                                                  // "SANS x"; the zero-quantity
+                                                  // signal row beside it carries
+                                                  // no meaning for a reader and
+                                                  // is left out.
+                                                  children: item.components
+                                                      .where((comp) =>
+                                                          comp.removalCharge ||
+                                                          comp.quantity > 0)
+                                                      .map((comp) => Text(
+                                                    comp.removalCharge
+                                                        ? '${AppLocalizations.of(context)!.translate('without')} ${comp.name}'
+                                                        : '+ ${comp.name} (${comp.quantity})',
                                                     style: TextStyle(
                                                       fontSize: 10,
+                                                      fontWeight: comp.removalCharge
+                                                          ? FontWeight.bold
+                                                          : null,
                                                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                                                       height: 1.1,
                                                     ),
@@ -944,13 +1212,52 @@ class OrderPanel extends ConsumerWidget {
                                                 ),
                                               ],
 
+                                              // Serial number. Shown on the
+                                              // line because it is the one
+                                              // detail the cashier has to check
+                                              // against the box in the
+                                              // customer's hand before payment.
+                                              if (item.serialNumber != null &&
+                                                  item.serialNumber!
+                                                      .isNotEmpty) ...[
+                                                const SizedBox(height: 3),
+                                                Row(
+                                                  children: [
+                                                    Icon(Icons.qr_code_2,
+                                                        size: 11,
+                                                        color: Theme.of(context)
+                                                            .colorScheme
+                                                            .primary),
+                                                    const SizedBox(width: 3),
+                                                    Expanded(
+                                                      child: Text(
+                                                        item.serialNumber!,
+                                                        style: TextStyle(
+                                                          fontSize: 10,
+                                                          fontFamily:
+                                                              'monospace',
+                                                          fontWeight:
+                                                              FontWeight.w700,
+                                                          color: Theme.of(
+                                                                  context)
+                                                              .colorScheme
+                                                              .primary,
+                                                        ),
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+
                                               // Note (Compact)
                                               if (item.note != null && item.note!.isNotEmpty) ...[
                                                 const SizedBox(height: 3),
                                                 Container(
                                                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                                                   decoration: BoxDecoration(
-                                                    borderRadius: BorderRadius.circular(3),
+                                                    borderRadius: AppTheme.brSm,
                                                     border: Border.all(),
                                                   ),
                                                   child: Row(
@@ -985,15 +1292,15 @@ class OrderPanel extends ConsumerWidget {
                                                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                         margin: const EdgeInsets.only(right: 4),
                                                         decoration: BoxDecoration(
-                                                          color: Colors.green[50],
-                                                          borderRadius: BorderRadius.circular(4),
-                                                          border: Border.all(color: Colors.green[200]!),
+                                                          color: AppTheme.tintFill(context, Colors.green),
+                                                          borderRadius: AppTheme.brSm,
+                                                          border: Border.all(color: AppTheme.tintBorder(context, Colors.green)),
                                                         ),
                                                         child: Text(
                                                           'Ticket #${item.ticketId}',
                                                           style: TextStyle(
                                                             fontSize: 10,
-                                                            color: Colors.green[800],
+                                                            color: AppTheme.tintOn(context, Colors.green),
                                                             fontWeight: FontWeight.w600,
                                                           ),
                                                         ),
@@ -1002,14 +1309,14 @@ class OrderPanel extends ConsumerWidget {
                                                       Container(
                                                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                         decoration: BoxDecoration(
-                                                          color: Colors.orange[50],
-                                                          borderRadius: BorderRadius.circular(4),
-                                                          border: Border.all(color: Colors.orange[200]!),
+                                                          color: AppTheme.tintFill(context, Colors.orange),
+                                                          borderRadius: AppTheme.brSm,
+                                                          border: Border.all(color: AppTheme.tintBorder(context, Colors.orange)),
                                                         ),
                                                         child: Row(
                                                           mainAxisSize: MainAxisSize.min,
                                                           children: [
-                                                            Icon(Icons.pause_circle_outline, size: 10, color: Colors.orange[800]),
+                                                            Icon(Icons.pause_circle_outline, size: 10, color: AppTheme.tintOn(context, Colors.orange)),
                                                             const SizedBox(width: 4),
                                                             Text(
                                                               'Held',
@@ -1091,7 +1398,8 @@ class OrderPanel extends ConsumerWidget {
                         ),
                     );
                     },
-                  ),
+                  );
+                }),
           ),
           // Order Summary
           Container(
@@ -1166,8 +1474,43 @@ class OrderPanel extends ConsumerWidget {
                     ),
                   ],
                 ),
+                // Delivery fee — its own line, deliberately after the tax row
+                // and outside the subtotal: it is not a product sale. Shown
+                // whenever one is recorded, including an explicit 0, because
+                // "Delivery: free" is information the cashier states out loud.
+                if (currentOrder.hasDeliveryFee) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.delivery_dining,
+                              size: 13, color: Colors.blue[700]),
+                          const SizedBox(width: 3),
+                          Text('${l10n.translate('delivery_fee')}:',
+                              style: TextStyle(
+                                  fontSize: 12, color: Colors.blue[700])),
+                        ],
+                      ),
+                      Text(
+                        currentOrder.deliveryFeeAmount > 0
+                            ? currencyFormatter
+                                .format(currentOrder.deliveryFeeAmount)
+                            : l10n.translate('free'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue[700],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const Divider(height: 14),
-                // Total row — prominent
+                // Total row — prominent. Carries the delivery fee because this
+                // is what the customer hands over; the products total above is
+                // what the sales figures are built from.
                 Row(
                   children: [
                     Text(
@@ -1177,7 +1520,7 @@ class OrderPanel extends ConsumerWidget {
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        currencyFormatter.format(currentOrder.total),
+                        currencyFormatter.format(currentOrder.amountDue),
                         textAlign: TextAlign.end,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1220,14 +1563,14 @@ class OrderPanel extends ConsumerWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Enter Quantity'),
-        content: OnscreenKeyboardTextField(
+        content: AdaptiveKeyboardTextField(
           controller: controller,
           autofocus: true, // Auto-focus to show on-screen keyboard immediately
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
           decoration: InputDecoration(
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            border: OutlineInputBorder(borderRadius: AppTheme.brMd),
             contentPadding: const EdgeInsets.symmetric(vertical: 20),
           ),
           onSubmitted: (_) => trySubmit(),
@@ -1263,16 +1606,16 @@ class OrderPanel extends ConsumerWidget {
             const Text('Item Note'),
           ],
         ),
-        content: OnscreenKeyboardTextField(
+        content: AdaptiveKeyboardTextField(
           controller: controller,
           autofocus: true, // Auto-focus to show on-screen keyboard immediately
           keyboardType: TextInputType.text,
           maxLines: 3,
           decoration: InputDecoration(
             hintText: 'Add special instructions or notes...',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            border: OutlineInputBorder(borderRadius: AppTheme.brMd),
             filled: true,
-            fillColor: Colors.amber[50],
+            fillColor: AppTheme.tintFill(context, Colors.amber),
           ),
         ),
         actions: [
@@ -1302,4 +1645,175 @@ class OrderPanel extends ConsumerWidget {
     );
   }
 
+}
+
+/// Tag an order line with its course: entrée, plat or dessert.
+///
+/// A chip rather than a menu entry because assigning courses is a per-line
+/// rhythm — the cashier rings in a starter, taps E, rings in a main, taps P —
+/// and burying it two taps deep in the modify dialog would make the feature
+/// cost more than it saves. Untagged lines show a muted outline, so an order
+/// halfway through being tagged is obvious at a glance.
+/// Row layout for the order panel: which order line each row shows, and where
+/// the "already sent" separator goes.
+///
+/// Splits the panel into what the kitchen has NOT seen yet and what it already
+/// has, so the cashier can tell at a glance which lines this round added.
+///
+/// A line counts as new while it still has units beyond `kdsPrintedQuantity` —
+/// the same predicate the KDS delta runs on
+/// (`PrintingService._filterItemsByMode`). So a line bumped from 1 to 3 reads
+/// as new, because the kitchen is owed 2 more of it, and a paid line never
+/// does.
+///
+/// Both groups keep the panel's existing newest-first order, so a line only
+/// moves when it genuinely has unsent units.
+///
+/// [ordered] holds indices into [items] — NOT row numbers. Callers address the
+/// order by these (removeItem, _showItemOptions, _CourseChip all take the real
+/// position), so getting this mapping wrong would act on the wrong line.
+({List<int> ordered, int separatorAt, bool showSeparator}) orderPanelRowOrder(
+    List<OrderItem> items) {
+  final newIndices = <int>[];
+  final sentIndices = <int>[];
+  for (var i = items.length - 1; i >= 0; i--) {
+    final it = items[i];
+    final hasUnsent = it.ticketId == null && it.quantity > it.kdsPrintedQuantity;
+    (hasUnsent ? newIndices : sentIndices).add(i);
+  }
+  return (
+    ordered: [...newIndices, ...sentIndices],
+    separatorAt: newIndices.length,
+    // Only worth a separator when there is something on each side of it — a
+    // brand-new order is all new, and a fully sent one has nothing to mark off.
+    showSeparator: newIndices.isNotEmpty && sentIndices.isNotEmpty,
+  );
+}
+
+/// Marks where the newly added lines stop and the ones the kitchen already has
+/// begin. Everything ABOVE it is what this round added.
+///
+/// Only rendered when there is something on both sides of it — see the
+/// `showSeparator` check in the order list.
+class _SentToKitchenSeparator extends StatelessWidget {
+  const _SentToKitchenSeparator({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.outline;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 8, 6, 4),
+      child: Row(
+        children: [
+          Expanded(child: Divider(height: 1, thickness: 1, color: color.withValues(alpha: 0.4))),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle_outline, size: 12, color: color),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: Divider(height: 1, thickness: 1, color: color.withValues(alpha: 0.4))),
+        ],
+      ),
+    );
+  }
+}
+
+class _CourseChip extends ConsumerWidget {
+  final OrderItem item;
+  final int index;
+
+  const _CourseChip({required this.item, required this.index});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    final course = OrderCourse.fromNumber(item.courseNo);
+    final tagged = course != null;
+
+    return PopupMenuButton<int>(
+      tooltip: l10n.translate('set_course'),
+      padding: EdgeInsets.zero,
+      // 0 is the "no course" entry: null cannot be a PopupMenuItem value and
+      // still be told apart from a dismissed menu.
+      onSelected: (value) => ref.read(orderProvider.notifier).updateItem(
+            index,
+            item.copyWith(
+              courseNo: value == 0 ? null : value,
+              clearCourse: value == 0,
+            ),
+          ),
+      itemBuilder: (_) => [
+        for (final c in OrderCourse.values)
+          PopupMenuItem(
+            value: c.number,
+            child: Row(children: [
+              if (c.number == item.courseNo)
+                const Icon(Icons.check, size: 16)
+              else
+                const SizedBox(width: 16),
+              const SizedBox(width: 8),
+              Text(l10n.translate(c.labelKey)),
+            ]),
+          ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 0,
+          child: Row(children: [
+            const SizedBox(width: 16),
+            const SizedBox(width: 8),
+            Text(l10n.translate('no_course')),
+          ]),
+        ),
+      ],
+      child: Container(
+        // Deliberately larger than a normal chip: this is tapped on every
+        // line of a coursed order, on a touchscreen, by someone holding a
+        // pad in the other hand. A 26px target was a miss waiting to happen.
+        width: 40,
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: tagged
+              ? scheme.primary.withValues(alpha: 0.12)
+              : Colors.transparent,
+          borderRadius: AppTheme.brSm,
+          border: Border.all(
+            color: tagged
+                ? scheme.primary.withValues(alpha: 0.5)
+                : scheme.outlineVariant,
+          ),
+        ),
+        child: tagged
+            ? Text(
+                l10n.translate(course.badgeKey),
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: scheme.primary,
+                ),
+              )
+            : Icon(Icons.restaurant_menu,
+                size: 20, color: scheme.onSurfaceVariant),
+      ),
+    );
+  }
 }

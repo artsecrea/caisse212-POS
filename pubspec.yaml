@@ -4,7 +4,7 @@ description: "A new Flutter project."
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.0.7+5
+version: 1.1.9+7
 environment:
   sdk: ^3.9.2
 
@@ -103,11 +103,18 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/sounds/button_tap.mp3
+    - assets/sounds/new_order.wav
     - assets/images/logo.svg
     - assets/images/caisse212.svg
     - assets/images/caisse212_icon.svg
     - assets/images/caisse212_icon.png
     - assets/images/logo-white.svg
+    # Delivery-platform marks, shown on external orders.
+    - assets/images/glovo.png
+    - assets/images/kooul.png
+    - assets/images/dealup.png
+    # Pre-built KDS web app, served by the LAN server at /kds (see ServerService).
+    - assets/kds_web.zip
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
@@ -142,12 +149,13 @@ flutter_launcher_icons:
   ios: true
   windows:
     generate: true
-    image_path: "assets/images/app_logo.png"
-  image_path: "assets/images/app_logo.png"
+    image_path: "assets/images/caisse212_icon.png"
+  image_path: "assets/images/caisse212_icon.png"
   adaptive_icon_background: "#ffffff"
-  adaptive_icon_foreground: "assets/images/app_logo.png"
+  adaptive_icon_foreground: "assets/images/caisse212_icon.png"
   remove_alpha_ios: true
 # Flutter Native Splash Configuration
+
 flutter_native_splash:
   color: "#ffffff"
   image: assets/images/app_logo.png

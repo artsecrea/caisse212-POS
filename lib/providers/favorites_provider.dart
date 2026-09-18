@@ -60,7 +60,8 @@ final displayedProductsProvider =
         if (searchQuery.isNotEmpty) {
           result = result.where((p) {
             return p.name.toLowerCase().contains(searchQuery) ||
-                (p.barcode?.toLowerCase().contains(searchQuery) ?? false);
+                (p.barcode?.toLowerCase().contains(searchQuery) ?? false) ||
+                (p.reference?.toLowerCase().contains(searchQuery) ?? false);
           }).toList();
         }
         return AsyncValue.data(result);

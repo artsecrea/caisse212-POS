@@ -493,7 +493,7 @@ body {
 <div id="welcome-view" class="welcome">
   <div class="welcome-icon">🏪</div>
   <div class="welcome-title" id="welcome-name">${businessName.isNotEmpty ? _escapeHtml(businessName) : t['welcome']}</div>
-  <div class="welcome-sub">${t['thank_you']}</div>
+  ${businessName.isNotEmpty ? "<div class='welcome-sub'>${t['thank_you'] ?? ''}</div>" : ''}
 </div>
 
 <div id="order-view" class="container">

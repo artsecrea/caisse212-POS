@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../providers/settings_provider.dart';
@@ -476,13 +477,13 @@ class OrderDetailsDialog extends ConsumerWidget {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.amber[50],
+                  color: AppTheme.tintFill(context, Colors.amber),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.amber[200]!),
+                  border: Border.all(color: AppTheme.tintBorder(context, Colors.amber)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.sticky_note_2, size: 16, color: Colors.amber[800]),
+                    Icon(Icons.sticky_note_2, size: 16, color: AppTheme.tintOn(context, Colors.amber)),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -593,28 +594,28 @@ class OrderDetailsDialog extends ConsumerWidget {
 
     switch (state.toUpperCase()) {
       case 'PENDING':
-        backgroundColor = Colors.orange[50]!;
-        textColor = Colors.orange[800]!;
+        backgroundColor = AppTheme.tintFill(context, Colors.orange);
+        textColor = AppTheme.tintOn(context, Colors.orange);
         icon = Icons.pending;
         break;
       case 'COMPLETED':
-        backgroundColor = Colors.green[50]!;
-        textColor = Colors.green[800]!;
+        backgroundColor = AppTheme.tintFill(context, Colors.green);
+        textColor = AppTheme.tintOn(context, Colors.green);
         icon = Icons.check_circle;
         break;
       case 'CANCELLED':
-        backgroundColor = Colors.red[50]!;
-        textColor = Colors.red[800]!;
+        backgroundColor = AppTheme.tintFill(context, Colors.red);
+        textColor = AppTheme.tintOn(context, Colors.red);
         icon = Icons.cancel;
         break;
       case 'ONHOLD':
-        backgroundColor = Colors.blue[50]!;
-        textColor = Colors.blue[800]!;
+        backgroundColor = AppTheme.tintFill(context, Colors.blue);
+        textColor = AppTheme.tintOn(context, Colors.blue);
         icon = Icons.pause_circle;
         break;
       default:
-        backgroundColor = Colors.grey[200]!;
-        textColor = Colors.grey[800]!;
+        backgroundColor = Theme.of(context).colorScheme.surfaceContainerHighest;
+        textColor = Theme.of(context).colorScheme.onSurface;
         icon = Icons.info;
     }
 

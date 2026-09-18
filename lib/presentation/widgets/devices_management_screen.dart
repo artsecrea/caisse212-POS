@@ -13,6 +13,7 @@ import '../../data/database/app_database.dart';
 import '../../services/socket_service.dart';
 import '../../providers/database_providers.dart';
 import '../../services/permission_service.dart';
+import '../../utils/pos_log.dart';
 
 class DevicesManagementScreen extends ConsumerStatefulWidget {
   const DevicesManagementScreen({super.key});
@@ -131,7 +132,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
       columnSpacing: 12,
       horizontalMargin: 12,
       minWidth: 1000,
-      headingRowColor: MaterialStateProperty.all(Colors.grey[200]),
+      headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.surfaceContainerHighest),
       columns: const [
         DataColumn2(label: Text('ID', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.S),
         DataColumn2(label: Text('Name', style: TextStyle(fontWeight: FontWeight.bold)), size: ColumnSize.M),
@@ -205,7 +206,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
   }
 
   Widget _buildStatusChip(bool isConnected) {
-    final color = isConnected ? Colors.green : Colors.grey;
+    final color = isConnected ? Colors.green : Theme.of(context).colorScheme.onSurfaceVariant;
     final text = isConnected ? 'Connected' : 'Disconnected';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -244,16 +245,16 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.devices, size: 64, color: Colors.grey[400]),
+          Icon(Icons.devices, size: 64, color: Theme.of(context).colorScheme.outline),
           const SizedBox(height: 16),
           Text(
             'No devices found',
-            style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
             'Click "Scan Network" to discover devices or "Add Device" to add manually',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -269,12 +270,12 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
           const SizedBox(height: 16),
           Text(
             'Error loading devices',
-            style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
             error,
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
             textAlign: TextAlign.center,
           ),
         ],
@@ -902,7 +903,7 @@ class _DeviceDetailsDialog
                       ),
                       Text(
                         device.type,
-                        style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                        style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
                     ],
                   ),
@@ -914,26 +915,26 @@ class _DeviceDetailsDialog
               ],
             ),
             const Divider(height: 32),
-            _buildDetailRow('ID', device.id.toString()),
+            _buildDetailRow(context, 'ID', device.id.toString()),
             if (device.type == 'KDS')
-              _buildDetailRow('Station', device.stationName ?? 'Not assigned'),
-            _buildDetailRow('IP Address', device.ip ?? 'Not set'),
-            _buildDetailRow('Port', device.port?.toString() ?? 'Not set'),
-            _buildDetailRow('Location', device.location ?? 'Not set'),
-            _buildDetailRow('Description', device.description ?? 'Not set'),
+              _buildDetailRow(context, 'Station', device.stationName ?? 'Not assigned'),
+            _buildDetailRow(context, 'IP Address', device.ip ?? 'Not set'),
+            _buildDetailRow(context, 'Port', device.port?.toString() ?? 'Not set'),
+            _buildDetailRow(context, 'Location', device.location ?? 'Not set'),
+            _buildDetailRow(context, 'Description', device.description ?? 'Not set'),
             const SizedBox(height: 16),
             Row(
               children: [
                 Text(
                   'Status: ',
-                  style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 14),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                   decoration: BoxDecoration(
                     color: device.isConnected ? Colors.green.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: device.isConnected ? Colors.green : Colors.grey),
+                    border: Border.all(color: device.isConnected ? Colors.green : Theme.of(context).colorScheme.outline),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -942,7 +943,7 @@ class _DeviceDetailsDialog
                         width: 8,
                         height: 8,
                         decoration: BoxDecoration(
-                          color: device.isConnected ? Colors.green : Colors.grey,
+                          color: device.isConnected ? Colors.green : Theme.of(context).colorScheme.onSurfaceVariant,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -950,7 +951,7 @@ class _DeviceDetailsDialog
                       Text(
                         device.isConnected ? 'Connected' : 'Disconnected',
                         style: TextStyle(
-                          color: device.isConnected ? Colors.green : Colors.grey,
+                          color: device.isConnected ? Colors.green : Theme.of(context).colorScheme.onSurfaceVariant,
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
                         ),
@@ -964,7 +965,7 @@ class _DeviceDetailsDialog
               children: [
                 Text(
                   'Active: ',
-                  style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 14),
                 ),
                 Icon(
                   device.isActive ? Icons.check_circle : Icons.cancel,
@@ -979,7 +980,7 @@ class _DeviceDetailsDialog
     );
   }
 
-  Widget _buildDetailRow(String label, String value) {
+  Widget _buildDetailRow(BuildContext context, String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -989,7 +990,7 @@ class _DeviceDetailsDialog
             width: 120,
             child: Text(
               '$label:',
-              style: TextStyle(color: Colors.grey[700], fontSize: 14),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 14),
             ),
           ),
           Expanded(
@@ -1051,7 +1052,7 @@ class _DiscoveredDevicesDialog extends ConsumerWidget {
                       trailing: ElevatedButton(
                         onPressed: () async {
                           // Add device logic here
-                          print(device.metadata);
+                          posLog(device.metadata);
                           await deviceRepo.addDevice(
                               ip: device.address,
                               port: device.port,

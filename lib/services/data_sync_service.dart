@@ -1,7 +1,12 @@
 import 'package:drift/drift.dart';
+import '../domain/models/serial_conflict.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/domain/models/booking_models.dart';
 import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/pending_operations_service.dart';
+import 'package:caisse212/services/product_cost_resolver.dart';
+import 'package:caisse212/services/z_service.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -18,6 +23,13 @@ class DataSyncService {
   final SharedPreferences? _prefs;
   late final PendingOperationsService _pendingOpsService;
   final _logger = Logger.instance;
+
+  /// Product `state` values the cloud legitimately owns, so a pull is allowed to
+  /// overwrite the local line with them. Everything else (the kitchen micro-
+  /// states PENDING/PREPARING/READY/COMPLETED) is LAN-local and driven by the
+  /// KDS without syncing up, so the backend's copy is stale and must never
+  /// clobber local progress on pull. See [pullOrderDelta].
+  static const Set<String> serverOwnedProductStates = {'CANCELED', 'PAID'};
 
   final _syncedOrderController = StreamController<int>.broadcast();
 
@@ -37,14 +49,110 @@ class DataSyncService {
   /// Callback for progress updates
   Function(String message, double progress)? onProgress;
 
+  /// Delete the local rows of [tableName] whose id is **not** in [serverIds].
+  ///
+  /// This is the non-destructive replacement for wiping a table before a sync:
+  /// rows the server still knows about are updated in place (see the upserting
+  /// `_persist*` helpers), and only the genuine leftovers — rows the admin
+  /// deleted on the backend — are removed.
+  ///
+  /// Ids are read out and diffed in Dart rather than expressed as a giant
+  /// `NOT IN (…)`: SQLite caps bound variables at ~999, and a catalog of a few
+  /// thousand products would blow straight through it. The deletes then go out
+  /// in chunks, the same pattern [clearOldSyncedData] uses.
+  ///
+  /// [protectWhere] is raw SQL naming rows that must never be reconciled away
+  /// (e.g. a table currently holding an order). [extraKeepWhere] additionally
+  /// spares rows that the sync does not own at all.
+  ///
+  /// Returns the number of rows deleted. Callers must not pass an empty
+  /// [serverIds] for a table they cannot prove is genuinely empty server-side —
+  /// that would be the old wipe by another name.
+  Future<int> _reconcileDeletes(
+    String tableName,
+    Set<int> serverIds, {
+    String idColumn = 'id',
+    String? protectWhere,
+  }) async {
+    final rows = await _database
+        .customSelect('SELECT $idColumn AS _rid FROM $tableName'
+            '${protectWhere == null ? '' : ' WHERE NOT ($protectWhere)'}')
+        .get();
+
+    final stale = <int>[];
+    for (final r in rows) {
+      final id = r.data['_rid'];
+      if (id is int && !serverIds.contains(id)) stale.add(id);
+    }
+    if (stale.isEmpty) return 0;
+
+    const chunkSize = 500;
+    for (var i = 0; i < stale.length; i += chunkSize) {
+      final end = (i + chunkSize).clamp(0, stale.length);
+      final chunk = stale.sublist(i, end);
+      // Values are ints read straight back out of SQLite — safe to inline.
+      await _database.customStatement(
+          'DELETE FROM $tableName WHERE $idColumn IN (${chunk.join(',')})');
+    }
+    return stale.length;
+  }
+
+  /// Move a UNIQUE value out of the way before upserting the row that now owns
+  /// it.
+  ///
+  /// Four master tables carry a unique constraint *besides* the primary key:
+  /// `users.username`, `commercials.cin`, and the partial indexes on
+  /// `waiters.pin` and `customers.phone_normalized`. A real upsert conflicts on
+  /// the primary key only, so if the admin reassigns a PIN from one waiter to
+  /// another the insert would hit the secondary index and abort the entire sync
+  /// transaction. (`INSERT OR REPLACE` never hit this because it resolved any
+  /// unique conflict by deleting the other row — quietly losing it.)
+  ///
+  /// So we clear the value off whichever *other* local row is holding it.
+  /// Nullable columns go to NULL; NOT NULL ones are parked on a sentinel that
+  /// is always resolved before the transaction ends — the parked row is either
+  /// updated by its own entry later in the same payload, or removed by the
+  /// reconcile pass because the server no longer lists it.
+  Future<void> _releaseUniqueValue(
+    String tableName,
+    String column,
+    Object? value,
+    int ownerId, {
+    required bool nullable,
+  }) async {
+    if (value == null) return;
+    final v = value.toString();
+    if (v.isEmpty) return;
+    await _database.customStatement(
+      nullable
+          ? 'UPDATE $tableName SET $column = NULL '
+              'WHERE $column = ? AND id <> ?'
+          : "UPDATE $tableName SET $column = '__sync_parked_' || id "
+              'WHERE $column = ? AND id <> ?',
+      [v, ownerId],
+    );
+  }
+
+  /// Collect the `id` values out of a raw server payload.
+  Set<int> _idsOf(List<Map<String, dynamic>> rows) {
+    final ids = <int>{};
+    for (final r in rows) {
+      final id = r['id'];
+      if (id is int) {
+        ids.add(id);
+      } else if (id is num) {
+        ids.add(id.toInt());
+      }
+    }
+    return ids;
+  }
+
   /// Clear only master data (not transactional data like orders, tickets, sessions).
   ///
-  /// Server-authoritative tables (users, products, categories, waiters,
-  /// commercials, etc.) are wiped here and repopulated by the subsequent
-  /// fetch calls — that way **rows the admin deleted on the backend
-  /// actually disappear from the device**. Tables that have a local-create
-  /// flow (customers, with isSynced=false rows that haven't been uploaded
-  /// yet) are deliberately NOT wiped here; their upload path runs first.
+  /// **No longer used by [syncAllData]** — that path now upserts and reconciles
+  /// (see [_reconcileDeletes]) instead of wiping. This remains the full-reset
+  /// path used by [clearAllData] on tenant logout, where emptying the tables is
+  /// exactly the intent.
   Future<void> clearMasterData() async {
     // Delete in reverse order of dependencies to avoid foreign key issues.
     await _database.delete(_database.kDSs).go();
@@ -54,17 +162,23 @@ class DataSyncService {
     await _database.delete(_database.areaTables).go();
     await _database.delete(_database.areas).go();
     await _database.delete(_database.productComponents).go();
+    await _database.delete(_database.productUnits).go();
     await _database.delete(_database.variantAttributeValues).go();
     await _database.delete(_database.productVariants).go();
     await _database.delete(_database.products).go();
     await _database.delete(_database.components).go();
     await _database.delete(_database.componentGroups).go();
     await _database.delete(_database.stations).go();
+    // Bookable resources catalog (product_resources is repopulated per-product
+    // by _persistProducts, so it doesn't need a separate clear here).
+    await _database.delete(_database.resources).go();
     await _database.delete(_database.categories).go();
     // Waiters + commercials are purely server-authoritative — wipe them so
     // backend deletes propagate to the device on the next sync.
     await _database.delete(_database.commercials).go();
     await _database.delete(_database.waiters).go();
+    await _database.delete(_database.providers).go();
+    await _database.delete(_database.agendaBookings).go();
     await _database.delete(_database.users).go();
   }
 
@@ -185,6 +299,16 @@ class DataSyncService {
             .go();
       });
 
+      // 2e2. ticket_draft_splits — local-only, never synced (see the table's
+      // own doc comment), but keyed by orderId like the rows above, so a
+      // purged order's draft split would otherwise sit orphaned forever:
+      // nothing ever queries it again once the order itself is gone.
+      await deleteInChunks(orderIds, (chunk) async {
+        await (_database.delete(_database.ticketDraftSplits)
+              ..where((t) => t.orderId.isIn(chunk)))
+            .go();
+      });
+
       // 2f. transactions + payments (linked via orders.paymentId →
       //     payments.id, then transactions.paymentId).
       if (paymentIds.isNotEmpty) {
@@ -269,9 +393,16 @@ class DataSyncService {
   /// Clear all data from the database (full tenant logout / reset).
   /// Order respects FK constraints — children before parents.
   Future<void> clearAllData() async {
+    // Refund lines reference refunds, which reference orders — both must go
+    // before the orders below.
+    await _database.delete(_database.refundLines).go();
+    await _database.delete(_database.refunds).go();
     await _database.delete(_database.tickets).go();
     await _database.delete(_database.orderProductComponents).go();
     await _database.delete(_database.orderProducts).go();
+    // Local-only draft ticket splits — never synced, but keyed by orderId
+    // like the rows above.
+    await _database.delete(_database.ticketDraftSplits).go();
     // orderLogs and notes reference orders — must go before orders
     await _database.delete(_database.orderLogs).go();
     await _database.delete(_database.notes).go();
@@ -279,12 +410,18 @@ class DataSyncService {
     await _database.delete(_database.transactions).go();
     await _database.delete(_database.payments).go();
     await _database.delete(_database.cashSessions).go();
+    // Z (shift) rows own the cash sessions above — wipe them too on a full
+    // logout / tenant switch, otherwise a stale open Z would be adopted by the
+    // next login and hand new orders the wrong z_day.
+    await _database.delete(_database.zs).go();
     await _database.delete(_database.customers).go();
     await _database.delete(_database.commercials).go();
     await _database.delete(_database.pendingSyncOperations).go();
     // waiterAreas references areas (cleared in clearMasterData) — must go first
     await _database.delete(_database.waiterAreas).go();
     await _database.delete(_database.waiters).go();
+    await _database.delete(_database.providers).go();
+    await _database.delete(_database.agendaBookings).go();
     await clearMasterData();
   }
 
@@ -300,17 +437,23 @@ class DataSyncService {
   ///     pre-sync data they were just looking at, instead of seeing an
   ///     empty UI mid-purge.
   ///
-  ///   Phase 2 (single transaction): snapshot locally-tracked user
-  ///     fields (`lastLogin`, `displayName`) that the server doesn't
-  ///     send, run `clearMasterData()` + retention purge, then persist
-  ///     all the cached lists. Wrapped in one transaction so the swap
-  ///     is atomic — if anything in phase 2 throws, drift rolls back
-  ///     and the old data is still there.
+  ///   Phase 2 (single transaction): run the retention purge, **upsert**
+  ///     every fetched row (update-or-insert, keyed on the server id),
+  ///     then reconcile — delete only the local ids the payload did not
+  ///     mention. Wrapped in one transaction, so a throw anywhere rolls
+  ///     back to the pre-sync catalog.
   ///
-  /// This replaces the old pattern that cleared and re-fetched inside
-  /// one long transaction — which held DB locks for the whole network
-  /// round-trip and showed an empty UI during the brief window between
-  /// clear and refetch.
+  /// Nothing is ever wiped-then-refilled. Two consequences worth knowing:
+  ///
+  ///   * Locally-owned columns survive without special handling, because
+  ///     they are simply not part of the update set — `area_tables.orderId`
+  ///     / `tableState`, and `users.lastLogin` / `displayName`. The old
+  ///     `INSERT OR REPLACE` deleted and recreated each row, resetting
+  ///     those to defaults, which is what the snapshot/restore helpers
+  ///     used to paper over.
+  ///   * `kds` and `kiosks` are no longer touched at all. syncAllData never
+  ///     fetched them, yet the old wipe deleted them every run and nothing
+  ///     put them back — device registrations silently disappeared.
   Future<void> syncAllData({int? dataRetentionDays}) async {
     try {
       // ── Phase 1: network fetches ────────────────────────────────────
@@ -329,6 +472,16 @@ class DataSyncService {
       onProgress?.call('Fetching product variants...', 0.34);
       final variants = await _apiService.fetchVariants();
 
+      // Serial (unit-level) stock. Tolerated as empty: a tenant that sells
+      // nothing serialised has no rows, and an older server has no endpoint at
+      // all — neither is a reason to fail the whole catalogue sync.
+      List<Map<String, dynamic>> serials = const [];
+      try {
+        serials = await _apiService.fetchSerials();
+      } catch (e) {
+        _logger.warning('Serial sync skipped: $e');
+      }
+
       onProgress?.call('Fetching component groups...', 0.42);
       final componentGroups = await _apiService.fetchComponentGroups();
 
@@ -337,6 +490,16 @@ class DataSyncService {
 
       onProgress?.call('Fetching product components...', 0.58);
       final productComponents = await _apiService.fetchProductComponents();
+
+      // Per-product rule overrides. Newer than most servers in the field, and
+      // the client tolerates its absence, so it must not take a sync down.
+      List<Map<String, dynamic>> productComponentGroups = const [];
+      try {
+        productComponentGroups =
+            await _apiService.fetchProductComponentGroups();
+      } catch (e) {
+        _logger.warning('Product component group rules skipped: $e');
+      }
 
       onProgress?.call('Fetching areas...', 0.66);
       final areas = await _apiService.fetchAreas();
@@ -353,24 +516,53 @@ class DataSyncService {
       onProgress?.call('Fetching waiters...', 0.9);
       final waiters = await _apiService.fetchWaiters();
 
-      // ── Phase 2: atomic swap (snapshot → clear → persist) ───────────
+      // Bookable resources and staff — best-effort (optional endpoints, older
+      // backends 404); [] if absent, which must not fail the master sync.
+      final resources = await _apiService.fetchResources();
+      final serviceProviders = await _apiService.fetchProviders();
+
+      // ── Guard: refuse a destructive wipe on a suspicious EMPTY payload ──
+      // The swap below DELETES the local catalog (tables, products, …) and
+      // repopulates it from the fetches above. A backend that returns an empty
+      // 200 — e.g. when a proxy strips the X-Business-Id header (see the
+      // pos-api-headers note) or a transient tenant-resolution glitch — would
+      // otherwise silently delete every table (dropping their order links) and
+      // every product mid-service. That is the "tables just got deleted"
+      // symptom. Never clear a populated device on the strength of an empty
+      // response: abort and let the next (correct) sync repopulate. A genuine
+      // "admin removed everything" is rare and recoverable; a mid-service wipe
+      // is not.
+      final localTables = await _database.select(_database.areaTables).get();
+      final localProducts = await _database.select(_database.products).get();
+      if (tables.isEmpty && localTables.isNotEmpty) {
+        throw Exception(
+            'Sync aborted: server returned 0 tables but the device has '
+            '${localTables.length}. Refusing to wipe tables (likely a transient/'
+            'backend issue — check X-Business-Id). Local data kept.');
+      }
+      if (products.isEmpty && localProducts.isNotEmpty) {
+        throw Exception(
+            'Sync aborted: server returned 0 products but the device has '
+            '${localProducts.length}. Refusing to wipe the catalog (likely a '
+            'transient/backend issue — check X-Business-Id). Local data kept.');
+      }
+
+      // ── Phase 2: upsert, then reconcile ─────────────────────────────
+      //
+      // The local catalog is never emptied. Every row the server sent is
+      // updated in place (or inserted when new), and only afterwards are the
+      // leftovers — ids the server no longer knows about — deleted. Two things
+      // this buys us over the old clear-then-refill:
+      //
+      //   * There is no instant, even inside the transaction, where the device
+      //     has no products/tables. A crash or a throw mid-way leaves the old
+      //     catalog intact rather than an empty one.
+      //   * Locally-owned columns survive on their own. `area_tables.orderId` /
+      //     `tableState` (set by the cashier's Hold/Pay flow) and
+      //     `users.lastLogin` / `displayName` are simply not part of the update
+      //     set, so they are no longer destroyed and restored from a snapshot.
       onProgress?.call('Updating local data...', 0.95);
       await _database.transaction(() async {
-        // Snapshot 1: locally-tracked user fields. Server doesn't send
-        // lastLogin / displayName, so we'd lose them otherwise.
-        final existingUsers = await _database.select(_database.users).get();
-        final existingUsersById = {for (final u in existingUsers) u.id: u};
-
-        // Snapshot 2: which table is currently holding which order. The
-        // API only sends static table data (name, capacity, area); the
-        // runtime `area_tables.orderId` mapping is set locally by the
-        // cashier (Hold / Pay flows) and would otherwise be wiped when
-        // `clearMasterData` deletes the table rows. Lives in memory until
-        // we've reinserted the new table set and can re-apply it.
-        final tableOrderSnapshot = await _snapshotTableOrders();
-
-        await clearMasterData();
-
         if (dataRetentionDays != null && dataRetentionDays > 0) {
           await clearOldSyncedData(dataRetentionDays);
         }
@@ -379,25 +571,82 @@ class DataSyncService {
         // writer: it doesn't touch the network and can be re-run safely
         // on a partial failure (drift rolls back the transaction on any
         // throw).
-        await _persistUsers(users, existingUsersById);
+        await _persistUsers(users);
         await _persistCategories(categories);
         await _persistStations(stations);
+        await _persistResources(resources);
         await _persistProducts(products);
         await _persistVariants(variants);
+        await _persistSerials(serials);
         await _persistComponentGroups(componentGroups);
         await _persistComponents(components);
         await _persistProductComponents(productComponents);
+        await _persistProductComponentGroups(productComponentGroups);
         await _persistAreas(areas);
         await _persistTables(tables);
-        // Restore the table → order assignments now that the new table
-        // rows exist. Done AFTER `_persistTables` so the update has
-        // something to write to. Skips entries whose order was purged by
-        // the retention pass above, or whose table id no longer exists
-        // in the server's response.
-        await _restoreTableOrders(tableOrderSnapshot);
         await _persistCommercials(commercials);
         await _persistCustomers(customers);
         await _persistWaiters(waiters);
+        await _persistProviders(serviceProviders);
+
+        // ── Reconcile: propagate backend deletes ──────────────────────
+        // Children before parents, mirroring the old clear order. Each call
+        // removes ONLY ids absent from this sync's payload.
+        //
+        // `kds` and `kiosks` are deliberately absent: syncAllData never
+        // fetches them, so they have no payload to reconcile against. The old
+        // clearMasterData() wiped both on every full sync and nothing ever put
+        // them back — device registrations silently vanished. Not reconciling
+        // them is the fix.
+        await _reconcileDeletes(
+            _database.productVariants.actualTableName, _idsOf(variants));
+        // Only reconcile serials when the fetch actually returned something.
+        // An empty list here is ambiguous — endpoint missing, or a genuinely
+        // empty tenant — and wiping the local cache on the ambiguous case would
+        // block every serial-tracked sale until the next successful pull.
+        if (serials.isNotEmpty) {
+          await _reconcileDeletes(
+              _database.serials.actualTableName, _idsOf(serials));
+        }
+        await _reconcileDeletes(
+            _database.products.actualTableName, _idsOf(products));
+        await _reconcileDeletes(
+            _database.components.actualTableName, _idsOf(components));
+        await _reconcileDeletes(
+            _database.componentGroups.actualTableName, _idsOf(componentGroups));
+        await _reconcileDeletes(
+            _database.stations.actualTableName, _idsOf(stations));
+        await _reconcileDeletes(
+            _database.resources.actualTableName, _idsOf(resources));
+        await _reconcileDeletes(
+            _database.categories.actualTableName, _idsOf(categories));
+        // A table still holding an order is never reconciled away: dropping it
+        // would strand that order with no floor position mid-service. It
+        // disappears on a later sync once the order is closed and the link
+        // cleared.
+        await _reconcileDeletes(
+          _database.areaTables.actualTableName,
+          _idsOf(tables),
+          protectWhere: 'order_id IS NOT NULL',
+        );
+        await _reconcileDeletes(
+            _database.areas.actualTableName, _idsOf(areas));
+        await _reconcileDeletes(
+            _database.commercials.actualTableName, _idsOf(commercials));
+        await _reconcileDeletes(
+            _database.waiters.actualTableName, _idsOf(waiters));
+        // Only when the endpoint actually answered: an older backend returns
+        // [] for providers, and reconciling on that would delete the whole
+        // bookable-staff list off a working shop.
+        if (serviceProviders.isNotEmpty) {
+          await _reconcileDeletes(
+              _database.providers.actualTableName, _idsOf(serviceProviders));
+        }
+        await _reconcileDeletes(
+            _database.users.actualTableName, _idsOf(users));
+        // Customers are NOT reconciled — the device creates them locally and
+        // uploads later, so a customer missing from the payload is very often
+        // one this POS just rang up, not one the admin deleted.
       });
 
       onProgress?.call('Sync complete!', 1.0);
@@ -407,51 +656,54 @@ class DataSyncService {
     }
   }
 
-  /// Writes the previously-fetched users into the local DB. Uses the
-  /// snapshot the caller took **before clearMasterData ran** so locally-
-  /// tracked fields (`lastLogin`, `displayName`) survive the swap.
-  Future<void> _persistUsers(
-    List<Map<String, dynamic>> users,
-    Map<int, User> existingById,
-  ) async {
+  /// Writes the previously-fetched users into the local DB.
+  ///
+  /// Upsert, not replace: `lastLogin` and `displayName` are tracked locally and
+  /// never sent by the server, so they are simply left out of the statement
+  /// when absent from the payload — SQLite keeps whatever the row already had.
+  /// The old `INSERT OR REPLACE` destroyed and recreated the row, which is why
+  /// this used to need a pre-wipe snapshot to put those two columns back.
+  Future<void> _persistUsers(List<Map<String, dynamic>> users) async {
     for (final user in users) {
-      final int? id = user['id'];
-      final prior = id != null ? existingById[id] : null;
-
       final createdAt = _parseDateTime(user['createdAt'] ?? user['created_at']);
       final updatedAt = _parseDateTime(user['updatedAt'] ?? user['updated_at']);
       final lastLogin =
-          _parseDateTime(user['lastLogin'] ?? user['last_login']) ?? prior?.lastLogin;
+          _parseDateTime(user['lastLogin'] ?? user['last_login']);
 
-      // Preserve a locally-set displayName when the server doesn't send one
-      // (typical case: the cashier edits their nickname in Profile, and the
-      // backend has no concept of display names yet). Same pattern as
-      // `lastLogin` above.
       final serverDisplayName =
           user['displayName'] ?? user['display_name'];
-      final displayName = (serverDisplayName is String &&
-              serverDisplayName.isNotEmpty)
-          ? serverDisplayName
-          : prior?.displayName;
+      final hasDisplayName =
+          serverDisplayName is String && serverDisplayName.isNotEmpty;
 
-      await _database.into(_database.users).insert(
-        UsersCompanion.insert(
-          id: Value(user['id']),
-          username: user['username'],
-          password: user['password'] ?? '',
-          firstName: user['firstName'] ?? '',
-          lastName: user['lastName'] ?? '',
-          type: user['type'] ?? 'cashier',
-          imageUrl: Value(user['imageUrl']),
-          permissions: Value(_normalizePermissions(user['permissions'])),
-          displayName: Value(displayName),
-          // Only override the column defaults when the server actually sends a value
-          createdAt: createdAt != null ? Value(createdAt) : const Value.absent(),
-          updatedAt: updatedAt != null ? Value(updatedAt) : const Value.absent(),
-          lastLogin: Value(lastLogin),
-        ),
-        mode: InsertMode.insertOrReplace,
-      );
+      final userId = (user['id'] as num?)?.toInt();
+      if (userId != null) {
+        await _releaseUniqueValue(
+            _database.users.actualTableName, 'username', user['username'],
+            userId, nullable: false);
+      }
+
+      await _database.into(_database.users).insertOnConflictUpdate(
+            UsersCompanion.insert(
+              id: Value(user['id']),
+              username: user['username'],
+              password: user['password'] ?? '',
+              firstName: user['firstName'] ?? '',
+              lastName: user['lastName'] ?? '',
+              type: user['type'] ?? 'cashier',
+              imageUrl: Value(user['imageUrl']),
+              permissions: Value(_normalizePermissions(user['permissions'])),
+              // Absent → column keeps its current local value on update.
+              displayName: hasDisplayName
+                  ? Value(serverDisplayName)
+                  : const Value.absent(),
+              createdAt:
+                  createdAt != null ? Value(createdAt) : const Value.absent(),
+              updatedAt:
+                  updatedAt != null ? Value(updatedAt) : const Value.absent(),
+              lastLogin:
+                  lastLogin != null ? Value(lastLogin) : const Value.absent(),
+            ),
+          );
     }
   }
 
@@ -498,7 +750,7 @@ class DataSyncService {
   Future<void> _persistCategories(
       List<Map<String, dynamic>> categories) async {
     for (final category in categories) {
-      await _database.into(_database.categories).insert(
+      await _database.into(_database.categories).insertOnConflictUpdate(
         CategoriesCompanion.insert(
           id: Value(category['id']),
           name: category['name'],
@@ -508,7 +760,6 @@ class DataSyncService {
           isActive: Value(category['isActive'] ?? true),
           color: Value(category['color']),
         ),
-        mode: InsertMode.insertOrReplace,
       );
     }
   }
@@ -516,50 +767,171 @@ class DataSyncService {
   Future<void> _persistStations(
       List<Map<String, dynamic>> stations) async {
     for (final station in stations) {
-      await _database.into(_database.stations).insert(
+      await _database.into(_database.stations).insertOnConflictUpdate(
         StationsCompanion.insert(
           id: Value(station['id']),
           name: station['name'],
           description: Value(station['description']),
         ),
-        mode: InsertMode.insertOrReplace,
       );
+    }
+  }
+
+  /// Persist a product the SERVER just created, through the exact code path a
+  /// catalogue sync uses.
+  ///
+  /// The quick-create endpoint returns the product in the same shape as
+  /// `GET /pos/products`, so reusing `_persistProducts` is not a convenience —
+  /// it is the only way the row ends up byte-identical to what the next full
+  /// sync would write. A bespoke insert here would drift the moment a column is
+  /// added to the sync mapping, and the product would silently change under the
+  /// cashier at the next refresh.
+  Future<void> persistServerProduct(Map<String, dynamic> product) =>
+      _persistProducts([product]);
+
+  /// Same reasoning for the category that may have been created alongside it.
+  Future<void> persistServerCategory(Map<String, dynamic> category) =>
+      _persistCategories([category]);
+
+  /// Platform item -> local product mapping cache.
+  ///
+  /// Pulled with the catalogue so an incoming Glovo/Kooul order can be resolved
+  /// at the counter without a round trip — including on a terminal that has been
+  /// offline since the last sync.
+  Future<void> _persistIntegrationMappings(
+      List<Map<String, dynamic>> items) async {
+    for (final m in items) {
+      final id = (m['id'] as num?)?.toInt();
+      if (id == null) continue;
+      await _database.into(_database.integrationMappings).insertOnConflictUpdate(
+            IntegrationMappingsCompanion.insert(
+              id: Value(id),
+              provider: (m['provider'] ?? '').toString().toUpperCase(),
+              externalId: (m['externalId'] ?? '').toString(),
+              kind: Value((m['kind'] ?? 'PRODUCT').toString().toUpperCase()),
+              productId: Value((m['productId'] as num?)?.toInt()),
+              variantId: Value((m['variantId'] as num?)?.toInt()),
+              componentId: Value((m['componentId'] as num?)?.toInt()),
+              mapped: Value(m['mapped'] as bool? ?? false),
+              externalName: Value(m['externalName'] as String?),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+    }
+  }
+
+  /// Refresh just the mapping cache. Called from the catalogue sync and worth
+  /// calling again when a line fails to resolve — the back office may have
+  /// linked it since the last pull.
+  Future<int> syncIntegrationMappings() async {
+    try {
+      final payload = await _apiService.fetchIntegrationMappings();
+      final items = (payload['items'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList() ??
+          const <Map<String, dynamic>>[];
+      if (items.isEmpty) return 0;
+      await _persistIntegrationMappings(items);
+      await _reconcileDeletes(
+          _database.integrationMappings.actualTableName, _idsOf(items));
+      _logger.info('Integration mappings refreshed (${items.length})');
+      return items.length;
+    } catch (e) {
+      // A tenant with no delivery integration has no endpoint/rows; never let
+      // that fail a catalogue sync.
+      _logger.warning('Integration mapping sync skipped: $e');
+      return 0;
+    }
+  }
+
+  /// Serial (unit-level) stock cache.
+  ///
+  /// Upserts every row the server sent, INCLUDING sold ones — a sold serial is
+  /// what a refund or a reprint has to name, and its `isAvailable: false` is
+  /// also what stops the picker offering a unit another terminal just sold.
+  ///
+  /// The server is authoritative for `isAvailable`, which is exactly what makes
+  /// this the recovery path for a local reservation orphaned by a crash.
+  Future<void> _persistSerials(List<Map<String, dynamic>> serials) async {
+    for (final serial in serials) {
+      final id = (serial['id'] as num?)?.toInt();
+      if (id == null) continue;
+      await _database.into(_database.serials).insertOnConflictUpdate(
+            SerialsCompanion.insert(
+              id: Value(id),
+              serialNumber: (serial['serialNumber'] ?? '').toString(),
+              code: Value(serial['code'] as String?),
+              productId: (serial['productId'] as num?)?.toInt() ?? 0,
+              batchId: Value((serial['batchId'] as num?)?.toInt()),
+              isAvailable: Value(serial['isAvailable'] ?? true),
+              productName: Value(serial['productName'] as String?),
+              batchCode: Value(serial['batchCode'] as String?),
+              uomId: Value((serial['uomId'] as num?)?.toInt()),
+              uomAbbreviation: Value(serial['uomAbbreviation'] as String?),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
     }
   }
 
   Future<void> _persistProducts(
       List<Map<String, dynamic>> products) async {
     for (final product in products) {
-      await _database.into(_database.products).insert(
+      // `price` and `finalPrice` used to be cast unconditionally. The catalogue
+      // sync always sends both, but the quick-create envelope
+      // (`POST /pos/products`) is a different serializer and need not — and a
+      // missing one threw a cast error AFTER the server had already created the
+      // product, so the till reported failure for a product that now existed.
+      // Each falls back to the other, then to 0.
+      final rawPrice = (product['price'] as num?)?.toDouble();
+      final rawFinalPrice = (product['finalPrice'] as num?)?.toDouble();
+      final price = rawPrice ?? rawFinalPrice ?? 0.0;
+      final finalPrice = rawFinalPrice ?? rawPrice ?? 0.0;
+
+      await _database.into(_database.products).insertOnConflictUpdate(
         ProductsCompanion.insert(
           id: Value(product['id']),
-          name: product['name'],
+          name: (product['name'] ?? '').toString(),
           barcode: Value(product['barcode']),
+          reference: Value(product['reference'] as String?),
           imageUrl: Value(product['imageUrl']),
           description: Value(product['description']),
-          price: (product['price'] as num).toDouble(),
+          price: price,
+          // Kept so order lines can carry a cost to the server for margin
+          // reporting. Absent in the payload stays null, not 0.0.
+          cost: Value((product['cost'] as num?)?.toDouble()),
           uom: Value(product['uom'] ?? 'unit'),
           categoryId: Value(product['categoryId']),
           stationId: Value(product['stationId']),
           tvaAmount: Value((product['tvaAmount'] as num?)?.toDouble() ?? 0.0),
           discountAmount: Value((product['discountAmount'] as num?)?.toDouble() ?? 0.0),
-          finalPrice: (product['finalPrice'] as num).toDouble(),
+          finalPrice: finalPrice,
           isActive: Value(product['isActive'] ?? true),
           isVariant: Value(product['isVariant'] ?? false),
-          isPlannable: Value(product['isPlannable'] ?? false),
-          planDurationMinutes: Value(product['planDurationMinutes'] as int?),
+          // Serial tracking: a unit-level product cannot be sold without
+          // naming the exact unit. Absent on older servers → false, i.e.
+          // the existing untracked behaviour.
+          isSerialTracked: Value(product['isSerialTracked'] ?? false),
+          // New backend structure renamed these to isTimeManaged /
+          // serviceDurationMinutes; map at the boundary onto the stable local
+          // columns, falling back to the old names for older servers.
+          isPlannable: Value(
+              product['isTimeManaged'] ?? product['isPlannable'] ?? false),
+          planDurationMinutes: Value(
+              (product['serviceDurationMinutes'] ?? product['planDurationMinutes'])
+                  as int?),
           color: Value(product['color']),
           // Scale / weighed-product fields — null when absent in API response.
           mbwCode: Value(product['mbwCode'] as String?),
           pricePerKg: Value(product['pricePerKg'] as int?),
           unitName: Value(product['unitName'] as String?),
         ),
-        mode: InsertMode.insertOrReplace,
       );
 
       // Sync extra stations (multi-station products). The primary `stationId`
       // above keeps single-station behavior; these are additional stations.
-      final productId = product['id'] as int;
+      final productId = (product['id'] as num?)?.toInt();
+      if (productId == null) continue;
       await (_database.delete(_database.productStations)
             ..where((t) => t.productId.equals(productId)))
           .go();
@@ -574,6 +946,66 @@ class DataSyncService {
               mode: InsertMode.insertOrIgnore,
             );
       }
+
+      // Sellable units beyond the base unit (`units[]`). Rebuilt per product,
+      // like the two joins above. Absent on older backends → the product keeps
+      // base-unit-only selling, exactly as before.
+      final units = (product['units'] as List?) ?? const [];
+      final keepUomIds = <int>[];
+      for (final u in units) {
+        if (u is! Map) continue;
+        final uomId = (u['uomId'] as num?)?.toInt();
+        if (uomId == null) continue;
+        keepUomIds.add(uomId);
+        await _database.into(_database.productUnits).insertOnConflictUpdate(
+              ProductUnitsCompanion.insert(
+                productId: productId,
+                uomId: uomId,
+                unitName: (u['unitName'] ?? '').toString(),
+                factor: Value((u['factor'] as num?)?.toDouble() ?? 1.0),
+                price: Value((u['price'] as num?)?.toDouble() ?? 0.0),
+              ),
+            );
+      }
+      await (_database.delete(_database.productUnits)
+            ..where((t) =>
+                t.productId.equals(productId) & t.uomId.isNotIn(keepUomIds)))
+          .go();
+
+      // Eligible resource pool for a bookable service (mirrors stations above).
+      await (_database.delete(_database.productResources)
+            ..where((t) => t.productId.equals(productId)))
+          .go();
+      final resourceIds = (product['resourceIds'] as List?)
+              ?.map((e) => e is int ? e : int.tryParse(e.toString()))
+              .whereType<int>()
+              .toList() ??
+          const [];
+      for (final rid in resourceIds) {
+        await _database.into(_database.productResources).insert(
+              ProductResourcesCompanion.insert(
+                  productId: productId, resourceId: rid),
+              mode: InsertMode.insertOrIgnore,
+            );
+      }
+    }
+  }
+
+  Future<void> _persistResources(
+      List<Map<String, dynamic>> resources) async {
+    for (final r in resources) {
+      final id = (r['id'] as num?)?.toInt();
+      if (id == null) continue;
+      await _database.into(_database.resources).insertOnConflictUpdate(
+            ResourcesCompanion.insert(
+              id: Value(id),
+              name: (r['name'] ?? 'Resource $id').toString(),
+              type: Value((r['type'] ?? 'OTHER').toString().toUpperCase()),
+              capacity: Value((r['capacity'] as num?)?.toInt() ?? 1),
+              businessId: Value((r['businessId'] as num?)?.toInt()),
+              isActive: Value(r['isActive'] as bool? ?? true),
+            ),
+          );
     }
   }
 
@@ -581,7 +1013,7 @@ class DataSyncService {
       List<Map<String, dynamic>> variants) async {
     for (final variant in variants) {
       // Insert variant
-      await _database.into(_database.productVariants).insert(
+      await _database.into(_database.productVariants).insertOnConflictUpdate(
         ProductVariantsCompanion.insert(
           id: Value(variant['id']),
           productId: variant['productId'],
@@ -596,16 +1028,32 @@ class DataSyncService {
           cost: Value((variant['cost'] as num?)?.toDouble()),
           tvaAmount: Value((variant['tvaAmount'] as num?)?.toDouble() ?? 0.0),
           isActive: Value(variant['isActive'] ?? true),
+          isSerialTracked: Value(variant['isSerialTracked'] ?? false),
         ),
-        mode: InsertMode.insertOrReplace,
       );
 
-      // Insert attribute values for this variant
+      // Attribute values for this variant. The row's PK is an autoIncrement
+      // `id` the server never sends, so `insertOnConflictUpdate` would have
+      // nothing to match on — `insertOrReplace` is kept here deliberately
+      // because it resolves against the UNIQUE(variant_id, attribute_id)
+      // index instead. Attributes the server dropped are reconciled away
+      // first, since without the old table-wide wipe they would linger.
+      final variantId = variant['id'] as int;
       final attributeValues = variant['attributeValues'] as List<dynamic>? ?? [];
+      final keepAttributeIds = attributeValues
+          .map((av) => (av['attributeId'] as num?)?.toInt())
+          .whereType<int>()
+          .toList();
+      await (_database.delete(_database.variantAttributeValues)
+            ..where((t) =>
+                t.variantId.equals(variantId) &
+                t.attributeId.isNotIn(keepAttributeIds)))
+          .go();
+
       for (final av in attributeValues) {
         await _database.into(_database.variantAttributeValues).insert(
           VariantAttributeValuesCompanion.insert(
-            variantId: variant['id'],
+            variantId: variantId,
             attributeId: av['attributeId'],
             attributeName: Value(av['attributeName']),
             valueId: av['valueId'],
@@ -620,14 +1068,22 @@ class DataSyncService {
   Future<void> _persistComponentGroups(
       List<Map<String, dynamic>> groups) async {
     for (final group in groups) {
-      await _database.into(_database.componentGroups).insert(
+      await _database.into(_database.componentGroups).insertOnConflictUpdate(
         ComponentGroupsCompanion.insert(
           id: Value(group['id']),
           name: group['name'],
           description: Value(group['description']),
           displayOrder: Value(group['displayOrder'] ?? 0),
+          color: Value(group['color'] as String?),
+          // A server that predates the rules sends none of these. Defaulting
+          // to the permissive QUANTITY/0/unlimited keeps such a group behaving
+          // exactly as it did before the POS knew rules existed.
+          selectionType:
+              Value((group['selectionType'] as String?) ?? 'QUANTITY'),
+          minSelection: Value((group['minSelection'] as num?)?.toInt() ?? 0),
+          maxSelection: Value((group['maxSelection'] as num?)?.toInt()),
+          freeQuantity: Value((group['freeQuantity'] as num?)?.toInt() ?? 0),
         ),
-        mode: InsertMode.insertOrReplace,
       );
     }
   }
@@ -635,113 +1091,192 @@ class DataSyncService {
   Future<void> _persistComponents(
       List<Map<String, dynamic>> components) async {
     for (final component in components) {
-      await _database.into(_database.components).insert(
+      await _database.into(_database.components).insertOnConflictUpdate(
         ComponentsCompanion.insert(
           id: Value(component['id']),
           name: component['name'],
           price: Value((component['price'] as num?)?.toDouble() ?? 0.0),
           componentGroupId: Value(component['componentGroupId']),
+          // Absent on older servers, where nothing was ever 86'd.
+          isActive: Value(component['isActive'] as bool? ?? true),
+          displayOrder: Value((component['displayOrder'] as num?)?.toInt() ?? 0),
+          // Absent until the backend exposes the stock link on the POS
+          // payload; null simply means "not a product in its own right".
+          linkedProductId: Value((component['linkedProductId'] as num?)?.toInt()),
+          linkedVariantId: Value((component['linkedVariantId'] as num?)?.toInt()),
         ),
-        mode: InsertMode.insertOrReplace,
       );
     }
   }
 
+  /// Replace the per-product group rule overrides.
+  ///
+  /// The payload is the complete set of overrides, so anything the server no
+  /// longer lists has been removed and that product must fall back to its
+  /// group defaults. A wipe-and-fill is honest here in a way it is not for the
+  /// product↔component join: this table holds no local state and no
+  /// server-assigned id worth preserving.
+  ///
+  /// An empty payload is left alone rather than treated as "everything was
+  /// deleted": the endpoint is new, and on a server that does not have it the
+  /// fetch returns empty. Wiping real overrides because an older backend
+  /// answered 404 would quietly turn every required group optional.
+  Future<void> _persistProductComponentGroups(
+      List<Map<String, dynamic>> rules) async {
+    if (rules.isEmpty) return;
+
+    await _database.delete(_database.productComponentGroups).go();
+    for (final rule in rules) {
+      final productId = (rule['productId'] as num?)?.toInt();
+      final groupId = (rule['groupId'] as num?)?.toInt();
+      if (productId == null || groupId == null) continue;
+
+      await _database
+          .into(_database.productComponentGroups)
+          .insertOnConflictUpdate(
+            ProductComponentGroupsCompanion.insert(
+              productId: productId,
+              groupId: groupId,
+              selectionType: Value(rule['selectionType'] as String?),
+              minSelection: Value((rule['minSelection'] as num?)?.toInt()),
+              maxSelection: Value((rule['maxSelection'] as num?)?.toInt()),
+              freeQuantity: Value((rule['freeQuantity'] as num?)?.toInt()),
+              isRequired: Value(rule['isRequired'] as bool?),
+              displayOrder:
+                  Value((rule['displayOrder'] as num?)?.toInt() ?? 0),
+            ),
+          );
+    }
+  }
+
+  /// Reconciling upsert for the product↔component join.
+  ///
+  /// This table's PK is an autoIncrement `id` the server never sends, and it
+  /// carries no unique constraint on `(product_id, component_id)`. A plain
+  /// insert therefore appends a brand-new row on every sync — harmless only
+  /// while something wiped the table first, which is exactly what the old
+  /// `clearMasterData()` did. With the wipe gone we match on the pair
+  /// ourselves: update the rows that already exist, insert the genuinely new
+  /// ones, and delete the pairs the server dropped.
   Future<void> _persistProductComponents(
       List<Map<String, dynamic>> productComponents) async {
-    for (final pc in productComponents) {
-      await _database.into(_database.productComponents).insert(
-        ProductComponentsCompanion.insert(
-          productId: pc['productId'],
-          componentId: pc['componentId'],
-          defaultPrice: Value((pc['defaultPrice'] as num?)?.toDouble() ?? 0.0),
-          defaultQuantity: Value(pc['defaultQuantity'] ?? 0),
+    String keyOf(int productId, int componentId) => '$productId:$componentId';
 
-          isRequired: Value(pc['isRequired'] ?? false),
-          minQuantity: Value(pc['minQuantity'] ?? 0),
-          maxQuantity: Value(pc['maxQuantity'] ?? 10),
-        ),
-        mode: InsertMode.insertOrReplace,
+    final existing = await _database.select(_database.productComponents).get();
+    final idByPair = <String, int>{};
+    for (final row in existing) {
+      // Keep the first id per pair; any historic duplicates fall through to
+      // the stale sweep below and get cleaned up on this pass.
+      idByPair.putIfAbsent(keyOf(row.productId, row.componentId), () => row.id);
+    }
+
+    final seen = <String>{};
+    for (final pc in productComponents) {
+      final productId = (pc['productId'] as num?)?.toInt();
+      final componentId = (pc['componentId'] as num?)?.toInt();
+      if (productId == null || componentId == null) continue;
+      final key = keyOf(productId, componentId);
+      seen.add(key);
+
+      final companion = ProductComponentsCompanion(
+        productId: Value(productId),
+        componentId: Value(componentId),
+        // Null stays null: it means "this link sets no price", and the
+        // component's catalogue price answers instead. Storing 0.0 for it
+        // made every un-overridden option free.
+        defaultPrice: Value((pc['defaultPrice'] as num?)?.toDouble()),
+        defaultQuantity: Value(pc['defaultQuantity'] ?? 0),
+        isRequired: Value(pc['isRequired'] ?? false),
+        minQuantity: Value(pc['minQuantity'] ?? 0),
+        // 0 from the server means *no ceiling*, not "none allowed" — it
+        // coerces a null max to 0. Stored as-is and read through
+        // effectiveMaxQuantity, which treats it as unlimited; the old
+        // fallback of 10 was a guess at a bound the server never set.
+        maxQuantity: Value((pc['maxQuantity'] as num?)?.toInt() ?? 0),
+        // Absent on servers without the feature, and on every link the back
+        // office has not flagged.
+        chargeOnRemoval: Value(pc['chargeOnRemoval'] as bool? ?? false),
+        updatedAt: Value(DateTime.now()),
       );
+
+      final existingId = idByPair[key];
+      if (existingId != null) {
+        await (_database.update(_database.productComponents)
+              ..where((t) => t.id.equals(existingId)))
+            .write(companion);
+      } else {
+        await _database.into(_database.productComponents).insert(companion);
+      }
+    }
+
+    // Pairs the server no longer sends (plus any legacy duplicate rows).
+    final stale = <int>[];
+    for (final row in existing) {
+      final key = keyOf(row.productId, row.componentId);
+      if (!seen.contains(key) || idByPair[key] != row.id) stale.add(row.id);
+    }
+    if (stale.isNotEmpty) {
+      const chunkSize = 500;
+      for (var i = 0; i < stale.length; i += chunkSize) {
+        final end = (i + chunkSize).clamp(0, stale.length);
+        final chunk = stale.sublist(i, end);
+        await (_database.delete(_database.productComponents)
+              ..where((t) => t.id.isIn(chunk)))
+            .go();
+      }
     }
   }
 
   Future<void> _persistAreas(
       List<Map<String, dynamic>> areas) async {
     for (final area in areas) {
-      await _database.into(_database.areas).insert(
+      await _database.into(_database.areas).insertOnConflictUpdate(
         AreasCompanion.insert(
           id: Value(area['id']),
           name: area['name'],
           description: Value(area['description']),
         ),
-        mode: InsertMode.insertOrReplace,
       );
     }
   }
 
-  /// Read the current `tableId → orderId` mapping into memory. Only rows
-  /// with an active order are captured — empty tables don't need to be
-  /// "restored" since the new table set starts empty anyway.
-  Future<Map<int, int>> _snapshotTableOrders() async {
-    final rows = await (_database.select(_database.areaTables)
-          ..where((t) => t.orderId.isNotNull()))
-        .get();
-    return {for (final r in rows) r.id: r.orderId!};
-  }
-
-  /// Re-apply a `tableId → orderId` mapping captured by
-  /// [_snapshotTableOrders] before the table rows were wiped.
+  /// Upserts the server's static table data (name, capacity, area).
   ///
-  /// Two guards:
-  ///   - If the new (server-returned) table set doesn't include a snapshot
-  ///     id, the `UPDATE ... WHERE id = ?` simply matches zero rows and
-  ///     the entry is silently dropped — the table doesn't exist anymore.
-  ///   - If the referenced order was purged by the retention pass that
-  ///     ran earlier in the same transaction, skip the restore so we
-  ///     don't reattach a dangling FK.
-  Future<void> _restoreTableOrders(Map<int, int> mapping) async {
-    if (mapping.isEmpty) return;
-    final orderIds = mapping.values.toSet().toList();
-    final survivors = await (_database.select(_database.orders)
-          ..where((o) => o.id.isIn(orderIds)))
-        .get();
-    final survivingIds = survivors.map((o) => o.id).toSet();
-
-    for (final entry in mapping.entries) {
-      if (!survivingIds.contains(entry.value)) continue;
-      await (_database.update(_database.areaTables)
-            ..where((t) => t.id.equals(entry.key)))
-          .write(AreaTablesCompanion(orderId: Value(entry.value)));
-    }
-  }
-
+  /// `orderId` and `tableState` are runtime, cashier-owned columns and are
+  /// deliberately absent from the statement, so an update never touches them.
+  /// Under the old `INSERT OR REPLACE` the row was destroyed and recreated,
+  /// which reset both to their defaults — hence the snapshot/restore pair this
+  /// replaces, and hence occupied tables appearing free after a sync.
   Future<void> _persistTables(
       List<Map<String, dynamic>> tables) async {
     for (final table in tables) {
-      await _database.into(_database.areaTables).insert(
-        AreaTablesCompanion.insert(
-          id: Value(table['id']),
-          name: table['name'],
-          capacity: Value(table['capacity'] ?? 4),
-          areaId: Value(table['areaId']),
-        ),
-        mode: InsertMode.insertOrReplace,
-      );
+      await _database.into(_database.areaTables).insertOnConflictUpdate(
+            AreaTablesCompanion.insert(
+              id: Value(table['id']),
+              name: table['name'],
+              capacity: Value(table['capacity'] ?? 4),
+              areaId: Value(table['areaId']),
+            ),
+          );
     }
   }
 
   Future<void> _persistCommercials(
       List<Map<String, dynamic>> commercials) async {
     for (final commercial in commercials) {
-      await _database.into(_database.commercials).insert(
+      final commercialId = (commercial['id'] as num?)?.toInt();
+      if (commercialId != null) {
+        await _releaseUniqueValue(_database.commercials.actualTableName, 'cin',
+            commercial['cin'], commercialId,
+            nullable: false);
+      }
+      await _database.into(_database.commercials).insertOnConflictUpdate(
         CommercialsCompanion.insert(
           id: Value(commercial['id']),
           firstName: commercial['firstName'],
           lastName: commercial['lastName'],
           cin: commercial['cin'],
         ),
-        mode: InsertMode.insertOrReplace,
       );
     }
   }
@@ -764,7 +1299,13 @@ class DataSyncService {
       // Use it when present so the local row reflects the canonical
       // last-touched timestamp; fall back to existing default otherwise.
       final updatedAt = _parseDateTime(customer['updatedAt']);
-      await _database.into(_database.customers).insert(
+      final customerId = (customer['id'] as num?)?.toInt();
+      if (customerId != null) {
+        await _releaseUniqueValue(_database.customers.actualTableName,
+            'phone_normalized', normalised, customerId,
+            nullable: true);
+      }
+      await _database.into(_database.customers).insertOnConflictUpdate(
         CustomersCompanion.insert(
           id: Value(customer['id']),
           firstName: Value(customer['firstName'] ?? ''),
@@ -775,7 +1316,6 @@ class DataSyncService {
           isSynced: const Value(true), // Data from server is already synced
           updatedAt: updatedAt != null ? Value(updatedAt) : const Value.absent(),
         ),
-        mode: InsertMode.insertOrReplace,
       );
     }
   }
@@ -791,17 +1331,101 @@ class DataSyncService {
     return '$cc$d';
   }
 
+  Future<void> _persistProviders(
+      List<Map<String, dynamic>> serviceProviders) async {
+    for (final row in serviceProviders) {
+      final id = (row['id'] as num?)?.toInt();
+      if (id == null) continue;
+      await _database.into(_database.providers).insertOnConflictUpdate(
+            ProvidersCompanion.insert(
+              id: Value(id),
+              firstName: (row['firstName'] ?? '').toString(),
+              lastName: Value(row['lastName']?.toString()),
+              imageUrl: Value(row['imageUrl']?.toString()),
+              username: Value(row['username']?.toString()),
+              passwordHash: Value(row['passwordHash']?.toString()),
+              pin: Value(row['pin']?.toString()),
+              isActive: Value(row['isActive'] as bool? ?? true),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+    }
+  }
+
+  /// Replace the cached diary for the pulled window.
+  ///
+  /// Scoped to the window rather than wiping the table: pulling one week must
+  /// not blank the weeks the terminal already has, and a booking that vanished
+  /// from the window genuinely was unscheduled, canceled, or moved out of it.
+  ///
+  /// Matched by **overlap**, exactly like the endpoint: a booking that starts
+  /// at 23:30 on the last day of the window is part of that window, and a
+  /// start-only match would leave a stale copy behind after it moved.
+  ///
+  /// One transaction, so the agenda never paints a half-empty week.
+  Future<void> cacheAgenda(
+    List<AgendaBookingDto> bookings, {
+    required DateTime windowStart,
+    required DateTime windowEnd,
+  }) async {
+    await _database.transaction(() async {
+      await (_database.delete(_database.agendaBookings)
+            ..where((t) =>
+                t.planStartAt.isSmallerThanValue(windowEnd) &
+                t.planEndAt.isBiggerThanValue(windowStart)))
+          .go();
+
+      for (final b in bookings) {
+        if (!b.hasWindow) continue;
+        await _database.into(_database.agendaBookings).insertOnConflictUpdate(
+              AgendaBookingsCompanion.insert(
+                orderProductId: Value(b.orderProductId),
+                orderId: Value(b.orderId),
+                orderCode: Value(b.orderCode),
+                productId: Value(b.productId),
+                productName: Value(b.productName),
+                customerName: Value(b.customerName),
+                customerPhone: Value(b.customerPhone),
+                note: Value(b.note),
+                planStartAt: b.planStartAt,
+                planEndAt: b.planEndAt,
+                planWaiterId: Value(b.planWaiterId),
+                planWaiterName: Value(b.planWaiterName),
+                planResourceId: Value(b.planResourceId),
+                planResourceName: Value(b.planResourceName),
+                planResourceType: Value(b.planResourceType),
+                value: Value(b.value),
+                state: Value(b.lineState ?? 'PENDING'),
+                fetchedAt: Value(DateTime.now()),
+              ),
+            );
+      }
+    });
+  }
+
+  /// Drop a booking from the cache the moment it is unscheduled, so the agenda
+  /// does not keep showing a slot the server has already freed.
+  Future<void> removeCachedBooking(int orderProductId) async {
+    await (_database.delete(_database.agendaBookings)
+          ..where((t) => t.orderProductId.equals(orderProductId)))
+        .go();
+  }
+
   Future<void> _persistWaiters(
       List<Map<String, dynamic>> waiters) async {
-    // No per-waiter clear of `waiter_areas` needed — clearMasterData
-    // already wiped that table at the start of the transaction.
     for (final waiter in waiters) {
       // `pin` is the credential the waiter app uses to authenticate against
       // the local POS — see `_waiterLogin` in server_service.dart. Stored
       // as-is (plaintext) since the LAN-only server has no separate hashing
       // requirement; uniqueness is enforced by the partial index added at
       // schemaVersion 18.
-      await _database.into(_database.waiters).insert(
+      final wId = (waiter['id'] as num?)?.toInt();
+      if (wId != null) {
+        await _releaseUniqueValue(
+            _database.waiters.actualTableName, 'pin', waiter['pin'], wId,
+            nullable: true);
+      }
+      await _database.into(_database.waiters).insertOnConflictUpdate(
         WaitersCompanion.insert(
           id: Value(waiter['id']),
           firstName: waiter['firstName'] ?? '',
@@ -812,17 +1436,23 @@ class DataSyncService {
           passwordHash: Value(waiter['passwordHash']),
           isActive: const Value(true),
         ),
-        mode: InsertMode.insertOrReplace,
       );
 
-      // Insert waiter-area assignments
-      final areaIds = waiter['areaIds'] as List<dynamic>? ?? [];
+      // Waiter→area assignments. Reconciled per waiter: without the old
+      // table-wide wipe, an area the admin unassigned would otherwise stay
+      // attached forever and keep routing that waiter's tables.
+      final waiterId = waiter['id'] as int;
+      final areaIds = (waiter['areaIds'] as List<dynamic>? ?? [])
+          .map((e) => e is int ? e : int.tryParse(e.toString()))
+          .whereType<int>()
+          .toList();
+      await (_database.delete(_database.waiterAreas)
+            ..where((t) =>
+                t.waiterId.equals(waiterId) & t.areaId.isNotIn(areaIds)))
+          .go();
       for (final areaId in areaIds) {
         await _database.into(_database.waiterAreas).insert(
-          WaiterAreasCompanion.insert(
-            waiterId: waiter['id'],
-            areaId: areaId as int,
-          ),
+          WaiterAreasCompanion.insert(waiterId: waiterId, areaId: areaId),
           mode: InsertMode.insertOrIgnore,
         );
       }
@@ -831,6 +1461,38 @@ class DataSyncService {
 
   // ============ UPLOAD LOCAL DATA TO SERVER ============
 
+  /// Fields shared by both order-sync payload builders (`getOrdersForSync` for
+  /// the bulk path and `syncSingleOrder` for the immediate one), kept in one
+  /// place so the two can't drift apart again.
+  ///
+  /// Every entry is conditional: an order that has none of these produces an
+  /// empty map and therefore exactly the payload the POS sent before these
+  /// columns existed. `deliveryStatus` in particular must be *absent* rather
+  /// than null — the contract reads absent as "don't change" and an unknown
+  /// value as NONE, so sending null on a non-delivery order would clear it.
+  Map<String, dynamic> _orderContractFields(Order order) => {
+        // Delivery charge, top-level next to `tip` in PosOrderRequest. Sent on
+        // create and on every re-sync, but ONLY when we actually hold a value:
+        // the contract reads a missing/null `deliveryFee` as "don't change",
+        // so sending null on an order that never had one would be a no-op at
+        // best and, on a server that reads null as "clear", would wipe a fee
+        // the platform set. An explicit 0 ("free delivery") IS sent, because
+        // the test below is on null, not on `> 0`.
+        if (order.deliveryFee != null) 'deliveryFee': order.deliveryFee,
+        if (order.externalOrderId != null)
+          'externalOrderId': order.externalOrderId,
+        // The courier-facing platform code, sent alongside the machine id so
+        // the server persists it and echoes it back on every order response.
+        // That echo is what lets a reprint work on a terminal that never saw
+        // the original queue row.
+        if (order.externalOrderCode != null)
+          'externalOrderCode': order.externalOrderCode,
+        if (order.deliveryStatus != null)
+          'deliveryStatus': order.deliveryStatus,
+        if (order.courierName != null) 'courierName': order.courierName,
+        if (order.courierPhone != null) 'courierPhone': order.courierPhone,
+      };
+
   /// Build products list for sync, merging order-level discount percentage
   /// into each product's manualDiscount proportionally.
   ///
@@ -838,7 +1500,11 @@ class DataSyncService {
   /// Effective price after existing discounts = $10 - $5 = $5.
   /// Order discount on that = $5 * 50% = $2.50.
   /// Final manualDiscount sent to server = $5 + $2.50 = $7.50.
-  Future<List<Map<String, dynamic>>> _buildProductsListForSync(
+  /// Exposed for tests: the per-line cost resolution below (variant cost
+  /// beats product cost, unknown stays absent) is worth pinning, and the
+  /// method only reads the DB, so a test can call it directly.
+  @visibleForTesting
+  Future<List<Map<String, dynamic>>> buildProductsListForSync(
     List<OrderProduct> orderProducts,
     double discountPercentage,
   ) async {
@@ -854,17 +1520,56 @@ class DataSyncService {
       componentsByProductId.putIfAbsent(comp.orderProductId, () => []).add(comp);
     }
 
+    // Per-line cost for server-side margin reporting. Batch-loaded in two
+    // queries rather than per line — a Z-close sync can push hundreds of lines.
+    //
+    // A variant's own cost wins when the line sold a variant, because a large
+    // size can cost more to make than the base product. Falls back to the
+    // product cost, and stays null when the catalogue never supplied one:
+    // sending 0.0 for "unknown" would read as a 100% margin on the server.
+    final catalogueIds = orderProducts.map((p) => p.productId).toSet().toList();
+    final variantIds =
+        orderProducts.map((p) => p.variantId).whereType<int>().toSet().toList();
+    final costByProductId = <int, double?>{};
+    if (catalogueIds.isNotEmpty) {
+      final rows = await (_database.select(_database.products)
+            ..where((t) => t.id.isIn(catalogueIds)))
+          .get();
+      for (final r in rows) {
+        costByProductId[r.id] = r.cost;
+      }
+    }
+    final costByVariantId = <int, double?>{};
+    if (variantIds.isNotEmpty) {
+      final rows = await (_database.select(_database.productVariants)
+            ..where((t) => t.id.isIn(variantIds)))
+          .get();
+      for (final r in rows) {
+        costByVariantId[r.id] = r.cost;
+      }
+    }
+
     final productDataList = <Map<String, dynamic>>[];
     final effectivePrices = <double>[];
 
     for (final product in orderProducts) {
       final productComponents = componentsByProductId[product.id] ?? [];
 
-      final componentsList = productComponents.map((comp) => {
+      // Removal charges are the server's to work out, from the explicit
+      // quantity we send for the component itself. Echoing our own copy back
+      // as an option would have it deduct stock for something nobody served,
+      // and the server drops rows it did not materialise anyway.
+      final componentsList = productComponents
+          .where((comp) => !comp.removalCharge)
+          .map((comp) => {
         'componentId': comp.componentId,
         'quantity': comp.quantity,
         'price': comp.price,
         'isSpecial': comp.isSpecial,
+        // Name captured at order time. Omitted (not null) on legacy rows so
+        // the server falls back to the component's current name exactly as
+        // it did before this field existed.
+        if (comp.name != null && comp.name!.isNotEmpty) 'name': comp.name,
       }).toList();
 
       double componentTotal = 0.0;
@@ -876,17 +1581,44 @@ class DataSyncService {
       final effectiveTotal = effectivePerItem * product.quantity;
       effectivePrices.add(effectiveTotal > 0 ? effectiveTotal : 0.0);
 
+      // The snapshot taken when the line was rung up wins. The catalogue
+      // lookup is only a fallback for rows created before `order_products.cost`
+      // existed — without it, every order already in the queue at upgrade time
+      // would sync with no cost at all.
+      final lineCost = product.cost ??
+          (product.variantId != null
+                  ? costByVariantId[product.variantId]
+                  : null) ??
+          costByProductId[product.productId];
+
       productDataList.add({
         'productId': product.productId,
         'variantId': product.variantId,
         'quantity': product.quantity,
         'unitaryPrice': product.unitaryPrice,
+        // Per-unit cost at sync time. Omitted rather than null when unknown, so
+        // a server that stores this can tell "no cost on file" from "zero cost".
+        if (lineCost != null) 'cost': lineCost,
         'unitaryDiscount': product.unitaryDiscount,
         'unitaryTva': product.unitaryTva,
         'manualDiscount': product.manualDiscount,
+        if (product.manualDiscountReason != null)
+          'manualDiscountReason': product.manualDiscountReason,
+        // UOM the quantity is expressed in. Omitted for base-unit lines, which
+        // is what every pre-existing line is — the server treats absent as 1:1.
+        if (product.saleUomId != null) 'saleUomId': product.saleUomId,
+        // The individual unit sold. Only ever present on a serial-tracked line —
+        // the server 400s a serialId on a normal product, and 400s a tracked
+        // line without one.
+        if (product.serialId != null) 'serialId': product.serialId,
         'note': product.note,
         'state': product.state,
         'zDay': product.zDay?.toIso8601String(),
+        // Booking fields — send times as explicit UTC (server stores UTC).
+        'planStartAt': product.planStartAt?.toUtc().toIso8601String(),
+        'planEndAt': product.planEndAt?.toUtc().toIso8601String(),
+        'planWaiterId': product.planWaiterId,
+        'planResourceId': product.planResourceId,
         'components': componentsList,
       });
     }
@@ -960,7 +1692,7 @@ class DataSyncService {
         .get();
 
       // Build products list, merging order-level discount into manualDiscount
-      final productsList = await _buildProductsListForSync(orderProducts, order.discountPercentage);
+      final productsList = await buildProductsListForSync(orderProducts, order.discountPercentage);
 
       // Build order map with products - discountPercentage is set to 0
       // because it has been merged into each product's manualDiscount
@@ -1002,6 +1734,7 @@ class DataSyncService {
             ? null
             : sessionCodeById[order.sessionId!],
         'zDay': order.zDay?.toIso8601String(),
+        ..._orderContractFields(order),
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),
         'updatedAt': order.updatedAt.toIso8601String(),
@@ -1061,9 +1794,17 @@ class DataSyncService {
     final sessions = await (_database.select(_database.cashSessions)
       ..where((s) => s.status.equals('ended') & s.isSynced.equals(false)))
       .get();
+    // Resolve each session's Z (shift) to its backend code.
+    final zIds = sessions.map((s) => s.zId).whereType<int>().toSet().toList();
+    final zRows = zIds.isEmpty
+        ? const <Z>[]
+        : await (_database.select(_database.zs)..where((z) => z.id.isIn(zIds)))
+            .get();
+    final zCodeById = {for (final z in zRows) z.id: z.code};
     return sessions.map((s) => {
       'id': s.id,
       'code': s.code,
+      'zCode': s.zId == null ? null : zCodeById[s.zId],
       'cashierId': s.cashierId,
       'moneyAtStart': s.moneyAtStart,
       'moneyAtEnd': s.moneyAtEnd,
@@ -1074,6 +1815,402 @@ class DataSyncService {
       'endedAt': s.endedAt?.toIso8601String(),
       'pausedAt': s.pausedAt?.toIso8601String(),
     }).toList();
+  }
+
+  // ── Z (shift) sync — pushed BEFORE sessions (sessions reference z code) ──
+
+  /// Unsynced Z rows (open OR closed) so the server tracks the currently-open Z
+  /// for uniqueness and receives the final aggregate at close. Stamps `posId`.
+  Future<List<Map<String, dynamic>>> getZsForSync() async {
+    final posId = _apiService.getPosId();
+    final zs = await (_database.select(_database.zs)
+          ..where((z) => z.isSynced.equals(false)))
+        .get();
+    return zs.map((z) => {
+          'id': z.id,
+          'code': z.code,
+          'posId': z.posId ?? posId,
+          'createdBy': z.createdBy,
+          'startedAt': z.startedAt.toIso8601String(),
+          'endedAt': z.endedAt?.toIso8601String(),
+          'endedBy': z.endedBy,
+          'status': z.status,
+          'totalPaid': z.totalPaid,
+          'details': z.details == null ? null : jsonDecode(z.details!),
+        }).toList();
+  }
+
+  Future<void> markZsAsSynced(List<int> zIds) async {
+    if (zIds.isEmpty) return;
+    await (_database.update(_database.zs)..where((z) => z.id.isIn(zIds)))
+        .write(const ZsCompanion(isSynced: Value(true)));
+  }
+
+  /// Push unsynced Z rows (bulk-first, per-item fallback) — mirror of
+  /// [syncSessionsBulk].
+  Future<int> syncZsBulk({int batchSize = 50}) async {
+    try {
+      final zs = await getZsForSync();
+      if (zs.isEmpty) return 0;
+      final batch = zs.take(batchSize).toList();
+      try {
+        await _apiService.syncZs(batch);
+        await markZsAsSynced(batch.map((z) => z['id'] as int).toList());
+        return batch.length;
+      } on ZAlreadyOpenException catch (conflict) {
+        await _adoptServerOpenZ(conflict);
+        return 0;
+      } catch (bulkError) {
+        _logger.warning('Bulk Z sync failed, falling back to individual: $bulkError');
+        int ok = 0;
+        for (final z in batch) {
+          try {
+            await _apiService.syncSingleZ(z['code'] as String, z);
+            await markZsAsSynced([z['id'] as int]);
+            ok++;
+          } on ZAlreadyOpenException catch (conflict) {
+            await _adoptServerOpenZ(conflict);
+            // Every remaining open Z in this batch would hit the same wall.
+            break;
+          } catch (e) {
+            _logger.error('Individual Z sync failed for #${z['id']}: $e');
+          }
+        }
+        return ok;
+      }
+    } catch (e) {
+      _logger.error('Error syncing Zs bulk: $e');
+      return 0;
+    }
+  }
+
+  /// Push unsynced refunds. POST /pos/refunds/bulk.
+  ///
+  /// A refund line must reference the SERVER's `order_products.id`, which the
+  /// POS does not assign. So before sending we make sure the parent order is
+  /// synced and then learn its line ids from `GET /pos/orders/{code}`, caching
+  /// them onto `order_products.serverId`. A refund whose ids still can't be
+  /// resolved is left unsynced and retried on the next cycle rather than sent
+  /// with wrong ids.
+  Future<int> syncRefundsBulk({int batchSize = 50}) async {
+    try {
+      // Previously-refused refunds are included, deliberately.
+      //
+      // They used to be excluded on the reasoning that they had already failed
+      // on their own merits and would roll back the batch around them. Both
+      // halves of that turned out to be wrong: the server runs each refund in
+      // its own transaction, so one failure poisons nothing, and its failure
+      // map mixes permanent rejections (over-refund, unknown order) with
+      // transient database errors that carry no distinguishing message.
+      // Excluding them meant a refund that failed once for a moment's reason
+      // was never sent again — money given back that never reached the books.
+      //
+      // Re-sending cannot double-refund: the endpoint is idempotent on `code`,
+      // so one the server already accepted comes back as skipped. A genuinely
+      // invalid refund simply keeps failing, and keeps saying why on the
+      // pending-sync screen, which is where it belongs until a human fixes it.
+      final pending = await refundsAwaitingSync(batchSize);
+      if (pending.isEmpty) return 0;
+
+      final payload = <Map<String, dynamic>>[];
+      final sentIds = <int>[];
+
+      for (final refund in pending) {
+        final order = await (_database.select(_database.orders)
+              ..where((o) => o.id.equals(refund.orderId)))
+            .getSingleOrNull();
+        if (order == null) continue;
+
+        // The refund can't exist server-side before its order does.
+        if (!order.isSynced) {
+          final ok = await syncSingleOrder(order.id);
+          if (!ok) continue;
+        }
+
+        await _ensureServerLineIds(order.code, order.id);
+
+        final lines = await (_database.select(_database.refundLines)
+              ..where((l) => l.refundId.equals(refund.id)))
+            .get();
+        if (lines.isEmpty) continue;
+
+        final opIds = lines.map((l) => l.orderProductId).toList();
+        final ops = await (_database.select(_database.orderProducts)
+              ..where((op) => op.id.isIn(opIds)))
+            .get();
+        final serverIdByLocal = {
+          for (final op in ops)
+            if (op.serverId != null) op.id: op.serverId!
+        };
+
+        final lineMaps = <Map<String, dynamic>>[];
+        var resolvable = true;
+        for (final l in lines) {
+          final serverId = l.orderProductServerId ?? serverIdByLocal[l.orderProductId];
+          if (serverId == null) {
+            resolvable = false;
+            break;
+          }
+          lineMaps.add({
+            'orderProductId': serverId,
+            'quantity': l.quantity,
+            // Only a deliberately-typed amount goes on the wire. A derived one
+            // is stored locally for the slip but omitted here so the server
+            // derives its own — our per-unit arithmetic does not account for an
+            // order-level discount the way the server's line total does, and
+            // sending it would 400 on the amount ceiling.
+            if (l.amountOverridden && l.amount != null) 'amount': l.amount,
+            'restock': l.restock,
+            if (l.reason != null) 'reason': l.reason,
+          });
+        }
+        if (!resolvable) {
+          _logger.warning(
+              'Refund ${refund.code}: server line ids unresolved — will retry.');
+          continue;
+        }
+
+        payload.add({
+          'code': refund.code,
+          'orderCode': refund.orderCode,
+          'method': refund.method,
+          if (refund.reason != null) 'reason': refund.reason,
+          'refundedBy': refund.refundedBy,
+          'refundedAt': refund.refundedAt.toUtc().toIso8601String(),
+          'lines': lineMaps,
+        });
+        sentIds.add(refund.id);
+      }
+
+      if (payload.isEmpty) return 0;
+
+      final RefundSyncResult result;
+      try {
+        result = await _apiService.syncRefunds(payload);
+      } catch (e) {
+        // Transport failure (401/500/timeout), NOT a record rejection: the
+        // batch never got a verdict, so nothing is marked either way and the
+        // whole thing is retried later. Safe because the endpoint is idempotent
+        // on `code`.
+        //
+        // Older servers instead fail the entire batch on one bad record, with
+        // no per-record response to tell us which. Isolating one at a time is
+        // the only way to salvage the good ones there, and is harmless against
+        // a server that reports properly (it will simply accept them all).
+        if (payload.length == 1) rethrow;
+        _logger.warning(
+            'Refund batch of ${payload.length} failed as a whole — retrying '
+            'one at a time to isolate the bad record: $e');
+        return await _syncRefundsIndividually(payload, sentIds);
+      }
+
+      // Apply the verdict per record, matched by CODE. Position matching would
+      // mis-assign every outcome the moment the server reorders or omits one.
+      final codeByLocalId = <int, String>{};
+      for (var i = 0; i < payload.length; i++) {
+        codeByLocalId[sentIds[i]] = (payload[i]['code'] ?? '').toString();
+      }
+
+      var syncedCount = 0;
+      for (final entry in codeByLocalId.entries) {
+        final localId = entry.key;
+        final code = entry.value;
+
+        if (result.accepted.contains(code)) {
+          // `created` and `skipped` are both success: skipped means the server
+          // already had it, which is the idempotent re-send working as intended.
+          await (_database.update(_database.refunds)
+                ..where((r) => r.id.equals(localId)))
+              .write(RefundsCompanion(
+            isSynced: const Value(true),
+            syncError: const Value(null),
+            updatedAt: Value(DateTime.now()),
+          ));
+          syncedCount++;
+          continue;
+        }
+
+        final error = result.failed[code];
+        if (error != null) {
+          // Recorded, not abandoned. The message is shown on the pending-sync
+          // screen and replaced on each attempt, so what is displayed is why
+          // it failed THIS time rather than the first time.
+          _logger.error('Refund $code refused by the server: $error');
+          await (_database.update(_database.refunds)
+                ..where((r) => r.id.equals(localId)))
+              .write(RefundsCompanion(
+            syncError: Value(
+                error.length > 300 ? '${error.substring(0, 300)}…' : error),
+            updatedAt: Value(DateTime.now()),
+          ));
+        }
+        // Neither accepted nor explicitly failed: the server said nothing about
+        // this code. Left untouched so the next cycle asks again — assuming
+        // success here is how a refund goes missing.
+      }
+
+      return syncedCount;
+    } catch (e) {
+      _logger.error('Error syncing refunds: $e');
+      return 0;
+    }
+  }
+
+  /// Re-send a rejected batch one refund at a time.
+  ///
+  /// Safe because the endpoint is idempotent on `code`: a refund the server
+  /// already accepted in the rolled-back attempt is a no-op, not a duplicate.
+  /// Anything that fails alone is the poison record — parked with its error so
+  /// the queue keeps moving and someone can see why.
+  Future<int> _syncRefundsIndividually(
+      List<Map<String, dynamic>> payload, List<int> localIds) async {
+    var synced = 0;
+    for (var i = 0; i < payload.length; i++) {
+      final localId = localIds[i];
+      try {
+        final one = await _apiService.syncRefunds([payload[i]]);
+        final code = (payload[i]['code'] ?? '').toString();
+        if (!one.accepted.contains(code)) {
+          // Reported as failed rather than thrown — park it with the server's
+          // own words instead of counting it as synced.
+          final why = one.failed[code] ?? 'Rejected by server';
+          throw Exception(why);
+        }
+        await (_database.update(_database.refunds)
+              ..where((r) => r.id.equals(localId)))
+            .write(RefundsCompanion(
+          isSynced: const Value(true),
+          syncError: const Value(null),
+          updatedAt: Value(DateTime.now()),
+        ));
+        synced++;
+      } catch (e) {
+        final message = e.toString();
+        _logger.error(
+            'Refund ${payload[i]['code']} refused, will retry: $message');
+        await (_database.update(_database.refunds)
+              ..where((r) => r.id.equals(localId)))
+            .write(RefundsCompanion(
+          // Truncated: this is displayed in the pending-sync screen, and a Dio
+          // error can carry an entire HTML error page.
+          syncError: Value(message.length > 300
+              ? '${message.substring(0, 300)}…'
+              : message),
+          updatedAt: Value(DateTime.now()),
+        ));
+      }
+    }
+    _logger.info('Refund isolation pass: $synced of ${payload.length} accepted');
+    return synced;
+  }
+
+  /// Every refund still owed to the server, oldest batch first.
+  ///
+  /// Exposed as its own method so the one predicate that decides whether a
+  /// refund is ever sent again can be tested without a network. A refund that
+  /// failed last time is still in here — see the reasoning at the call site.
+  Future<List<Refund>> refundsAwaitingSync([int batchSize = 50]) =>
+      (_database.select(_database.refunds)
+            ..where((r) => r.isSynced.equals(false))
+            ..limit(batchSize))
+          .get();
+
+  /// Refunds the server refused on their last attempt, for the pending-sync
+  /// screen. They are still queued and still retried; this is the list of what
+  /// is currently unhappy, not a list of what has been given up on.
+  Future<List<Refund>> parkedRefunds() => (_database.select(_database.refunds)
+        ..where((r) => r.syncError.isNotNull() & r.isSynced.equals(false))
+        ..orderBy([(r) => OrderingTerm.desc(r.refundedAt)]))
+      .get();
+
+  /// Clear the last error message on a refund.
+  ///
+  /// Retrying no longer depends on this — every unsynced refund is retried on
+  /// every cycle — so this only tidies a stale message away after the cause
+  /// was fixed elsewhere. Kept because the screen offers it.
+  Future<void> unparkRefund(int refundId) async {
+    await (_database.update(_database.refunds)
+          ..where((r) => r.id.equals(refundId)))
+        .write(const RefundsCompanion(syncError: Value(null)));
+  }
+
+  /// Public entry point to [_ensureServerLineIds] — booking needs it before it
+  /// can address a line, because `PATCH /order-products/{id}/schedule` speaks
+  /// the server's line ids, not this device's.
+  Future<void> ensureServerLineIds(String orderCode, int orderId) =>
+      _ensureServerLineIds(orderCode, orderId);
+
+  /// Fill in `order_products.serverId` for [orderCode] from the server's own
+  /// copy of the order. Lines are matched the same way the delta pull matches
+  /// them — oldest unmatched row per (productId, variantId) — because that is
+  /// the only key both sides share.
+  Future<void> _ensureServerLineIds(String orderCode, int orderId) async {
+    try {
+      final local = await (_database.select(_database.orderProducts)
+            ..where((op) => op.orderId.equals(orderId)))
+          .get();
+      if (local.every((op) => op.serverId != null)) return;
+
+      final remote = await _apiService.fetchOrderByCode(orderCode);
+      final products = ((remote['products'] ?? remote['orderProducts']) as List?)
+              ?.cast<Map<String, dynamic>>() ??
+          const [];
+      if (products.isEmpty) return;
+
+      final byKey = <(int, int?), List<OrderProduct>>{};
+      for (final op in local) {
+        byKey.putIfAbsent((op.productId, op.variantId), () => []).add(op);
+      }
+
+      for (final p in products) {
+        final serverId = (p['id'] as num?)?.toInt();
+        final productId = ((p['productId'] ?? p['product_id']) as num?)?.toInt();
+        if (serverId == null || productId == null) continue;
+        final variantId = ((p['variantId'] ?? p['variant_id']) as num?)?.toInt();
+        final queue = byKey[(productId, variantId)];
+        if (queue == null || queue.isEmpty) continue;
+        final row = queue.removeAt(0);
+        if (row.serverId == serverId) continue;
+        await (_database.update(_database.orderProducts)
+              ..where((op) => op.id.equals(row.id)))
+            .write(OrderProductsCompanion(serverId: Value(serverId)));
+      }
+    } catch (e) {
+      _logger.warning('Could not resolve server line ids for $orderCode: $e');
+    }
+  }
+
+  /// Resolve a Z open-conflict by adopting the server's Z.
+  ///
+  /// The contract allows exactly one open Z per terminal, and a 409 carries the
+  /// one the server already has. Retrying can only conflict again, so we insert
+  /// the server's Z locally (marked synced) and close whatever *other* local Z
+  /// was still open, so both sides agree on which shift is live. The adopted
+  /// row keeps the server's code, which is what subsequent session syncs
+  /// reference.
+  Future<void> _adoptServerOpenZ(ZAlreadyOpenException conflict) async {
+    try {
+      final posId = _apiService.getPosId();
+      final zService = ZService(_database);
+      final adopted = await zService.adoptServerZ(conflict.openZ, posId: posId);
+
+      // Any other still-open local Z is a duplicate of the shift we just
+      // adopted — mark it closed and synced so it stops being retried forever.
+      await (_database.update(_database.zs)
+            ..where((z) =>
+                z.status.equals('open') & z.id.isNotValue(adopted.id)))
+          .write(ZsCompanion(
+        status: const Value('closed'),
+        endedAt: Value(DateTime.now()),
+        isSynced: const Value(true),
+        updatedAt: Value(DateTime.now()),
+      ));
+
+      _logger.warning(
+          'Adopted server open Z ${adopted.code} after 409; local duplicates closed.');
+    } catch (e) {
+      _logger.error('Failed to adopt server Z on 409: $e');
+    }
   }
 
   /// Get all new customers that need to be synced
@@ -1162,38 +2299,92 @@ class DataSyncService {
     final categories = await _apiService.fetchCategories();
     final products = await _apiService.fetchProducts();
     final variants = await _apiService.fetchVariants();
+    List<Map<String, dynamic>> serials = const [];
+    try {
+      serials = await _apiService.fetchSerials();
+    } catch (e) {
+      _logger.warning('Serial sync skipped: $e');
+    }
     final componentGroups = await _apiService.fetchComponentGroups();
     final components = await _apiService.fetchComponents();
     final productComponents = await _apiService.fetchProductComponents();
+    final stations = await _apiService.fetchStations();
+
+    // Same reasoning as syncAllData: an empty 200 is far more likely to be a
+    // stripped header or a tenant-resolution blip than a genuinely emptied
+    // catalog, so never let one drive deletes on a populated device.
+    final localProducts = await _database.select(_database.products).get();
+    if (products.isEmpty && localProducts.isNotEmpty) {
+      throw Exception(
+          'Menu sync aborted: server returned 0 products but the device has '
+          '${localProducts.length}. Local data kept.');
+    }
+
     await _database.transaction(() async {
       await _persistCategories(categories);
-      await _persistStations(await _apiService.fetchStations());
+      await _persistStations(stations);
       await _persistProducts(products);
       await _persistVariants(variants);
+      await _persistSerials(serials);
       await _persistComponentGroups(componentGroups);
       await _persistComponents(components);
       await _persistProductComponents(productComponents);
+
+      await _reconcileDeletes(
+          _database.productVariants.actualTableName, _idsOf(variants));
+      if (serials.isNotEmpty) {
+        await _reconcileDeletes(
+            _database.serials.actualTableName, _idsOf(serials));
+      }
+      await _reconcileDeletes(
+          _database.products.actualTableName, _idsOf(products));
+      await _reconcileDeletes(
+          _database.components.actualTableName, _idsOf(components));
+      await _reconcileDeletes(
+          _database.componentGroups.actualTableName, _idsOf(componentGroups));
+      await _reconcileDeletes(
+          _database.stations.actualTableName, _idsOf(stations));
+      await _reconcileDeletes(
+          _database.categories.actualTableName, _idsOf(categories));
     });
+
+    // Outside the transaction: it does its own network call and swallows its
+    // own failures, and a tenant with no delivery integration must not fail a
+    // menu sync over it.
+    await syncIntegrationMappings();
   }
 
-  /// Pull + persist users only (preserves local lastLogin / displayName).
+  /// Pull + persist users only. `lastLogin` / `displayName` survive on their
+  /// own now that this upserts instead of replacing.
   Future<void> syncUsersOnly() async {
-    final existing = await _database.select(_database.users).get();
-    final byId = {for (final u in existing) u.id: u};
     final users = await _apiService.fetchUsers();
-    await _persistUsers(users, byId);
+    await _persistUsers(users);
   }
 
-  /// Pull + persist areas and tables only.
+  /// Pull + persist areas and tables only. No snapshot/restore dance: the
+  /// upsert leaves `orderId` and `tableState` untouched.
   Future<void> syncAreasOnly() async {
-    final snapshot = await _snapshotTableOrders();
     final areas = await _apiService.fetchAreas();
     final tables = await _apiService.fetchTables();
+
+    final localTables = await _database.select(_database.areaTables).get();
+    if (tables.isEmpty && localTables.isNotEmpty) {
+      throw Exception(
+          'Table sync aborted: server returned 0 tables but the device has '
+          '${localTables.length}. Local data kept.');
+    }
+
     await _database.transaction(() async {
       await _persistAreas(areas);
       await _persistTables(tables);
+      // An occupied table is never reconciled away mid-service.
+      await _reconcileDeletes(
+        _database.areaTables.actualTableName,
+        _idsOf(tables),
+        protectWhere: 'order_id IS NOT NULL',
+      );
+      await _reconcileDeletes(_database.areas.actualTableName, _idsOf(areas));
     });
-    await _restoreTableOrders(snapshot);
   }
 
   /// Upload all unsynced local data to the server (sessions, orders, tickets,
@@ -1204,6 +2395,9 @@ class DataSyncService {
     await syncOrdersBulk(batchSize: batchSize);
     await syncTicketsBulk(batchSize: batchSize * 2);
     await syncCustomersBulk(batchSize: batchSize);
+    // Refunds last: each one needs its order to exist server-side first, and
+    // needs the server's line ids, which only become resolvable afterwards.
+    await syncRefundsBulk(batchSize: batchSize);
   }
 
   // ── Upload flow ────────────────────────────────────────────────────────────
@@ -1233,7 +2427,7 @@ class DataSyncService {
     try {
       final orders = await getOrdersForSync();
       if (orders.isNotEmpty) {
-        await _apiService.syncOrders(orders);
+        await _applySerialConflicts(await _apiService.syncOrders(orders));
         await markOrdersAsSynced(orders.map((o) => o['id'] as int).toList());
       }
     } catch (e) {
@@ -1270,9 +2464,19 @@ class DataSyncService {
         return true;
       }
 
+      // Resolve the session's Z (shift) code.
+      String? zCode;
+      if (session.zId != null) {
+        final z = await (_database.select(_database.zs)
+              ..where((t) => t.id.equals(session.zId!)))
+            .getSingleOrNull();
+        zCode = z?.code;
+      }
+
       // Build session data
       final sessionData = {
         'code': session.code,
+        'zCode': zCode,
         'cashierId': session.cashierId,
         'moneyAtStart': session.moneyAtStart,
         'moneyAtEnd': session.moneyAtEnd,
@@ -1316,7 +2520,12 @@ class DataSyncService {
   }
 
   /// Sync a single order immediately (for online auto-sync)
-  Future<bool> syncSingleOrder(int orderId) async {
+  /// [deadline] bounds the network push only (not the local reads/writes
+  /// around it). Passed by the detached "prompt push" the cashier's tap kicks
+  /// off, so a hanging server hands over to the pending-ops fallback and the
+  /// periodic sweep in seconds instead of sitting on Dio's 10s connect + 30s
+  /// receive. Null (bulk sync, manual sync) keeps the Dio defaults.
+  Future<bool> syncSingleOrder(int orderId, {Duration? deadline}) async {
     try {
       // Get the specific order with products
       final order = await (_database.select(_database.orders)
@@ -1339,7 +2548,7 @@ class DataSyncService {
         .get();
 
       // Build products list, merging order-level discount into manualDiscount
-      final productsList = await _buildProductsListForSync(orderProducts, order.discountPercentage);
+      final productsList = await buildProductsListForSync(orderProducts, order.discountPercentage);
 
       // Resolve customer phone for the new phone-keyed contract.
       String? customerPhoneNormalized;
@@ -1388,13 +2597,18 @@ class DataSyncService {
         'note': order.note,
         'address': order.address,
         'cancellationReason': order.cancellationReason,
+        // See getOrdersForSync — without `date` the server stamps "now".
+        'date': order.date.toIso8601String(),
+        ..._orderContractFields(order),
         'products': productsList,
         'createdAt': order.createdAt.toIso8601String(),
         'updatedAt': order.updatedAt.toIso8601String(),
       };
 
       // Sync to server using single order endpoint (PUT to create/update)
-      await _apiService.syncSingleOrder(order.code, orderData);
+      final push = _apiService.syncSingleOrder(order.code, orderData);
+      await _applySerialConflicts(
+          await (deadline == null ? push : push.timeout(deadline)));
 
       // Mark as synced
       await markOrdersAsSynced([orderId]);
@@ -1403,12 +2617,55 @@ class DataSyncService {
       return true;
     } catch (e) {
       _logger.error('Error syncing single order: $e');
+      // Stale unit cache: refresh it so the next attempt (or the cashier's next
+      // pick) is made against server truth rather than repeating the failure.
+      if (isSerialRejection(e)) {
+        _logger.warning('Serial rejection — refreshing the serial cache');
+        await refreshSerials();
+      }
+      return false;
+    }
+  }
+
+  /// Serial rejections mean the local unit cache disagrees with the server —
+  /// the unit was sold on another terminal, or its reception was never
+  /// validated. Retrying the same payload can only fail again, so re-pull the
+  /// serials and let the cashier pick a unit that actually exists.
+  ///
+  /// Matched on the message because the backend returns all six serial failures
+  /// as a plain 400; there is no error code to switch on.
+  static bool isSerialRejection(Object error) {
+    final m = error.toString().toLowerCase();
+    if (!m.contains('serial')) return false;
+    return m.contains('not available') ||
+        m.contains('serial-tracked') ||
+        m.contains('must have quantity') ||
+        m.contains('belongs to product') ||
+        m.contains('more than one line') ||
+        m.contains('remove serialid');
+  }
+
+  /// Re-pull just the serial cache. Safe to call from an error path: it swallows
+  /// its own failures, because it is already running because something failed.
+  Future<bool> refreshSerials() async {
+    try {
+      final serials = await _apiService.fetchSerials();
+      await _persistSerials(serials);
+      if (serials.isNotEmpty) {
+        await _reconcileDeletes(
+            _database.serials.actualTableName, _idsOf(serials));
+      }
+      _logger.info('Serial cache refreshed (${serials.length} rows)');
+      return true;
+    } catch (e) {
+      _logger.error('Serial refresh failed: $e');
       return false;
     }
   }
 
   /// Sync tickets for a single order (used by auto-sync when online)
-  Future<bool> syncTicketsForOrder(int orderId) async {
+  /// [deadline] bounds the network push only — see [syncSingleOrder].
+  Future<bool> syncTicketsForOrder(int orderId, {Duration? deadline}) async {
     try {
       final order = await (_database.select(_database.orders)
         ..where((o) => o.id.equals(orderId)))
@@ -1450,7 +2707,8 @@ class DataSyncService {
         });
       }
 
-      await _apiService.syncTickets(payload);
+      final push = _apiService.syncTickets(payload);
+      await (deadline == null ? push : push.timeout(deadline));
       await markTicketsAsSynced(tickets.map((t) => t.id).toList());
 
       _logger.info('Synced ${tickets.length} tickets for order code=${order.code}');
@@ -1465,6 +2723,76 @@ class DataSyncService {
   /// Only sends bulk request if more than one order, otherwise uses single sync.
   /// If the bulk request fails, falls back to individual syncs so only
   /// confirmed-successful orders are marked as synced.
+  /// Give up the units another terminal sold first.
+  ///
+  /// Two tills go offline, both sell the same boxed unit, both come back. The
+  /// server awards it to whoever got there first and drops the serial links
+  /// from the losing order — the order itself still saves and still counts.
+  /// This is the losing terminal reconciling with that.
+  ///
+  /// Note what is NOT done here: the serial stays unavailable locally, because
+  /// it genuinely is — somebody sold it. And nothing is undone on the order.
+  /// The customer left with a box and a receipt naming that serial; erasing
+  /// every trace would make the records tidy and the shop floor unexplainable.
+  ///
+  /// Never throws. It runs after a sync the server has already accepted, and
+  /// turning that into a failure would re-queue the batch forever — the exact
+  /// behaviour this feature was built to remove.
+  Future<void> _applySerialConflicts(List<SerialConflictReport> conflicts) async {
+    if (conflicts.isEmpty) return;
+    for (final conflict in conflicts) {
+      try {
+        final order = await (_database.select(_database.orders)
+              ..where((o) => o.code.equals(conflict.orderCode)))
+            .getSingleOrNull();
+        if (order != null) {
+          final lines = await (_database.select(_database.orderProducts)
+                ..where((p) => p.orderId.equals(order.id))
+                ..where((p) => p.serialId.equals(conflict.serialId)))
+              .get();
+          for (final line in lines) {
+            // The number stays in the note: once the link is gone this is the
+            // only place the terminal still says which box went out the door.
+            final note = [
+              if (line.note != null && line.note!.trim().isNotEmpty) line.note!,
+              conflict.historyNote,
+            ].join(' · ');
+            await (_database.update(_database.orderProducts)
+                  ..where((p) => p.id.equals(line.id)))
+                .write(OrderProductsCompanion(
+              serialId: const Value(null),
+              note: Value(note),
+              updatedAt: Value(DateTime.now()),
+            ));
+          }
+        }
+
+        // One row per (order, serial). Re-syncing the same order must not pile
+        // up duplicates of a conflict somebody has already seen.
+        final existing = await (_database.select(_database.serialConflicts)
+              ..where((c) => c.orderCode.equals(conflict.orderCode))
+              ..where((c) => c.serialId.equals(conflict.serialId)))
+            .getSingleOrNull();
+        if (existing == null) {
+          await _database.into(_database.serialConflicts).insert(
+                SerialConflictsCompanion.insert(
+                  orderCode: conflict.orderCode,
+                  productId: conflict.productId,
+                  serialId: conflict.serialId,
+                  serialNumber: Value(conflict.serialNumber),
+                  winningOrderCode: Value(conflict.winningOrderCode),
+                  reason: Value(conflict.reason),
+                ),
+              );
+        }
+        _logger.warning('Serial conflict on ${conflict.orderCode}: '
+            '${conflict.historyNote}');
+      } catch (e) {
+        _logger.warning('Could not apply serial conflict $conflict: $e');
+      }
+    }
+  }
+
   Future<int> syncOrdersBulk({int batchSize = 50}) async {
     try {
       // Get unsynced orders
@@ -1486,7 +2814,7 @@ class DataSyncService {
 
       // Try bulk sync first
       try {
-        await _apiService.syncOrders(batch);
+        await _applySerialConflicts(await _apiService.syncOrders(batch));
         // Bulk succeeded – mark all as synced
         final syncedIds = batch.map((o) => o['id'] as int).toList();
         await markOrdersAsSynced(syncedIds);
@@ -1653,28 +2981,56 @@ class DataSyncService {
 
   /// Get sync status summary
   Future<Map<String, int>> getSyncStatus() async {
-    final unsyncedOrders = await (_database.select(_database.orders)
-      ..where((o) => o.isSynced.equals(false)))
-      .get();
+    // Use SQL COUNT — NOT `.get().length`, which would fetch and deserialize
+    // every unsynced row across these tables just to count them (a real stall
+    // on the exit path when there's a backlog or a big customers table).
+    final ordersCnt = countAll(filter: _database.orders.isSynced.equals(false));
+    final ticketsCnt =
+        countAll(filter: _database.tickets.isSynced.equals(false));
+    final sessionsCnt = countAll(
+        filter: _database.cashSessions.status.equals('ended') &
+            _database.cashSessions.isSynced.equals(false));
+    final customersCnt =
+        countAll(filter: _database.customers.isSynced.equals(false));
 
-    final unsyncedTickets = await (_database.select(_database.tickets)
-      ..where((t) => t.isSynced.equals(false)))
-      .get();
-
-    final unsyncedSessions = await (_database.select(_database.cashSessions)
-      ..where((s) => s.status.equals('ended') & s.isSynced.equals(false)))
-      .get();
-
-    final unsyncedCustomers = await (_database.select(_database.customers)
-      ..where((c) => c.isSynced.equals(false)))
-      .get();
+    final ordersN = (await (_database.selectOnly(_database.orders)
+              ..addColumns([ordersCnt]))
+            .getSingle())
+        .read(ordersCnt) ??
+        0;
+    final ticketsN = (await (_database.selectOnly(_database.tickets)
+              ..addColumns([ticketsCnt]))
+            .getSingle())
+        .read(ticketsCnt) ??
+        0;
+    final sessionsN = (await (_database.selectOnly(_database.cashSessions)
+              ..addColumns([sessionsCnt]))
+            .getSingle())
+        .read(sessionsCnt) ??
+        0;
+    final customersN = (await (_database.selectOnly(_database.customers)
+              ..addColumns([customersCnt]))
+            .getSingle())
+        .read(customersCnt) ??
+        0;
 
     return {
-      'orders': unsyncedOrders.length,
-      'tickets': unsyncedTickets.length,
-      'sessions': unsyncedSessions.length,
-      'customers': unsyncedCustomers.length,
+      'orders': ordersN,
+      'tickets': ticketsN,
+      'sessions': sessionsN,
+      'customers': customersN,
     };
+  }
+
+  /// Count of Z shifts still waiting to be pushed. Not part of [getSyncStatus]
+  /// (which mirrors the status UI) — used by the exit flow to decide whether a
+  /// pre-exit flush is needed at all.
+  Future<int> countUnsyncedZs() async {
+    final cnt = countAll(filter: _database.zs.isSynced.equals(false));
+    return (await (_database.selectOnly(_database.zs)..addColumns([cnt]))
+                .getSingle())
+            .read(cnt) ??
+        0;
   }
 
   /// Sync all pending operations (deletes and updates)
@@ -1770,6 +3126,18 @@ class DataSyncService {
         }
         await _apiService.deleteOrderProduct(operation.serverId!);
         _logger.info('Deleted order product #${operation.serverId} from server');
+        break;
+
+      case 'SCHEDULE':
+        // Freeing a slot is the one booking call that may be replayed: it only
+        // ever gives capacity back, so arriving late can wrong nobody.
+        if (operation.serverId == null) {
+          _logger.warning(
+              'Skipping unschedule - no server ID for line #${operation.entityId}');
+          return;
+        }
+        await _apiService.deleteSchedule(operation.serverId!);
+        _logger.info('Unscheduled line #${operation.serverId} on server');
         break;
 
       case 'SESSION':
@@ -2155,7 +3523,11 @@ class DataSyncService {
           ..where((o) => o.code.equals(code)))
         .getSingleOrNull();
 
-    final int orderId;
+    // Header upsert, product snapshot, and delete/re-insert all commit together.
+    // Previously the header was written outside the products transaction, so a
+    // crash between them left the header updated with stale or missing products.
+    late int orderId;
+    await _database.transaction(() async {
     if (existing != null) {
       await (_database.update(_database.orders)
             ..where((o) => o.id.equals(existing.id)))
@@ -2167,64 +3539,21 @@ class DataSyncService {
           .insert(_orderCompanionFromDelta(item, null));
     }
 
-    // Snapshot existing products + components BEFORE deleting so we can
-    // restore client-only fields (ticketId, components) when the server delta
-    // omits them.
+    // Load existing lines and index them by (productId, variantId) so each
+    // server line can be matched to a local row and UPDATED IN PLACE rather
+    // than delete+reinsert. Update-in-place keeps line IDs stable and preserves
+    // EVERY client-only column automatically (ticketId, zDay, KDS print +
+    // stage timestamps) — the server only owns price/qty/discount/state/plan/
+    // components. Duplicate product/variant lines are matched in insertion
+    // order; whatever local rows go unmatched were removed remotely.
     final existingProductsList = await (_database.select(_database.orderProducts)
           ..where((op) => op.orderId.equals(orderId)))
         .get();
-    final existingOpIds = existingProductsList.map((op) => op.id).toList();
-
-    // Per (productId, variantId): queues so duplicate product lines are
-    // matched in insertion order.
-    final quantityQueue = <(int, int?), List<double>>{};
-    final priceQueue = <(int, int?), List<double>>{};
-    final ticketIdQueue = <(int, int?), List<int?>>{};
-    final stateQueue = <(int, int?), List<String?>>{};
-    final unitaryDiscountQueue = <(int, int?), List<double>>{};
-    final manualDiscountQueue = <(int, int?), List<double>>{};
-    final componentQueue = <(int, int?), List<List<OrderProductComponent>>>{};
-
+    final existingByKey = <(int, int?), List<OrderProduct>>{};
     for (final op in existingProductsList) {
-      final key = (op.productId, op.variantId);
-      quantityQueue.putIfAbsent(key, () => []).add(op.quantity);
-      priceQueue.putIfAbsent(key, () => []).add(op.unitaryPrice);
-      ticketIdQueue.putIfAbsent(key, () => []).add(op.ticketId);
-      stateQueue.putIfAbsent(key, () => []).add(op.state);
-      unitaryDiscountQueue.putIfAbsent(key, () => []).add(op.unitaryDiscount);
-      manualDiscountQueue.putIfAbsent(key, () => []).add(op.manualDiscount);
-      componentQueue.putIfAbsent(key, () => []).add([]);
+      existingByKey.putIfAbsent((op.productId, op.variantId), () => []).add(op);
     }
 
-    // Load all components in one query and slot them into componentQueue.
-    if (existingOpIds.isNotEmpty) {
-      final allComps = await (_database.select(_database.orderProductComponents)
-              ..where((c) => c.orderProductId.isIn(existingOpIds)))
-          .get();
-      final opById = {for (final op in existingProductsList) op.id: op};
-      for (final comp in allComps) {
-        final op = opById[comp.orderProductId];
-        if (op == null) continue;
-        final key = (op.productId, op.variantId);
-        componentQueue[key]?.last.add(comp);
-      }
-    }
-
-    // Delete and re-insert atomically — a crash between the two steps would
-    // leave the order with zero products.
-    await _database.transaction(() async {
-    // Delete existing products + components.
-    if (existingOpIds.isNotEmpty) {
-      await (_database.delete(_database.orderProductComponents)
-            ..where((c) => c.orderProductId.isIn(existingOpIds)))
-          .go();
-    }
-    await (_database.delete(_database.orderProducts)
-          ..where((op) => op.orderId.equals(orderId)))
-        .go();
-
-    // Re-insert from server payload, falling back to local data where the
-    // server omits client-only fields.
     final products =
         ((item['products'] as List?) ?? []).cast<Map<String, dynamic>>();
     for (final p in products) {
@@ -2232,131 +3561,177 @@ class DataSyncService {
       final variantId = ((p['variantId'] ?? p['variant_id']) as num?)?.toInt();
       final key = (productId, variantId);
 
-      // Pop the oldest entry for this (productId, variantId) pair.
-      final existingQty =
-          quantityQueue[key]?.isNotEmpty == true ? quantityQueue[key]!.removeAt(0) : null;
-      final existingPrice =
-          priceQueue[key]?.isNotEmpty == true ? priceQueue[key]!.removeAt(0) : null;
-      final existingTicketId =
-          ticketIdQueue[key]?.isNotEmpty == true ? ticketIdQueue[key]!.removeAt(0) : null;
-      final existingState =
-          stateQueue[key]?.isNotEmpty == true ? stateQueue[key]!.removeAt(0) : null;
-      final existingComponents =
-          componentQueue[key]?.isNotEmpty == true ? componentQueue[key]!.removeAt(0) : <OrderProductComponent>[];
-      final existingUnitaryDiscount =
-          unitaryDiscountQueue[key]?.isNotEmpty == true ? unitaryDiscountQueue[key]!.removeAt(0) : null;
-      final existingManualDiscount =
-          manualDiscountQueue[key]?.isNotEmpty == true ? manualDiscountQueue[key]!.removeAt(0) : null;
+      // Match to an existing local row (oldest unmatched of this product/variant).
+      final queue = existingByKey[key];
+      final existingRow =
+          (queue != null && queue.isNotEmpty) ? queue.removeAt(0) : null;
 
+      // ── Resolve server-owned fields, falling back to the matched local row
+      //    when the server omits/zeros a value (same rules as before). ──
       final serverPrice =
           ((p['unitaryPrice'] ?? p['unitary_price'] ?? p['price']) as num?)?.toDouble();
-
-      // Log every product whose server price is absent or zero so we can
-      // trace the origin of 0-price order lines in production.
       if (serverPrice == null || serverPrice == 0.0) {
         _logger.warning(
           'pullOrderDelta[$code] productId=$productId variantId=$variantId '
-          'serverPrice=$serverPrice existingLocalPrice=$existingPrice '
+          'serverPrice=$serverPrice existingLocalPrice=${existingRow?.unitaryPrice} '
           '→ raw payload keys=${p.keys.toList()} '
           'unitaryPrice_raw=${p['unitaryPrice']} unitary_price_raw=${p['unitary_price']} '
           'full_product=$p',
         );
       }
-
       // Preserve local price when server omits or zeros it.
       final unitaryPrice = (serverPrice != null && serverPrice > 0)
           ? serverPrice
-          : existingPrice ?? 0.0;
-
+          : existingRow?.unitaryPrice ?? 0.0;
       if (unitaryPrice == 0.0) {
         _logger.warning(
           'pullOrderDelta[$code] productId=$productId → RESOLVED TO 0.0 '
-          '(serverPrice=$serverPrice existingLocalPrice=$existingPrice)',
+          '(serverPrice=$serverPrice existingLocalPrice=${existingRow?.unitaryPrice})',
         );
       }
-
-      // ticketId is client-only — server never sets it, so always keep local.
-      final serverTicketId =
-          ((p['ticketId'] ?? p['ticket_id']) as num?)?.toInt();
-      final ticketId = serverTicketId ?? existingTicketId;
 
       final serverUnitaryDiscount =
           ((p['unitaryDiscount'] ?? p['unitary_discount'] ?? p['discountAmount'] ?? p['discount_amount']) as num?)?.toDouble();
       final serverManualDiscount =
           ((p['manualDiscount'] ?? p['manual_discount'] ?? p['manualDiscountAmount'] ?? p['manual_discount_amount']) as num?)?.toDouble();
+      final unitaryDiscount =
+          serverUnitaryDiscount ?? existingRow?.unitaryDiscount ?? 0.0;
+      final manualDiscount =
+          serverManualDiscount ?? existingRow?.manualDiscount ?? 0.0;
+      final unitaryTva =
+          ((p['unitaryTva'] ?? p['unitary_tva'] ?? p['totalTva'] ?? p['total_tva']) as num?)
+                  ?.toDouble() ??
+              0.0;
 
       // Preserve local quantity when server sends 0 — protects weighed/MBw
-      // items whose decimal quantity (e.g. 0.405 kg) may be truncated to 0
-      // by a server backend that stores quantity as integer.
+      // items whose decimal quantity may be truncated to 0 by the backend.
       final serverQty = (p['quantity'] as num?)?.toDouble();
-      final qty = (serverQty != null && serverQty > 0) ? serverQty : existingQty ?? 1.0;
+      final qty = (serverQty != null && serverQty > 0)
+          ? serverQty
+          : existingRow?.quantity ?? 1.0;
 
-      final opRow = await _database
-          .into(_database.orderProducts)
-          .insertReturning(OrderProductsCompanion(
-            orderId: Value(orderId),
-            productId: Value(productId),
-            variantId: Value(variantId),
-            ticketId: Value(ticketId),
-            quantity: Value(qty),
-            unitaryPrice: Value(unitaryPrice),
-            unitaryDiscount: Value(
-                serverUnitaryDiscount ?? existingUnitaryDiscount ?? 0.0),
-            unitaryTva: Value(
-                ((p['unitaryTva'] ?? p['unitary_tva'] ?? p['totalTva'] ?? p['total_tva']) as num?)
-                        ?.toDouble() ??
-                    0.0),
-            manualDiscount: Value(
-                serverManualDiscount ?? existingManualDiscount ?? 0.0),
-            note: Value(p['note'] as String?),
-            // Prevent a stale server response from downgrading a locally-paid
-            // item back to PENDING (e.g. SSE fires before the push completes).
-            state: Value(() {
-              final serverState = p['state'] as String? ?? 'PENDING';
-              return (existingState == 'PAID' && serverState == 'PENDING')
-                  ? 'PAID'
-                  : serverState;
-            }()),
-            planStartAt: Value(
-                _parseDateTime(p['planStartAt'] ?? p['plan_start_at'])),
-            planEndAt:
-                Value(_parseDateTime(p['planEndAt'] ?? p['plan_end_at'])),
-            planWaiterId: Value(
-                ((p['planWaiterId'] ?? p['plan_waiter_id']) as num?)
-                    ?.toInt()),
-            updatedAt: Value(DateTime.now()),
-          ));
+      final note = p['note'] as String?;
+      // Product KITCHEN state (PENDING→PREPARING→READY→COMPLETED) is LAN-LOCAL:
+      // the KDS advances it without ever syncing it up, so the backend's copy is
+      // authoritatively STALE. A pull must NOT let that stale state clobber the
+      // local KDS progress — that's exactly what reset tickets after a sync
+      // (delete/reinsert-from-backend wiped the kitchen state).
+      //
+      // The cloud only owns two product-state facts: a CANCELED decision (which
+      // can originate backend-side) and a PAID line (financial). For a brand-new
+      // local line we trust the server. Everything else keeps the local state.
+      final serverState = p['state'] as String? ?? 'PENDING';
+      final localState = existingRow?.state;
+      final String state;
+      if (localState == null) {
+        state = serverState;
+      } else if (serverOwnedProductStates.contains(serverState)) {
+        state = serverState;
+      } else {
+        state = localState;
+      }
+      final planStartAt = _parseDateTime(p['planStartAt'] ?? p['plan_start_at']);
+      final planEndAt = _parseDateTime(p['planEndAt'] ?? p['plan_end_at']);
+      final planWaiterId =
+          ((p['planWaiterId'] ?? p['plan_waiter_id']) as num?)?.toInt();
+      final planResourceId =
+          ((p['planResourceId'] ?? p['plan_resource_id']) as num?)?.toInt();
+      // The server's own line id. Refunds must reference it, and this delta is
+      // one of only two places we ever learn it (the other is an explicit
+      // GET /pos/orders/{code}). Absent → keep whatever we already had.
+      final lineServerId = (p['id'] as num?)?.toInt();
+      final saleUomId =
+          ((p['saleUomId'] ?? p['sale_uom_id']) as num?)?.toInt();
 
+      final int opId;
+      if (existingRow != null) {
+        // UPDATE in place — write ONLY server-owned columns. Every client-only
+        // column (ticketId, zDay, kdsPrintedAt/Quantity, preparing/ready/
+        // servedAt, createdAt) is left untouched by omission. kdsPrintedQuantity
+        // is clamped down ONLY when the server shrank the line below what was
+        // already sent to the kitchen, so a remote qty drop can't strand it.
+        opId = existingRow.id;
+        await (_database.update(_database.orderProducts)
+              ..where((t) => t.id.equals(opId)))
+            .write(OrderProductsCompanion(
+          quantity: Value(qty),
+          unitaryPrice: Value(unitaryPrice),
+          unitaryDiscount: Value(unitaryDiscount),
+          unitaryTva: Value(unitaryTva),
+          manualDiscount: Value(manualDiscount),
+          note: Value(note),
+          state: Value(state),
+          planStartAt: Value(planStartAt),
+          planEndAt: Value(planEndAt),
+          planWaiterId: Value(planWaiterId),
+          planResourceId: Value(planResourceId),
+          serverId: lineServerId != null
+              ? Value(lineServerId)
+              : const Value.absent(),
+          saleUomId:
+              saleUomId != null ? Value(saleUomId) : const Value.absent(),
+          kdsPrintedQuantity: existingRow.kdsPrintedQuantity > qty
+              ? Value(qty)
+              : const Value.absent(),
+          updatedAt: Value(DateTime.now()),
+        ));
+      } else {
+        // No local match → a line added on the server. Client-only fields start
+        // empty (never printed, no ticket).
+        opId = await _database.into(_database.orderProducts).insert(
+              OrderProductsCompanion(
+                orderId: Value(orderId),
+                productId: Value(productId),
+                variantId: Value(variantId),
+                quantity: Value(qty),
+                unitaryPrice: Value(unitaryPrice),
+                unitaryDiscount: Value(unitaryDiscount),
+                unitaryTva: Value(unitaryTva),
+                manualDiscount: Value(manualDiscount),
+                note: Value(note),
+                state: Value(state),
+                planStartAt: Value(planStartAt),
+                planEndAt: Value(planEndAt),
+                planWaiterId: Value(planWaiterId),
+                planResourceId: Value(planResourceId),
+                serverId: Value(lineServerId),
+                saleUomId: Value(saleUomId),
+                // Line added on the server (a web edit): stamp the cost from
+                // the local catalogue so it is not the one line in the order
+                // with an unknown margin. The server does not send a cost.
+                cost: await ProductCostResolver(_database)
+                    .resolveValue(productId: productId, variantId: variantId),
+                updatedAt: Value(DateTime.now()),
+              ),
+            );
+      }
+
+      // Components: only touch them when the server actually sent some. If it
+      // omitted them, whatever is already attached to the line stays.
       final serverComponents =
           ((p['components'] ?? p['options'] as List?) ?? []).cast<Map<String, dynamic>>();
       if (serverComponents.isNotEmpty) {
-        // Server provided components — use them.
+        await (_database.delete(_database.orderProductComponents)
+              ..where((c) => c.orderProductId.equals(opId)))
+            .go();
         for (final c in serverComponents) {
           await _database.into(_database.orderProductComponents).insert(
                 OrderProductComponentsCompanion(
-                  orderProductId: Value(opRow.id),
+                  orderProductId: Value(opId),
                   componentId: Value(
                       ((c['componentId'] ?? c['component_id']) as num).toInt()),
                   quantity: Value((c['quantity'] as num?)?.toInt() ?? 1),
                   price: Value((c['price'] as num?)?.toDouble() ?? 0.0),
                   isSpecial: Value(
                       (c['isSpecial'] ?? c['is_special']) as bool? ?? false),
-                  createdAt: Value(DateTime.now()),
-                  updatedAt: Value(DateTime.now()),
-                ),
-                mode: InsertMode.insertOrReplace,
-              );
-        }
-      } else if (existingComponents.isNotEmpty) {
-        // Server omitted components — restore from local snapshot.
-        for (final comp in existingComponents) {
-          await _database.into(_database.orderProductComponents).insert(
-                OrderProductComponentsCompanion(
-                  orderProductId: Value(opRow.id),
-                  componentId: Value(comp.componentId),
-                  quantity: Value(comp.quantity),
-                  price: Value(comp.price),
-                  isSpecial: Value(comp.isSpecial),
+                  name: Value(c['name'] as String?),
+                  // A charge for a default the customer removed. Without this
+                  // an imported order would bring it back as a plain option,
+                  // and the next edit would send it as one — an ingredient
+                  // nobody served, deducted from stock.
+                  removalCharge: Value(
+                      (c['removalCharge'] ?? c['removal_charge']) as bool? ??
+                          false),
                   createdAt: Value(DateTime.now()),
                   updatedAt: Value(DateTime.now()),
                 ),
@@ -2364,6 +3739,22 @@ class DataSyncService {
               );
         }
       }
+    }
+
+    // Any local lines the server no longer lists were removed remotely — drop
+    // them and their components. Server order snapshots are complete, so an
+    // unmatched local line means a genuine remote removal.
+    final leftoverIds = [
+      for (final q in existingByKey.values)
+        for (final op in q) op.id,
+    ];
+    if (leftoverIds.isNotEmpty) {
+      await (_database.delete(_database.orderProductComponents)
+            ..where((c) => c.orderProductId.isIn(leftoverIds)))
+          .go();
+      await (_database.delete(_database.orderProducts)
+            ..where((op) => op.id.isIn(leftoverIds)))
+          .go();
     }
     }); // end transaction
 
@@ -2410,6 +3801,14 @@ class DataSyncService {
           ((item['tableId'] ?? item['table_id']) as num?)?.toInt()
           ?? existing?.tableId),
       source: Value(item['source'] as String?),
+      // The courier code the server echoes back. Falls back to what we already
+      // hold rather than nulling it: an older server that does not return the
+      // field must not wipe a code we captured from the queue, or the reprint
+      // loses it.
+      externalOrderCode: Value(
+          (item['externalOrderCode'] ?? item['external_order_code'])
+                  as String? ??
+              existing?.externalOrderCode),
       sourceId: Value(
           ((item['sourceId'] ?? item['source_id']) as num?)?.toInt()),
       discountPercentage: Value(
@@ -2419,6 +3818,26 @@ class DataSyncService {
               existing?.discountPercentage ??
               0.0),
       tip: Value((item['tip'] as num?)?.toDouble()),
+      // Delivery fee from PosOrderResponse, preserved across re-syncs the same
+      // way externalOrderCode is: fall back to what we already hold instead of
+      // nulling it, so an older server that doesn't return the field can't
+      // erase a fee this terminal recorded (or one that came off the queue).
+      // A server-sent 0 still wins — it's a real value, not an absence.
+      deliveryFee: Value(
+          ((item['deliveryFee'] ?? item['delivery_fee']) as num?)?.toDouble() ??
+              existing?.deliveryFee),
+      // Payment position, straight from the server — it owns the arithmetic.
+      // Falls back to what we hold so an older backend that omits the fields
+      // cannot blank a balance the cashier is looking at.
+      amountPaid: Value(
+          ((item['amountPaid'] ?? item['amount_paid']) as num?)?.toDouble() ??
+              existing?.amountPaid),
+      balanceDue: Value(
+          ((item['balanceDue'] ?? item['balance_due']) as num?)?.toDouble() ??
+              existing?.balanceDue),
+      paymentStatus: Value(
+          (item['paymentStatus'] ?? item['payment_status']) as String? ??
+              existing?.paymentStatus),
       createdBy: Value(
           ((item['createdBy'] ?? item['created_by']) as num?)?.toInt()
           ?? existing?.createdBy),
@@ -2468,24 +3887,28 @@ class DataSyncService {
     if (existing == null) return;
 
     final orderId = existing.id;
-    await (_database.delete(_database.tickets)
-          ..where((t) => t.orderId.equals(orderId)))
-        .go();
-    final opIds = await (_database.select(_database.orderProducts)
-          ..where((op) => op.orderId.equals(orderId)))
-        .map((op) => op.id)
-        .get();
-    if (opIds.isNotEmpty) {
-      await (_database.delete(_database.orderProductComponents)
-            ..where((c) => c.orderProductId.isIn(opIds)))
+    // Cascade delete atomically — a crash mid-cascade would otherwise leave an
+    // orphaned order (e.g. tickets gone but the order row still present).
+    await _database.transaction(() async {
+      await (_database.delete(_database.tickets)
+            ..where((t) => t.orderId.equals(orderId)))
           .go();
-    }
-    await (_database.delete(_database.orderProducts)
-          ..where((op) => op.orderId.equals(orderId)))
-        .go();
-    await (_database.delete(_database.orders)
-          ..where((o) => o.id.equals(orderId)))
-        .go();
+      final opIds = await (_database.select(_database.orderProducts)
+            ..where((op) => op.orderId.equals(orderId)))
+          .map((op) => op.id)
+          .get();
+      if (opIds.isNotEmpty) {
+        await (_database.delete(_database.orderProductComponents)
+              ..where((c) => c.orderProductId.isIn(opIds)))
+            .go();
+      }
+      await (_database.delete(_database.orderProducts)
+            ..where((op) => op.orderId.equals(orderId)))
+          .go();
+      await (_database.delete(_database.orders)
+            ..where((o) => o.id.equals(orderId)))
+          .go();
+    });
 
     _logger.info('pullOrderDeltas: tombstone order code=$code');
   }
@@ -2497,13 +3920,48 @@ class DataSyncService {
           ..where((t) => t.orderId.equals(orderId) & t.num.equals(ticketNum)))
         .getSingleOrNull();
 
+    final sessionId =
+        ((item['sessionId'] ?? item['session_id']) as num?)?.toInt();
+
+    // z_day precedence:
+    //  1. server-sent zDay (authoritative),
+    //  2. the session's Z opening day (all sessions in a Z share one z_day),
+    //     falling back to the session's own opening day,
+    //  3. the ticket date (last resort, when no session row is available).
+    DateTime? zDay;
+    final rawZ = item['zDay'] ?? item['z_day'];
+    if (rawZ != null) {
+      zDay = _parseDateTime(rawZ);
+    } else if (sessionId != null) {
+      final s = await (_database.select(_database.cashSessions)
+            ..where((t) => t.id.equals(sessionId)))
+          .getSingleOrNull();
+      if (s != null) {
+        DateTime? d;
+        if (s.zId != null) {
+          final z = await (_database.select(_database.zs)
+                ..where((t) => t.id.equals(s.zId!)))
+              .getSingleOrNull();
+          if (z != null) {
+            d = DateTime(z.startedAt.year, z.startedAt.month, z.startedAt.day);
+          }
+        }
+        zDay = d ??
+            DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day);
+      }
+    }
+    if (zDay == null) {
+      final ticketDate =
+          _parseDateTime(item['date'] ?? item['createdAt']) ?? DateTime.now();
+      zDay = DateTime(ticketDate.year, ticketDate.month, ticketDate.day);
+    }
+
     final companion = TicketsCompanion(
       num: Value(ticketNum),
       date: Value(_parseDateTime(item['date'] ?? item['createdAt']) ??
           DateTime.now()),
       orderId: Value(orderId),
-      sessionId: Value(
-          ((item['sessionId'] ?? item['session_id']) as num?)?.toInt()),
+      sessionId: Value(sessionId),
       paymentMethod: Value(
           (item['paymentMethod'] ?? item['payment_method']) as String? ??
               'CASH'),
@@ -2517,14 +3975,7 @@ class DataSyncService {
           Value((item['isPaid'] ?? item['is_paid']) as bool? ?? true),
       isCancelled: Value(
           (item['isCancelled'] ?? item['is_cancelled']) as bool? ?? false),
-      zDay: Value(() {
-        // Prefer the server-sent zDay; fall back to deriving from the ticket date.
-        final raw = item['zDay'] ?? item['z_day'];
-        if (raw != null) return _parseDateTime(raw);
-        final ticketDate = _parseDateTime(item['date'] ?? item['createdAt']) ??
-            DateTime.now();
-        return DateTime(ticketDate.year, ticketDate.month, ticketDate.day);
-      }()),
+      zDay: Value(zDay),
       isSynced: const Value(true),
     );
 

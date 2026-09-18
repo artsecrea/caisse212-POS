@@ -1,6 +1,7 @@
 import 'package:bcrypt/bcrypt.dart';
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:drift/drift.dart';
+import 'pos_log.dart';
 
 /// Sample data generator for testing the POS app
 /// Run this after the first launch to populate the database
@@ -10,7 +11,7 @@ class SampleDataGenerator {
   SampleDataGenerator(this.database);
 
   Future<void> generateAll() async {
-    print('Generating sample data...');
+    posLog('Generating sample data...');
 
     await _generateUsers();
     await _generateAreas();
@@ -25,11 +26,11 @@ class SampleDataGenerator {
     await _generateCustomers();
     await _generateCommercials();
 
-    print('Sample data generated successfully!');
+    posLog('Sample data generated successfully!');
   }
 
   Future<void> _generateUsers() async {
-    print('Creating users...');
+    posLog('Creating users...');
     // Admin user - has all permissions automatically by type
     await database.into(database.users).insert(
       UsersCompanion.insert(
@@ -71,7 +72,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateAreas() async {
-    print('Creating areas...');
+    posLog('Creating areas...');
     final areas = [
       {'id': 1, 'name': 'Main Hall', 'description': 'Main dining area'},
       {'id': 2, 'name': 'Terrace', 'description': 'Outdoor seating'},
@@ -90,7 +91,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateWaiters() async {
-    print('Creating waiters...');
+    posLog('Creating waiters...');
     final waiters = [
       {'id': 1, 'firstName': 'Ahmed', 'lastName': 'Hassan', 'areaIds': [1, 2]},
       {'id': 2, 'firstName': 'Fatima', 'lastName': 'Zahra', 'areaIds': [3]},
@@ -122,7 +123,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateCategories() async {
-    print('Creating categories...');
+    posLog('Creating categories...');
     final categories = [
       {
         'id': 1,
@@ -169,7 +170,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateComponentGroups() async {
-    print('Creating component groups...');
+    posLog('Creating component groups...');
     final groups = [
       {'id': 1, 'name': 'Toppings', 'order': 1, 'description': 'Add extra toppings'},
       {'id': 2, 'name': 'Sauces', 'order': 2, 'description': 'Special sauces'},
@@ -190,7 +191,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateComponents() async {
-    print('Creating components...');
+    posLog('Creating components...');
     final components = [
       // Toppings (group 1)
       {'id': 1, 'name': 'Extra Cheese', 'price': 1.50, 'groupId': 1},
@@ -230,7 +231,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateProducts() async {
-    print('Creating products...');
+    posLog('Creating products...');
     final products = [
       // Burgers (category 1)
       {
@@ -457,7 +458,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateProductComponents() async {
-    print('Linking products to components...');
+    posLog('Linking products to components...');
 
     // Burgers (products 1-4) can have all toppings, sauces, extras, and sides
     // Make cheese required (component 1) with min 1, max 3
@@ -542,7 +543,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateTables() async {
-    print('Creating tables...');
+    posLog('Creating tables...');
     final tables = [
       // Main Hall tables
       {'id': 1, 'name': 'Table 1', 'capacity': 4, 'areaId': 1},
@@ -574,7 +575,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateCustomers() async {
-    print('Creating customers...');
+    posLog('Creating customers...');
     final customers = [
       {'id': 1, 'firstName': 'Ahmed', 'lastName': 'Benali', 'phone': '0555123456'},
       {'id': 2, 'firstName': 'Fatima', 'lastName': 'Cherif', 'phone': '0666234567'},
@@ -595,7 +596,7 @@ class SampleDataGenerator {
   }
 
   Future<void> _generateCommercials() async {
-    print('Creating commercials...');
+    posLog('Creating commercials...');
     final commercials = [
       {'id': 1, 'firstName': 'Mohamed', 'lastName': 'Alami', 'cin': '123456789'},
       {'id': 2, 'firstName': 'Amina', 'lastName': 'Belkacem', 'cin': '987654321'},

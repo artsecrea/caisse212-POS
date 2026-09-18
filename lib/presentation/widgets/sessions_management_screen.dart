@@ -14,6 +14,7 @@ import '../../utils/currency_formatter.dart';
 import 'admin_mode_chip.dart';
 import 'close_session_dialog.dart';
 import 'permission_guard.dart';
+import 'x_report_dialog.dart';
 
 class SessionsManagementScreen extends ConsumerStatefulWidget {
   const SessionsManagementScreen({super.key});
@@ -155,7 +156,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                     )
                   : Icon(
                       isOnline ? Icons.cloud_sync : Icons.cloud_off,
-                      color: isOnline ? null : Colors.grey,
+                      color: isOnline ? null : Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
               onPressed: hasPermission && isOnline && !_isSyncing ? _syncAllSessions : null,
               tooltip: !hasPermission
@@ -394,7 +395,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       cloudIcon = const Icon(Icons.cloud_off, size: 14, color: Colors.orange);
       cloudTooltip = l10n.translate('not_synced_to_server');
     } else {
-      cloudIcon = const Icon(Icons.cloud_queue, size: 14, color: Colors.grey);
+      cloudIcon = Icon(Icons.cloud_queue, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant);
       cloudTooltip = 'Pending — will sync when session ends';
     }
 
@@ -437,7 +438,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
               PermissionIconButton(
                 permission: Permissions.sessionsDelete,
                 icon: const Icon(Icons.delete, size: 20),
-                color: Colors.grey,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 tooltip: l10n.translate('delete'),
                 onPressed: () => _deleteSession(session),
               ),
@@ -458,7 +459,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         color = Colors.orange;
         break;
       default:
-        color = Colors.grey;
+        color = Theme.of(context).colorScheme.onSurfaceVariant;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -478,14 +479,14 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: Colors.grey[300]!)),
+        border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
             'Showing ${_currentPage * _rowsPerPage + 1}–${((_currentPage + 1) * _rowsPerPage).clamp(0, totalItems)} of $totalItems sessions',
-            style: TextStyle(color: Colors.grey[700]),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           ),
           Row(
             children: [
@@ -523,16 +524,16 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.access_time, size: 64, color: Colors.grey[400]),
+          Icon(Icons.access_time, size: 64, color: Theme.of(context).colorScheme.outline),
           const SizedBox(height: 16),
           Text(
             l10n.translate('no_sessions_found'),
-            style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
             'Try adjusting your filters',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -546,14 +547,14 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         children: [
           Icon(Icons.error_outline, size: 64, color: Colors.red[400]),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Error loading sessions',
-            style: TextStyle(fontSize: 18, color: Colors.grey),
+            style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 8),
           Text(
             error,
-            style: const TextStyle(fontSize: 14, color: Colors.grey),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
             textAlign: TextAlign.center,
           ),
         ],
@@ -739,6 +740,15 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
           ),
         ),
         actions: [
+          TextButton.icon(
+            onPressed: () => showPrintXReportDialog(
+              context: context,
+              ref: ref,
+              session: session,
+            ),
+            icon: const Icon(Icons.print_outlined, size: 18),
+            label: Text(l10n.translate('print_x_report')),
+          ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: Text(l10n.translate('close')),
@@ -762,7 +772,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: Colors.grey[600])),
+          Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           Text(
             value,
             style: TextStyle(fontWeight: FontWeight.bold, color: valueColor),
@@ -779,7 +789,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
       case 'paused':
         return Colors.orange;
       default:
-        return Colors.grey;
+        return Theme.of(context).colorScheme.onSurfaceVariant;
     }
   }
 
@@ -865,7 +875,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                         '${op.lastError != null ? '\n${l10n.translate('error')}: ${op.lastError}' : ''}',
                       ),
                       trailing: IconButton(
-                        icon: const Icon(Icons.delete_forever, color: Colors.grey),
+                        icon: Icon(Icons.delete_forever, color: Theme.of(context).colorScheme.onSurfaceVariant),
                         onPressed: () async {
                           await pendingOpsService.markCompleted(op.id);
                           if (context.mounted) Navigator.of(context).pop();

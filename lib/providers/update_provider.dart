@@ -192,3 +192,10 @@ final updateProvider =
     StateNotifierProvider<UpdateNotifier, UpdateState>((ref) {
   return UpdateNotifier(ref.watch(updateServiceProvider));
 });
+
+/// The version the user tapped "Later" on for the auto-update "ready" banner.
+/// The banner hides while `pendingVersion == this`; a newer staged version
+/// (different string) makes it reappear automatically — no manual reset. Held
+/// in RAM only (resets each launch, which is fine: `applyPendingUpdateIfExists`
+/// applies any staged update at the next launch before this ever matters).
+final dismissedUpdateBannerProvider = StateProvider<String?>((ref) => null);

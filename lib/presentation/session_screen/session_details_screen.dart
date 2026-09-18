@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../services/session_service.dart';
+import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
 
 class SessionDetailsScreen extends ConsumerStatefulWidget {
   const SessionDetailsScreen({super.key});
@@ -58,7 +60,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Failed to load session: ${e.toString()}';
+        _errorMessage = errorText(e, AppLocalizations.of(context)!);
         _isLoading = false;
       });
     }
@@ -83,7 +85,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to pause session: ${e.toString()}')),
+          SnackBar(content: Text(errorText(e, AppLocalizations.of(context)!))),
         );
       }
     }
@@ -108,7 +110,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to resume session: ${e.toString()}')),
+          SnackBar(content: Text(errorText(e, AppLocalizations.of(context)!))),
         );
       }
     }
@@ -187,7 +189,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Failed to end session: ${e.toString()}'),
+              content: Text(errorText(e, AppLocalizations.of(context)!)),
               backgroundColor: Colors.red,
             ),
           );
@@ -214,9 +216,9 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
       case 'paused':
         return Colors.orange;
       case 'ended':
-        return Colors.grey;
+        return Theme.of(context).colorScheme.onSurfaceVariant;
       default:
-        return Colors.grey;
+        return Theme.of(context).colorScheme.onSurfaceVariant;
     }
   }
 
@@ -226,8 +228,8 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Session Details'),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Theme.of(context).colorScheme.onPrimary,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -245,7 +247,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
                     children: [
                       Icon(Icons.error_outline, size: 64, color: Colors.red[400]),
                       const SizedBox(height: 16),
-                      Text(_errorMessage!, style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                      Text(_errorMessage!, style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                     ],
                   ),
                 )
@@ -254,11 +256,11 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.access_time, size: 64, color: Colors.grey[400]),
+                          Icon(Icons.access_time, size: 64, color: Theme.of(context).colorScheme.outline),
                           const SizedBox(height: 16),
-                          Text('No active session', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                          Text('No active session', style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                           const SizedBox(height: 8),
-                          Text('Please login to start a new session', style: TextStyle(fontSize: 14, color: Colors.grey[500])),
+                          Text('Please login to start a new session', style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                         ],
                       ),
                     )
@@ -410,7 +412,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
           Text(
             label,
             style: TextStyle(
-              color: Colors.grey[700],
+              color: Theme.of(context).colorScheme.onSurface,
               fontSize: 14,
             ),
           ),
@@ -418,7 +420,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
             value,
             style: TextStyle(
               fontWeight: bold ? FontWeight.bold : FontWeight.w600,
-              color: valueColor ?? Colors.black87,
+              color: valueColor ?? Theme.of(context).colorScheme.onSurface,
               fontSize: 14,
             ),
           ),

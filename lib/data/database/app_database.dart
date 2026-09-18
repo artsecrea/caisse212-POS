@@ -10,6 +10,8 @@ import 'tables/user_table.dart';
 import 'tables/component_table.dart';
 import 'tables/component_group_table.dart';
 import 'tables/product_component_table.dart';
+import 'tables/product_component_group_table.dart';
+import 'tables/serial_conflict_table.dart';
 import 'tables/area_table.dart';
 import 'tables/area_tables_table.dart';
 import 'tables/station_table.dart';
@@ -31,6 +33,18 @@ import 'tables/waiter_table.dart';
 import 'tables/note_table.dart';
 import 'tables/activity_log_table.dart';
 import 'tables/product_station_table.dart';
+import 'tables/resource_table.dart';
+import 'tables/product_resource_table.dart';
+import 'tables/z_table.dart';
+import 'tables/refund_table.dart';
+import 'tables/product_unit_table.dart';
+import 'tables/cash_movement_table.dart';
+import 'tables/serial_table.dart';
+import 'tables/integration_mapping_table.dart';
+import 'tables/provider_table.dart';
+import 'tables/agenda_booking_table.dart';
+import 'tables/ticket_draft_split_table.dart';
+import '../../utils/pos_log.dart';
 
 part 'app_database.g.dart';
 
@@ -43,6 +57,8 @@ part 'app_database.g.dart';
   Components,
   ComponentGroups,
   ProductComponents,
+  ProductComponentGroups,
+  SerialConflicts,
   Areas,
   AreaTables,
   Stations,
@@ -64,13 +80,31 @@ part 'app_database.g.dart';
   Notes,
   ActivityLogs,
   ProductStations,
+  Resources,
+  ProductResources,
+  Zs,
+  Refunds,
+  RefundLines,
+  ProductUnits,
+  CashMovements,
+  Serials,
+  IntegrationMappings,
+  Providers,
+  AgendaBookings,
+  TicketDraftSplits,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
+
+  /// Injects a caller-supplied executor — used by tests to run against an
+  /// in-memory database instead of the on-disk one. Production code always uses
+  /// the default constructor.
+  AppDatabase.forTesting(super.executor);
+
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 24;
+  int get schemaVersion => 51;
 
   @override
   MigrationStrategy get migration {
@@ -540,6 +574,334 @@ class AppDatabase extends _$AppDatabase {
                 'ALTER TABLE cash_sessions ADD COLUMN details TEXT;');
           } catch (e) {/* may already exist */}
         }
+        if (from < 25) {
+          // Z (shift) tracking: a Z owns one or more cash sessions.
+          try {
+            await m.createTable(zs);
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+                'ALTER TABLE cash_sessions ADD COLUMN z_id INTEGER;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 26) {
+          // Product reference / SKU — searchable, nullable.
+          try {
+            await customStatement(
+                'ALTER TABLE products ADD COLUMN reference TEXT;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 27) {
+          // KDS stage timestamps on order_products — for local kitchen stats.
+          // TEXT because build.yaml sets store_date_time_values_as_text: true.
+          for (final col in const ['preparing_at', 'ready_at', 'served_at']) {
+            try {
+              await customStatement(
+                  'ALTER TABLE order_products ADD COLUMN $col TEXT;');
+            } catch (e) {/* may already exist */}
+          }
+        }
+        if (from < 43) {
+          // Reserved value and resource type on the cached diary.
+          for (final col in const [
+            'value REAL NULL',
+            'plan_resource_type TEXT NULL',
+          ]) {
+            try {
+              await customStatement(
+                  'ALTER TABLE agenda_bookings ADD COLUMN $col;');
+            } catch (e) {/* may already exist */}
+          }
+        }
+        if (from < 51) {
+          // Courses (entrée / plat / dessert). Null on every existing row,
+          // which is exactly right: nobody chose one, so nothing about how
+          // their tickets print changes.
+          try {
+            await customStatement(
+                'ALTER TABLE order_products ADD COLUMN course_no INTEGER;');
+          } catch (e) {/* may already exist */}
+        }
+
+        if (from < 50) {
+          // Delta printing for the CUSTOMER order ticket. Existing rows start
+          // at 0, which reads as "nothing has been put on a slip yet" — so the
+          // first additions-only print after upgrading behaves like a full
+          // one, then settles into deltas. That is the honest default: we
+          // genuinely do not know what was already handed to the customer.
+          try {
+            await customStatement('ALTER TABLE order_products ADD COLUMN '
+                'order_ticket_printed_quantity REAL NOT NULL DEFAULT 0.0;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 49) {
+          // Draft ticket-split arrangement — local only, see the table's own
+          // doc comment. New, so a straight create; nothing to migrate.
+          try {
+            await m.createTable(ticketDraftSplits);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 48) {
+          // Units another till sold out from under us.
+          try {
+            await m.createTable(serialConflicts);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 47) {
+          // default_price becomes nullable so "no override" and "free" stop
+          // being the same value. SQLite cannot drop NOT NULL in place, and
+          // the column was written with a 0.0 default: rows that were never
+          // overridden are indistinguishable from free ones now, so the
+          // honest repair is to let the next sync restate them.
+          try {
+            await customStatement(
+                'UPDATE product_components SET default_price = NULL '
+                'WHERE default_price = 0;');
+          } catch (e) {/* column already nullable, or table absent */}
+        }
+        if (from < 46) {
+          // Charge-on-removal: the catalogue flag, and the local marker for a
+          // billed removal so the signal survives a restart and a re-sync.
+          try {
+            await customStatement('ALTER TABLE product_components ADD COLUMN '
+                'charge_on_removal INTEGER NOT NULL DEFAULT 0;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement('ALTER TABLE order_product_components ADD '
+                'COLUMN removal_charge INTEGER NOT NULL DEFAULT 0;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 45) {
+          // The product an option stands for, so it can be routed to that
+          // product's station.
+          for (final col in const [
+            'linked_product_id INTEGER NULL',
+            'linked_variant_id INTEGER NULL',
+          ]) {
+            try {
+              await customStatement('ALTER TABLE components ADD COLUMN $col;');
+            } catch (e) {/* may already exist */}
+          }
+        }
+        if (from < 44) {
+          // Component group selection rules. The server has had these since
+          // V138; the POS was rendering every group as free-for-all steppers
+          // because it never stored them.
+          for (final col in const [
+            'color TEXT NULL',
+            "selection_type TEXT NOT NULL DEFAULT 'QUANTITY'",
+            'min_selection INTEGER NOT NULL DEFAULT 0',
+            'max_selection INTEGER NULL',
+            'free_quantity INTEGER NOT NULL DEFAULT 0',
+          ]) {
+            try {
+              await customStatement(
+                  'ALTER TABLE component_groups ADD COLUMN $col;');
+            } catch (e) {/* may already exist */}
+          }
+          for (final col in const [
+            'is_active INTEGER NOT NULL DEFAULT 1',
+            'display_order INTEGER NOT NULL DEFAULT 0',
+          ]) {
+            try {
+              await customStatement('ALTER TABLE components ADD COLUMN $col;');
+            } catch (e) {/* may already exist */}
+          }
+          try {
+            await m.createTable(productComponentGroups);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 28) {
+          // Booking resources: assigned resource on a scheduled line + the
+          // Resources catalog and the per-product eligible pool.
+          try {
+            await customStatement(
+                'ALTER TABLE order_products ADD COLUMN plan_resource_id INTEGER;');
+          } catch (e) {/* may already exist */}
+          try {
+            await m.createTable(resources);
+          } catch (e) {/* may already exist */}
+          try {
+            await m.createTable(productResources);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 29) {
+          // POS↔backend contract catch-up. All additive and nullable, so a
+          // device that upgrades mid-shift keeps every existing row valid and
+          // the old sync payloads keep working unchanged.
+
+          // Delivery-platform routing + the ready-signal marker.
+          for (final col in const [
+            'external_order_id TEXT',
+            'delivery_status TEXT',
+            'courier_name TEXT',
+            'courier_phone TEXT',
+            'ready_signal_at TEXT', // TEXT: store_date_time_values_as_text
+          ]) {
+            try {
+              await customStatement('ALTER TABLE orders ADD COLUMN $col;');
+            } catch (e) {/* may already exist */}
+          }
+
+          // Line-level: the server's own line id (refunds reference it), the
+          // sold UOM, and the discount reason.
+          for (final col in const [
+            'server_id INTEGER',
+            'sale_uom_id INTEGER',
+            'manual_discount_reason TEXT',
+          ]) {
+            try {
+              await customStatement(
+                  'ALTER TABLE order_products ADD COLUMN $col;');
+            } catch (e) {/* may already exist */}
+          }
+
+          // Component name snapshot, so a rename or an 86 can't rewrite an
+          // already-printed ticket.
+          try {
+            await customStatement(
+                'ALTER TABLE order_product_components ADD COLUMN name TEXT;');
+          } catch (e) {/* may already exist */}
+
+          try {
+            await m.createTable(refunds);
+          } catch (e) {/* may already exist */}
+          try {
+            await m.createTable(refundLines);
+          } catch (e) {/* may already exist */}
+          try {
+            await m.createTable(productUnits);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 30) {
+          // Split the discount reason out of `orders.note`. Applying a manual
+          // discount used to write its reason into `note`, which is the field
+          // the KDS and the kitchen ticket read — so discounting an order
+          // silently replaced the kitchen instruction. Existing rows keep
+          // whatever `note` holds; only new discounts write here.
+          try {
+            await customStatement(
+                'ALTER TABLE orders ADD COLUMN discount_reason TEXT;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 31) {
+          // Non-sale cash in/out of the drawer, so a petty-cash withdrawal
+          // stops surfacing as unexplained Z-report variance.
+          try {
+            await m.createTable(cashMovements);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 32) {
+          // Local "86" flag. Defaults to 1 so every existing product stays
+          // sellable; only an explicit kitchen action clears it.
+          try {
+            await customStatement(
+                'ALTER TABLE products ADD COLUMN is_available INTEGER NOT NULL DEFAULT 1;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 33) {
+          // Product cost, so order lines can carry a cost to the server for
+          // margin reporting. Nullable — an unknown cost must not read as 0.
+          try {
+            await customStatement(
+                'ALTER TABLE products ADD COLUMN cost REAL NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 34) {
+          // Per-line cost snapshot. Existing rows stay NULL; the sync falls back
+          // to the catalogue cost for those, so historical orders still report.
+          try {
+            await customStatement(
+                'ALTER TABLE order_products ADD COLUMN cost REAL NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 35) {
+          // Serial-managed products: the unit-level stock cache, the two
+          // tracking flags, and the unit sold on a line.
+          try {
+            await m.createTable(serials);
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+                'ALTER TABLE products ADD COLUMN is_serial_tracked '
+                'INTEGER NOT NULL DEFAULT 0;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+                'ALTER TABLE product_variants ADD COLUMN is_serial_tracked '
+                'INTEGER NOT NULL DEFAULT 0;');
+          } catch (e) {/* may already exist */}
+          try {
+            await customStatement(
+                'ALTER TABLE order_products ADD COLUMN serial_id INTEGER NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 36) {
+          // Parked-refund marker — see Refunds.syncError.
+          try {
+            await customStatement(
+                'ALTER TABLE refunds ADD COLUMN sync_error TEXT NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 37) {
+          // Distinguishes a typed amount from a derived one — see
+          // RefundLines.amountOverridden. Existing rows are all derived.
+          try {
+            await customStatement(
+                'ALTER TABLE refund_lines ADD COLUMN amount_overridden '
+                'INTEGER NOT NULL DEFAULT 0;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 38) {
+          // Platform item id -> our product/component, cached for offline
+          // resolution of incoming marketplace orders.
+          try {
+            await m.createTable(integrationMappings);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 39) {
+          // Courier-facing platform code, kept on the order so reprints survive
+          // the queue's 7-day purge.
+          try {
+            await customStatement(
+                'ALTER TABLE orders ADD COLUMN external_order_code TEXT NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 40) {
+          // Delivery charge, tracked beside the products total like `tip`.
+          // Left NULL on every existing row: "no fee recorded" is the honest
+          // reading of history, and defaulting to 0 would claim every past
+          // order shipped free.
+          try {
+            await customStatement(
+                'ALTER TABLE orders ADD COLUMN delivery_fee REAL NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 41) {
+          // Bookable staff, and the last pulled diary they appear in. Both are
+          // caches of server state, so a failed create is safe to swallow —
+          // the next master sync refills them.
+          try {
+            await m.createTable(providers);
+          } catch (e) {/* may already exist */}
+          try {
+            await m.createTable(agendaBookings);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 42) {
+          // Backend-tracked payment position, for service orders settled in
+          // instalments. NULL on history: we were never told, which is not
+          // the same as nothing having been paid.
+          for (final col in const [
+            'amount_paid REAL NULL',
+            'balance_due REAL NULL',
+            'payment_status TEXT NULL',
+          ]) {
+            try {
+              await customStatement('ALTER TABLE orders ADD COLUMN $col;');
+            } catch (e) {/* may already exist */}
+          }
+        }
       },
     );
   }
@@ -554,7 +916,7 @@ class AppDatabase extends _$AppDatabase {
         if (!await dbFolder.exists()) {
           await dbFolder.create(recursive: true);
         }
-        print(">>>>>>>>"+dbFolder.path);
+        posLog(">>>>>>>>"+dbFolder.path);
 
         return NativeDatabase.createInBackground(file);
       } catch (e) {

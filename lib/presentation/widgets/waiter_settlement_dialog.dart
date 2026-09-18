@@ -9,7 +9,9 @@ import '../../providers/network_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/sync_manager_provider.dart';
+import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
 
@@ -98,7 +100,7 @@ class _WaiterSettlementDialogState
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = errorText(e, AppLocalizations.of(context)!);
         _isLoading = false;
       });
     }
@@ -158,6 +160,8 @@ class _WaiterSettlementDialogState
     final repo = ref.read(orderRepositoryProvider);
     final paidStatus =
         ref.read(settingsProvider).paidOrderDefaultStatus;
+    final autoClearTable =
+        ref.read(settingsProvider).autoClearTableAfterPaying;
     final isOnline = ref.read(lastKnownOnlineStatusProvider);
     final syncManager = ref.read(syncManagerProvider.notifier);
     final printingService = ref.read(printingServiceProvider);
@@ -189,39 +193,56 @@ class _WaiterSettlementDialogState
                 .map((t) => int.tryParse(t.num) ?? 0)
                 .reduce((a, b) => a > b ? a : b);
         final ticketNumStr = (maxNum + 1).toString().padLeft(4, '0');
-        // Cash ticket covering the remaining due.
-        final ticketId = await database.into(database.tickets).insert(
-              TicketsCompanion.insert(
-                num: ticketNumStr,
-                orderId: orderId,
-                paymentMethod: 'CASH',
-                amount: due,
-                sessionId: Value(session?.id),
-                // z_day = the session's opening calendar day (falls back to
-                // today's midnight when no session is open).
-                zDay: Value(ref.read(currentZDayProvider)),
-                isPaid: const Value(true),
-                printCount: const Value(0),
-                date: Value(DateTime.now()),
-              ),
-            );
 
-        // Mark every UNPAID line on this order as PAID and attach the
-        // new ticket. Anything already PAID stays as-is so partials don't
-        // get re-stamped.
-        await (database.update(database.orderProducts)
-              ..where((p) =>
-                  p.orderId.equals(orderId) & p.state.equals('PAID').not()))
-            .write(OrderProductsCompanion(
-          ticketId: Value(ticketId),
-          state: const Value('PAID'),
-          updatedAt: Value(DateTime.now()),
-        ));
+        // Cash ticket + PAID marking committed atomically — without the
+        // transaction a mid-write failure could leave an orphaned paid ticket
+        // with still-PENDING lines (mirrors payment_screen._processPayment and
+        // _payDirectly).
+        final zDay = ref.read(currentZDayProvider);
+        late final int ticketId;
+        await database.transaction(() async {
+          ticketId = await database.into(database.tickets).insert(
+                TicketsCompanion.insert(
+                  num: ticketNumStr,
+                  orderId: orderId,
+                  paymentMethod: 'CASH',
+                  amount: due,
+                  sessionId: Value(session?.id),
+                  // z_day = the session's opening calendar day (falls back to
+                  // today's midnight when no session is open).
+                  zDay: Value(zDay),
+                  isPaid: const Value(true),
+                  printCount: const Value(0),
+                  date: Value(DateTime.now()),
+                ),
+              );
 
-        // Mark the order itself paid (status from settings, default
-        // COMPLETED) and trigger sync if online.
-        await repo.updateOrderStatus(orderId, paidStatus,
-            queueSyncOperation: false);
+          // Mark every UNPAID line on this order as PAID and attach the
+          // new ticket. Anything already PAID stays as-is so partials don't
+          // get re-stamped.
+          await (database.update(database.orderProducts)
+                ..where((p) =>
+                    p.orderId.equals(orderId) & p.state.equals('PAID').not()))
+              .write(OrderProductsCompanion(
+            ticketId: Value(ticketId),
+            state: const Value('PAID'),
+            updatedAt: Value(DateTime.now()),
+          ));
+        });
+
+        // Mark the order paid AND free its table in one atomic step — the same
+        // path the cashier uses, so a waiter-settled order frees its table
+        // (occupancy-based) exactly like a cashier-paid one, honoring the
+        // auto-clear-table setting. All lines are PAID by now, so this always
+        // settles.
+        // The waiter keeps `servedBy`; the till that took the cash takes
+        // `takenBy`, so the money lands in this cashier's session.
+        await repo.claimOrderForCurrentUser(orderId);
+        await repo.settleOrderAndFreeTable(
+          orderId,
+          paidStatus: paidStatus,
+          clearTable: autoClearTable,
+        );
         if (isOnline) {
           try {
             await syncManager.autoSyncOrder(orderId);
@@ -251,6 +272,10 @@ class _WaiterSettlementDialogState
             ticketId: ticketId,
             ticketNumber: ticketNumStr,
             amount: due,
+            deliveryFee: PrintingService.feeForThisTicket(
+              o.order.deliveryFee,
+              anythingAlreadyPaid: o.totalPaid > 0,
+            ),
             paymentMethod: 'CASH',
             createdAt: DateTime.now(),
             items: itemsForPrint,

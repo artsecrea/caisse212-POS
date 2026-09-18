@@ -1,14 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:caisse212/providers/stat_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
-import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/data_sync_service.dart';
 import 'package:caisse212/services/permission_service.dart';
+import 'z_management_dialog.dart';
 import 'package:caisse212/services/activity_log_service.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
@@ -21,12 +20,22 @@ import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/responsive_utils.dart';
 import '../settings/settings_screen.dart';
+import 'settings_lock_dialog.dart';
 import '../profile/profile_dialog.dart';
 import '../../providers/held_orders_provider.dart';
 import 'admin_mode_chip.dart';
+import 'calculator_dialog.dart';
+// DISABLED-FOR-NOW: restore alongside the commented menu items below.
+// import 'cash_movement_dialog.dart';
 import 'close_session_dialog.dart';
+import 'x_report_dialog.dart';
+import 'z_report_dialog.dart';
+import 'settle_unpaid_dialog.dart';
+// import 'notify_admin_dialog.dart';
 import 'report_issue_dialog.dart';
 import 'sync_inspector_dialog.dart';
+import './adaptive_text_field.dart';
+import '../../core/theme/app_theme.dart';
 
 class TopBar extends ConsumerStatefulWidget {
   const TopBar({Key? key}) : super(key: key);
@@ -46,10 +55,10 @@ class _TopBarState extends ConsumerState<TopBar> {
   void initState() {
     super.initState();
     _checkConnectivity();
-    _connectivitySub = Connectivity().onConnectivityChanged.listen((result) {
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       if (!mounted) return;
       setState(() {
-        _isOnline = result != ConnectivityResult.none;
+        _isOnline = _hasNetwork(results);
       });
       ref.read(networkStateProvider.notifier).state = _isOnline;
     });
@@ -68,12 +77,48 @@ class _TopBarState extends ConsumerState<TopBar> {
     _requestSearchFocus();
   }
 
+  /// Put the cursor back in the product search.
+  ///
+  /// Guarded, because this runs from [didChangeDependencies], which fires on
+  /// ANY inherited-widget change — including ones caused by a dialog opening
+  /// above us or the on-screen keyboard resizing the view. Ungarded, typing in
+  /// the Settings dialog yanked the caret to this field and the characters
+  /// landed in the product search instead.
+  ///
+  /// Does nothing at all when `autoFocusProductSearch` is off: taking the
+  /// caret is what raises the on-screen keyboard, so on a touch till this is
+  /// the difference between the keyboard covering half the product grid every
+  /// time you come back to the main screen and it staying down until asked
+  /// for. The cashier taps the search box to type; the barcode scanner keeps
+  /// working either way, since it listens on the scaffold's own focus node.
   void _requestSearchFocus() {
+    if (!ref.read(settingsProvider).autoFocusProductSearch) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _searchFocusNode.canRequestFocus) {
+      if (!mounted) return;
+      if (!_mayTakeFocus()) return;
+      if (_searchFocusNode.canRequestFocus) {
         _searchFocusNode.requestFocus();
       }
     });
+  }
+
+  /// Whether it is this bar's turn to hold the keyboard.
+  bool _mayTakeFocus() {
+    // A modal is open above the main screen (settings, payment, any dialog).
+    // Its fields own the keyboard until it closes.
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+
+    // Something else on this screen already has the caret — the order note,
+    // a quantity box, the customer search. Respect whatever the user is
+    // actually typing in. A FocusScopeNode means "nothing in particular".
+    final primary = FocusManager.instance.primaryFocus;
+    if (primary != null &&
+        primary != _searchFocusNode &&
+        primary is! FocusScopeNode) {
+      return false;
+    }
+    return true;
   }
 
   @override
@@ -97,7 +142,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       height: 40,
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: AppTheme.brXl,
       ),
       child: Row(
         children: [
@@ -114,7 +159,7 @@ class _TopBarState extends ConsumerState<TopBar> {
           ),
           // Search text field
           Expanded(
-            child: OnscreenKeyboardTextField(
+            child: AdaptiveKeyboardTextField(
               controller: _searchController,
               focusNode: _searchFocusNode,
               decoration: InputDecoration(
@@ -140,7 +185,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                 ref.read(productSearchQueryProvider.notifier).state = '';
                 _searchFocusNode.requestFocus();
               },
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: AppTheme.brXl,
               child: Container(
                 width: 30,
                 height: 40,
@@ -153,6 +198,44 @@ class _TopBarState extends ConsumerState<TopBar> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  /// A top-bar action: outlined, filled, and big enough to hit.
+  ///
+  /// These used to be bare white glyphs on a coloured bar with nothing around
+  /// them — no edge, no hit target you could see, and at a glance no way to
+  /// tell a button from the decoration. A border and a tint make each one read
+  /// as a thing you press.
+  Widget _navButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    Color? iconColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: Colors.white.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: 46,
+              height: 42,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.75), width: 1.6),
+              ),
+              child: Icon(icon, color: iconColor ?? Colors.white, size: 23),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -248,7 +331,7 @@ class _TopBarState extends ConsumerState<TopBar> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: AppTheme.brXl,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -262,11 +345,19 @@ class _TopBarState extends ConsumerState<TopBar> {
     );
   }
 
+  /// connectivity_plus 6 reports a LIST of active transports, not one enum.
+  /// The old `result != ConnectivityResult.none` compared a List to an enum —
+  /// never equal, so `networkStateProvider` was pinned to true and the whole
+  /// app believed it was online while the till sat on a dead link. Matches the
+  /// idiom already used in `network_provider.dart`.
+  static bool _hasNetwork(List<ConnectivityResult> results) =>
+      results.isNotEmpty && !results.contains(ConnectivityResult.none);
+
   Future<void> _checkConnectivity() async {
-    final result = await Connectivity().checkConnectivity();
+    final results = await Connectivity().checkConnectivity();
     if (!mounted) return;
     setState(() {
-      _isOnline = result != ConnectivityResult.none;
+      _isOnline = _hasNetwork(results);
     });
     ref.read(networkStateProvider.notifier).state = _isOnline;
   }
@@ -276,6 +367,47 @@ class _TopBarState extends ConsumerState<TopBar> {
     final m = dt.minute.toString().padLeft(2, '0');
     final s = dt.second.toString().padLeft(2, '0');
     return '$h:$m:$s';
+  }
+
+  /// Clear the backlog of unpaid orders in one pass.
+  ///
+  /// Credentials first: this turns other people's open orders into collected
+  /// cash on a day the operator chooses, which is a books decision, not a
+  /// cashier one. Admin, or a holder of the same close sign-off permission —
+  /// somebody trusted to accept a discrepancy is trusted to clear one.
+  Future<void> _handleSettleUnpaid() async {
+    final l10n = AppLocalizations.of(context);
+    final elevation = await showAdminCredentialDialog(
+      context,
+      ref,
+      title: l10n?.translate('settle_unpaid_orders'),
+      description: l10n?.translate('enter_admin_credentials'),
+      permission: Permissions.sessionsCloseUnbalanced,
+    );
+    if (elevation == null || !mounted) return;
+    await showSettleUnpaidDialog(context: context, ref: ref);
+  }
+
+  /// Read a past trading day's Z figures from the till.
+  ///
+  /// Credentials first, every time: this exposes whole-day takings, and the
+  /// till is typically left logged in as whichever cashier is on. An admin
+  /// passes by being an admin; anyone else needs `pos:z:print`.
+  ///
+  /// Not gated on `zTrackingEnabled` — a day's totals are readable whether or
+  /// not this terminal runs the Z shift lifecycle. See
+  /// [showPrintZReportDialog].
+  Future<void> _handleZReport() async {
+    final l10n = AppLocalizations.of(context);
+    final elevation = await showAdminCredentialDialog(
+      context,
+      ref,
+      title: l10n?.translate('print_z_report'),
+      description: l10n?.translate('enter_admin_credentials'),
+      permission: Permissions.zPrint,
+    );
+    if (elevation == null || !mounted) return;
+    await showPrintZReportDialog(context: context, ref: ref);
   }
 
   void _showCurrentSessionDetails() async {
@@ -331,6 +463,18 @@ class _TopBarState extends ConsumerState<TopBar> {
             ),
           ),
           actions: [
+            // X report for the shift in progress — a read-only snapshot, so
+            // it is safe on a live session and closes nothing. Same dialog
+            // Sessions management offers, so the two cannot drift.
+            TextButton.icon(
+              onPressed: () => showPrintXReportDialog(
+                context: context,
+                ref: ref,
+                session: session,
+              ),
+              icon: const Icon(Icons.print_outlined, size: 18),
+              label: Text(l10n?.translate('print_x_report') ?? 'Print X report'),
+            ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
               child: Text(l10n?.translate('close') ?? 'Close'),
@@ -358,32 +502,40 @@ class _TopBarState extends ConsumerState<TopBar> {
       if (heldOrders.isNotEmpty && mounted) {
         final proceed = await showDialog<bool>(
           context: context,
-          builder: (ctx) => AlertDialog(
-            title: Row(
-              children: [
-                const Icon(Icons.warning_amber, color: Colors.orange),
-                const SizedBox(width: 8),
-                Text(l10n?.translate('held_orders_warning_title') ??
-                    'Unsaved held orders'),
+          builder: (ctx) {
+            final cs = Theme.of(ctx).colorScheme;
+            return AlertDialog(
+              icon: const Icon(Icons.warning_amber_rounded,
+                  color: Color(0xFFD97706), size: 30),
+              title: Text(
+                l10n?.translate('held_orders_warning_title') ??
+                    'Unsaved held orders',
+                textAlign: TextAlign.center,
+              ),
+              content: Text(
+                (l10n?.translate('held_orders_warning_body') ??
+                        'You have {0} held order(s) in memory that will be lost if you log out. Continue?')
+                    .replaceAll('{0}', heldOrders.length.toString()),
+                textAlign: TextAlign.center,
+              ),
+              actionsAlignment: MainAxisAlignment.center,
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(l10n?.translate('cancel') ?? 'Cancel'),
+                ),
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  icon: const Icon(Icons.logout_rounded, size: 18),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: cs.error,
+                    foregroundColor: cs.onError,
+                  ),
+                  label: Text(l10n?.translate('logout') ?? 'Logout'),
+                ),
               ],
-            ),
-            content: Text(
-              (l10n?.translate('held_orders_warning_body') ??
-                      'You have {0} held order(s) in memory that will be lost if you log out. Continue?')
-                  .replaceAll('{0}', heldOrders.length.toString()),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text(l10n?.translate('cancel') ?? 'Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-                child: Text(l10n?.translate('logout') ?? 'Logout'),
-              ),
-            ],
-          ),
+            );
+          },
         );
         if (proceed != true) return;
       }
@@ -404,47 +556,139 @@ class _TopBarState extends ConsumerState<TopBar> {
         return;
       }
 
-      // Show dialog asking user to pause or end session
+      // Z (shift) close availability — offered next to End Session.
+      final zEnabled = ref.read(settingsProvider).zTrackingEnabled;
+      final openZForClose =
+          zEnabled ? await ref.read(zServiceProvider).getOpenZ() : null;
+      final canCloseZ = openZForClose != null &&
+          ref.read(permissionServiceProvider).hasPermission(Permissions.zClose);
+
+      // Show dialog asking user to pause or end session — a clear, tappable
+      // list of options (each with an icon + one-line explanation) instead of a
+      // cramped row of colored buttons.
       final choice = await showDialog<String>(
         context: context,
         barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: Text(l10n?.translate('logout') ?? 'Logout'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(l10n?.translate('what_to_do_with_session') ?? 'What would you like to do with your current session?'),
-              const SizedBox(height: 16),
-              Text(l10n?.translate('pause_resume_info') ?? '• Pause: Resume when you login again'),
-              Text(l10n?.translate('end_close_info') ?? '• End: Close session and calculate totals'),
+        builder: (dctx) {
+          final dcs = Theme.of(dctx).colorScheme;
+          // Semantic accents (caution / destructive / brand) — tinted at low
+          // alpha so they read on both light and dark surfaces.
+          const pauseColor = Color(0xFFD97706); // amber
+          const endColor = Color(0xFFDC2626); // red
+
+          Widget optionTile({
+            required IconData icon,
+            required Color color,
+            required String title,
+            required String subtitle,
+            required String value,
+          }) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Material(
+                color: color.withValues(alpha: 0.10),
+                borderRadius: AppTheme.brLg,
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => Navigator.of(dctx).pop(value),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      borderRadius: AppTheme.brLg,
+                      border: Border.all(color: color.withValues(alpha: 0.35)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 46,
+                          height: 46,
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.18),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(icon, color: color, size: 24),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(title,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 15)),
+                              const SizedBox(height: 2),
+                              Text(subtitle,
+                                  style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: dcs.onSurfaceVariant)),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right,
+                            color: color.withValues(alpha: 0.7)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
+
+          return AlertDialog(
+            icon: Icon(Icons.logout_rounded, color: dcs.primary, size: 30),
+            title: Text(l10n?.translate('logout') ?? 'Logout',
+                textAlign: TextAlign.center),
+            content: SizedBox(
+              width: 380,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    l10n?.translate('what_to_do_with_session') ??
+                        'What would you like to do with your current session?',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: dcs.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 18),
+                  optionTile(
+                    icon: Icons.pause_circle_outline,
+                    color: pauseColor,
+                    title: l10n?.translate('pause_session') ?? 'Pause Session',
+                    subtitle: l10n?.translate('pause_resume_info_short') ??
+                        'Resume when you log in again',
+                    value: 'pause',
+                  ),
+                  optionTile(
+                    icon: Icons.stop_circle_outlined,
+                    color: endColor,
+                    title: l10n?.translate('end_session') ?? 'End Session',
+                    subtitle: l10n?.translate('end_close_info_short') ??
+                        'Close session and calculate totals',
+                    value: 'end',
+                  ),
+                  if (canCloseZ)
+                    optionTile(
+                      icon: Icons.point_of_sale,
+                      color: dcs.primary,
+                      title: l10n?.translate('close_z') ?? 'Close Z',
+                      subtitle: l10n?.translate('close_z_info_short') ??
+                          'Close the whole shift and print the Z report',
+                      value: 'closez',
+                    ),
+                ],
+              ),
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dctx).pop('cancel'),
+                child: Text(l10n?.translate('cancel') ?? 'Cancel'),
+              ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop('cancel'),
-              child: Text(l10n?.translate('cancel') ?? 'Cancel'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).pop('pause'),
-              icon: const Icon(Icons.pause),
-              label: Text(l10n?.translate('pause_session') ?? 'Pause Session'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                foregroundColor: Colors.white,
-              ),
-            ),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).pop('end'),
-              icon: const Icon(Icons.stop),
-              label: Text(l10n?.translate('end_session') ?? 'End Session'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       );
 
       if (choice == 'cancel' || choice == null) {
@@ -465,17 +709,50 @@ class _TopBarState extends ConsumerState<TopBar> {
         await Future.delayed(const Duration(milliseconds: 500));
         await _doLogout();
       } else if (choice == 'end') {
-        // End session via cash-count + Z-report dialog.
+        // End session via the cash-count dialog. That dialog now owns the
+        // optional "Print X report" checkbox (when Z tracking is on), so there
+        // is no follow-up confirmation dialog here.
         final result = await showCloseSessionDialog(
           context: context,
           ref: ref,
           sessionId: session.id,
         );
         if (!result.closed) return; // user backed out — keep them logged in
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(l10n?.translate('session_ended_successfully') ?? 'Session ended successfully.'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _doLogout();
+      } else if (choice == 'closez') {
+        // Close policy: optionally require an admin/manager credential first.
+        if (ref.read(settingsProvider).zCloseRequireManager) {
+          final elev = await showAdminCredentialDialog(
+            context,
+            ref,
+            title: l10n?.translate('close_z'),
+            description: l10n?.translate('enter_admin_credentials'),
+            permission: Permissions.zClose,
+          );
+          if (elev == null) return;
+        }
+        // Close dialog offers Print Z / Print X, then a plain Close (auto-closes
+        // the Z's sessions). Returns true only if the Z was actually closed.
+        final closed = await showZCloseDialog(
+          context,
+          ref,
+          endedBy: ref.read(currentUserProvider)?.id,
+        );
+        if (!closed) return;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(l10n?.translate('z_closed') ?? 'Z closed'),
               backgroundColor: Colors.green,
             ),
           );
@@ -507,12 +784,19 @@ class _TopBarState extends ConsumerState<TopBar> {
       if (userId != null) {
         final session =
             await SessionService(database).getActiveSession(userId);
-        if (session != null) {
+        // Only end a genuinely ACTIVE session here. A PAUSED session is
+        // intentionally left open so the next login can resume it — ending it
+        // (getActiveSession also matches 'paused') is what made a paused
+        // session come back "ended" and forced a brand-new session on relogin.
+        if (session != null && session.status == 'active') {
           await SessionService(database).endSession(sessionId: session.id);
         }
       }
+      // Push Z (shift) rows before sessions — sessions carry their z_code, so
+      // the Z must exist server-side first.
+      await syncService.syncPendingOperations();
+      await syncService.syncZsBulk();
       await Future.wait([
-        syncService.syncPendingOperations(),
         syncService.syncSessionsBulk(),
         syncService.syncOrdersBulk(),
         syncService.syncTicketsBulk(),
@@ -536,17 +820,39 @@ class _TopBarState extends ConsumerState<TopBar> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (_) => AlertDialog(
-          content: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(width: 16),
-              Text(AppLocalizations.of(context)?.translate('syncing_data') ??
-                  'Syncing data...'),
-            ],
-          ),
-        ),
+        builder: (dctx) {
+          final dcs = Theme.of(dctx).colorScheme;
+          return AlertDialog(
+            content: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 3, color: dcs.primary),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    AppLocalizations.of(dctx)?.translate('syncing_data') ??
+                        'Syncing data...',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 15),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    AppLocalizations.of(dctx)?.translate('please_wait') ??
+                        'Please wait…',
+                    style:
+                        TextStyle(fontSize: 12.5, color: dcs.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       );
     }
     await _syncAndCloseBeforeLogout(user?.id);
@@ -562,105 +868,6 @@ class _TopBarState extends ConsumerState<TopBar> {
       // pushNamedAndRemoveUntil clears the dialog and all other routes.
       Navigator.of(context)
           .pushNamedAndRemoveUntil('/login', (route) => false);
-    }
-  }
-
-  /// Full logout - clears tenant data and goes back to server login
-  Future<void> _handleFullLogout() async {
-    final localizations = AppLocalizations.of(context);
-    final prefs = ref.read(sharedPreferencesProvider);
-
-    // Require an admin's credentials before wiping local + tenant data.
-    final admin = await showAdminCredentialDialog(
-      context,
-      ref,
-      title: localizations?.translate('full_logout') ?? 'Full Logout',
-      description: localizations?.translate('full_logout_warning') ??
-          'This will clear ALL data and disconnect from the server.',
-      confirmLabel: localizations?.translate('verify_logout') ?? 'Verify & Logout',
-      confirmColor: Colors.red,
-    );
-    if (admin == null) return;
-
-    // After password verification (or if no password set), show confirmation dialog
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(localizations?.translate('full_logout') ?? 'Full Logout'),
-        content: Text(
-          localizations?.translate('full_logout_confirm') ??
-          'This will clear all server authentication data and local database.\n\n'
-          'You will need to reconnect to the server or use demo mode again.\n\n'
-          'Are you sure?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(localizations?.translate('cancel') ?? 'Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text(localizations?.translate('full_logout') ?? 'Full Logout'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    try {
-      // Clear current user and session
-      ref.read(currentUserProvider.notifier).state = null;
-      ref.read(currentSessionProvider.notifier).state = null;
-      // Drop any admin-mode elevation so it doesn't survive a user swap.
-      ref.read(adminElevationProvider.notifier).state = null;
-      // Clear current order state
-      ref.read(orderProvider.notifier).clearOrder();
-
-      // Get API service and call logout endpoint
-      final apiService = ApiService(prefs);
-      
-      // Call logout API (this won't throw error, just logs if it fails)
-      await apiService.logout();
-
-      // Clear API service data INCLUDING tenant password hash
-      await apiService.clearAllAuthData(); // Use clearAllAuthData for full logout
-
-      // Dump/backup the database before clearing
-      final database = ref.read(databaseProvider);
-      final syncService = DataSyncService(database, apiService);
-      await syncService.dumpDatabaseBeforeClear();
-
-      // Clear the database
-      await syncService.clearAllData();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Logged out completely. All data cleared.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        // Navigate to tenant login screen – unfocus first to prevent
-        // AnimatedDefaultTextStyle dirty-widget-in-wrong-scope errors.
-        FocusManager.instance.primaryFocus?.unfocus();
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            Navigator.of(context)
-                .pushNamedAndRemoveUntil('/tenant_login', (route) => false);
-          }
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error during logout: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
     }
   }
 
@@ -692,12 +899,12 @@ class _TopBarState extends ConsumerState<TopBar> {
             }
           }
         },
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AppTheme.brMd,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
             color: isOpen ? Colors.green.withOpacity(0.2) : Colors.white.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: AppTheme.brMd,
             border: Border.all(
               color: isOpen ? Colors.green : Colors.white.withOpacity(0.3),
               width: 1,
@@ -767,6 +974,11 @@ class _TopBarState extends ConsumerState<TopBar> {
     try {
       final database = ref.read(databaseProvider);
       final syncService = DataSyncService(database, apiService);
+
+      // The terminal's category scope rides on login/refresh only — never on
+      // the catalogue sync — so without this an admin hiding a category would
+      // not reach a till that stays signed in. Failure is not fatal to a sync.
+      await apiService.refreshTerminalInfo();
 
       // First upload local data
       await syncService.uploadLocalData();
@@ -897,7 +1109,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: Colors.grey[600])),
+          Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           Text(value, style: TextStyle(fontWeight: FontWeight.bold, color: valueColor)),
         ],
       ),
@@ -911,9 +1123,9 @@ class _TopBarState extends ConsumerState<TopBar> {
       case 'paused':
         return Colors.orange;
       case 'ended':
-        return Colors.grey;
+        return Theme.of(context).colorScheme.onSurfaceVariant;
       default:
-        return Colors.grey;
+        return Theme.of(context).colorScheme.onSurfaceVariant;
     }
   }
 
@@ -931,10 +1143,13 @@ class _TopBarState extends ConsumerState<TopBar> {
     final isVeryCompact = screenWidth < 700;
 
     final hPad = isVeryCompact ? 8.0 : 16.0;
+    final scheme = Theme.of(context).colorScheme;
 
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).primaryColor,
+        // Not `primaryColor`: this bar puts white on top of itself, and a dark
+        // scheme's primary is a pale blue. See [AppTheme.bar].
+        color: AppTheme.bar(scheme),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.15),
@@ -970,40 +1185,61 @@ class _TopBarState extends ConsumerState<TopBar> {
                   if (!isCompact) ...[
                     _buildBarcodeScanToggle(),
                     const SizedBox(width: 4),
-                    if (ref.read(permissionServiceProvider).hasPermission(Permissions.agendaView))
-                      Tooltip(
-                        message: 'Agenda',
-                        child: IconButton(
-                          icon: const Icon(Icons.calendar_month_outlined, color: Colors.white),
-                          onPressed: () => Navigator.pushNamed(context, '/agenda'),
-                        ),
+                    // The calculator's home. It used to sit in the category
+                    // bar, which is a strange place for a general-purpose tool
+                    // and disappears entirely once a full-page shop hides that
+                    // bar. Here it is in the same place on every layout.
+                    _navButton(
+                      icon: Icons.calculate_outlined,
+                      tooltip: l10n?.translate('calculator') ?? 'Calculator',
+                      onPressed: () => showCalculatorDialog(context),
+                    ),
+                    if (ref.read(permissionServiceProvider).hasPermission(Permissions.agendaView)) ...[
+                      _navButton(
+                        icon: Icons.calendar_month_outlined,
+                        tooltip: 'Agenda',
+                        onPressed: () => Navigator.pushNamed(context, '/agenda'),
                       ),
-                    if (ref.read(permissionServiceProvider).hasPermission(Permissions.reportsView))
-                      Tooltip(
-                        message: 'Dashboard',
-                        child: IconButton(
-                          icon: const Icon(Icons.dashboard_outlined, color: Colors.white),
-                          onPressed: () => Navigator.pushNamed(context, '/dashboard'),
-                        ),
+                      // Booking rides the same permission as the agenda: both
+                      // are the diary, one reading it and one adding to it.
+                      _navButton(
+                        icon: Icons.event_available_outlined,
+                        tooltip: AppLocalizations.of(context)
+                                ?.translate('book_appointment') ??
+                            'Book appointment',
+                        onPressed: () =>
+                            Navigator.pushNamed(context, '/booking'),
                       ),
+                    ],
+                    // Dashboard removed from the bar on request. The
+                    // '/dashboard' route still exists in main.dart but nothing
+                    // navigates to it any more — add an entry here or in the
+                    // profile menu to bring it back.
                     if (ref.read(permissionServiceProvider).hasPermission(Permissions.notesView))
-                      Tooltip(
-                        message: l10n?.translate('notes') ?? 'Notes',
-                        child: IconButton(
-                          icon: const Icon(Icons.sticky_note_2_outlined, color: Colors.white),
-                          onPressed: () => Navigator.pushNamed(context, '/notes'),
-                        ),
+                      _navButton(
+                        icon: Icons.sticky_note_2_outlined,
+                        tooltip: l10n?.translate('notes') ?? 'Notes',
+                        onPressed: () => Navigator.pushNamed(context, '/notes'),
                       ),
                   ],
                   const Spacer(),
                   // Session, network, sync, customer display on non-compact only
                   if (!isCompact) ...[
-                    IconButton(
-                      icon: const Icon(Icons.point_of_sale_outlined, color: Colors.white, size: 20),
+                    _navButton(
+                      icon: Icons.point_of_sale_outlined,
                       tooltip: l10n?.translate('session') ?? 'session',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       onPressed: _showCurrentSessionDetails,
+                    ),
+                    _navButton(
+                      icon: Icons.summarize_outlined,
+                      tooltip: l10n?.translate('print_z_report') ?? 'Z report',
+                      onPressed: _handleZReport,
+                    ),
+                    _navButton(
+                      icon: Icons.price_check_rounded,
+                      tooltip: l10n?.translate('settle_unpaid_orders') ??
+                          'Settle unpaid orders',
+                      onPressed: _handleSettleUnpaid,
                     ),
                     const SizedBox(width: 6),
                     GestureDetector(
@@ -1016,9 +1252,18 @@ class _TopBarState extends ConsumerState<TopBar> {
                         icon: const Icon(Icons.sync, size: 18),
                         label: Text(l10n?.translate('update') ?? 'Update'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Theme.of(context).primaryColor,
-                          disabledBackgroundColor: Colors.grey[300],
+                          backgroundColor: AppTheme.onBar,
+                          foregroundColor: AppTheme.bar(scheme),
+                          disabledBackgroundColor:
+                              AppTheme.onBar.withValues(alpha: 0.45),
+                          disabledForegroundColor:
+                              AppTheme.bar(scheme).withValues(alpha: 0.5),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 18, vertical: 14),
+                          textStyle: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
                         ),
                       ),
                     ),
@@ -1037,11 +1282,11 @@ class _TopBarState extends ConsumerState<TopBar> {
                       children: [
                         CircleAvatar(
                           radius: isVeryCompact ? 16 : 18,
-                          backgroundColor: Colors.white,
+                          backgroundColor: AppTheme.onBar,
                           child: Text(
                             currentUser?.effectiveDisplayName.substring(0, 1).toUpperCase() ?? 'U',
                             style: TextStyle(
-                              color: Theme.of(context).primaryColor,
+                              color: AppTheme.bar(scheme),
                               fontWeight: FontWeight.bold,
                               fontSize: isVeryCompact ? 13 : 14,
                             ),
@@ -1072,8 +1317,6 @@ class _TopBarState extends ConsumerState<TopBar> {
                 );
               } else if (value == 'logout') {
                 await _handleLogout();
-              } else if (value == 'full_logout') {
-                await _handleFullLogout();
               } else if (value == 'exit_app') {
                 await requestAppExit(context, ref);
               }
@@ -1107,7 +1350,14 @@ class _TopBarState extends ConsumerState<TopBar> {
                     ],
                   ),
                   onTap: () {
-                    Future.delayed(Duration.zero, () {
+                    // Deferred because the popup menu is still closing; the
+                    // pin prompt needs the menu's route gone first.
+                    Future.delayed(Duration.zero, () async {
+                      if (!context.mounted) return;
+                      if (!await SettingsLockDialog.unlock(context, ref)) {
+                        return;
+                      }
+                      if (!context.mounted) return;
                       showDialog(
                         context: context,
                         builder: (context) => const SettingsScreen(),
@@ -1133,6 +1383,57 @@ class _TopBarState extends ConsumerState<TopBar> {
                   },
                 ));
               }
+
+              // DISABLED-FOR-NOW: Cash movements and Notify admin are hidden
+              // from the menu. Everything behind them is intact — the dialogs,
+              // services, the cash_movements table and the paid-in/paid-out
+              // figures in the session close math all still exist; with no
+              // movements ever recorded those simply total zero. Re-enable by
+              // uncommenting this block and the two imports at the top.
+              /*
+              // Cash movements — drawer in/out that isn't a sale. Sits next to
+              // Sessions because it only makes sense against an open one, and
+              // rides on the same permission: whoever may end a session and
+              // count the drawer is who explains what left it.
+              if (permissionService.hasPermission(Permissions.sessionsEnd)) {
+                items.add(PopupMenuItem(
+                  value: 'cash_movements',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.account_balance_wallet),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('cash_movements') ?? 'Cash movements'),
+                    ],
+                  ),
+                  onTap: () {
+                    // Deferred: the menu has to finish closing before another
+                    // route/dialog is pushed, same pattern as Settings above.
+                    Future.delayed(Duration.zero, () {
+                      showCashMovementDialog(context: context, ref: ref);
+                    });
+                  },
+                ));
+              }
+
+              // Notify admin — a GENERAL push to the owner's phone. Ungated:
+              // "the card machine is down" is exactly the message a junior
+              // cashier alone on shift needs to be able to send.
+              items.add(PopupMenuItem(
+                value: 'notify_admin',
+                child: Row(
+                  children: [
+                    const Icon(Icons.campaign_outlined),
+                    const SizedBox(width: 8),
+                    Text(l10n?.translate('notify_admin') ?? 'Notify admin'),
+                  ],
+                ),
+                onTap: () {
+                  Future.delayed(Duration.zero, () {
+                    showNotifyAdminDialog(context: context, ref: ref);
+                  });
+                },
+              ));
+              */
 
               // Orders - permission protected
               if (permissionService.hasPermission(Permissions.ordersView)) {
@@ -1168,6 +1469,11 @@ class _TopBarState extends ConsumerState<TopBar> {
                 ));
               }
 
+              // DISABLED-FOR-NOW: Devices is hidden from the menu. The screen
+              // and its '/devices' route are untouched, so re-enabling is just
+              // uncommenting this block. Nothing else navigates there, so with
+              // this commented out the screen is simply unreachable.
+              /*
               // Devices - permission protected
               if (permissionService.hasPermission(Permissions.devicesView)) {
                 items.add(PopupMenuItem(
@@ -1184,6 +1490,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                   },
                 ));
               }
+              */
 
               // Agenda (planning view) - permission protected
               if (permissionService.hasPermission(Permissions.agendaView)) {
@@ -1200,10 +1507,26 @@ class _TopBarState extends ConsumerState<TopBar> {
                     Navigator.pushNamed(context, '/agenda');
                   },
                 ));
+                items.add(PopupMenuItem(
+                  value: 'booking',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.event_available_outlined),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('book_appointment') ??
+                          'Book appointment'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/booking');
+                  },
+                ));
               }
 
-              // Printers - permission protected
-              if (permissionService.hasPermission(Permissions.devicesView)) {
+              // Printers — settings-grade: the same permission and the same
+              // pin as Settings itself. The screen enforces both again for the
+              // other ways in; this only decides whether to offer the item.
+              if (SettingsLockDialog.canOpenPrinters(ref)) {
                 items.add(PopupMenuItem(
                   value: 'printers',
                   child: Row(
@@ -1283,27 +1606,9 @@ class _TopBarState extends ConsumerState<TopBar> {
                 ),
               ));
 
-              // Full logout - permission protected (admin only)
-              if (permissionService.hasPermission(Permissions.all)) {
-                items.add(PopupMenuItem(
-                  value: 'full_logout',
-                  child: Row(
-                    children: [
-                      const Icon(Icons.logout, color: Colors.red),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          l10n?.translate('full_logout_clear_all') ?? 'Full Logout (Clear All)',
-                          style: const TextStyle(color: Colors.red),
-                          softWrap: true,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                );
-              }
+              // Full logout moved to Settings: wiping the terminal is a setup
+              // action, not something to sit one tap from Logout in a menu the
+              // cashier opens all shift.
 
               // Exit app — confirm, offer to close the session, sync, then quit.
               items.add(const PopupMenuDivider());
@@ -1330,7 +1635,7 @@ class _TopBarState extends ConsumerState<TopBar> {
           if (isCompact)
             Container(
               height: 40,
-              color: Theme.of(context).primaryColorDark,
+              color: AppTheme.barAlt(scheme),
               padding: EdgeInsets.symmetric(horizontal: hPad),
               child: Row(
                 children: [
@@ -1354,6 +1659,31 @@ class _TopBarState extends ConsumerState<TopBar> {
                     constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                     onPressed: _showCurrentSessionDetails,
                   ),
+                  IconButton(
+                    icon: const Icon(Icons.summarize_outlined,
+                        color: Colors.white, size: 18),
+                    tooltip: l10n?.translate('print_z_report') ?? 'Z report',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    onPressed: _handleZReport,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.price_check_rounded,
+                        color: Colors.white, size: 18),
+                    tooltip: l10n?.translate('settle_unpaid_orders') ??
+                        'Settle unpaid orders',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    onPressed: _handleSettleUnpaid,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.calculate_outlined,
+                        color: Colors.white, size: 18),
+                    tooltip: l10n?.translate('calculator') ?? 'Calculator',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    onPressed: () => showCalculatorDialog(context),
+                  ),
                   const Spacer(),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
@@ -1361,7 +1691,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                       color: _isOnline
                           ? Colors.green.withValues(alpha: 0.3)
                           : Colors.red.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: AppTheme.brXl,
                     ),
                     child: Icon(
                       _isOnline ? Icons.wifi : Icons.wifi_off,

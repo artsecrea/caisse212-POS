@@ -64,7 +64,19 @@ enum TransactionType {
   static TransactionType fromString(String value) {
     return TransactionType.values.firstWhere(
       (e) => e.value == value,
-      orElse: () => TransactionType.cash,
+      // Unknown → `other`, NOT `cash`.
+      //
+      // The money has to land in some bucket (dropping it would understate
+      // takings), but claiming an unrecognised method is physical cash inflates
+      // `expectedCashAtEnd` and produces a phantom drawer shortage the cashier
+      // gets blamed for. `other` keeps it in the takings total while leaving the
+      // expected-cash figure alone.
+      //
+      // This is reachable: the backend's own vocabulary already includes
+      // TRANSFER and CHECK (see the refund contract), neither of which is in
+      // this enum. If a ticket ever carries one, mis-filing it as cash is the
+      // expensive mistake and mis-filing it as other is the cheap one.
+      orElse: () => TransactionType.other,
     );
   }
 }

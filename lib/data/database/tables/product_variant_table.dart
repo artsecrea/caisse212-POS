@@ -13,6 +13,10 @@ class ProductVariants extends Table {
   TextColumn get tags => text().nullable()();
   RealColumn get price => real()();
   RealColumn get cost => real().nullable()();
+  /// Per-variant serial tracking. Independent of the product's flag —
+  /// tracked = either is true.
+  BoolColumn get isSerialTracked =>
+      boolean().withDefault(const Constant(false))();
   RealColumn get tvaAmount => real().withDefault(const Constant(0.0))();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
   DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();

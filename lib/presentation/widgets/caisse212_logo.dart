@@ -17,7 +17,7 @@ class Caisse212Logo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bylineColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
+    final bylineColor = isDark ? Theme.of(context).colorScheme.outline : Theme.of(context).colorScheme.onSurfaceVariant;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -47,7 +47,7 @@ class Caisse212Logo extends StatelessWidget {
                 height: size * 0.22,
                 colorFilter: ColorFilter.mode(
                   isDark
-                      ? Colors.grey[400]!
+                      ? Theme.of(context).colorScheme.outline
                       : const Color(0xFF7B1FA2),
                   BlendMode.srcIn,
                 ),
@@ -58,7 +58,7 @@ class Caisse212Logo extends StatelessWidget {
                 style: TextStyle(
                   fontSize: size * 0.16,
                   color: isDark
-                      ? Colors.grey[400]
+                      ? Theme.of(context).colorScheme.outline
                       : const Color(0xFF7B1FA2),
                   fontStyle: FontStyle.italic,
                   fontWeight: FontWeight.w500,

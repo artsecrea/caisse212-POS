@@ -145,8 +145,8 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
                   ),
                   filled: true,
                   fillColor: isDarkMode 
-                      ? Colors.grey[800] 
-                      : Colors.grey[100],
+                      ? Theme.of(context).colorScheme.onSurface 
+                      : Theme.of(context).colorScheme.surfaceContainerHighest,
                 ),
                 dropdownColor: isDarkMode ? Colors.grey[850] : Colors.white,
                 items: _issueTypes.map((type) {
@@ -180,8 +180,8 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
                   ),
                   filled: true,
                   fillColor: isDarkMode 
-                      ? Colors.grey[800] 
-                      : Colors.grey[100],
+                      ? Theme.of(context).colorScheme.onSurface 
+                      : Theme.of(context).colorScheme.surfaceContainerHighest,
                 ),
                 style: TextStyle(
                   color: Theme.of(context).textTheme.bodyLarge?.color,
@@ -212,8 +212,8 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
                   ),
                   filled: true,
                   fillColor: isDarkMode 
-                      ? Colors.grey[800] 
-                      : Colors.grey[100],
+                      ? Theme.of(context).colorScheme.onSurface 
+                      : Theme.of(context).colorScheme.surfaceContainerHighest,
                   alignLabelWithHint: true,
                 ),
                 style: TextStyle(
@@ -239,8 +239,8 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
                   ElevatedButton(
                     onPressed: _isSubmitting ? null : _submitIssue,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Theme.of(context).primaryColor,
-                      foregroundColor: Colors.white,
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 32,
                         vertical: 16,

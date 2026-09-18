@@ -1,3 +1,5 @@
+import '../utils/pos_log.dart';
+import 'package:loggecrea/loggecrea.dart';
 // import 'dart:async';
 //
 // import 'package:cmdecrea/cmdecrea.dart';
@@ -114,7 +116,7 @@
 //     final repository = _ref.read(socketOrderRepositoryProvider);
 //     final socketOrder = await repository.getOrderWithDetails(event.orderId);
 //     if (socketOrder == null) {
-//       print('⚠️ Could not load order details for order ${event.orderId}');
+//       Logger.instance.warning('Could not load order details for order ${event.orderId}');
 //       return;
 //     }
 //
@@ -134,9 +136,9 @@
 //       for (final stationId in stationIds) {
 //         try {
 //           await sendOrderToStation(socketOrder, stationId);
-//           print('✅ Sent order ${event.orderCode} to station $stationId');
+//           posLog('✅ Sent order ${event.orderCode} to station $stationId');
 //         } catch (e) {
-//           print('❌ Failed to send to station $stationId: $e');
+//           Logger.instance.error('Failed to send to station $stationId: $e');
 //         }
 //       }
 //
@@ -144,15 +146,15 @@
 //       if (productsWithoutStation.isNotEmpty) {
 //         try {
 //           await sendOrderWithoutStationToAllKDS(socketOrder, productsWithoutStation);
-//           print('✅ Sent ${productsWithoutStation.length} products without station to "all" KDS');
+//           posLog('✅ Sent ${productsWithoutStation.length} products without station to "all" KDS');
 //         } catch (e) {
-//           print('❌ Failed to send products without station to "all" KDS: $e');
+//           Logger.instance.error('Failed to send products without station to "all" KDS: $e');
 //         }
 //       }
 //
 //       // If no products at all (neither with station nor without)
 //       if (stationIds.isEmpty && productsWithoutStation.isEmpty) {
-//         print('⚠️ Order ${event.orderCode} has no products');
+//         Logger.instance.warning('Order ${event.orderCode} has no products');
 //       }
 //     }
 //
@@ -160,7 +162,7 @@
 //
 //   /// Called when an order is updated
 //   Future<void> _onOrderUpdated(OrderUpdatedEvent event) async {
-//     print('🔄 Order updated: ID ${event.orderId}');
+//     posLog('🔄 Order updated: ID ${event.orderId}');
 //
 //     // Get full order details
 //     final repository = _ref.read(socketOrderRepositoryProvider);
@@ -177,7 +179,7 @@
 //
 //   /// Called when order status changes
 //   Future<void> _onOrderStatusChanged(OrderStatusChangedEvent event) async {
-//     print('📊 Order ${event.orderId} status: ${event.oldStatus} → ${event.newStatus}');
+//     posLog('📊 Order ${event.orderId} status: ${event.oldStatus} → ${event.newStatus}');
 //
 //     // ===== IMPLEMENT YOUR LOGIC HERE =====
 //
@@ -201,7 +203,7 @@
 //
 //   /// Called when order product state changes
 //   Future<void> _onOrderProductStateChanged(OrderProductStateChangedEvent event) async {
-//     print('🍳 Product ${event.orderProductId} state: ${event.oldState} → ${event.newState}');
+//     posLog('🍳 Product ${event.orderProductId} state: ${event.oldState} → ${event.newState}');
 //
 //     // ===== IMPLEMENT YOUR LOGIC HERE =====
 //
@@ -226,7 +228,7 @@
 //
 //   /// Called when order is held
 //   Future<void> _onOrderHeld(OrderHeldEvent event) async {
-//     print('⏸️ Order held: ${event.orderCode} (ID: ${event.orderId})');
+//     posLog('⏸️ Order held: ${event.orderCode} (ID: ${event.orderId})');
 //
 //     // ===== IMPLEMENT YOUR LOGIC HERE =====
 //     // Maybe don't send held orders to kitchen
@@ -235,7 +237,7 @@
 //
 //   /// Called when order items are changed
 //   Future<void> _onOrderItemsChanged(OrderItemsChangedEvent event) async {
-//     print('📦 Order ${event.orderId} items changed (${event.itemCount} items)');
+//     posLog('📦 Order ${event.orderId} items changed (${event.itemCount} items)');
 //
 //     // ===== IMPLEMENT YOUR LOGIC HERE =====
 //     // Maybe re-send to kitchen if items changed
@@ -248,7 +250,7 @@
 //     final currentUser = _ref.read(currentUserProvider);
 //
 //     _client.listenForCommand('UPDATE_ORDER', (command) {
-//       print("new order update");
+//       posLog("new order update");
 //
 //       // Handle order updates from other devices
 //       final orderId =  int.parse(command.payload['id']);
@@ -257,7 +259,7 @@
 //     });
 //
 //     _client.listenForCommand('UPDATE_ORDER_PRODUCT', (command) async {
-//       print("new product update");
+//       posLog("new product update");
 //
 //       // Handle order product updates from other devices
 //       final orderId =  int.parse(command.payload['orderId']);
@@ -270,7 +272,7 @@
 //
 //     _client.listenForCommand('ORDER_STATE_CHANGED', (command) {
 //       // Handle order state changes from KDS
-//       print('Order state changed: ${command.payload}');
+//       posLog('Order state changed: ${command.payload}');
 //     });
 //
 //     _client.listenForCommand('ORDER_CREATE', (command) async {
@@ -278,7 +280,7 @@
 //       // first get the tickets repo and if the command is paid  create it ticket
 //
 //
-//       print(command.payload);
+//       posLog(command.payload);
 //       var isPaid = command.getPayloadValueOrDefault("paid", false);
 //       final stat = !isPaid ? "ONHOLD" : "PENDING";
 //
@@ -294,7 +296,7 @@
 //     });
 //
 //     _client.listenForAllCommands((cmd){
-//       print("received command: ${cmd.type} from ${cmd.senderId}");
+//       posLog("received command: ${cmd.type} from ${cmd.senderId}");
 //     });
 //
 //   }
@@ -312,12 +314,12 @@
 //       );
 //
 //       if (kds == null) {
-//         print('❌ KDS $kdsId not found');
+//         Logger.instance.error('KDS $kdsId not found');
 //         return;
 //       }
 //
 //       if (!kds.isActive) {
-//         print('❌ KDS $kdsId is inactive');
+//         Logger.instance.error('KDS $kdsId is inactive');
 //         return;
 //       }
 //
@@ -325,15 +327,15 @@
 //
 //       // Check if device is connected
 //       // if (!_client.connectedDeviceIds.contains(targetDeviceId)) {
-//       //   print('⚠️ KDS ${kds.name} (ID: $targetDeviceId) is NOT connected');
-//       //   print('   Connected devices: ${_client.connectedDeviceIds}');
+//       //   Logger.instance.warning('KDS ${kds.name} (ID: $targetDeviceId) is NOT connected');
+//       //   posLog('   Connected devices: ${_client.connectedDeviceIds}');
 //       //   return;
 //       // }
 //
 //       // Verify connection is healthy before sending
 //       final isHealthy = await _client.testConnection();
 //       if (!isHealthy) {
-//         print('⚠️ Connection test failed for KDS ${kds.name}');
+//         Logger.instance.warning('Connection test failed for KDS ${kds.name}');
 //         return;
 //       }
 //
@@ -349,11 +351,11 @@
 //
 //       // await _client.sendToDevice(targetDeviceId, command);
 //       await _client.sendToDevice(targetDeviceId, command);
-//       print('✅ Order sent successfully to KDS ${kds.name}');
+//       posLog('✅ Order sent successfully to KDS ${kds.name}');
 //
 //     } catch (e, stackTrace) {
-//       print('❌ Error sending order to KDS $kdsId: $e');
-//       print('   Stack trace: $stackTrace');
+//       Logger.instance.error('Error sending order to KDS $kdsId: $e');
+//       posLog('   Stack trace: $stackTrace');
 //       // Don't rethrow - log and continue
 //     }
 //   }
@@ -404,7 +406,7 @@
 //     final kdsList = await kdsListAsync;
 //
 //     if (kdsList.isEmpty) {
-//       print('⚠️ No KDS devices found for station $stationId');
+//       Logger.instance.warning('No KDS devices found for station $stationId');
 //       return;
 //     }
 //
@@ -455,7 +457,7 @@
 //         .toList();
 //
 //     if (filteredKdsList.isEmpty) {
-//       print('⚠️ No KDS named "all" found for products without station');
+//       Logger.instance.warning('No KDS named "all" found for products without station');
 //       return;
 //     }
 //
@@ -479,7 +481,7 @@
 //     for (final kds in filteredKdsList) {
 //       if (kds.isActive) {
 //         await sendOrderToKDS(filteredOrder, kds.id);
-//         print('📦 Sent order to KDS "${kds.name}" (ID: ${kds.id}) with ${productsWithoutStation.length} products');
+//         posLog('📦 Sent order to KDS "${kds.name}" (ID: ${kds.id}) with ${productsWithoutStation.length} products');
 //       }
 //     }
 //   }

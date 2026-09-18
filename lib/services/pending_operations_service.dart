@@ -10,21 +10,83 @@ class PendingOperationsService {
 
   PendingOperationsService(this._database);
 
+  /// A pending op that keeps failing is a poison message — after this many
+  /// attempts it is skipped (dead-lettered in place) so it can't retry forever
+  /// or block the queue on every sync cycle. The row is kept for diagnostics.
+  static const int maxRetries = 5;
+
+  /// Insert a pending op, deduplicating against an existing op with the same
+  /// (entityType, entityId, operationType):
+  ///   - DELETE: idempotent — a second identical delete is skipped.
+  ///   - UPDATE: the queued payload is overwritten with the newest state and
+  ///     the retry counter reset (older duplicate rows are removed).
+  /// This prevents double-taps / repeated failures from piling up duplicate
+  /// operations (e.g. two deletes for the same order, the second of which would
+  /// fail forever with "not found").
+  Future<void> _upsertOperation({
+    required String operationType,
+    required String entityType,
+    required int entityId,
+    int? serverId,
+    String? updateDataJson,
+  }) async {
+    final existing = await (_database.select(_database.pendingSyncOperations)
+          ..where((t) =>
+              t.entityType.equals(entityType) &
+              t.entityId.equals(entityId) &
+              t.operationType.equals(operationType)))
+        .get();
+
+    if (existing.isNotEmpty) {
+      if (operationType == 'DELETE') {
+        _logger.info(
+            'Skipped duplicate DELETE for $entityType #$entityId (already queued)');
+        return;
+      }
+      // UPDATE: refresh the newest row's payload, drop any older duplicates.
+      final keep = existing.first;
+      await (_database.update(_database.pendingSyncOperations)
+            ..where((t) => t.id.equals(keep.id)))
+          .write(PendingSyncOperationsCompanion(
+        updateData: Value(updateDataJson),
+        serverId: Value(serverId),
+        retryCount: const Value(0),
+        lastError: const Value(null),
+        createdAt: Value(DateTime.now()),
+      ));
+      for (final dup in existing.skip(1)) {
+        await (_database.delete(_database.pendingSyncOperations)
+              ..where((t) => t.id.equals(dup.id)))
+            .go();
+      }
+      return;
+    }
+
+    await _database.into(_database.pendingSyncOperations).insert(
+          PendingSyncOperationsCompanion.insert(
+            operationType: operationType,
+            entityType: entityType,
+            entityId: entityId,
+            serverId: Value(serverId),
+            updateData: updateDataJson != null
+                ? Value(updateDataJson)
+                : const Value.absent(),
+            createdAt: Value(DateTime.now()),
+          ),
+        );
+  }
+
   /// Queue a delete operation for an order
   Future<void> queueOrderDelete({
     required int entityId,
     required String orderCode,
   }) async {
     try {
-      // Temporarily store orderCode in updateData until database is regenerated
-      await _database.into(_database.pendingSyncOperations).insert(
-        PendingSyncOperationsCompanion.insert(
-          operationType: 'DELETE',
-          entityType: 'ORDER',
-          entityId: entityId,
-          updateData: Value(jsonEncode({'_orderCode': orderCode})),
-          createdAt: Value(DateTime.now()),
-        ),
+      await _upsertOperation(
+        operationType: 'DELETE',
+        entityType: 'ORDER',
+        entityId: entityId,
+        updateDataJson: jsonEncode({'_orderCode': orderCode}),
       );
       _logger.info('Queued DELETE operation for ORDER code=$orderCode');
     } catch (e) {
@@ -40,15 +102,11 @@ class PendingOperationsService {
     required String ticketNum,
   }) async {
     try {
-      // Temporarily store orderCode and ticketNum in updateData until database is regenerated
-      await _database.into(_database.pendingSyncOperations).insert(
-        PendingSyncOperationsCompanion.insert(
-          operationType: 'DELETE',
-          entityType: 'TICKET',
-          entityId: entityId,
-          updateData: Value(jsonEncode({'_orderCode': orderCode, '_ticketNum': ticketNum})),
-          createdAt: Value(DateTime.now()),
-        ),
+      await _upsertOperation(
+        operationType: 'DELETE',
+        entityType: 'TICKET',
+        entityId: entityId,
+        updateDataJson: jsonEncode({'_orderCode': orderCode, '_ticketNum': ticketNum}),
       );
       _logger.info('Queued DELETE operation for TICKET orderCode=$orderCode, ticketNum=$ticketNum');
     } catch (e) {
@@ -63,14 +121,11 @@ class PendingOperationsService {
     required String sessionCode,
   }) async {
     try {
-      await _database.into(_database.pendingSyncOperations).insert(
-        PendingSyncOperationsCompanion.insert(
-          operationType: 'DELETE',
-          entityType: 'SESSION',
-          entityId: entityId,
-          updateData: Value(jsonEncode({'_sessionCode': sessionCode})),
-          createdAt: Value(DateTime.now()),
-        ),
+      await _upsertOperation(
+        operationType: 'DELETE',
+        entityType: 'SESSION',
+        entityId: entityId,
+        updateDataJson: jsonEncode({'_sessionCode': sessionCode}),
       );
       _logger.info('Queued DELETE operation for SESSION code=$sessionCode');
     } catch (e) {
@@ -89,14 +144,11 @@ class PendingOperationsService {
       final dataWithMeta = Map<String, dynamic>.from(updateData);
       dataWithMeta['_sessionCode'] = sessionCode;
 
-      await _database.into(_database.pendingSyncOperations).insert(
-        PendingSyncOperationsCompanion.insert(
-          operationType: 'UPDATE',
-          entityType: 'SESSION',
-          entityId: entityId,
-          updateData: Value(jsonEncode(dataWithMeta)),
-          createdAt: Value(DateTime.now()),
-        ),
+      await _upsertOperation(
+        operationType: 'UPDATE',
+        entityType: 'SESSION',
+        entityId: entityId,
+        updateDataJson: jsonEncode(dataWithMeta),
       );
       _logger.info('Queued UPDATE operation for SESSION code=$sessionCode');
     } catch (e) {
@@ -122,15 +174,12 @@ class PendingOperationsService {
         if (ticketNum != null) metaData['_ticketNum'] = ticketNum;
       }
 
-      await _database.into(_database.pendingSyncOperations).insert(
-        PendingSyncOperationsCompanion.insert(
-          operationType: 'DELETE',
-          entityType: entityType,
-          entityId: entityId,
-          serverId: Value(serverId),
-          updateData: metaData != null ? Value(jsonEncode(metaData)) : const Value.absent(),
-          createdAt: Value(DateTime.now()),
-        ),
+      await _upsertOperation(
+        operationType: 'DELETE',
+        entityType: entityType,
+        entityId: entityId,
+        serverId: serverId,
+        updateDataJson: metaData != null ? jsonEncode(metaData) : null,
       );
       _logger.info('Queued DELETE operation for $entityType #$entityId');
     } catch (e) {
@@ -150,14 +199,11 @@ class PendingOperationsService {
       final dataWithMeta = Map<String, dynamic>.from(updateData);
       dataWithMeta['_orderCode'] = orderCode;
 
-      await _database.into(_database.pendingSyncOperations).insert(
-        PendingSyncOperationsCompanion.insert(
-          operationType: 'UPDATE',
-          entityType: 'ORDER',
-          entityId: entityId,
-          updateData: Value(jsonEncode(dataWithMeta)),
-          createdAt: Value(DateTime.now()),
-        ),
+      await _upsertOperation(
+        operationType: 'UPDATE',
+        entityType: 'ORDER',
+        entityId: entityId,
+        updateDataJson: jsonEncode(dataWithMeta),
       );
       _logger.info('Queued UPDATE operation for ORDER code=$orderCode');
     } catch (e) {
@@ -179,14 +225,11 @@ class PendingOperationsService {
       dataWithMeta['_orderCode'] = orderCode;
       dataWithMeta['_ticketNum'] = ticketNum;
 
-      await _database.into(_database.pendingSyncOperations).insert(
-        PendingSyncOperationsCompanion.insert(
-          operationType: 'UPDATE',
-          entityType: 'TICKET',
-          entityId: entityId,
-          updateData: Value(jsonEncode(dataWithMeta)),
-          createdAt: Value(DateTime.now()),
-        ),
+      await _upsertOperation(
+        operationType: 'UPDATE',
+        entityType: 'TICKET',
+        entityId: entityId,
+        updateDataJson: jsonEncode(dataWithMeta),
       );
       _logger.info('Queued UPDATE operation for TICKET orderCode=$orderCode, ticketNum=$ticketNum');
     } catch (e) {
@@ -210,15 +253,12 @@ class PendingOperationsService {
       if (orderCode != null) dataWithMeta['_orderCode'] = orderCode;
       if (ticketNum != null) dataWithMeta['_ticketNum'] = ticketNum;
 
-      await _database.into(_database.pendingSyncOperations).insert(
-        PendingSyncOperationsCompanion.insert(
-          operationType: 'UPDATE',
-          entityType: entityType,
-          entityId: entityId,
-          serverId: Value(serverId),
-          updateData: Value(jsonEncode(dataWithMeta)),
-          createdAt: Value(DateTime.now()),
-        ),
+      await _upsertOperation(
+        operationType: 'UPDATE',
+        entityType: entityType,
+        entityId: entityId,
+        serverId: serverId,
+        updateDataJson: jsonEncode(dataWithMeta),
       );
       _logger.info('Queued UPDATE operation for $entityType #$entityId');
     } catch (e) {
@@ -227,9 +267,12 @@ class PendingOperationsService {
     }
   }
 
-  /// Get all pending operations
+  /// Get all pending operations still worth retrying (FIFO). Ops that have
+  /// exceeded [maxRetries] are excluded — they stay in the table for
+  /// diagnostics but no longer retry or block the queue every cycle.
   Future<List<PendingSyncOperation>> getPendingOperations() async {
     return await (_database.select(_database.pendingSyncOperations)
+      ..where((tbl) => tbl.retryCount.isSmallerThanValue(maxRetries))
       ..orderBy([
         (tbl) => OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.asc),
       ]))
@@ -267,13 +310,20 @@ class PendingOperationsService {
           .getSingleOrNull();
 
       if (operation != null) {
+        final newCount = operation.retryCount + 1;
         await (_database.update(_database.pendingSyncOperations)
           ..where((tbl) => tbl.id.equals(operationId)))
             .write(PendingSyncOperationsCompanion(
-          retryCount: Value(operation.retryCount + 1),
+          retryCount: Value(newCount),
           lastError: Value(error),
         ));
-        _logger.warning('Recorded failure for operation #$operationId: $error');
+        if (newCount >= maxRetries) {
+          _logger.error(
+              'Operation #$operationId dead-lettered after $newCount attempts '
+              '(${operation.entityType} ${operation.operationType} #${operation.entityId}): $error');
+        } else {
+          _logger.warning('Recorded failure for operation #$operationId (attempt $newCount): $error');
+        }
       }
     } catch (e) {
       _logger.error('Failed to record operation failure: $e');

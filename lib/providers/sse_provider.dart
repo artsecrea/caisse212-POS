@@ -8,6 +8,7 @@ import '../services/sse_service.dart';
 import '../services/pos_command_handler.dart';
 import 'database_providers.dart';
 import 'external_order_provider.dart';
+import 'settings_provider.dart';
 
 // ── Service providers ──────────────────────────────────────────────────────
 
@@ -32,6 +33,13 @@ final sseAlertProvider = StateProvider<String?>((ref) => null);
 final sseNewOrderProvider =
     StateProvider<Map<String, dynamic>?>((ref) => null);
 
+/// Set when a queued order is cancelled on the platform side. The UI shows it
+/// and clears it. `wasConfirmed` is the difference between "a ticket vanished"
+/// and "stop cooking that" — the second needs a dialog, not a toast.
+final sseOrderCancelledProvider =
+    StateProvider<({String? orderCode, String? reason, bool wasConfirmed})?>(
+        (ref) => null);
+
 /// Increments whenever the server sends a `close_session`, `close_all_sessions`,
 /// `force_logout`, or `logout` command. UI listens and navigates to /login.
 final sseSessionClosedProvider = StateProvider<int>((ref) => 0);
@@ -48,7 +56,12 @@ final sseLifecycleProvider = Provider<void>((ref) {
   final sseService = ref.watch(sseServiceProvider);
   final commandHandler = ref.watch(posCommandHandlerProvider);
 
-  if (user == null) {
+  // Admin-controlled master switch (defaults off). When disabled — or no user —
+  // keep the SSE connection torn down entirely.
+  final sseEnabled = ref.watch(
+      settingsProvider.select((s) => s.sseEnabled));
+
+  if (user == null || !sseEnabled) {
     sseService.stop();
     return;
   }
@@ -74,6 +87,35 @@ final sseLifecycleProvider = Provider<void>((ref) {
         } catch (e) {
           Logger.instance.error('SSE: failed to parse new-order event: $e');
         }
+        break;
+
+      case SseEventType.orderCancelled:
+        // The platform pulled the order. Take it off the board immediately —
+        // a cancelled ticket left visible is one a cashier will work.
+        final code = (event.data['orderCode'] ??
+                event.data['order_code'] ??
+                event.data['code'])
+            ?.toString();
+        final id = (event.data['id'] ?? event.data['queueItemId']) as int?;
+        Logger.instance
+            .warning('SSE: order-cancelled code=$code id=$id');
+        final wasConfirmed = ref
+            .read(externalOrderProvider.notifier)
+            .onOrderCancelledEvent(queueItemId: id, orderCode: code);
+        ref.read(sseOrderCancelledProvider.notifier).state = (
+          orderCode: code,
+          reason: (event.data['reason'] ?? event.data['cancellationReason'])
+              ?.toString(),
+          wasConfirmed: wasConfirmed,
+        );
+        break;
+
+      case SseEventType.orderReady:
+      case SseEventType.orderDeliveryStatusChanged:
+        // Status moved on the platform's side. Nothing to decide locally —
+        // refresh so the ticket shows the new state.
+        Logger.instance.info('SSE: ${event.type.name} — refreshing the queue');
+        ref.read(externalOrderProvider.notifier).load();
         break;
 
       case SseEventType.orderStateChanged:

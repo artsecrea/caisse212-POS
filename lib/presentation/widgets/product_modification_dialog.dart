@@ -2,18 +2,44 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
-import 'package:intl/intl.dart';
+// intl exports a TextDirection of its own, which collides with the one
+// material.dart brings in from dart:ui. Only the formatters are wanted
+// here, so the clashing name is dropped at the import.
+import 'package:intl/intl.dart' hide TextDirection;
 import '../../data/database/app_database.dart';
+import '../../providers/booking_providers.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/network_provider.dart';
+import '../../providers/resource_providers.dart';
 import '../../providers/settings_provider.dart';
+import '../../domain/models/app_settings.dart';
+import '../../domain/models/component_rules.dart';
 import '../../domain/models/order_models.dart';
 import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../providers/order_provider.dart';
 import 'permission_guard.dart';
+import 'serial_picker_panel.dart';
+import './adaptive_text_field.dart';
+
+/// A slot chosen from the availability sheet.
+class _SlotPick {
+  final DateTime start;
+  final DateTime end;
+  final int? waiterId;
+  final String? waiterName;
+  final int? resourceId;
+  const _SlotPick({
+    required this.start,
+    required this.end,
+    this.waiterId,
+    this.waiterName,
+    this.resourceId,
+  });
+}
 
 String _fmtQtyLocal(double q) {
   if (q == q.truncateToDouble()) return q.toInt().toString();
@@ -40,14 +66,36 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   final Map<int, int> _componentQuantities = {};
   final Map<int, bool> _componentSpecial = {};
 
+  /// Index of the option group on screen in
+  /// [ComponentGroupDisplayMode.step]. Never clamped in place: the group list
+  /// arrives from a stream and can shrink under an open dialog, so every read
+  /// clamps instead.
+  int _groupStep = 0;
+
   late TextEditingController _manualDiscountController;
   late TextEditingController _noteController;
   late TextEditingController _quantityController;
+  late TextEditingController _priceController;
   late FocusNode _discountFocusNode;
+
+  /// The unit chosen for a serial-tracked product. Required before save, and
+  /// forces quantity to 1 — one line per physical unit.
+  Serial? _selectedSerial;
+
+  /// Serial-tracking flag from the catalogue row, loaded with the plannable
+  /// flags below. Null until that load lands; the getter falls back to the
+  /// object we were handed so the very first frame is still correct.
+  bool? _serialTrackedDb;
 
   bool _isPercentageDiscount = false;
   double _productDiscount = 0.0;
   double _quantity = 1.0;
+  /// Manual unit-price override (permission-gated). Null = use the default
+  /// product/variant price. Never negative.
+  double? _customPrice;
+  /// The product's unit of measure (e.g. kg, L). Falls back to "pcs" when the
+  /// product has no unit set. Loaded from the products table on open.
+  String? _unitName;
   String? _discountError;
 
   // Variant selection state
@@ -65,11 +113,47 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   DateTime? _planEndAt;
   int? _planWaiterId;
   String? _planWaiterName;
+  int? _planResourceId;
+  bool _loadingAvailability = false;
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
   /// When a plannable product has a start date selected, quantity is locked to 1.
   bool get _isQuantityLocked => _isPlannable && _planStartAt != null;
+
+  /// Whether this product (or the chosen variant) needs a serial. Read
+  /// synchronously off the already-loaded rows so the panel can switch on the
+  /// first frame — a tracked product must never render a components panel that
+  /// lets the cashier add it without a unit.
+  bool get _isSerialTracked {
+    final variant = _selectedVariant?['variant'];
+    if (variant != null && variant.isSerialTracked == true) return true;
+    if (_serialTrackedDb != null) return _serialTrackedDb!;
+    // Fall back to the object we were handed; an OrderItem has no flag, so an
+    // edit of an existing serial line is detected by the serial it carries.
+    if (widget.product is OrderItem) {
+      return (widget.product as OrderItem).serialId != null;
+    }
+    try {
+      return widget.product.isSerialTracked == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Units already committed to OTHER lines of the current order, so the picker
+  /// cannot hand the same physical unit to two lines.
+  Set<int> _serialsInBasket() {
+    final editingId =
+        widget.product is OrderItem ? (widget.product as OrderItem).id : null;
+    final ids = <int>{};
+    for (final item in ref.read(orderProvider).items) {
+      if (item.serialId == null) continue;
+      if (editingId != null && item.id == editingId) continue;
+      ids.add(item.serialId!);
+    }
+    return ids;
+  }
 
   int get _productId => widget.product is OrderItem
       ? (widget.product as OrderItem).productId
@@ -86,6 +170,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     _manualDiscountController = TextEditingController();
     _noteController = TextEditingController();
     _quantityController = TextEditingController(text: '1');
+    _priceController = TextEditingController();
     _discountFocusNode = FocusNode();
 
     if (widget.product is OrderItem) {
@@ -97,6 +182,15 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       for (var comp in item.components) {
         _componentQuantities[comp.componentId] = comp.quantity;
         _componentSpecial[comp.componentId] = comp.isSpecial;
+      }
+
+      // Re-opening a serial line must show its own unit as the current pick,
+      // not an empty picker that then demands a re-scan.
+      if (item.serialId != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          final s = await ref.read(serialServiceProvider).byId(item.serialId!);
+          if (mounted && s != null) setState(() => _selectedSerial = s);
+        });
       }
 
       if (item.manualDiscount > 0) {
@@ -115,6 +209,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       _planStartAt = item.planStartAt;
       _planEndAt = item.planEndAt;
       _planWaiterId = item.planWaiterId;
+      _planResourceId = item.planResourceId;
     } else {
       _productDiscount = widget.product.discountAmount ?? 0.0;
       // Seeding happens in build() via ref.listen so it fires as soon as the
@@ -130,7 +225,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       if (product != null && mounted) {
         setState(() {
           _isPlannable = product.isPlannable;
+          _serialTrackedDb = product.isSerialTracked;
           _planDurationMinutes = product.planDurationMinutes;
+          _unitName = product.unitName;
           if (_planStartAt != null && _planEndAt == null && _planDurationMinutes != null) {
             _planEndAt = _planStartAt!.add(Duration(minutes: _planDurationMinutes!));
           }
@@ -149,6 +246,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     _manualDiscountController.dispose();
     _noteController.dispose();
     _quantityController.dispose();
+    _priceController.dispose();
     _discountFocusNode.dispose();
     super.dispose();
   }
@@ -233,25 +331,32 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   /// Seeds _componentQuantities from [componentsData] for any component not yet
   /// tracked. The initial quantity is max(defaultQuantity, minQuantity) so that
   /// required components always start at their minimum, never below it.
-  void _seedComponents(List<dynamic> componentsData) {
-    bool hasChanges = false;
-    for (final componentData in componentsData) {
-      final component = componentData['component'];
-      final isRequired = componentData['isRequired'] as bool;
-      final minQuantity = componentData['minQuantity'] as int;
-      final defaultQuantity = componentData['defaultQuantity'] as int? ?? 0;
-
-      if (_componentQuantities.containsKey(component.id)) continue;
-
-      // Only auto-seed required components or those with a non-zero default.
-      if (isRequired || defaultQuantity > 0) {
-        // Never start below minQuantity.
-        _componentQuantities[component.id] =
-        defaultQuantity < minQuantity ? minQuantity : defaultQuantity;
-        hasChanges = true;
-      }
+  void _seedComponents(
+      List<dynamic> componentsData, Map<int?, ComponentGroupRule> rules) {
+    final byGroup = <int?, List<dynamic>>{};
+    for (final cd in componentsData) {
+      final groupId = cd['component']?.componentGroupId as int?;
+      byGroup.putIfAbsent(groupId, () => []).add(cd);
     }
-    if (hasChanges && mounted) setState(() {});
+
+    byGroup.forEach((groupId, members) {
+      final rule =
+          rules[groupId] ?? ComponentGroupRule(groupId: groupId, name: '');
+      final seeded = seedGroup(rule, [
+        for (final cd in members)
+          ComponentSeed(
+            componentId: cd['component'].id as int,
+            isRequired: cd['isRequired'] as bool,
+            minQuantity: cd['minQuantity'] as int,
+            defaultQuantity: cd['defaultQuantity'] as int? ?? 0,
+          ),
+      ]);
+      seeded.forEach((componentId, quantity) {
+        // Never overwrite what the cashier already touched.
+        if (_componentQuantities.containsKey(componentId)) return;
+        _componentQuantities[componentId] = quantity;
+      });
+    });
   }
 
   /// Adjust a component's quantity by [delta] (+1 or -1), respecting min/max.
@@ -262,7 +367,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     required int delta,
     required bool isRequired,
     required int minQuantity,
-    required int maxQuantity,
+    required int? maxQuantity,
   }) {
     // Always read the current tracked value; it must already be in the map
     // because _seedComponents / _buildComponentCard guarantee it is seeded
@@ -270,7 +375,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     final current = _componentQuantities[componentId] ?? minQuantity;
     final next = current + delta;
 
-    if (next > maxQuantity || next < minQuantity) return;
+    if (maxQuantity != null && next > maxQuantity) return;
+    if (next < minQuantity) return;
 
     setState(() {
       if (next == 0 && !isRequired && minQuantity == 0) {
@@ -283,6 +389,111 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     });
   }
 
+  /// Pick exactly one component out of a SINGLE group, clearing its siblings.
+  ///
+  /// Tapping the selected one again clears it, which is the only way to back
+  /// out of an optional radio group once something has been chosen.
+  void _selectExclusive(
+      int componentId, List<dynamic> groupComponents, bool required) {
+    setState(() {
+      final wasSelected = (_componentQuantities[componentId] ?? 0) > 0;
+      for (final cd in groupComponents) {
+        final id = cd['component']?.id as int?;
+        if (id != null) _componentQuantities[id] = 0;
+      }
+      if (!wasSelected || required) _componentQuantities[componentId] = 1;
+    });
+  }
+
+  /// Flip one component of a MULTIPLE group on or off. Quantity is always one.
+  void _toggleComponent(int componentId) {
+    setState(() {
+      final on = (_componentQuantities[componentId] ?? 0) > 0;
+      _componentQuantities[componentId] = on ? 0 : 1;
+    });
+  }
+
+  /// The current selection of one group, as pricing input.
+  List<ComponentPick> _picksFor(List<dynamic> groupComponents) {
+    final picks = <ComponentPick>[];
+    for (final cd in groupComponents) {
+      final id = cd['component']?.id as int?;
+      if (id == null) continue;
+      final qty = _componentQuantities[id] ?? 0;
+      if (qty <= 0) continue;
+      picks.add(ComponentPick(
+        componentId: id,
+        quantity: qty,
+        unitPrice: (cd['defaultPrice'] as double?) ?? 0.0,
+      ));
+    }
+    return picks;
+  }
+
+  /// Every option row this line will be billed and sent as, across all
+  /// groups, with each group's free allowance already spent.
+  ///
+  /// The cart, the displayed total and the order line all read from this one
+  /// list, so what the customer is shown is what gets sent and what gets
+  /// charged. A partly-covered component appears twice: the free units at
+  /// 0.00 and the rest at catalogue price.
+  List<ChargedComponentLine> _allocatedLines(
+      List<dynamic> componentsData, Map<int?, ComponentGroupRule> rules) {
+    final byGroup = <int?, List<dynamic>>{};
+    for (final cd in componentsData) {
+      final groupId = cd['component']?.componentGroupId as int?;
+      byGroup.putIfAbsent(groupId, () => []).add(cd);
+    }
+    final lines = <ChargedComponentLine>[];
+    byGroup.forEach((groupId, members) {
+      lines.addAll(allocateFreeAllowance(
+          _picksFor(members), rules[groupId]?.freeQuantity ?? 0));
+    });
+    return lines;
+  }
+
+  /// Defaults the customer has taken off that are still charged for.
+  ///
+  /// Only ever non-empty for links the back office flagged. Everything else
+  /// behaves as it always has: take the cheese off, pay less.
+  List<RemovalCandidate> _removalCandidates(List<dynamic> componentsData) {
+    final out = <RemovalCandidate>[];
+    for (final cd in componentsData) {
+      final id = cd['component']?.id as int?;
+      if (id == null) continue;
+      final candidate = RemovalCandidate(
+        componentId: id,
+        defaultQuantity: cd['defaultQuantity'] as int? ?? 0,
+        selectedQuantity: _componentQuantities[id] ?? 0,
+        unitPrice: (cd['defaultPrice'] as double?) ?? 0.0,
+        chargeOnRemoval: cd['chargeOnRemoval'] as bool? ?? false,
+      );
+      // A flagged link with nothing to charge bills nothing, server-side, so
+      // quoting a removal fee here would be a number that never arrives.
+      if (candidate.needsExplicitRow && candidate.unitPrice > 0) {
+        out.add(candidate);
+      }
+    }
+    return out;
+  }
+
+  /// The first group whose selection breaks its own rule, or null.
+  GroupValidation? _firstGroupProblem(
+      List<dynamic> componentsData, Map<int?, ComponentGroupRule> rules) {
+    final byGroup = <int?, List<dynamic>>{};
+    for (final cd in componentsData) {
+      final groupId = cd['component']?.componentGroupId as int?;
+      byGroup.putIfAbsent(groupId, () => []).add(cd);
+    }
+    for (final entry in byGroup.entries) {
+      final rule = rules[entry.key];
+      if (rule == null) continue;
+      final problem = validateGroup(rule, _picksFor(entry.value));
+      if (problem != null) return problem;
+    }
+    return null;
+  }
+
   double _calculateComponentTotal(List<dynamic> componentsData) {
     double total = 0.0;
     for (final entry in _componentQuantities.entries) {
@@ -290,12 +501,24 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         final componentData = componentsData.firstWhere(
               (cd) => cd['component']?.id == entry.key,
         );
-        final defaultPrice = (componentData['defaultPrice'] as double?) ?? 0.0;
-        total += defaultPrice * entry.value;
+        final catalogue = (componentData['defaultPrice'] as double?) ?? 0.0;
+        // Free-allowance pricing when the rules have loaded, catalogue price
+        // otherwise — the cart must never quote more than it charges.
+        final rules = ref
+            .read(productComponentGroupRulesProvider(_productId))
+            .valueOrNull;
+        total += rules == null
+            ? catalogue * entry.value
+            : chargedTotalFor(
+                _allocatedLines(componentsData, rules), entry.key);
       } catch (_) {
         continue;
       }
     }
+    // Defaults taken off that are still charged for. Added separately from
+    // the loop above because the money is owed precisely for the units that
+    // are NOT selected, which that loop never visits.
+    total += removalChargePerParentUnit(_removalCandidates(componentsData));
     return total;
   }
 
@@ -356,7 +579,27 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       return;
     }
 
-    final quantity = _isQuantityLocked ? 1.0 : (double.tryParse(_quantityController.text.replaceAll(',', '.')) ?? 1.0);
+    // Hard gate. The backend 400s the entire order if a serial-tracked line
+    // arrives without a unit, so the sale is stopped here rather than failing
+    // later at sync time when the customer has already walked out.
+    if (_isSerialTracked && _selectedSerial == null) {
+      SnackBarHelper.showErrorSnackBar(
+          context, ref, l10n.translate('serial_required'));
+      return;
+    }
+
+    final rawQuantity = _isQuantityLocked
+        ? 1.0
+        : (double.tryParse(_quantityController.text.replaceAll(',', '.')) ?? 1.0);
+    // Time-managed products are a whole count of sessions — the backend rejects
+    // a fractional quantity, so round to an integer here.
+    // A serial names one physical unit, so the quantity is not the cashier's to
+    // choose — selling three means three lines with three serials.
+    final quantity = _isSerialTracked
+        ? 1.0
+        : (_isPlannable
+            ? rawQuantity.roundToDouble().clamp(1.0, double.infinity)
+            : rawQuantity);
     if (quantity < 1) {
       SnackBarHelper.showErrorSnackBar(context, ref, 'Quantity must be at least 1');
       return;
@@ -390,9 +633,95 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       }
     }
 
-    // Build selected components list
+    // Validate the group rules — how many of each group, not just whether the
+    // individual component was marked required. Caught here as well as in the
+    // UI because a rule can change under a dialog that is already open.
+    final groupRules =
+        ref.read(productComponentGroupRulesProvider(_productId)).valueOrNull;
+    if (groupRules != null) {
+      final problem = _firstGroupProblem(componentsData, groupRules);
+      if (problem != null) {
+        final l10n = AppLocalizations.of(context)!;
+        final name = problem.rule.name.isEmpty
+            ? l10n.translate('components')
+            : problem.rule.name;
+        SnackBarHelper.showErrorSnackBar(
+          context,
+          ref,
+          problem.problem == GroupProblem.tooFew
+              ? '$name: ${l10n.translate('at_least')} ${problem.rule.minSelection} (${problem.selected})'
+              : '$name: ${l10n.translate('up_to')} ${problem.rule.maxSelection} (${problem.selected})',
+        );
+        return;
+      }
+    }
+
+    // Every option row this line will be billed as, after each group's free
+    // allowance. The POS is the pricing authority on its own orders, and a
+    // partly-covered option ships as two rows — the free units at 0.00, the
+    // rest at catalogue price — because the server stores option prices to two
+    // decimals and would round a blended average into a different total than
+    // the one printed on the customer's ticket.
+    final allocation = groupRules == null
+        ? const <ChargedComponentLine>[]
+        : _allocatedLines(componentsData, groupRules);
+
     final selectedComponents = <OrderItemComponent>[];
-    for (final entry in _componentQuantities.entries) {
+    for (final line in allocation) {
+      Map<String, dynamic>? row;
+      try {
+        row = componentsData
+            .firstWhere((c) => c['component']?.id == line.componentId);
+      } catch (_) {
+        continue;
+      }
+      final comp = row['component'];
+      if (comp == null) continue;
+      selectedComponents.add(OrderItemComponent(
+        componentId: comp.id,
+        name: comp.name ?? 'Unknown',
+        quantity: line.quantity,
+        price: line.unitPrice,
+        isSpecial: _componentSpecial[comp.id] ?? false,
+      ));
+    }
+
+    // Removals: say so explicitly, and carry the money.
+    //
+    // Two rows, deliberately. The first is the SIGNAL — the component at the
+    // quantity actually wanted, zero included — and it is what the server
+    // reads to work the charge out; a ticket that simply omits the row bills
+    // nothing. The second is a local money row the server never sees: it is
+    // dropped from the sync payload, and exists so the cart, the ticket and
+    // the customer all quote the figure the server is about to charge.
+    for (final candidate in _removalCandidates(componentsData)) {
+      Map<String, dynamic>? catalogueRow;
+      try {
+        catalogueRow = componentsData
+            .firstWhere((c) => c['component']?.id == candidate.componentId);
+      } catch (_) {
+        continue;
+      }
+      final comp = catalogueRow['component'];
+      if (comp == null) continue;
+      final name = comp.name ?? 'Unknown';
+
+      for (final row in removalRowsFor(candidate)) {
+        selectedComponents.add(OrderItemComponent(
+          componentId: row.componentId,
+          name: name,
+          quantity: row.quantity,
+          price: row.price,
+          removalCharge: row.removalCharge,
+        ));
+      }
+    }
+
+    // Rules not loaded yet: fall back to catalogue pricing, one row per
+    // component, exactly as the dialog behaved before the rules existed.
+    for (final entry in groupRules != null
+        ? const <MapEntry<int, int>>[]
+        : _componentQuantities.entries) {
       if (entry.value <= 0) continue;
 
       Map<String, dynamic>? componentData;
@@ -421,7 +750,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     final baseProductPrice = widget.product is OrderItem
         ? (widget.product as OrderItem).finalPrice
         : widget.product.price;
-    final effectiveProductPrice = _variantPrice ?? baseProductPrice;
+    final effectiveProductPrice = _customPrice ?? _variantPrice ?? baseProductPrice;
     final selectedComponentTotal = selectedComponents.fold(
         0.0, (sum, c) => sum + c.price * c.quantity);
     final manualDiscount =
@@ -444,10 +773,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
     Navigator.of(context).pop({
       'components': selectedComponents,
+      'serialId': _selectedSerial?.id,
+      'serialNumber': _selectedSerial?.serialNumber,
       'discount': _productDiscount,
       'manualDiscount': manualDiscount,
       'note': _noteController.text.isEmpty ? null : _noteController.text,
       'quantity': quantity,
+      // Manual unit-price override (null unless a permitted user changed it).
+      'priceOverride': _customPrice,
       'variantId': variantId,
       'variantName': variantName,
       'variantPrice': variantPrice,
@@ -456,6 +789,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       'planStartAt': _planStartAt,
       'planEndAt': _planEndAt,
       'planWaiterId': _planWaiterId,
+      'planResourceId': _planResourceId,
     });
   }
 
@@ -473,7 +807,13 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         ? (widget.product as OrderItem).imageUrl
         : widget.product.imageUrl;
 
-    final productPrice = _variantPrice ?? baseProductPrice;
+    final basePrice = _variantPrice ?? baseProductPrice;
+    // Seed the price field with the current price the first time it renders.
+    if (_priceController.text.isEmpty) {
+      _priceController.text = basePrice.toStringAsFixed(2);
+    }
+    // Manual override (permission-gated) wins for display + totals.
+    final productPrice = _customPrice ?? basePrice;
     final productImageUrl = _variantImageUrl ?? baseProductImageUrl;
 
     final variantsAsync =
@@ -484,15 +824,21 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     final componentsAsync = ref.watch(productComponentsProvider(_productId));
     final componentGroupsAsync = ref.watch(componentGroupsProvider);
 
-    // Seed component quantities as soon as the provider resolves.
-    // ref.listen fires synchronously on the current value and on every change,
-    // so components are ready on the very first render rather than after a tap.
-    ref.listen<AsyncValue<List<dynamic>>>(
-      productComponentsProvider(_productId),
-          (_, next) => next.whenData(_seedComponents),
-    );
-    // Also seed immediately if the value is already available (e.g. cached).
-    componentsAsync.whenData(_seedComponents);
+    final componentRulesAsync =
+        ref.watch(productComponentGroupRulesProvider(_productId));
+
+    // Seed only once BOTH the components and the rules governing them are
+    // available.
+    //
+    // Seeding on the components alone raced the rules: the component list
+    // comes from a stream that resolves first, so a radio group fell back to
+    // the permissive default and every member carrying a default was selected
+    // — and because seeding never overwrites what is already tracked, the
+    // dialog stayed wrong for as long as it was open. Both providers are
+    // watched, so this runs again on the rebuild when the rules land.
+    if (componentsAsync.hasValue && componentRulesAsync.hasValue) {
+      _seedComponents(componentsAsync.value!, componentRulesAsync.value!);
+    }
     final l10n = AppLocalizations.of(context)!;
     final currencyFormatter = ref.watch(currencyFormatterProvider);
 
@@ -548,10 +894,26 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                     width: 1,
                     color: Theme.of(context).dividerColor,
                   ),
-                  // RIGHT: Components
+                  // RIGHT: Components — or the serial picker. A serial-tracked
+                  // product carries no components, so the panel is reused
+                  // rather than squeezing a second list onto the dialog.
                   Expanded(
                     flex: 5,
-                    child: _buildComponentsPanel(componentsAsync, componentGroupsAsync, l10n),
+                    child: _isSerialTracked
+                        ? SerialPickerPanel(
+                            productId: _productId,
+                            selectedSerialId: _selectedSerial?.id,
+                            excludeSerialIds: _serialsInBasket(),
+                            onSelected: (serial) => setState(() {
+                              _selectedSerial = serial;
+                              // One line per unit — the backend rejects a
+                              // serial line with any other quantity.
+                              _quantity = 1.0;
+                              _quantityController.text = '1';
+                            }),
+                          )
+                        : _buildComponentsPanel(
+                            componentsAsync, componentGroupsAsync, l10n),
                   ),
                 ],
               ),
@@ -578,8 +940,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                     child: ElevatedButton(
                       onPressed: () => _handleSave(context),
                       style: AppButtonStyles.elevatedButtonStyle(
-                        backgroundColor: Theme.of(context).primaryColor,
-                        foregroundColor: Colors.white,
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
                         isLarge: true,
                       ),
                       child: Text(widget.isEditMode
@@ -618,6 +980,46 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               _buildQuantityRow(context, componentsAsync, basePrice, currencyFormatter, l10n),
               const SizedBox(height: 16),
 
+              // ── Unit price override (permission-gated; admins bypass) ──
+              PermissionGuard(
+                permission: Permissions.ordersItemPrice,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.translate('unit_price'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    AdaptiveKeyboardTextField(
+                      controller: _priceController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [
+                        // Digits + one decimal only → negatives are impossible.
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'^\d*\.?\d{0,2}')),
+                      ],
+                      decoration: InputDecoration(
+                        prefixText: '$currency ',
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (v) {
+                        final parsed = double.tryParse(v);
+                        setState(() => _customPrice =
+                            (parsed == null || parsed < 0) ? null : parsed);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
               // ── Product discount (read-only) ──
               if (_productDiscount > 0) ...[
                 _buildProductDiscountCard(l10n, currencyFormatter),
@@ -643,7 +1045,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                       children: [
                         Expanded(
                           flex: 2,
-                          child: OnscreenKeyboardTextField(
+                          child: AdaptiveKeyboardTextField(
                             controller: _manualDiscountController,
                             focusNode: _discountFocusNode,
                             keyboardType:
@@ -709,7 +1111,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 ),
               ),
               const SizedBox(height: 6),
-              TextField(
+              AdaptiveKeyboardTextField(
                 controller: _noteController,
                 decoration: InputDecoration(
                   labelText: l10n.translate('add_note'),
@@ -842,45 +1244,57 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
         return componentGroupsAsync.when(
           data: (groups) {
+            final rules =
+                ref.watch(productComponentGroupRulesProvider(_productId))
+                        .valueOrNull ??
+                    const <int?, ComponentGroupRule>{};
             final Map<int?, List<Map<String, dynamic>>> grouped = {};
             for (var cd in componentsData) {
               final groupId = cd['component']?.componentGroupId as int?;
               grouped.putIfAbsent(groupId, () => []).add(cd);
             }
 
+            // Groups in the order the catalogue puts them in; the ungrouped
+            // bucket carries displayOrder 9999 so it always trails.
+            final orderedIds = grouped.keys.toList()
+              ..sort((a, b) {
+                final ra = rules[a]?.displayOrder ?? 9999;
+                final rb = rules[b]?.displayOrder ?? 9999;
+                if (ra != rb) return ra.compareTo(rb);
+                return (a ?? 1 << 30).compareTo(b ?? 1 << 30);
+              });
+            final allocation = _allocatedLines(componentsData, rules);
+
+            // Stepping is only a layout of its own once there is more than
+            // one group to step between - a single group would gain a step
+            // counter and a pair of dead buttons and nothing else.
+            final mode =
+                ref.watch(settingsProvider).componentGroupDisplayMode;
+            if (mode == ComponentGroupDisplayMode.step &&
+                orderedIds.length > 1) {
+              return _buildComponentSteps(
+                groups: groups,
+                orderedIds: orderedIds,
+                grouped: grouped,
+                rules: rules,
+                allocation: allocation,
+                currencyFormatter: currencyFormatter,
+                l10n: l10n,
+              );
+            }
+
             return ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              itemCount: grouped.length,
-              itemBuilder: (context, index) {
-                final groupId = grouped.keys.elementAt(index);
-                final groupComponents = grouped[groupId]!;
-                final group = groupId != null
-                    ? groups.cast<dynamic>().firstWhere(
-                          (g) => g.id == groupId,
-                      orElse: () => null,
-                    )
-                    : null;
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (group != null)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                        child: Text(
-                          group.name as String,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8),
-                          ),
-                        ),
-                      ),
-                    ...groupComponents.map((cd) =>
-                        _buildComponentCard(cd, currencyFormatter, l10n)),
-                  ],
-                );
-              },
+              itemCount: orderedIds.length,
+              itemBuilder: (context, index) => _buildGroupSection(
+                groups: groups,
+                groupId: orderedIds[index],
+                groupComponents: grouped[orderedIds[index]]!,
+                rule: rules[orderedIds[index]],
+                allocation: allocation,
+                currencyFormatter: currencyFormatter,
+                l10n: l10n,
+              ),
             );
           },
           loading: () => const Center(child: CircularProgressIndicator()),
@@ -1028,6 +1442,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       setState(() => _planEndAt = picked);
     }
 
+    final canSchedule = ref.watch(lastKnownOnlineStatusProvider);
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(12),
@@ -1064,7 +1480,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             ],
           ),
           const SizedBox(height: 8),
-          // Start time button
+          if (_planDurationMinutes == null)
+            _durationRequiredBanner(theme, l10n),
+          if (_planDurationMinutes != null) ...[
+            _availabilityButton(context, l10n),
+            const SizedBox(height: 8),
+          ],
+          // Manual start/end. Disabled offline for the same reason the
+          // availability button is: these write the plan fields.
           Row(children: [
             Expanded(
               child: OutlinedButton.icon(
@@ -1072,7 +1495,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 label: Text(_planStartAt != null
                     ? dateTimeFmt.format(_planStartAt!)
                     : l10n.translate('select_start_time')),
-                onPressed: pickStart,
+                onPressed: canSchedule ? pickStart : null,
               ),
             ),
             const SizedBox(width: 8),
@@ -1082,17 +1505,22 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 label: Text(_planEndAt != null
                     ? dateTimeFmt.format(_planEndAt!)
                     : l10n.translate('select_end_time')),
-                onPressed: _planStartAt != null ? pickEnd : null,
+                onPressed:
+                    canSchedule && _planStartAt != null ? pickEnd : null,
               ),
             ),
           ]),
           if (_planStartAt != null && _planEndAt != null) ...[
             const SizedBox(height: 4),
             Text(
-              'Duration: ${_planEndAt!.difference(_planStartAt!).inMinutes} min',
+              'Duration: ${_planEndAt!.difference(_planStartAt!).inMinutes} min'
+              '${_planWaiterName != null ? ' · ${l10n.translate('with')} $_planWaiterName' : ''}',
               style: theme.textTheme.bodySmall,
             ),
           ],
+          // Resource selector (only shown when the service has an eligible pool)
+          const SizedBox(height: 8),
+          _buildResourceSelectorForPlan(context, l10n),
           // Waiter selector
           const SizedBox(height: 8),
           _buildWaiterSelectorForPlan(context, l10n),
@@ -1101,35 +1529,301 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 
-  Widget _buildWaiterSelectorForPlan(BuildContext context, AppLocalizations l10n) {
-    final theme = Theme.of(context);
-    return FutureBuilder<List<Waiter>>(
-      future: ref.read(databaseProvider).select(ref.read(databaseProvider).waiters).get(),
-      builder: (ctx, snap) {
-        if (!snap.hasData || snap.data!.isEmpty) return const SizedBox.shrink();
-        final waiters = snap.data!;
-        return DropdownButtonFormField<int?>(
-          value: _planWaiterId,
-          decoration: InputDecoration(
-            labelText: l10n.translate('assign_waiter'),
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+  /// Amber banner: a time-managed service can't be booked until it has a
+  /// duration (the availability endpoint 400s otherwise).
+  Widget _durationRequiredBanner(ThemeData theme, AppLocalizations l10n) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(children: [
+        const Icon(Icons.info_outline, size: 16, color: Colors.orange),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            l10n.translate('booking_needs_duration'),
+            style: theme.textTheme.bodySmall,
           ),
-          items: [
-            DropdownMenuItem<int?>(value: null, child: Text(l10n.translate('unspecified'))),
-            ...waiters.map((w) => DropdownMenuItem<int?>(
-                value: w.id,
-                child: Text('${w.firstName} ${w.lastName ?? ''}'.trim()))),
-          ],
-          onChanged: (v) => setState(() {
-            _planWaiterId = v;
-            _planWaiterName = v == null
-                ? null
-                : waiters.firstWhere((w) => w.id == v).firstName;
-          }),
-        );
+        ),
+      ]),
+    );
+  }
+
+  /// "Find available slots" — online-only entry point to real availability.
+  ///
+  /// Offline this is not a degraded mode with a manual fallback, it is closed.
+  /// A time picked here becomes `planStartAt` on the line, which the next order
+  /// sync would push as a booking — a slot claimed without ever asking the
+  /// diary that owns it. Selling the service as a walk-in still works; it just
+  /// carries no plan fields.
+  Widget _availabilityButton(BuildContext context, AppLocalizations l10n) {
+    final online = ref.watch(lastKnownOnlineStatusProvider);
+    if (!online) {
+      return Row(children: [
+        Icon(Icons.cloud_off, size: 15, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(l10n.translate('reconnect_to_book'),
+              style: Theme.of(context).textTheme.bodySmall),
+        ),
+      ]);
+    }
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton.tonalIcon(
+        icon: _loadingAvailability
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.event_available, size: 18),
+        label: Text(l10n.translate('find_available_slots')),
+        onPressed:
+            _loadingAvailability ? null : () => _showAvailabilitySheet(context, l10n),
+      ),
+    );
+  }
+
+  /// Resource dropdown, shown only when this product has an eligible resource
+  /// pool. `null` = unassigned. Kept in sync with the availability sheet.
+  Widget _buildResourceSelectorForPlan(
+      BuildContext context, AppLocalizations l10n) {
+    final asyncRes = ref.watch(eligibleResourcesProvider(_productId));
+    final resources = asyncRes.valueOrNull ?? const <Resource>[];
+    if (resources.isEmpty) return const SizedBox.shrink();
+    return DropdownButtonFormField<int?>(
+      value: _planResourceId,
+      decoration: InputDecoration(
+        labelText: l10n.translate('assign_resource'),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      items: [
+        DropdownMenuItem<int?>(
+            value: null, child: Text(l10n.translate('unspecified'))),
+        ...resources.map((r) => DropdownMenuItem<int?>(
+            value: r.id, child: Text(r.name))),
+      ],
+      onChanged: (v) => setState(() => _planResourceId = v),
+    );
+  }
+
+  /// Bottom sheet that queries real availability and lets the user pick a slot.
+  /// Picking a slot sets start (clamped to `start + duration`), end, waiter,
+  /// and — when the service requires one — the resource.
+  Future<void> _showAvailabilitySheet(
+      BuildContext context, AppLocalizations l10n) async {
+    if (_planDurationMinutes == null) return;
+    DateTime selectedDate = DateTime(
+      (_planStartAt ?? DateTime.now()).year,
+      (_planStartAt ?? DateTime.now()).month,
+      (_planStartAt ?? DateTime.now()).day,
+    );
+    int? sheetResourceId = _planResourceId;
+
+    final picked = await showModalBottomSheet<_SlotPick>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return StatefulBuilder(builder: (sheetCtx, setSheet) {
+          final key = (
+            productId: _productId,
+            date: selectedDate,
+            waiterId: null as int?,
+            resourceId: sheetResourceId,
+          );
+          final async = ref.watch(availabilityProvider(key));
+          final fmt = DateFormat('HH:mm');
+          final dateFmt = DateFormat('EEE dd/MM');
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 12,
+                  bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Text(l10n.translate('available_slots'),
+                        style: Theme.of(sheetCtx).textTheme.titleMedium),
+                    const Spacer(),
+                    TextButton.icon(
+                      icon: const Icon(Icons.calendar_today, size: 16),
+                      label: Text(dateFmt.format(selectedDate)),
+                      onPressed: () async {
+                        final d = await showDatePicker(
+                          context: sheetCtx,
+                          initialDate: selectedDate,
+                          firstDate: DateTime.now()
+                              .subtract(const Duration(days: 1)),
+                          lastDate:
+                              DateTime.now().add(const Duration(days: 365)),
+                        );
+                        if (d != null) {
+                          setSheet(() =>
+                              selectedDate = DateTime(d.year, d.month, d.day));
+                        }
+                      },
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  Flexible(
+                    child: async.when(
+                      loading: () => const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Center(child: CircularProgressIndicator())),
+                      error: (e, _) => Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          e.toString().replaceFirst('Exception: ', ''),
+                          style: TextStyle(
+                              color: Theme.of(sheetCtx).colorScheme.error),
+                        ),
+                      ),
+                      data: (avail) {
+                        // Resource chooser when required and not yet resolved.
+                        final needsResource = avail.requiresResource &&
+                            sheetResourceId == null &&
+                            avail.eligibleResourceIds.isNotEmpty;
+                        if (needsResource) {
+                          final resList =
+                              ref.watch(resourcesByIdProvider);
+                          return ListView(
+                            shrinkWrap: true,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text(
+                                    l10n.translate('pick_a_resource_first'),
+                                    style: Theme.of(sheetCtx)
+                                        .textTheme
+                                        .bodySmall),
+                              ),
+                              ...avail.eligibleResourceIds.map((rid) {
+                                final r = resList[rid];
+                                return ListTile(
+                                  dense: true,
+                                  leading: const Icon(Icons.meeting_room),
+                                  title: Text(r?.name ?? 'Resource #$rid'),
+                                  onTap: () =>
+                                      setSheet(() => sheetResourceId = rid),
+                                );
+                              }),
+                            ],
+                          );
+                        }
+                        if (!avail.hasAnyAvailability) {
+                          return Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(l10n.translate('no_slots_available')),
+                          );
+                        }
+                        final dur =
+                            Duration(minutes: _planDurationMinutes!);
+                        return ListView(
+                          shrinkWrap: true,
+                          children: [
+                            for (final c in avail.candidates)
+                              if (c.hasAvailability) ...[
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 6),
+                                  child: Text(c.waiterName,
+                                      style: Theme.of(sheetCtx)
+                                          .textTheme
+                                          .labelLarge),
+                                ),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: [
+                                    for (final iv in c.freeIntervals)
+                                      // Offer the interval's start; clamp end to
+                                      // start + duration (interval may be longer).
+                                      ActionChip(
+                                        label: Text(
+                                            '${fmt.format(iv.start)} - ${fmt.format(iv.start.add(dur))}'),
+                                        onPressed: () => Navigator.of(sheetCtx)
+                                            .pop(_SlotPick(
+                                          start: iv.start,
+                                          end: iv.start.add(dur),
+                                          waiterId: c.waiterId,
+                                          waiterName: c.waiterName,
+                                          resourceId: sheetResourceId ??
+                                              avail.resolvedResourceId,
+                                        )),
+                                      ),
+                                  ],
+                                ),
+                                const Divider(height: 12),
+                              ],
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
       },
+    );
+
+    if (picked == null || !mounted) return;
+    setState(() {
+      _planStartAt = picked.start;
+      _planEndAt = picked.end;
+      _planWaiterId = picked.waiterId;
+      _planWaiterName = picked.waiterName;
+      if (picked.resourceId != null) {
+        _planResourceId = picked.resourceId;
+      }
+      _quantity = 1.0;
+      _quantityController.text = '1';
+    });
+  }
+
+  Widget _buildWaiterSelectorForPlan(BuildContext context, AppLocalizations l10n) {
+    // `planWaiterId` is a *provider* employee id — a staff profile of its own,
+    // and never a waiter: the backend allows one profile per employee and
+    // rejects a non-provider outright, so offering waiters here would only
+    // produce a 400 at the point of booking.
+    final serviceProviders =
+        ref.watch(serviceProvidersProvider).valueOrNull ?? const [];
+    if (serviceProviders.isEmpty) return const SizedBox.shrink();
+
+    return DropdownButtonFormField<int?>(
+      value: _planWaiterId,
+      decoration: InputDecoration(
+        labelText: l10n.translate('provider'),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      items: [
+        DropdownMenuItem<int?>(
+            value: null, child: Text(l10n.translate('unspecified'))),
+        ...serviceProviders.map((sp) => DropdownMenuItem<int?>(
+            value: sp.id, child: Text(providerDisplayName(sp)))),
+      ],
+      // Left enabled offline on purpose: naming who is cutting the hair claims
+      // no slot — there is no time window to conflict over — so a walk-in can
+      // still record its provider with the connection down.
+      onChanged: (v) => setState(() {
+        _planWaiterId = v;
+        _planWaiterName = v == null
+            ? null
+            : providerDisplayName(
+                serviceProviders.firstWhere((sp) => sp.id == v));
+      }),
     );
   }
 
@@ -1298,7 +1992,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           ),
           SizedBox(
             width: 80,
-            child: OnscreenKeyboardTextField(
+            child: AdaptiveKeyboardTextField(
               controller: _quantityController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               textAlign: TextAlign.center,
@@ -1317,7 +2011,9 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               onChanged: (value) {
                 final parsed = double.tryParse(value.replaceAll(',', '.'));
                 if (parsed != null && parsed > 0) {
-                  setState(() => _quantity = parsed);
+                  // Time-managed services are a whole count — keep qty integer.
+                  setState(() => _quantity =
+                      _isPlannable ? parsed.roundToDouble() : parsed);
                 }
               },
             ),
@@ -1333,8 +2029,24 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             visualDensity: VisualDensity.comfortable,
           ),
         ],
+        // Unit of measure beside the quantity (defaults to "pcs").
+        const SizedBox(width: 8),
+        Text(
+          _unitLabel(),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: onSurface.withValues(alpha: 0.7),
+          ),
+        ),
       ],
     );
+  }
+
+  /// The product's unit label for display, defaulting to "pcs" when unset.
+  String _unitLabel() {
+    final u = _unitName?.trim();
+    return (u == null || u.isEmpty) ? 'pcs' : u;
   }
 
   // ─── Variant section ─────────────────────────────────────────────────────────
@@ -1538,29 +2250,359 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 
+  // ─── Component group header ──────────────────────────────────────────────────
+
+  /// The group's name, its colour, and what it is asking of the cashier.
+  ///
+  /// The rule is stated in words rather than left to be discovered by a
+  /// rejected confirm: "pick 1", "up to 3", "2 free". The live count next to
+  /// it turns red only once the selection actually breaks the rule.
+  /// One group: its header and its option cards. Shared by both layouts, so
+  /// a card behaves identically whichever one is switched on.
+  Widget _buildGroupSection({
+    required List<dynamic> groups,
+    required int? groupId,
+    required List<dynamic> groupComponents,
+    required ComponentGroupRule? rule,
+    required List<ChargedComponentLine> allocation,
+    required CurrencyFormatter currencyFormatter,
+    required AppLocalizations l10n,
+  }) {
+    final group = groupId != null
+        ? groups.cast<dynamic>().firstWhere(
+              (g) => g.id == groupId,
+              orElse: () => null,
+            )
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (group != null)
+          _buildGroupHeader(group.name as String, rule, groupComponents, l10n),
+        ...groupComponents.map((cd) => _buildComponentCard(
+              cd,
+              currencyFormatter,
+              l10n,
+              rule: rule,
+              groupComponents: groupComponents,
+              allocation: allocation,
+            )),
+      ],
+    );
+  }
+
+  /// [ComponentGroupDisplayMode.step]: one group on screen at a time.
+  ///
+  /// The numbered pills are navigation and progress at once - a group that
+  /// still breaks its own rule stays red wherever the cashier is, so what is
+  /// outstanding is visible without walking back through every step. They do
+  /// not gate movement: [_handleSave] is the gate, and blocking Next would
+  /// only make a group that is optional-but-wrong impossible to leave.
+  Widget _buildComponentSteps({
+    required List<dynamic> groups,
+    required List<int?> orderedIds,
+    required Map<int?, List<Map<String, dynamic>>> grouped,
+    required Map<int?, ComponentGroupRule> rules,
+    required List<ChargedComponentLine> allocation,
+    required CurrencyFormatter currencyFormatter,
+    required AppLocalizations l10n,
+  }) {
+    final theme = Theme.of(context);
+    final rtl = Directionality.of(context) == TextDirection.rtl;
+    final step = _groupStep.clamp(0, orderedIds.length - 1);
+    final groupId = orderedIds[step];
+
+    final problems = <int?, GroupValidation?>{
+      for (final id in orderedIds)
+        id: rules[id] == null
+            ? null
+            : validateGroup(rules[id]!, _picksFor(grouped[id]!)),
+    };
+    final outstanding = problems.values.where((p) => p != null).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // -- Step pills: tap to jump straight to a group --
+        SizedBox(
+          height: 52,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            itemCount: orderedIds.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final isCurrent = i == step;
+              final bad = problems[orderedIds[i]] != null;
+              final color =
+                  bad ? theme.colorScheme.error : theme.primaryColor;
+              return InkWell(
+                onTap: () => setState(() => _groupStep = i),
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  width: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: isCurrent
+                        ? color.withValues(alpha: 0.2)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: isCurrent || bad ? color : theme.dividerColor,
+                      width: isCurrent ? 2 : 1,
+                    ),
+                  ),
+                  child: Text(
+                    '${i + 1}',
+                    style: TextStyle(
+                      fontWeight:
+                          isCurrent ? FontWeight.bold : FontWeight.normal,
+                      color: isCurrent || bad
+                          ? color
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+
+        // -- Where we are, and what is still outstanding elsewhere --
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Text(
+                l10n
+                    .translate('step_of')
+                    .replaceAll('{0}', '${step + 1}')
+                    .replaceAll('{1}', '${orderedIds.length}'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const Spacer(),
+              if (outstanding > 0)
+                Flexible(
+                  child: Text(
+                    l10n
+                        .translate('incomplete_groups_remaining')
+                        .replaceAll('{0}', '$outstanding'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: theme.colorScheme.error,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ),
+        ),
+
+        // -- The one group on screen --
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            children: [
+              _buildGroupSection(
+                groups: groups,
+                groupId: groupId,
+                groupComponents: grouped[groupId]!,
+                rule: rules[groupId],
+                allocation: allocation,
+                currencyFormatter: currencyFormatter,
+                l10n: l10n,
+              ),
+            ],
+          ),
+        ),
+
+        // -- Back / Next --
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: step == 0
+                      ? null
+                      : () => setState(() => _groupStep = step - 1),
+                  icon:
+                      Icon(rtl ? Icons.chevron_right : Icons.chevron_left),
+                  label: Text(l10n.translate('back')),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: step >= orderedIds.length - 1
+                      ? null
+                      : () => setState(() => _groupStep = step + 1),
+                  icon:
+                      Icon(rtl ? Icons.chevron_left : Icons.chevron_right),
+                  label: Text(l10n.translate('next')),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGroupHeader(
+    String name,
+    ComponentGroupRule? rule,
+    List<dynamic> groupComponents,
+    AppLocalizations l10n,
+  ) {
+    final theme = Theme.of(context);
+    final picks = _picksFor(groupComponents);
+    final units = selectedUnits(picks);
+    final problem = rule == null ? null : validateGroup(rule, picks);
+
+    final hints = <String>[];
+    if (rule != null) {
+      if (rule.minSelection > 0) {
+        hints.add(rule.minSelection == rule.maxSelection
+            ? '${l10n.translate('choose')} ${rule.minSelection}'
+            : '${l10n.translate('at_least')} ${rule.minSelection}');
+      }
+      if (rule.maxSelection != null && rule.maxSelection != rule.minSelection) {
+        hints.add('${l10n.translate('up_to')} ${rule.maxSelection}');
+      }
+      if (rule.freeQuantity > 0) {
+        hints.add('${rule.freeQuantity} ${l10n.translate('free_included')}');
+      }
+    }
+
+    Color? swatch;
+    final raw = rule?.color;
+    if (raw != null && raw.startsWith('#') && raw.length >= 7) {
+      final parsed = int.tryParse(raw.substring(1, 7), radix: 16);
+      if (parsed != null) swatch = Color(0xFF000000 | parsed);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      child: Row(
+        children: [
+          if (swatch != null) ...[
+            Container(
+              width: 10,
+              height: 10,
+              decoration:
+                  BoxDecoration(color: swatch, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Flexible(
+            child: Text(
+              name,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (rule?.isRequired ?? false) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.error.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                l10n.translate('required').toUpperCase(),
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ),
+          ],
+          const Spacer(),
+          if (hints.isNotEmpty)
+            Text(
+              hints.join(' · '),
+              style: TextStyle(
+                fontSize: 12,
+                color: problem != null
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                fontWeight:
+                    problem != null ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          if (hints.isNotEmpty && units > 0) ...[
+            const SizedBox(width: 6),
+            Text(
+              '($units)',
+              style: TextStyle(
+                fontSize: 12,
+                color: problem != null
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.onSurface.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   // ─── Component card ──────────────────────────────────────────────────────────
 
   Widget _buildComponentCard(
       Map<String, dynamic> componentData,
       CurrencyFormatter currencyFormatter,
-      AppLocalizations l10n,
-      ) {
+      AppLocalizations l10n, {
+      ComponentGroupRule? rule,
+      List<dynamic> groupComponents = const [],
+      List<ChargedComponentLine> allocation = const [],
+      }) {
     final component = componentData['component'];
     final isRequired = componentData['isRequired'] as bool;
     final minQuantity = componentData['minQuantity'] as int;
-    final maxQuantity = componentData['maxQuantity'] as int;
-    final defaultQuantity = componentData['defaultQuantity'] as int? ?? 0;
     final defaultPrice = componentData['defaultPrice'] as double? ?? 0.0;
 
-    // The map is always seeded before this card renders (via ref.listen in
-    // build). Fall back to minQuantity as a safe display default.
-    final quantity = _componentQuantities[component.id] ??
-        (isRequired || defaultQuantity > 0
-            ? (defaultQuantity < minQuantity ? minQuantity : defaultQuantity)
-            : 0);
+    // How this group is picked from. Absent rules mean the old permissive
+    // behaviour: steppers, no group ceiling.
+    final selectionType = rule?.selectionType ?? ComponentSelectionType.quantity;
+    final isStepper = selectionType == ComponentSelectionType.quantity;
+
+    // 0 from the server means unbounded. SINGLE and MULTIPLE are one-each
+    // whatever the per-component bound says.
+    final maxQuantity = isStepper
+        ? effectiveMaxQuantity(componentData['maxQuantity'] as int?)
+        : 1;
+
+    // Seeding runs earlier in this same build pass, so the map already holds
+    // every component that should start selected. Absent means not chosen —
+    // and it must, because seeding deliberately leaves out the members of a
+    // radio group it did not pick. Re-deriving a quantity here from
+    // isRequired/defaultQuantity ignored the group rules and drew every
+    // defaulted option as selected.
+    final quantity = _componentQuantities[component.id] ?? 0;
+    final selected = quantity > 0;
+
+    // A group that has hit its ceiling stops accepting more, rather than
+    // letting the cashier build a selection that will be refused on confirm.
+    final groupMax = rule?.maxSelection;
+    final groupFull = groupMax != null &&
+        selectedUnits(_picksFor(groupComponents)) >= groupMax;
 
     final canDecrement = quantity > minQuantity;
-    final canIncrement = quantity < maxQuantity;
+    final canIncrement = (maxQuantity == null || quantity < maxQuantity) &&
+        (!groupFull || quantity > 0);
 
     void decrement() => _adjustComponent(
       componentId: component.id,
@@ -1578,20 +2620,59 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       maxQuantity: maxQuantity,
     );
 
-    return Card(
+    // Whole-card tap for the two pick-one-each types. Selecting inside a full
+    // MULTIPLE group is blocked; deselecting never is.
+    void toggle() {
+      if (selectionType == ComponentSelectionType.single) {
+        _selectExclusive(
+            component.id, groupComponents, rule?.isRequired ?? false);
+      } else {
+        if (!selected && groupFull) return;
+        _toggleComponent(component.id);
+      }
+    }
+
+    // What this component actually costs for one parent unit once the group's
+    // free allowance is spent, and how many of its units that covered.
+    final componentId = component.id as int;
+    final freeUnits = freeUnitsFor(allocation, componentId);
+    final chargedTotal = chargedTotalFor(allocation, componentId);
+    final discounted = selected && freeUnits > 0;
+
+    return GestureDetector(
+      onTap: isStepper ? null : toggle,
+      child: Card(
       margin: const EdgeInsets.only(bottom: 8),
       elevation: isRequired ? 3 : 1,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            // Decrement button
-            _componentButton(
-              icon: Icons.remove,
-              active: canDecrement,
-              activeColor: Theme.of(context).colorScheme.error,
-              onTap: canDecrement ? decrement : null,
-            ),
+            // Decrement, or the tick / radio dot that replaces it.
+            if (isStepper)
+              _componentButton(
+                icon: Icons.remove,
+                active: canDecrement,
+                activeColor: Theme.of(context).colorScheme.error,
+                onTap: canDecrement ? decrement : null,
+              )
+            else
+              Icon(
+                selectionType == ComponentSelectionType.single
+                    ? (selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked)
+                    : (selected
+                        ? Icons.check_box
+                        : Icons.check_box_outline_blank),
+                size: 30,
+                color: selected
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: groupFull ? 0.2 : 0.45),
+              ),
             const SizedBox(width: 10),
 
             // Info
@@ -1636,25 +2717,56 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      if (defaultPrice > 0)
+                      // A discount option carries a negative catalogue price.
+                      // Guarding on `> 0` printed nothing at all for one, so the
+                      // cashier had no way to see what it took off.
+                      if (defaultPrice != 0)
                         Text(
-                          '+${currencyFormatter.format(defaultPrice)}',
+                          '${defaultPrice > 0 ? '+' : '-'}'
+                          '${currencyFormatter.format(defaultPrice.abs())}',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
-                            color: Theme.of(context).brightness == Brightness.dark
-                                ? Colors.green[400]
-                                : Colors.green[700],
+                            decoration:
+                                discounted ? TextDecoration.lineThrough : null,
+                            color: discounted
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.45)
+                                : defaultPrice < 0
+                                    // Same colour a discount gets in the price
+                                    // preview below, so it reads as money off.
+                                    ? Theme.of(context).colorScheme.error
+                                    : (Theme.of(context).brightness ==
+                                            Brightness.dark
+                                        ? Colors.green[400]
+                                        : Colors.green[700]),
                           ),
                         ),
-                      if (defaultPrice > 0) const SizedBox(width: 8),
-                      Text(
-                        '$minQuantity–$maxQuantity',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                      if (discounted) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          chargedTotal <= 0
+                              ? l10n.translate('free_included').toUpperCase()
+                              : '+${currencyFormatter.format(chargedTotal)}'
+                                  ' ($freeUnits ${l10n.translate('free_included')})',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
                         ),
-                      ),
+                      ],
+                      if (defaultPrice != 0) const SizedBox(width: 8),
+                      if (isStepper)
+                        Text(
+                          '$minQuantity–${maxQuantity ?? '∞'}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                          ),
+                        ),
                     ],
                   ),
                 ],
@@ -1662,39 +2774,42 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             ),
             const SizedBox(width: 8),
 
-            // Quantity badge
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
-              ),
-              child: Center(
-                child: Text(
-                  quantity.toString(),
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                    color: Theme.of(context).colorScheme.onSurface,
+            if (isStepper) ...[
+              // Quantity badge
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
+                ),
+                child: Center(
+                  child: Text(
+                    quantity.toString(),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
+              const SizedBox(width: 10),
 
-            // Increment button
-            _componentButton(
-              icon: Icons.add,
-              active: canIncrement,
-              activeColor: Theme.of(context).brightness == Brightness.dark
-                  ? Colors.green[400]!
-                  : Colors.green[700]!,
-              onTap: canIncrement ? increment : null,
-            ),
+              // Increment button
+              _componentButton(
+                icon: Icons.add,
+                active: canIncrement,
+                activeColor: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.green[400]!
+                    : Colors.green[700]!,
+                onTap: canIncrement ? increment : null,
+              ),
+            ],
           ],
         ),
+      ),
       ),
     );
   }

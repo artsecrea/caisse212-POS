@@ -1,10 +1,13 @@
 // filepath: /home/arecrea/prj/posecrea/lib/presentation/widgets/table_selection_dialog.dart
 
 import 'package:flutter/material.dart';
+import '../../providers/settings_provider.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/currency_formatter.dart';
 import '../../utils/responsive_utils.dart';
 import '../../data/database/app_database.dart' as db;
 
@@ -16,6 +19,34 @@ class TableSelectionDialog extends ConsumerStatefulWidget {
 }
 
 class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
+  @override
+  void initState() {
+    super.initState();
+    // Repair the floor before showing it.
+    //
+    // Occupancy is a pointer that whichever path finished the order is meant
+    // to clear, and a path that forgot leaves a table showing occupied with
+    // nobody at it — which the cashier can only fix by knowing that a manual
+    // clear exists. Recomputing it here means the picker is right whatever
+    // happened before it opened. Unawaited: the list is a stream, so a release
+    // simply arrives as an update rather than holding the dialog closed.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref
+          .read(orderRepositoryProvider)
+          .reconcileTableOccupancy(
+            freeOnPayment:
+                ref.read(settingsProvider).autoClearTableAfterPaying,
+          )
+          .catchError((Object e) {
+        // Never block the picker on a repair: an unrepaired floor is still a
+        // usable one.
+        debugPrint('Table occupancy sweep failed: $e');
+        return 0;
+      });
+    });
+  }
+
   bool _isGridView = true;
   String _searchQuery = '';
   String _filterOption = 'all'; // all, withOrder, withoutOrder
@@ -119,7 +150,13 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+
+            // What the floor is holding. The two figures a cashier taking
+            // over a shift asks for first, and the reason the per-table
+            // amounts below exist at all.
+            const _FloorTotalsBar(),
+            const SizedBox(height: 12),
 
             // Area Selection Chips
             areasAsync.when(
@@ -156,13 +193,12 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                                   _selectedAreaId = null;
                                 });
                               },
-                              selectedColor: Theme.of(context).primaryColor,
-                              backgroundColor: isDark
-                                  ? Theme.of(context).colorScheme.surfaceContainerHighest
-                                  : Colors.grey[200],
+                              selectedColor: Theme.of(context).colorScheme.primary,
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.surfaceContainerHighest,
                               labelStyle: TextStyle(
                                 color: _selectedAreaId == null
-                                    ? Colors.white
+                                    ? Theme.of(context).colorScheme.onPrimary
                                     : Theme.of(context).colorScheme.onSurface,
                                 fontWeight: _selectedAreaId == null
                                     ? FontWeight.bold
@@ -181,13 +217,12 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                                   _selectedAreaId = selected ? area.id : null;
                                 });
                               },
-                              selectedColor: Theme.of(context).primaryColor,
-                              backgroundColor: isDark
-                                  ? Theme.of(context).colorScheme.surfaceContainerHighest
-                                  : Colors.grey[200],
+                              selectedColor: Theme.of(context).colorScheme.primary,
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.surfaceContainerHighest,
                               labelStyle: TextStyle(
                                 color: _selectedAreaId == area.id
-                                    ? Colors.white
+                                    ? Theme.of(context).colorScheme.onPrimary
                                     : Theme.of(context).colorScheme.onSurface,
                                 fontWeight: _selectedAreaId == area.id
                                     ? FontWeight.bold
@@ -245,7 +280,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                       filled: true,
                       fillColor: isDark
                           ? Theme.of(context).colorScheme.surfaceContainerHighest
-                          : Colors.grey[100],
+                          : Theme.of(context).colorScheme.surfaceContainerHighest,
                     ),
                     onChanged: (value) {
                       setState(() {
@@ -264,7 +299,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                   decoration: BoxDecoration(
                     color: isDark
                         ? Theme.of(context).colorScheme.surfaceContainerHighest
-                        : Colors.grey[100],
+                        : Theme.of(context).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                       color: Theme.of(context).colorScheme.outline.withOpacity(0.5),
@@ -318,7 +353,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                   style: IconButton.styleFrom(
                     backgroundColor: isDark
                         ? Theme.of(context).colorScheme.surfaceContainerHighest
-                        : Colors.grey[100],
+                        : Theme.of(context).colorScheme.surfaceContainerHighest,
                   ),
                 ),
               ],
@@ -391,7 +426,7 @@ class _AvailableTablesTab extends ConsumerWidget {
                 Icon(
                   Icons.search_off,
                   size: 64,
-                  color: isDark ? Colors.grey[600] : Colors.grey[400],
+                  color: isDark ? Theme.of(context).colorScheme.onSurfaceVariant : Theme.of(context).colorScheme.outline,
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -400,7 +435,7 @@ class _AvailableTablesTab extends ConsumerWidget {
                       : l10n.translate('no_tables_available'),
                   style: TextStyle(
                     fontSize: 16,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                    color: isDark ? Theme.of(context).colorScheme.outline : Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -470,6 +505,8 @@ class _TableCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final hasOrder = table.orderId != null;
     final l10n = AppLocalizations.of(context)!;
+    final currency = ref.watch(currencyFormatterProvider);
+    final due = ref.watch(unpaidTablesProvider).valueOrNull?.byTableId[table.id];
 
     return InkWell(
       onTap: () async {
@@ -514,14 +551,38 @@ class _TableCard extends ConsumerWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 4),
-              Text(
-                '${l10n.translate('capacity')}: ${table.capacity}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isDark ? Colors.grey[400] : Colors.grey[600],
+              const SizedBox(height: 2),
+              if (due == null)
+                Text(
+                  '${l10n.translate('capacity')}: ${table.capacity}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark ? Theme.of(context).colorScheme.outline : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                )
+              else ...[
+                // What is still owed, in the card's own colour so it reads at
+                // a glance from across the counter.
+                Text(
+                  currency.format(due.due),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.orange[300] : Colors.orange[900],
+                  ),
                 ),
-              ),
+                // Only worth the line when something HAS been collected —
+                // otherwise every occupied table would carry a redundant
+                // "paid 0".
+                if (due.paid > 0.005)
+                  Text(
+                    '${l10n.translate('paid')} ${currency.format(due.paid)}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.green[300] : Colors.green[800],
+                    ),
+                  ),
+              ],
             ],
           ),
         ),
@@ -544,6 +605,8 @@ class _TableListItem extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final hasOrder = table.orderId != null;
     final l10n = AppLocalizations.of(context)!;
+    final currency = ref.watch(currencyFormatterProvider);
+    final due = ref.watch(unpaidTablesProvider).valueOrNull?.byTableId[table.id];
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -588,10 +651,14 @@ class _TableListItem extends ConsumerWidget {
           ),
         ),
         subtitle: Text(
-          '${l10n.translate('capacity')}: ${table.capacity} • ${hasOrder ? l10n.translate('has_active_order') : l10n.translate('available')}',
+          due == null
+              ? '${l10n.translate('capacity')}: ${table.capacity} • ${hasOrder ? l10n.translate('has_active_order') : l10n.translate('available')}'
+              : '${due.order.code} • '
+                  '${l10n.translate('paid')} ${currency.format(due.paid)} • '
+                  '${l10n.translate('remaining')} ${currency.format(due.due)}',
           style: TextStyle(
             fontSize: 13,
-            color: isDark ? Colors.grey[400] : Colors.grey[600],
+            color: isDark ? Theme.of(context).colorScheme.outline : Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
         trailing: Container(
@@ -833,3 +900,76 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
       }
     }
   }
+
+/// Paid against still-owed across every occupied table.
+///
+/// Its own widget so it rebuilds on the stream without dragging the whole
+/// dialog with it, and so it can simply not be there while the first figures
+/// are still being computed — a bar that flashes zeros and then corrects
+/// itself is worse than one that arrives a frame late.
+class _FloorTotalsBar extends ConsumerWidget {
+  const _FloorTotalsBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
+    final currency = ref.watch(currencyFormatterProvider);
+    final summary = ref.watch(unpaidTablesProvider).valueOrNull;
+    // Only what the tables are actually holding, so this bar is exactly the
+    // sum of the amounts on the cards below it. A stray unpaid order still
+    // pointing at a table it was cleared from belongs on the Z's unpaid sheet,
+    // not in the floor's running total.
+    final seated = summary?.seatedTables.toList() ?? const [];
+    if (seated.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final value = seated.fold(0.0, (s, e) => s + e.total);
+    final paid = seated.fold(0.0, (s, e) => s + e.paid);
+    final owed = seated.fold(0.0, (s, e) => s + e.due);
+    final scheme = Theme.of(context).colorScheme;
+
+    Widget figure(String label, String value, Color color) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                  fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          figure(
+            '${l10n.translate('occupied')} (${seated.length})',
+            currency.format(value),
+            scheme.onSurface,
+          ),
+          const SizedBox(width: 22),
+          figure(l10n.translate('paid'), currency.format(paid),
+              Colors.green.shade700),
+          const Spacer(),
+          figure(l10n.translate('pending_payment'), currency.format(owed),
+              Colors.orange.shade800),
+        ],
+      ),
+    );
+  }
+}

@@ -3,6 +3,7 @@ import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import '../services/pending_operations_service.dart';
 import 'database_providers.dart';
+import '../utils/pos_log.dart';
 
 class TicketRepository {
   final AppDatabase _database;
@@ -70,7 +71,7 @@ class TicketRepository {
           updateData: ticket.toColumns(false).map((k, v) => MapEntry(k, v.toString())),
         );
       } catch (e) {
-        print('Failed to queue ticket update operation: $e');
+        posLog('Failed to queue ticket update operation: $e');
       }
     }
   }
@@ -100,9 +101,9 @@ class TicketRepository {
           entityId: ticketId,
           serverId: ticketId,
         );
-        print('Queued delete operation for synced ticket #$ticketId');
+        posLog('Queued delete operation for synced ticket #$ticketId');
       } catch (e) {
-        print('Failed to queue ticket delete operation: $e');
+        posLog('Failed to queue ticket delete operation: $e');
       }
     }
 

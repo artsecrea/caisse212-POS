@@ -53,6 +53,7 @@ class _DebugDataScreenState extends ConsumerState<DebugDataScreen> {
       final database = AppDatabase();
 
       // Delete all data from tables (in reverse order to respect foreign keys)
+      await database.delete(database.zs).go();
       await database.delete(database.cashSessions).go();
       await database.delete(database.transactions).go();
       await database.delete(database.payments).go();
@@ -146,9 +147,9 @@ class _DebugDataScreenState extends ConsumerState<DebugDataScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Use these tools to manage sample data during development. Remove this screen before production.',
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 32),
 
@@ -225,9 +226,9 @@ class _DebugDataScreenState extends ConsumerState<DebugDataScreen> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey[300]!),
+                  border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
                 ),
                 child: Text(
                   _message,
@@ -242,11 +243,11 @@ class _DebugDataScreenState extends ConsumerState<DebugDataScreen> {
 
             const Divider(),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               '💡 Tip: After generating sample data, restart the app to see the changes.',
               style: TextStyle(
                 fontSize: 12,
-                color: Colors.grey,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontStyle: FontStyle.italic,
               ),
               textAlign: TextAlign.center,

@@ -33,5 +33,10 @@ class CashSessions extends Table {
   //   before the feature shipped.
   RealColumn get totalPaid => real().nullable()();
   TextColumn get details => text().nullable()();
+
+  // The Z (shift) this session belongs to (schema v25). Local FK to Zs.id; on
+  // sync the session sends the Z's `code` as `zCode`. Nullable for sessions
+  // created before Z tracking / when Z tracking is disabled.
+  IntColumn get zId => integer().nullable()();
 }
 

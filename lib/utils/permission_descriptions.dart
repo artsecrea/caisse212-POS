@@ -292,6 +292,60 @@ const Map<String, PermissionDescription> kPermissionDescriptions = {
     titleKey: 'perm_pos_sync_managePending_title',
     subtitleKey: 'perm_pos_sync_managePending_subtitle',
   ),
+
+  // ── Catalogue ──────────────────────────────────────────────────────────
+  'pos:catalog': PermissionDescription(
+    titleKey: 'perm_pos_catalog_title',
+    subtitleKey: 'perm_pos_catalog_subtitle',
+  ),
+
+  // ── Price override ─────────────────────────────────────────────────────
+  'pos:orders:item:price': PermissionDescription(
+    titleKey: 'perm_pos_orders_item_price_title',
+    subtitleKey: 'perm_pos_orders_item_price_subtitle',
+  ),
+
+  // ── Editing someone else's order ───────────────────────────────────────
+  'pos:orders:waiter:update': PermissionDescription(
+    titleKey: 'perm_pos_orders_waiter_update_title',
+    subtitleKey: 'perm_pos_orders_waiter_update_subtitle',
+  ),
+
+  // ── Refunds ────────────────────────────────────────────────────────────
+  'pos:refunds:view': PermissionDescription(
+    titleKey: 'perm_pos_refunds_view_title',
+    subtitleKey: 'perm_pos_refunds_view_subtitle',
+  ),
+  'pos:refunds:create': PermissionDescription(
+    titleKey: 'perm_pos_refunds_create_title',
+    subtitleKey: 'perm_pos_refunds_create_subtitle',
+  ),
+  'pos:refunds:waste': PermissionDescription(
+    titleKey: 'perm_pos_refunds_waste_title',
+    subtitleKey: 'perm_pos_refunds_waste_subtitle',
+  ),
+  'pos:refunds:amount:override': PermissionDescription(
+    titleKey: 'perm_pos_refunds_amount_override_title',
+    subtitleKey: 'perm_pos_refunds_amount_override_subtitle',
+  ),
+
+  // ── Z (shift) ──────────────────────────────────────────────────────────
+  'pos:z:open': PermissionDescription(
+    titleKey: 'perm_pos_z_open_title',
+    subtitleKey: 'perm_pos_z_open_subtitle',
+  ),
+  'pos:z:close': PermissionDescription(
+    titleKey: 'perm_pos_z_close_title',
+    subtitleKey: 'perm_pos_z_close_subtitle',
+  ),
+  'pos:z:view': PermissionDescription(
+    titleKey: 'perm_pos_z_view_title',
+    subtitleKey: 'perm_pos_z_view_subtitle',
+  ),
+  'pos:z:print': PermissionDescription(
+    titleKey: 'perm_pos_z_print_title',
+    subtitleKey: 'perm_pos_z_print_subtitle',
+  ),
 };
 
 /// Resolve display strings for a token at runtime. Falls back to the raw

@@ -53,6 +53,24 @@ class _ExternalCustomerReviewDialogState
   Future<void> _onSaveOrModify() async {
     if (_isOpeningChild) return;
     setState(() => _isOpeningChild = true);
+    // Any uncaught throw below used to leave `_isOpeningChild = true` forever,
+    // disabling every button — a frozen-looking dialog. Guard the whole flow;
+    // the finally clause guarantees the buttons come back.
+    try {
+      await _saveOrModifyFlow();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isOpeningChild = false);
+    }
+  }
+
+  Future<void> _saveOrModifyFlow() async {
     final db = ref.read(databaseProvider);
     final split = _splitName();
     final queueFullName =
@@ -69,9 +87,13 @@ class _ExternalCustomerReviewDialogState
     if (phoneRaw.isNotEmpty) {
       final phoneNorm = normalizePhone(phoneRaw);
       if (phoneNorm.isNotEmpty) {
-        final existing = await (db.select(db.customers)
-              ..where((c) => c.phoneNormalized.equals(phoneNorm)))
-            .getSingleOrNull();
+        // Duplicate-tolerant: getSingleOrNull() throws on >1 match, which is
+        // exactly what froze this dialog when the DB held duplicate phones.
+        final matches = await (db.select(db.customers)
+              ..where((c) => c.phoneNormalized.equals(phoneNorm))
+              ..limit(1))
+            .get();
+        final existing = matches.isEmpty ? null : matches.first;
         if (existing != null) {
           final existingFullName =
               '${existing.firstName} ${existing.lastName}'.trim();
@@ -82,10 +104,7 @@ class _ExternalCustomerReviewDialogState
               existingFullName.toLowerCase() !=
                   queueFullName.toLowerCase();
           if (namesDiffer) {
-            if (!mounted) {
-              setState(() => _isOpeningChild = false);
-              return;
-            }
+            if (!mounted) return;
             final choice = await showDialog<NameConflictChoice>(
               context: context,
               barrierDismissible: false,
@@ -100,12 +119,11 @@ class _ExternalCustomerReviewDialogState
             if (!mounted) return;
             if (choice == null) {
               // Cashier cancelled the conflict prompt — back to review.
-              setState(() => _isOpeningChild = false);
+              // (_isOpeningChild is reset by the caller's finally.)
               return;
             }
             if (choice == NameConflictChoice.keepExisting) {
               // No upsert, no form. The existing row is the customer.
-              setState(() => _isOpeningChild = false);
               Navigator.of(context).pop(existing.id);
               return;
             }
@@ -119,7 +137,6 @@ class _ExternalCustomerReviewDialogState
               isSynced: false,
             );
             if (!mounted) return;
-            setState(() => _isOpeningChild = false);
             if (overriddenId != null) {
               Navigator.of(context).pop(overriddenId);
             }
@@ -139,31 +156,40 @@ class _ExternalCustomerReviewDialogState
       initialPhone: widget.suggestedPhone,
     );
     if (!mounted) return;
-    setState(() => _isOpeningChild = false);
     final id = result?['id'];
     if (id is int) {
       Navigator.of(context).pop(id);
     }
     // If the cashier cancelled the inner dialog, stay on this one so they
     // can try another path (Pick different / Cancel) rather than aborting
-    // the whole confirm.
+    // the whole confirm. (_isOpeningChild is reset by the caller's finally.)
   }
 
   Future<void> _onPickDifferent() async {
     if (_isOpeningChild) return;
     setState(() => _isOpeningChild = true);
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (_) => const CustomerSelectionDialog(),
-    );
-    if (!mounted) return;
-    setState(() => _isOpeningChild = false);
-    final id = result?['id'];
-    // CustomerSelectionDialog returns `{id: null}` for "Unselect" — treat
-    // that as "stay on this dialog" rather than "no customer", since this
-    // flow always wants a customer linked.
-    if (id is int) {
-      Navigator.of(context).pop(id);
+    try {
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (_) => const CustomerSelectionDialog(),
+      );
+      if (!mounted) return;
+      final id = result?['id'];
+      // CustomerSelectionDialog returns `{id: null}` for "Unselect" — treat
+      // that as "stay on this dialog" rather than "no customer", since this
+      // flow always wants a customer linked.
+      if (id is int) {
+        Navigator.of(context).pop(id);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isOpeningChild = false);
     }
   }
 
@@ -176,15 +202,24 @@ class _ExternalCustomerReviewDialogState
     final suggestedName = (widget.suggestedName ?? '').trim();
     final suggestedPhone = (widget.suggestedPhone ?? '').trim();
 
+    final media = MediaQuery.of(context);
     return Dialog(
+      insetPadding: const EdgeInsets.all(16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Container(
-        width: 480,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      child: ConstrainedBox(
+        // Cap width on big screens, shrink on phones, and cap height to the
+        // space left above the on-screen keyboard so the content scrolls
+        // instead of overflowing.
+        constraints: BoxConstraints(
+          maxWidth: 480,
+          maxHeight: media.size.height - media.viewInsets.bottom - 32,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             // Header
             Row(
               children: [
@@ -283,7 +318,8 @@ class _ExternalCustomerReviewDialogState
                 style: const TextStyle(fontSize: 16),
               ),
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -297,13 +333,13 @@ class _ExternalCustomerReviewDialogState
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 18, color: Colors.grey[600]),
+        Icon(icon, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
         const SizedBox(width: 8),
         SizedBox(
           width: 80,
           child: Text(
             label,
-            style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface),
           ),
         ),
         Expanded(

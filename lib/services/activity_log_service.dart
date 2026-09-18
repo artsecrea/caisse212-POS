@@ -115,6 +115,19 @@ class ActivityLogService {
           [orderCode, fromTable, toTable, username ?? ''],
           userId: userId, username: username);
 
+  /// Audit line recording that a cashier overrode the unit price of a line
+  /// item. [oldPrice]/[newPrice] are the pre-formatted amounts.
+  Future<void> logPriceChanged(
+          String productName, String oldPrice, String newPrice,
+          {String? orderCode, int? userId, String? username}) =>
+      log(
+        ActivityAction.priceChanged,
+        'audit_price_changed',
+        [productName, oldPrice, newPrice, orderCode ?? '', username ?? ''],
+        userId: userId,
+        username: username,
+      );
+
   Future<void> logPayment(String amount, String orderCode,
           {int? userId, String? username}) =>
       log(ActivityAction.payment, 'audit_payment', [amount, orderCode, username ?? ''],
@@ -170,6 +183,46 @@ class ActivityLogService {
   Future<void> logSessionEnd({int? userId, String? username}) =>
       log(ActivityAction.sessionEnd, 'audit_session_end', [username ?? ''],
           userId: userId, username: username);
+
+  // ── Z (shift) tracking ─────────────────────────────────────────────────
+
+  Future<void> logZOpened(String zCode, {int? userId, String? username}) =>
+      log(ActivityAction.zOpened, 'audit_z_opened', [zCode, username ?? ''],
+          userId: userId, username: username);
+
+  Future<void> logZClosed(String zCode,
+          {String? total, int? userId, String? username}) {
+    final hasTotal = total != null && total.trim().isNotEmpty;
+    return log(
+      ActivityAction.zClosed,
+      hasTotal ? 'audit_z_closed_total' : 'audit_z_closed',
+      hasTotal ? [zCode, total, username ?? ''] : [zCode, username ?? ''],
+      userId: userId,
+      username: username,
+    );
+  }
+
+  /// Fiscal day closed — from here login is blocked until the day rolls over.
+  Future<void> logZDayClosed(String businessDay,
+          {String? zCode, int? userId, String? username}) =>
+      log(
+        ActivityAction.zDayClosed,
+        'audit_z_day_closed',
+        [businessDay, zCode ?? '', username ?? ''],
+        userId: userId,
+        username: username,
+      );
+
+  /// A manager lifted the day lock before the next business day.
+  Future<void> logZDayReopened(String businessDay,
+          {int? userId, String? username}) =>
+      log(
+        ActivityAction.zDayReopened,
+        'audit_z_day_reopened',
+        [businessDay, username ?? ''],
+        userId: userId,
+        username: username,
+      );
 
   /// Records that [username] upgraded to admin mode using [adminUsername]'s password.
   Future<void> logAdminElevationGranted({

@@ -35,15 +35,24 @@ class NameConflictDialog extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final colors = Theme.of(context).colorScheme;
 
+    final media = MediaQuery.of(context);
     return Dialog(
+      insetPadding: const EdgeInsets.all(16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Container(
-        width: 480,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      child: ConstrainedBox(
+        // Cap width for big screens but shrink on phones (no horizontal
+        // overflow), and cap height to the visible area minus the keyboard so
+        // the content scrolls instead of overflowing.
+        constraints: BoxConstraints(
+          maxWidth: 480,
+          maxHeight: media.size.height - media.viewInsets.bottom - 32,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             // Header
             Row(
               children: [
@@ -146,7 +155,8 @@ class NameConflictDialog extends StatelessWidget {
               onPressed: () => Navigator.of(context).pop(),
               child: Text(l10n.translate('cancel')),
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );

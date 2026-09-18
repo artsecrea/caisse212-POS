@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'snackbar_helper.dart';
+import 'pos_log.dart';
 
 // ==========================================
 // OLD WAY (DO NOT USE)
@@ -113,7 +114,7 @@ class ExampleWidget extends ConsumerWidget {
                 label: 'UNDO',
                 onPressed: () {
                   // Handle undo action
-                  print('Undo clicked');
+                  posLog('Undo clicked');
                 },
               ),
             );

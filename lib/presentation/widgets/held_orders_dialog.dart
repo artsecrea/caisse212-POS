@@ -1,6 +1,7 @@
 // filepath: /home/arecrea/prj/posecrea/lib/presentation/widgets/held_orders_dialog.dart
 
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/order_provider.dart';
 import '../../data/database/app_database.dart';
@@ -64,11 +65,11 @@ class HeldOrdersDialog extends ConsumerWidget {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.inbox_outlined, size: 64, color: Colors.grey[400]),
+                          Icon(Icons.inbox_outlined, size: 64, color: Theme.of(context).colorScheme.outline),
                           const SizedBox(height: 16),
                           Text(
                             'No held orders',
-                            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                            style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                           ),
                         ],
                       ),
@@ -139,14 +140,14 @@ class _HeldOrderCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.orange[100],
+                      color: AppTheme.tintFill(context, Colors.orange),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.orange[700]!),
                     ),
                     child: Text(
                       'ON HOLD',
                       style: TextStyle(
-                        color: Colors.orange[700],
+                        color: AppTheme.tintOn(context, Colors.orange),
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
@@ -162,20 +163,20 @@ class _HeldOrderCard extends StatelessWidget {
                     order.type == 'DINE_IN' ? Icons.restaurant :
                     order.type == 'TAKE_AWAY' ? Icons.shopping_bag : Icons.delivery_dining,
                     size: 16,
-                    color: Colors.grey[600],
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                   const SizedBox(width: 4),
                   Text(
                     order.type.replaceAll('_', ' '),
-                    style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                    style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface),
                   ),
                   const SizedBox(width: 16),
                   // Date/Time
-                  Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                  Icon(Icons.access_time, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   const SizedBox(width: 4),
                   Text(
                     _formatDateTime(order.updatedAt),
-                    style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                    style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface),
                   ),
                 ],
               ),

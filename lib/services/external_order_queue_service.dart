@@ -5,6 +5,8 @@ import '../data/database/app_database.dart';
 import '../domain/models/external_order_models.dart';
 import 'api_service.dart';
 import 'customer_repository.dart';
+import 'product_cost_resolver.dart';
+import 'external_item_resolver.dart';
 
 /// Handles the external order queue.
 ///
@@ -23,13 +25,96 @@ class ExternalOrderQueueService {
 
   ExternalOrderQueueService(this._api, this._db);
 
+  late final _resolver = ExternalItemResolver(_db);
+
+  /// Fill in local product ids the server could not.
+  ///
+  /// Runs on every item the POS receives, from any path — the queued payload is
+  /// frozen when the platform sends it, but this terminal matches against a
+  /// catalogue that has moved on since, so a line the server marked unmapped is
+  /// very often resolvable here. Nothing is asked of the cashier.
+  Future<ExternalQueueItem> resolve(ExternalQueueItem item) async {
+    // Cheap exit for the overwhelmingly common case: the server resolved it all.
+    if (!item.order.hasUnmappedItems) return item;
+    final resolved =
+        await _resolver.resolveOrder(item.order, source: item.source);
+    return item.copyWith(order: resolved);
+  }
+
+  Future<List<ExternalQueueItem>> _resolveAll(
+      List<ExternalQueueItem> items) async {
+    final out = <ExternalQueueItem>[];
+    for (final i in items) {
+      out.add(await resolve(i));
+    }
+    return out;
+  }
+
   /// Fetches all PENDING queue items from the server.
   Future<List<ExternalQueueItem>> fetchPending() async {
     final raw = await _api.fetchPendingQueueItems();
-    return raw
+    return _resolveAll(raw
         .map((j) => ExternalQueueItem.fromJson(j))
         .where((item) => item.status == 'PENDING')
-        .toList();
+        .toList());
+  }
+
+  /// Paged browse with optional source/status filters.
+  ///
+  /// Falls back to the flat `/pending` list when the paged endpoint isn't
+  /// available (an older backend), so a terminal pointed at an out-of-date
+  /// server still shows its actionable orders instead of an error screen. The
+  /// fallback is synthesised into a single page and only makes sense for the
+  /// PENDING view, which is what `/pending` returns.
+  Future<QueuePage> browse({
+    int page = 0,
+    int size = 20,
+    String? source,
+    String? status,
+  }) async {
+    try {
+      final raw = await _api.fetchQueuePage(
+          page: page, size: size, source: source, status: status);
+      final parsed = QueuePage.fromJson(raw);
+      // Resolve here too: the browse list is what the confirm screen renders,
+      // so a line only fixed on the /pending path would still look unmappable.
+      return parsed.copyWith(content: await _resolveAll(parsed.content));
+    } catch (e) {
+      final wantsPendingOnly = status == null || status == 'PENDING';
+      if (!wantsPendingOnly) rethrow;
+      Logger.instance.warning(
+          'Queue browse unavailable, falling back to /pending: $e');
+      var items = await fetchPending();
+      if (source != null && source.isNotEmpty) {
+        items = items.where((i) => matchesSource(i.source, source)).toList();
+      }
+      return QueuePage(
+        content: items,
+        page: 0,
+        size: items.length,
+        totalElements: items.length,
+        totalPages: 1,
+        first: true,
+        last: true,
+      );
+    }
+  }
+
+  /// `OTHER` is defined by the contract as "any source outside WEB/GLOVO/KOOUL",
+  /// so it can't be matched by equality — DealUp and WhatsApp both land there.
+  static bool matchesSource(String itemSource, String filter) {
+    final s = itemSource.toUpperCase();
+    if (filter == 'OTHER') {
+      return s != 'WEB' && s != 'GLOVO' && s != 'KOOUL';
+    }
+    return s == filter.toUpperCase();
+  }
+
+  /// Per-source tallies for the filter chips. Never throws — a missing badge
+  /// must not take the screen down with it.
+  Future<QueueCounts> counts({String? status}) async {
+    final raw = await _api.fetchQueueCounts(status: status);
+    return QueueCounts.fromJson(raw);
   }
 
   /// Confirms [item] on the server (state PENDING→CONFIRMED, DealUp
@@ -160,8 +245,31 @@ class ExternalOrderQueueService {
               type: Value(item.order.type),
               source: Value(item.source),
               sourceId: Value(item.id),
+              // The PLATFORM's own order id (e.g. "glovo-123"), echoed back on
+              // every re-sync so the server can close the reconciliation loop.
+              //
+              // This previously stored `item.orderCode` — the POS's own code,
+              // which is a different identifier entirely. The model carries the
+              // real value now. Left null when the platform didn't supply one:
+              // the contract says the server backfills from the queue by code,
+              // and a wrong id is worse than an absent one.
+              externalOrderId: Value(item.externalOrderId),
+              // The courier-facing code, copied onto the ORDER so reprints
+              // still work after the queue row is purged at 7 days.
+              externalOrderCode: Value(item.order.externalOrderCode),
+              // The platform's delivery charge, copied onto the local order so
+              // it survives the queue's 7-day purge and rides up to the server
+              // on the normal order push (`_orderContractFields`). Left null
+              // when the platform sent none — an absent fee is not a free one.
+              deliveryFee: Value(item.order.deliveryFee),
+              // Orders created from a delivery queue also carry the order date
+              // the platform reported, not the moment we ingested it.
+              date: Value(item.createdAt),
               clientId: Value(localClientId ?? item.customerId),
               note: Value(item.order.note),
+              address: Value(item.order.address),
+              courierName: Value(item.order.courierName),
+              courierPhone: Value(item.order.courierPhone),
               cancellationReason: Value(cancellationReason),
               isSynced: const Value(false),
               persons: const Value(1),
@@ -174,6 +282,7 @@ class ExternalOrderQueueService {
           );
 
       // 3. Insert order products — resolve prices from local catalog.
+      final costResolver = ProductCostResolver(_db);
       for (final qItem in item.order.items) {
         final product = await (_db.select(_db.products)
               ..where((p) => p.id.equals(qItem.productId)))
@@ -189,6 +298,11 @@ class ExternalOrderQueueService {
                     variantId: Value(qItem.variantId),
                     quantity: Value(qItem.quantity.toDouble()),
                     unitaryPrice: price,
+                    // Online orders need a cost like any other sale, or every
+                    // Glovo/WhatsApp line reports an unknown margin.
+                    cost: await costResolver.resolveValue(
+                        productId: qItem.productId,
+                        variantId: qItem.variantId),
                     unitaryTva: Value(tva),
                     note: Value(qItem.note),
                     state: const Value('PENDING'),
@@ -208,6 +322,7 @@ class ExternalOrderQueueService {
                   orderProductId: orderProductId,
                   quantity: Value(comp.quantity),
                   price: Value(compPrice),
+                  name: Value(component?.name),
                 ),
               );
         }

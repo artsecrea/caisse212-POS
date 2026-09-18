@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter/services.dart';
+import './adaptive_text_field.dart';
 
 class ManualDiscountDialog extends StatefulWidget {
   final double currentPercentage;
@@ -18,7 +20,11 @@ class ManualDiscountDialog extends StatefulWidget {
 class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
   late TextEditingController _percentageController;
   late TextEditingController _noteController;
-  final _formKey = GlobalKey<FormState>();
+  final _percentageFocus = FocusNode();
+  final _noteFocus = FocusNode();
+  // Manual validation error (the onscreen-keyboard field is a TextField, not a
+  // FormField, so we surface errors via the decoration's errorText instead).
+  String? _percentageError;
 
   @override
   void initState() {
@@ -33,15 +39,28 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
   void dispose() {
     _percentageController.dispose();
     _noteController.dispose();
+    _percentageFocus.dispose();
+    _noteFocus.dispose();
     super.dispose();
   }
 
   void _applyDiscount() {
-    if (_formKey.currentState!.validate()) {
-      final percentage = double.tryParse(_percentageController.text) ?? 0.0;
-      final note = _noteController.text.trim().isEmpty ? null : _noteController.text.trim();
-      Navigator.of(context).pop({'percentage': percentage, 'note': note});
+    final raw = _percentageController.text.trim();
+    if (raw.isNotEmpty) {
+      final percentage = double.tryParse(raw);
+      if (percentage == null) {
+        setState(() => _percentageError = 'Please enter a valid number');
+        return;
+      }
+      if (percentage < 0 || percentage > 100) {
+        setState(() => _percentageError = 'Percentage must be between 0 and 100');
+        return;
+      }
     }
+    final percentage = double.tryParse(raw) ?? 0.0;
+    final note =
+        _noteController.text.trim().isEmpty ? null : _noteController.text.trim();
+    Navigator.of(context).pop({'percentage': percentage, 'note': note});
   }
 
   @override
@@ -51,9 +70,7 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
       child: Container(
         width: 400,
         padding: const EdgeInsets.all(24),
-        child: Form(
-          key: _formKey,
-          child: Column(
+        child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -75,35 +92,35 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
               ),
               const Divider(height: 24),
 
-              const Text(
+              Text(
                 'Enter discount percentage to apply to all items',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
+                style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 20),
 
               // Percentage input
-              TextFormField(
+              AdaptiveKeyboardTextField(
                 controller: _percentageController,
+                focusNode: _percentageFocus,
                 decoration: InputDecoration(
                   labelText: 'Discount Percentage',
                   hintText: '0.0',
                   suffixText: '%',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                   prefixIcon: const Icon(Icons.percent),
+                  errorText: _percentageError,
                 ),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 inputFormatters: [
                   FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
                 ],
-                validator: (value) {
-                  if (value == null || value.isEmpty) return null;
-                  final percentage = double.tryParse(value);
-                  if (percentage == null) return 'Please enter a valid number';
-                  if (percentage < 0 || percentage > 100) return 'Percentage must be between 0 and 100';
-                  return null;
-                },
                 autofocus: true,
-                onFieldSubmitted: (_) => _applyDiscount(),
+                onChanged: (_) {
+                  if (_percentageError != null) {
+                    setState(() => _percentageError = null);
+                  }
+                },
+                onSubmitted: (_) => _applyDiscount(),
               ),
 
               const SizedBox(height: 20),
@@ -123,8 +140,12 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
                       });
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isSelected ? Theme.of(context).primaryColor : Colors.grey[200],
-                      foregroundColor: isSelected ? Colors.white : Colors.black87,
+                      backgroundColor: isSelected
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.surfaceContainerHighest,
+                      foregroundColor: isSelected
+                          ? Theme.of(context).colorScheme.onPrimary
+                          : Theme.of(context).colorScheme.onSurface,
                       elevation: isSelected ? 2 : 0,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -137,8 +158,9 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
               const SizedBox(height: 20),
 
               // Note / reason field
-              TextFormField(
+              AdaptiveKeyboardTextField(
                 controller: _noteController,
+                focusNode: _noteFocus,
                 decoration: InputDecoration(
                   labelText: 'Note (reason for discount)',
                   hintText: 'e.g. Loyalty customer, manager approval…',
@@ -147,7 +169,7 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
                 ),
                 maxLines: 2,
                 textInputAction: TextInputAction.done,
-                onFieldSubmitted: (_) => _applyDiscount(),
+                onSubmitted: (_) => _applyDiscount(),
               ),
 
               const SizedBox(height: 16),
@@ -156,18 +178,18 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.orange[50],
+                  color: AppTheme.tintFill(context, Colors.orange),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange[200]!),
+                  border: Border.all(color: AppTheme.tintBorder(context, Colors.orange)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, color: Colors.orange[700], size: 20),
+                    Icon(Icons.info_outline, color: AppTheme.tintOn(context, Colors.orange), size: 20),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'This discount will be applied to every ticket product when calculating payments.',
-                        style: TextStyle(fontSize: 12, color: Colors.orange[900]),
+                        style: TextStyle(fontSize: 12, color: AppTheme.tintOn(context, Colors.orange)),
                       ),
                     ),
                   ],
@@ -203,7 +225,6 @@ class _ManualDiscountDialogState extends State<ManualDiscountDialog> {
               ),
             ],
           ),
-        ),
       ),
     );
   }

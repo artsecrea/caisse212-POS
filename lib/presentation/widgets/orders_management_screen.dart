@@ -1,14 +1,13 @@
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/orders_management_screen.dart
 
-import 'package:drift/drift.dart' show OrderingTerm, OrderingMode, Value;
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart'
-    show OnscreenKeyboardTextField;
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../utils/admin_auth.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/customer_display.dart';
 
@@ -22,9 +21,12 @@ import '../../services/permission_service.dart';
 import 'admin_mode_chip.dart';
 import 'permission_guard.dart';
 import 'order_details_dialog.dart';
+import 'refund_dialog.dart';
+import 'order_refunds_panel.dart';
 import 'waiter_settlement_dialog.dart';
-import 'external_orders_tab.dart';
+import '../../utils/snackbar_helper.dart';
 import '../paymen_screen/payment_screen.dart';
+import './adaptive_text_field.dart';
 // TEMP-TIP-HIDDEN: restore together with the commented block in _payOrder.
 // import 'tip_flow.dart';
 
@@ -35,9 +37,8 @@ class OrdersManagementScreen extends ConsumerStatefulWidget {
   ConsumerState<OrdersManagementScreen> createState() => _OrdersManagementScreenState();
 }
 
-class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _OrdersManagementScreenState
+    extends ConsumerState<OrdersManagementScreen> {
   // Filters
   String _statusFilter = 'ALL';
   // ALL | DINE_IN | TAKE_AWAY | DELIVERY — matches the values stored in
@@ -106,7 +107,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
     _loadOrders();
   }
 
@@ -143,7 +143,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
   @override
   void dispose() {
-    _tabController.dispose();
     _searchController.dispose();
     _customerSearchController.dispose();
     _customerSearchFocusNode.dispose();
@@ -192,6 +191,18 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       // for non-admin cashiers who want to peek at their colleagues'
       // orders within their own session scope.
       final isAdmin = ref.read(adminElevationProvider) != null;
+      // What is still owed is the floor's business, not one cashier's.
+      // Whoever is on the till next has to be able to find an open order,
+      // add to it and settle it — including one raised in an earlier session
+      // by somebody who has since gone home, which is exactly the case the
+      // "my orders" scope used to hide. That scope exists to keep a cashier's
+      // *history* out of a colleague's view, so it is lifted only while the
+      // list is restricted to what has not been paid.
+      //
+      // Nothing else is relaxed: the list stays unscoped by session (this
+      // screen never passes sessionId), and the full history still needs the
+      // admin credentials that `_toggleShowAllOrders` prompts for.
+      final scopeToSelf = !isAdmin && !_showAllOrders && !_unpaidOnly;
       final result = await orderRepo.getPaginatedOrdersWithFullDetails(
         page: _currentPage,
         pageSize: _rowsPerPage,
@@ -200,7 +211,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         unpaidOnly: _unpaidOnly,
         searchQuery: _searchQuery.isNotEmpty ? _searchQuery : null,
         customerId: _selectedCustomerId,
-        cashierId: isAdmin ? null : (_showAllOrders ? null : currentUser?.id),
+        cashierId: scopeToSelf ? currentUser?.id : null,
         tableId: _selectedTableId,
         waiterId: _waiterFilter,
         startDate: _startDate,
@@ -289,27 +300,26 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
 
     return Scaffold(
       appBar: _buildAppBar(l10n),
-      body: TabBarView(
-        controller: _tabController,
+      // Single view. The online/external queue used to be a second tab here,
+      // but it belongs with the confirm-order flow — the cashier accepts an
+      // online order and rings it up, which is what that screen is for. This
+      // page is the local order history.
+      body: Column(
         children: [
-          Column(
-            children: [
-              _buildFiltersBar(l10n),
-              _buildSecondaryFiltersBar(l10n),
-              Expanded(
-                child: _isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _errorMessage != null
-                        ? _buildErrorView(_errorMessage!, l10n)
-                        : _paginatedOrders == null || _paginatedOrders!.orders.isEmpty
-                            ? _buildEmptyView(l10n)
-                            : _groupBy == 'none'
-                                ? _buildOrdersTable(currency, l10n)
-                                : _buildGroupedView(currency, l10n),
-              ),
-            ],
+          _buildFiltersBar(l10n),
+          _buildSecondaryFiltersBar(l10n),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _errorMessage != null
+                    ? _buildErrorView(_errorMessage!, l10n)
+                    : _paginatedOrders == null ||
+                            _paginatedOrders!.orders.isEmpty
+                        ? _buildEmptyView(l10n)
+                        : _groupBy == 'none'
+                            ? _buildOrdersTable(currency, l10n)
+                            : _buildGroupedView(currency, l10n),
           ),
-          const ExternalOrdersTab(),
         ],
       ),
     );
@@ -439,13 +449,6 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         ),
         const SizedBox(width: 8),
       ],
-      bottom: TabBar(
-        controller: _tabController,
-        tabs: const [
-          Tab(icon: Icon(Icons.receipt_long, size: 18), text: 'Orders'),
-          Tab(icon: Icon(Icons.chat_bubble_outline, size: 18), text: 'External'),
-        ],
-      ),
     );
   }
 
@@ -544,7 +547,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
   }
 
   Widget _buildSearchField(AppLocalizations l10n) {
-    return OnscreenKeyboardTextField(
+    return AdaptiveKeyboardTextField(
       controller: _searchController,
       decoration: InputDecoration(
         hintText: l10n.translate('search_by_code_username_customer'),
@@ -575,7 +578,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     final has = _startDate != null || _endDate != null;
     return OutlinedButton.icon(
       onPressed: _showDateRangePicker,
-      icon: Icon(Icons.date_range, size: 18, color: has ? null : Colors.grey),
+      icon: Icon(Icons.date_range, size: 18, color: has ? null : Theme.of(context).colorScheme.onSurfaceVariant),
       label: Text(
         _getDateRangeText(l10n),
         style: const TextStyle(fontSize: 12),
@@ -709,7 +712,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  OnscreenKeyboardTextField(
+                  AdaptiveKeyboardTextField(
                     autofocus: true,
                     decoration: InputDecoration(
                       hintText: l10n.translate('search_tables'),
@@ -1210,11 +1213,11 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           },
           displayStringForOption: (Customer c) => c.displayLabel,
           fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-            // OnscreenKeyboardTextField is the on-screen keyboard variant
+            // AdaptiveKeyboardTextField is the on-screen keyboard variant
             // of the basic TextField; RawAutocomplete still drives the
             // controller/focusNode lifecycle and listens for changes, so
             // the suggestion list keeps working exactly as before.
-            return OnscreenKeyboardTextField(
+            return AdaptiveKeyboardTextField(
               controller: controller,
               focusNode: focusNode,
               decoration: InputDecoration(
@@ -1361,6 +1364,17 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     final needsSync = isSyncRelevant && !order.isSynced;
     final isZLocked = orderDetails.isZLocked;
     final isUnpaid = orderDetails.totalPaid < orderDetails.total;
+    // Refunding a cancelled order is meaningless: cancelling already reversed
+    // the sale and its stock, so refunding on top would give the money back
+    // twice. Hidden rather than disabled — there is no reading of this the
+    // cashier should be reaching for.
+    final isCancelled = order.status == 'CANCELED';
+    // Gated leniently: a role seeded before the refund permissions existed
+    // holds none of them, and hiding the button for the whole floor on upgrade
+    // would be worse than the status quo. See hasRefundPermission.
+    final canRefund = ref
+        .read(permissionServiceProvider)
+        .hasRefundPermission(Permissions.refundsCreate);
 
     return ListTile(
       leading: CircleAvatar(
@@ -1425,6 +1439,10 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
                 if (isUnpaid && canPay)
                   PopupMenuItem(value: 'pay', child: Row(children: [const Icon(Icons.payment, size: 18, color: Colors.teal), SizedBox(width: 8), Text(l10n.translate('pay'), style: const TextStyle(color: Colors.teal))]))
                 else if (!isZLocked) ...[
+                  // Refunding is a money movement on an already-paid order, so
+                  // it rides on the same permission as taking the payment.
+                  if (canPay && !isCancelled && canRefund)
+                    PopupMenuItem(value: 'refund', child: Row(children: [Icon(Icons.assignment_return, size: 18, color: Colors.deepOrange), const SizedBox(width: 8), Text(l10n.translate('refund'), style: const TextStyle(color: Colors.deepOrange))])),
                   if (canUpdate)
                     PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
                   if (canUpdate)
@@ -1747,7 +1765,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       case 'CANCELED':
         return Colors.red;
       default:
-        return Colors.grey;
+        return Theme.of(context).colorScheme.onSurfaceVariant;
     }
   }
 
@@ -1816,16 +1834,16 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.receipt_long, size: 64, color: Colors.grey[400]),
+          Icon(Icons.receipt_long, size: 64, color: Theme.of(context).colorScheme.outline),
           const SizedBox(height: 16),
           Text(
             l10n.translate('no_orders_found'),
-            style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
             l10n.translate('try_adjusting_filters'),
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
@@ -1847,12 +1865,12 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           const SizedBox(height: 16),
           Text(
             l10n.translate('error_loading_orders'),
-            style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
             error,
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
@@ -1927,7 +1945,19 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
       case 'delete':
         _deleteOrder(order);
         break;
+      case 'refund':
+        _refundOrder(order);
+        break;
     }
+  }
+
+  Future<void> _refundOrder(Order order) async {
+    final refunded =
+        await showRefundDialog(context: context, ref: ref, order: order);
+    if (!refunded || !mounted) return;
+    final l10n = AppLocalizations.of(context)!;
+    SnackBarHelper.success(context, l10n.translate('refund_recorded'));
+    _loadOrders();
   }
 
   // CRUD Operations
@@ -2051,7 +2081,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
           children: [
             Text('${l10n.translate('confirm_cancel_order')} ${order.code}?'),
             const SizedBox(height: 16),
-            OnscreenKeyboardTextField(
+            AdaptiveKeyboardTextField(
               controller: reasonController,
               decoration: InputDecoration(
                 labelText: l10n.translate('cancellation_reason'),
@@ -2210,26 +2240,13 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     final l10n = AppLocalizations.of(context)!;
     try {
       final orderRepo = ref.read(orderRepositoryProvider);
-      final database = ref.read(databaseProvider);
       final isOnline = ref.read(networkStateProvider);
 
       // Update order status with cancellation reason if provided
       await orderRepo.updateOrderStatus(order.id, newStatus, cancellationReason: cancellationReason);
 
-      // Update tickets isCancelled based on order status
-      final isCancelled = newStatus == 'CANCELED';
-      try {
-        await (database.update(database.tickets)
-          ..where((t) => t.orderId.equals(order.id)))
-          .write(TicketsCompanion(
-            isCancelled: Value(isCancelled),
-            isSynced: const Value(false),
-            updatedAt: Value(DateTime.now()),
-          ));
-      } catch (e) {
-        // Column might not exist yet - will be created on next migration
-        debugPrint('Could not update tickets isCancelled: $e');
-      }
+      // Ticket flagging moved into OrderRepository.updateOrderStatus, so every
+      // route to CANCELED gets it rather than just this one.
 
       bool synced = false;
       // Auto-sync for all statuses except ONHOLD
@@ -2425,7 +2442,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
         ),
         content: SizedBox(
           width: 400,
-          child: OnscreenKeyboardTextField(
+          child: AdaptiveKeyboardTextField(
             controller: codeController,
             autofocus: true,
             decoration: InputDecoration(
@@ -2529,7 +2546,7 @@ class _OrdersManagementScreenState extends ConsumerState<OrdersManagementScreen>
     } catch (e) {
       if (mounted) {
         Navigator.of(context).pop(); // Close loading dialog
-        _showErrorSnackBar('Error: ${e.toString()}');
+        _showErrorSnackBar(errorText(e, AppLocalizations.of(context)!));
       }
     }
   }
@@ -2579,7 +2596,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
+                color: AppTheme.bar(Theme.of(context).colorScheme),
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(4),
                   topRight: Radius.circular(4),
@@ -2625,6 +2642,11 @@ class _OrderDetailsDialog extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Refunds first: an order that was partly given back still
+                    // shows its original total everywhere else on this dialog,
+                    // so this is the only thing on screen that says otherwise.
+                    OrderRefundsPanel(orderId: order.id),
+                    const SizedBox(height: 20),
                     Text(l10n.translate('order_information'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
                     Card(
@@ -2633,18 +2655,18 @@ class _OrderDetailsDialog extends ConsumerWidget {
                         padding: const EdgeInsets.all(16),
                         child: Column(
                           children: [
-                            _buildInfoRow(l10n.translate('order_id'), '#${order.id}'),
-                            _buildInfoRow(l10n.translate('order_code'), order.code),
-                            _buildInfoRow(l10n.translate('status'), _getTranslatedStatus(order.status, l10n)),
-                            _buildInfoRow(l10n.translate('type'), order.type.replaceAll('_', ' ')),
-                            _buildInfoRow(l10n.translate('number_of_persons'), '${order.persons}'),
+                            _buildInfoRow(context, l10n.translate('order_id'), '#${order.id}'),
+                            _buildInfoRow(context, l10n.translate('order_code'), order.code),
+                            _buildInfoRow(context, l10n.translate('status'), _getTranslatedStatus(order.status, l10n)),
+                            _buildInfoRow(context, l10n.translate('type'), order.type.replaceAll('_', ' ')),
+                            _buildInfoRow(context, l10n.translate('number_of_persons'), '${order.persons}'),
                             if (fullDetails.tableName != null)
-                              _buildInfoRow(l10n.translate('table'), fullDetails.tableName!),
+                              _buildInfoRow(context, l10n.translate('table'), fullDetails.tableName!),
                             if (fullDetails.customerName != null)
-                              _buildInfoRow(l10n.translate('customer'), fullDetails.customerName!),
-                            _buildInfoRow(l10n.translate('username'), fullDetails.userName ?? 'N/A'),
-                            _buildInfoRow(l10n.translate('date'), _formatFullDateTime(order.date)),
-                            _buildInfoRow(l10n.translate('synced'), order.isSynced ? l10n.translate('yes') : l10n.translate('no')),
+                              _buildInfoRow(context, l10n.translate('customer'), fullDetails.customerName!),
+                            _buildInfoRow(context, l10n.translate('username'), fullDetails.userName ?? 'N/A'),
+                            _buildInfoRow(context, l10n.translate('date'), _formatFullDateTime(order.date)),
+                            _buildInfoRow(context, l10n.translate('synced'), order.isSynced ? l10n.translate('yes') : l10n.translate('no')),
                           ],
                         ),
                       ),
@@ -2688,7 +2710,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
     }
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildInfoRow(BuildContext context, String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -2699,7 +2721,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
             child: Text(
               '$label:',
               style: TextStyle(
-                color: Colors.grey[700],
+                color: Theme.of(context).colorScheme.onSurface,
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
               ),
@@ -2751,7 +2773,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
                               padding: const EdgeInsets.only(left: 24, top: 4),
                               child: Text(
                                 '+ ${comp.name} x${comp.quantity}',
-                                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                                style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
                               ),
                             )),
                       ],
@@ -2764,7 +2786,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
                   children: [
                     Text(
                       'x${item.quantity}',
-                      style: TextStyle(fontSize: 14, color: Colors.grey[700], fontWeight: FontWeight.w600),
+                      style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurface, fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 4),
                     Text(

@@ -119,7 +119,7 @@ class PermissionIconButton extends ConsumerWidget {
       onPressed: hasPermission ? onPressed : null,
       icon: icon,
       tooltip: tooltip ?? (hasPermission ? null : 'Insufficient permissions'),
-      color: hasPermission ? color : Colors.grey,
+      color: hasPermission ? color : Theme.of(context).colorScheme.onSurfaceVariant,
     );
   }
 }

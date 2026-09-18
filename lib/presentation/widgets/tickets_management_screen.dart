@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import 'package:drift/drift.dart' hide Column;
@@ -14,6 +14,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/customer_display.dart';
 import '../../utils/currency_formatter.dart';
 import 'admin_mode_chip.dart';
+import './adaptive_text_field.dart';
 
 class TicketsManagementScreen extends ConsumerStatefulWidget {
   const TicketsManagementScreen({super.key});
@@ -164,7 +165,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                     )
                   : Icon(
                       isOnline ? Icons.cloud_sync : Icons.cloud_off,
-                      color: isOnline ? null : Colors.grey,
+                      color: isOnline ? null : Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
               onPressed: hasPermission && isOnline && !_isSyncing ? _syncAllTickets : null,
               tooltip: !hasPermission
@@ -284,7 +285,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                         'Retries: ${op.retryCount}${op.lastError != null ? '\nError: ${op.lastError}' : ''}',
                       ),
                       trailing: IconButton(
-                        icon: const Icon(Icons.delete_forever, color: Colors.grey),
+                        icon: Icon(Icons.delete_forever, color: Theme.of(context).colorScheme.onSurfaceVariant),
                         onPressed: () async {
                           await pendingOpsService.markCompleted(op.id);
                           Navigator.of(context).pop();
@@ -548,7 +549,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
               Text(
                 ticket.id.toString(),
                 style: ticket.isCancelled
-                    ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.grey)
+                    ? TextStyle(decoration: TextDecoration.lineThrough, color: Theme.of(context).colorScheme.onSurfaceVariant)
                     : null,
               ),
               const SizedBox(width: 4),
@@ -577,7 +578,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         DataCell(Text(
           ticket.num,
           style: ticket.isCancelled
-              ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.grey)
+              ? TextStyle(decoration: TextDecoration.lineThrough, color: Theme.of(context).colorScheme.onSurfaceVariant)
               : null,
         )),
         DataCell(Text(ticket.orderId.toString())),
@@ -585,7 +586,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         DataCell(Text(
           ref.watch(currencyFormatterProvider).format(ticket.amount),
           style: ticket.isCancelled
-              ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.grey)
+              ? TextStyle(decoration: TextDecoration.lineThrough, color: Theme.of(context).colorScheme.onSurfaceVariant)
               : null,
         )),
         DataCell(Text(ticket.paymentMethod.toUpperCase())),
@@ -616,7 +617,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
                   return IconButton(
                     icon: Icon(Icons.delete,
                         size: 20,
-                        color: (isZLocked || !canDelete) ? Colors.grey : Colors.red),
+                        color: (isZLocked || !canDelete) ? Theme.of(context).colorScheme.onSurfaceVariant : Colors.red),
                     onPressed:
                         (isZLocked || !canDelete) ? null : () => _deleteTicket(ticket),
                     tooltip: isZLocked
@@ -671,14 +672,14 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: Colors.grey[300]!)),
+        border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
             'Showing ${_currentPage * _rowsPerPage + 1}-${((_currentPage + 1) * _rowsPerPage).clamp(0, totalItems)} of $totalItems tickets',
-            style: TextStyle(color: Colors.grey[700]),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           ),
           Row(
             children: [
@@ -714,16 +715,16 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.receipt, size: 64, color: Colors.grey[400]),
+          Icon(Icons.receipt, size: 64, color: Theme.of(context).colorScheme.outline),
           const SizedBox(height: 16),
           Text(
             'No tickets found',
-            style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
             'Try adjusting your filters',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -739,12 +740,12 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
           const SizedBox(height: 16),
           Text(
             'Error loading tickets',
-            style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600),
+            style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
             error,
-            style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
             textAlign: TextAlign.center,
           ),
         ],
@@ -803,6 +804,10 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       ticketId: ticket.id,
       ticketNumber: ticket.num,
       amount: ticket.amount,
+      deliveryFee: orderData == null
+          ? null
+          : await _ticketDeliveryFee(database, orderData.id, ticket.id),
+      tvaAmount: await _ticketTvaTotal(database, ticket.id),
       paymentMethod: ticket.paymentMethod,
       createdAt: ticket.date,
       items: itemsForPrint,
@@ -1036,7 +1041,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
+                color: AppTheme.bar(Theme.of(context).colorScheme),
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(4),
                   topRight: Radius.circular(4),
@@ -1089,15 +1094,15 @@ class _TicketDetailsDialog extends ConsumerWidget {
                         padding: const EdgeInsets.all(16),
                         child: Column(
                           children: [
-                            _buildInfoRow('Ticket ID', '#${ticket.id}'),
-                            _buildInfoRow('Ticket Number', ticket.num),
-                            _buildInfoRow('Order Code', orderCode),
-                            _buildInfoRow('Order ID', '#${ticket.orderId}'),
-                            _buildInfoRow('Status', ticket.isPaid ? 'PAID' : 'UNPAID'),
-                            _buildInfoRow('Payment Method', ticket.paymentMethod.toUpperCase()),
-                            _buildInfoRow('Amount', currencyFormatter.format(ticket.amount)),
-                            _buildInfoRow('Print Count', ticket.printCount.toString()),
-                            _buildInfoRow('Date', _formatFullDateTime(ticket.date)),
+                            _buildInfoRow(context, 'Ticket ID', '#${ticket.id}'),
+                            _buildInfoRow(context, 'Ticket Number', ticket.num),
+                            _buildInfoRow(context, 'Order Code', orderCode),
+                            _buildInfoRow(context, 'Order ID', '#${ticket.orderId}'),
+                            _buildInfoRow(context, 'Status', ticket.isPaid ? 'PAID' : 'UNPAID'),
+                            _buildInfoRow(context, 'Payment Method', ticket.paymentMethod.toUpperCase()),
+                            _buildInfoRow(context, 'Amount', currencyFormatter.format(ticket.amount)),
+                            _buildInfoRow(context, 'Print Count', ticket.printCount.toString()),
+                            _buildInfoRow(context, 'Date', _formatFullDateTime(ticket.date)),
                           ],
                         ),
                       ),
@@ -1111,7 +1116,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
                         padding: const EdgeInsets.all(16),
                         child: Column(
                           children: [
-                            _buildInfoRow('Total Items', itemCount.toString()),
+                            _buildInfoRow(context, 'Total Items', itemCount.toString()),
                             const SizedBox(height: 12),
                             ...items.map((itemData) {
                               final item = itemData['product'] as OrderProduct;
@@ -1129,7 +1134,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
                                     ),
                                     Text(
                                       'x${item.quantity}',
-                                      style: TextStyle(color: Colors.grey[600]),
+                                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                                     ),
                                     const SizedBox(width: 12),
                                     Text(
@@ -1238,6 +1243,10 @@ class _TicketDetailsDialog extends ConsumerWidget {
         ticketId: ticket.id,
         ticketNumber: ticket.num,
         amount: ticket.amount,
+        deliveryFee: orderData == null
+            ? null
+            : await _ticketDeliveryFee(database, orderData.id, ticket.id),
+        tvaAmount: await _ticketTvaTotal(database, ticket.id),
         paymentMethod: ticket.paymentMethod,
         createdAt: ticket.date,
         items: itemsForPrint,
@@ -1293,7 +1302,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
     }
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildInfoRow(BuildContext context, String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -1304,7 +1313,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
             child: Text(
               label,
               style: TextStyle(
-                color: Colors.grey[600],
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -1380,7 +1389,7 @@ class _EditTicketDialogState extends State<_EditTicketDialog> {
           ),
           const SizedBox(height: 16),
 
-          OnscreenKeyboardTextField(
+          AdaptiveKeyboardTextField(
             controller: _amountController,
             decoration: InputDecoration(
               labelText: 'Amount',
@@ -1419,6 +1428,41 @@ class _EditTicketDialogState extends State<_EditTicketDialog> {
 }
 
 /// Build the items list (with components) for a ticket's order products.
+/// VAT carried by a ticket's lines, summed the same way `OrderItem.totalTva`
+/// does (`unitaryTva * quantity`) so a reprint shows the figure the original
+/// receipt showed. Only reaches the paper when the `tva` ticket field is on.
+/// The delivery fee to show on a REPRINT of [ticketId], or null.
+///
+/// An order carries one delivery charge, collected on whichever ticket settled
+/// first — which is the lowest-id ticket on that order, since ticket rows are
+/// inserted in payment order. Reprinting any later ticket of a divided order
+/// must not repeat the fee, or two receipts would each claim to have collected
+/// it. Returns null when there is no fee or this isn't that ticket.
+Future<double?> _ticketDeliveryFee(
+    AppDatabase database, int orderId, int ticketId) async {
+  final order = await (database.select(database.orders)
+        ..where((o) => o.id.equals(orderId)))
+      .getSingleOrNull();
+  final fee = order?.deliveryFee;
+  if (fee == null || fee <= 0) return null;
+
+  final ticketIds = await (database.select(database.tickets)
+        ..where((t) => t.orderId.equals(orderId)))
+      .get();
+  if (ticketIds.isEmpty) return null;
+  final firstTicketId =
+      ticketIds.map((t) => t.id).reduce((a, b) => a < b ? a : b);
+  return ticketId == firstTicketId ? fee : null;
+}
+
+Future<double> _ticketTvaTotal(AppDatabase database, int ticketId) async {
+  final products = await (database.select(database.orderProducts)
+        ..where((tbl) => tbl.ticketId.equals(ticketId)))
+      .get();
+  return products.fold<double>(
+      0.0, (sum, p) => sum + (p.unitaryTva * p.quantity));
+}
+
 Future<List<Map<String, dynamic>>> _buildTicketPrintItems(
     AppDatabase database, int ticketId) async {
   final products = await (database.select(database.orderProducts)

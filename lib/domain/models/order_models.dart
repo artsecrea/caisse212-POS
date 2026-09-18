@@ -18,6 +18,13 @@ class OrderItem {
   final double? savedQuantity;
   final List<OrderItemComponent> components;
   final String? note;
+  /// Which course this line belongs to: 1 entrée, 2 plat, 3 dessert.
+  ///
+  /// Null is the normal state — see `OrderProducts.courseNo`. The kitchen
+  /// ticket only splits into sections when the lines on it actually carry
+  /// more than one course.
+  final int? courseNo;
+
   final int? ticketId; // null = not paid, number = ticket ID (paid)
   final double discount; // discount amount per item
   final double manualDiscount; // manual discount amount per item
@@ -26,6 +33,7 @@ class OrderItem {
   final DateTime? planStartAt; // Planning start time
   final DateTime? planEndAt; // Planning end time
   final int? planWaiterId; // Assigned waiter for this booking
+  final int? planResourceId; // Assigned resource (room/chair/equipment) for this booking
   final DateTime? kdsPrintedAt; // When item was sent to kitchen (KDS ticket printed)
   /// Quantity that has already been sent to the kitchen. Persisted. Lets
   /// `KdsPrintMode.modificationsOnly` fire a ticket for the *added* units when
@@ -34,12 +42,29 @@ class OrderItem {
   /// Transient (never persisted) override for the quantity to render on the
   /// *current* KDS ticket — the modifications-only delta. Null → use [quantity].
   final double? kdsPrintQuantity;
+  /// Quantity already put on a printed CUSTOMER order ticket. Persisted, and
+  /// the exact counterpart of [kdsPrintedQuantity] for the receipt printer —
+  /// see `OrderProducts.orderTicketPrintedQuantity` for why the two are
+  /// tracked separately rather than shared.
+  final double orderTicketPrintedQuantity;
+  /// Transient (never persisted) override for the quantity to render on the
+  /// *current* order ticket — the additions-only delta. Null → use [quantity].
+  final double? orderTicketPrintQuantity;
   // Scale / weighed-item fields
   final bool isWeighedItem;
   final double? weightKg;
   final double? pricePerKgDisplay;
   /// Unit label from the server (e.g. "kg", "pcs", "box") — nullable.
   final String? unitName;
+
+  /// The individual unit sold, for serial-tracked products.
+  ///
+  /// Non-null means this line is exactly one physical unit: quantity is forced
+  /// to 1 and the line never merges with another of the same product, because
+  /// two units are two different serials. [serialNumber] is carried alongside
+  /// purely so the basket, receipt and KDS can show it without a lookup.
+  final int? serialId;
+  final String? serialNumber;
 
   OrderItem({
     this.id,
@@ -53,6 +78,7 @@ class OrderItem {
     this.savedQuantity,
     this.components = const [],
     this.note,
+    this.courseNo,
     this.ticketId,
     this.discount = 0.0,
     this.manualDiscount = 0.0,
@@ -61,13 +87,18 @@ class OrderItem {
     this.planStartAt,
     this.planEndAt,
     this.planWaiterId,
+    this.planResourceId,
     this.kdsPrintedAt,
     this.kdsPrintedQuantity = 0.0,
     this.kdsPrintQuantity,
+    this.orderTicketPrintedQuantity = 0.0,
+    this.orderTicketPrintQuantity,
     this.isWeighedItem = false,
     this.weightKg,
     this.pricePerKgDisplay,
     this.unitName,
+    this.serialId,
+    this.serialNumber,
   });
 
   /// Returns the display name - variant name if available, otherwise product name
@@ -99,6 +130,9 @@ class OrderItem {
     return tva * quantity;
   }
 
+  /// True when this line names a specific physical unit.
+  bool get isSerialLine => serialId != null;
+
   OrderItem copyWith({
     int? id,
     int? productId,
@@ -111,6 +145,8 @@ class OrderItem {
     double? savedQuantity,
     List<OrderItemComponent>? components,
     String? note,
+    int? courseNo,
+    bool clearCourse = false,
     int? ticketId,
     double? discount,
     double? manualDiscount,
@@ -119,13 +155,18 @@ class OrderItem {
     DateTime? planStartAt,
     DateTime? planEndAt,
     int? planWaiterId,
+    int? planResourceId,
     DateTime? kdsPrintedAt,
     double? kdsPrintedQuantity,
     double? kdsPrintQuantity,
+    double? orderTicketPrintedQuantity,
+    double? orderTicketPrintQuantity,
     bool? isWeighedItem,
     double? weightKg,
     double? pricePerKgDisplay,
     String? unitName,
+    int? serialId,
+    String? serialNumber,
   }) {
     return OrderItem(
       id: id ?? this.id,
@@ -139,21 +180,32 @@ class OrderItem {
       savedQuantity: savedQuantity ?? this.savedQuantity,
       components: components ?? this.components,
       note: note ?? this.note,
+      // `clearCourse` because null is a meaningful value here: "no course"
+      // has to be reachable from "plat", and `courseNo ?? this.courseNo`
+      // could never express it.
+      courseNo: clearCourse ? null : (courseNo ?? this.courseNo),
       ticketId: ticketId ?? this.ticketId,
       discount: discount ?? this.discount,
       manualDiscount: manualDiscount ?? this.manualDiscount,
       tva: tva ?? this.tva,
       state: state ?? this.state,
       planStartAt: planStartAt ?? this.planStartAt,
+      planResourceId: planResourceId ?? this.planResourceId,
       planEndAt: planEndAt ?? this.planEndAt,
       planWaiterId: planWaiterId ?? this.planWaiterId,
       kdsPrintedAt: kdsPrintedAt ?? this.kdsPrintedAt,
       kdsPrintedQuantity: kdsPrintedQuantity ?? this.kdsPrintedQuantity,
       kdsPrintQuantity: kdsPrintQuantity ?? this.kdsPrintQuantity,
+      orderTicketPrintedQuantity:
+          orderTicketPrintedQuantity ?? this.orderTicketPrintedQuantity,
+      orderTicketPrintQuantity:
+          orderTicketPrintQuantity ?? this.orderTicketPrintQuantity,
       isWeighedItem: isWeighedItem ?? this.isWeighedItem,
       weightKg: weightKg ?? this.weightKg,
       pricePerKgDisplay: pricePerKgDisplay ?? this.pricePerKgDisplay,
       unitName: unitName ?? this.unitName,
+      serialId: serialId ?? this.serialId,
+      serialNumber: serialNumber ?? this.serialNumber,
     );
   }
 
@@ -174,13 +226,16 @@ class OrderItem {
         'quantity': c.quantity,
         'price': c.price,
         'isSpecial': c.isSpecial,
+        'removalCharge': c.removalCharge,
       }).toList(),
       'note': note,
+      'courseNo': courseNo,
       'ticketId': ticketId,
       'discount': discount,
       'tva': tva,
       'state': state,
       'planStartAt': planStartAt?.toIso8601String(),
+      'planResourceId': planResourceId,
       'planEndAt': planEndAt?.toIso8601String(),
       'planWaiterId': planWaiterId,
       'kdsPrintedAt': kdsPrintedAt?.toIso8601String(),
@@ -189,6 +244,8 @@ class OrderItem {
       'weightKg': weightKg,
       'pricePerKgDisplay': pricePerKgDisplay,
       'unitName': unitName,
+      'serialId': serialId,
+      'serialNumber': serialNumber,
     };
   }
 
@@ -203,12 +260,19 @@ class OrderItemComponent {
   final double price;
   final bool isSpecial;
 
+  /// This row is money for a default the customer removed, not something to
+  /// make. It is never sent to the server as an option — the server works the
+  /// charge out for itself from the explicit quantity we send — and the
+  /// kitchen must never see it as an ingredient.
+  final bool removalCharge;
+
   OrderItemComponent({
     required this.componentId,
     required this.name,
     required this.quantity,
     required this.price,
     this.isSpecial = false,
+    this.removalCharge = false,
   });
 
   OrderItemComponent copyWith({
@@ -217,6 +281,7 @@ class OrderItemComponent {
     int? quantity,
     double? price,
     bool? isSpecial,
+    bool? removalCharge,
   }) {
     return OrderItemComponent(
       componentId: componentId ?? this.componentId,
@@ -224,11 +289,33 @@ class OrderItemComponent {
       quantity: quantity ?? this.quantity,
       price: price ?? this.price,
       isSpecial: isSpecial ?? this.isSpecial,
+      removalCharge: removalCharge ?? this.removalCharge,
     );
   }
 }
 
 // Model for current active order in the POS
+/// How much of a line the kitchen was told to make and no longer has to.
+///
+/// [sent] is what has been put on a kitchen ticket ([OrderItem.
+/// kdsPrintedQuantity]); [remaining] is what the line is worth now — 0 for a
+/// line deleted outright. The difference is food somebody is cooking for an
+/// order that no longer wants it, and is exactly what a cancellation ticket
+/// has to carry.
+///
+/// Returns 0 when nothing was ever sent, which is the case that matters most:
+/// pulling a line the kitchen never saw needs no ticket, and printing one
+/// would train the pass to ignore the paper.
+///
+/// Pure, so the arithmetic that decides whether a printer fires can be tested
+/// without one.
+double cancelledQuantity({required double sent, required double remaining}) {
+  final gone = sent - remaining;
+  // Same epsilon as everywhere else quantities are compared: weighed goods
+  // make exact equality a lie.
+  return gone > 0.0001 ? gone : 0.0;
+}
+
 class CurrentOrder {
   final int? orderId;
   final String? orderCode;
@@ -244,7 +331,15 @@ class CurrentOrder {
   final String? waiterName;
   final String? coupon;
   final double discountPercentage; // Manual discount percentage (0-100)
+
+  /// Order-level note for the kitchen. Printed on the kitchen ticket and shown
+  /// on the KDS board, so it is an instruction, not bookkeeping.
   final String? note;
+
+  /// Why the manual discount was given. Kept apart from [note] — it used to
+  /// share it, so discounting an order wiped the kitchen instruction.
+  final String? discountReason;
+
   final String type;
   final String? deliveryAddress; // Delivery address (when type == DELIVERY)
   final int numberOfPersons; // Number of persons for the order
@@ -254,6 +349,29 @@ class CurrentOrder {
   /// Carries through to PaymentScreen so the receipt and total-due lines
   /// show the right number.
   final double tip;
+
+  /// Delivery charge for this order. Like [tip], it is deliberately NOT part
+  /// of [total] — the products total stays a products total, and the cashier
+  /// collects [amountDue].
+  ///
+  /// `null` and `0` are different states and must stay that way:
+  ///   * `null` — no delivery fee recorded (nothing to show, nothing to send)
+  ///   * `0`    — delivery is explicitly free (a real, printable fact)
+  /// Use [hasDeliveryFee] rather than a `> 0` test when deciding whether the
+  /// fee is a recorded value.
+  final double? deliveryFee;
+
+  /// Where the order came from — the `Orders.source` column: `POS`, `WAITER`,
+  /// `KIOSK`, `EXTERNAL` (see `kAllOrderSources`). Null on a cart that has
+  /// not been saved yet, and on orders written before the column was
+  /// populated.
+  ///
+  /// Deliberately distinct from [waiterId]: a cashier can attach a waiter to
+  /// an order they raised themselves, so a non-null [waiterId] does NOT mean
+  /// the waiter app created it. Only this field answers that, which is what
+  /// the waiter-order edit guard needs — see `isWaiterRaisedOrder` in
+  /// `utils/order_permissions.dart`.
+  final String? source;
 
   CurrentOrder({
     this.orderId,
@@ -271,11 +389,25 @@ class CurrentOrder {
     this.coupon,
     this.discountPercentage = 0.0,
     this.note,
+    this.discountReason,
     this.type = 'DINE_IN',
     this.deliveryAddress,
     this.numberOfPersons = 1,
     this.tip = 0.0,
+    this.deliveryFee,
+    this.source,
   });
+
+  /// True when there is an order note worth surfacing to the cashier.
+  bool get hasNote => note != null && note!.trim().isNotEmpty;
+
+  /// Whether a delivery fee has been recorded at all. True for an explicit
+  /// zero ("free delivery"), false only when the field was never set.
+  bool get hasDeliveryFee => deliveryFee != null;
+
+  /// The delivery fee as money, treating "not recorded" as nothing owed.
+  /// Use this for arithmetic; use [hasDeliveryFee] for display decisions.
+  double get deliveryFeeAmount => deliveryFee ?? 0.0;
 
   // Subtotal: sum of all base prices (no tax, no discounts)
   double get subtotal {
@@ -301,6 +433,12 @@ class CurrentOrder {
   double get total {
     return totalBeforeDiscount - discountAmount;
   }
+
+  /// What the customer actually hands over: the products [total] plus the
+  /// non-product extras. Kept separate from [total] so nothing that reports
+  /// on sales, discounts or Z-totals ever picks the fee up by accident —
+  /// only the collection points (payment pad, receipt footer) use this.
+  double get amountDue => total + deliveryFeeAmount;
 
   // Get only unpaid items
   List<OrderItem> get unpaidItems {
@@ -338,10 +476,18 @@ class CurrentOrder {
     String? coupon,
     double? discountPercentage,
     String? note,
+    String? discountReason,
     String? type,
     String? deliveryAddress,
     int? numberOfPersons,
     double? tip,
+    double? deliveryFee,
+    String? source,
+    /// `copyWith` can't express "set this back to null" through a nullable
+    /// parameter — `deliveryFee: null` is indistinguishable from "not passed".
+    /// This flag is how the cashier's "remove the fee" action round-trips, and
+    /// it wins over [deliveryFee] if both are given.
+    bool clearDeliveryFee = false,
   }) {
     return CurrentOrder(
       orderId: orderId ?? this.orderId,
@@ -359,10 +505,14 @@ class CurrentOrder {
       coupon: coupon ?? this.coupon,
       discountPercentage: discountPercentage ?? this.discountPercentage,
       note: note ?? this.note,
+      discountReason: discountReason ?? this.discountReason,
       type: type ?? this.type,
       deliveryAddress: deliveryAddress ?? this.deliveryAddress,
       numberOfPersons: numberOfPersons ?? this.numberOfPersons,
       tip: tip ?? this.tip,
+      deliveryFee:
+          clearDeliveryFee ? null : (deliveryFee ?? this.deliveryFee),
+      source: source ?? this.source,
     );
   }
 

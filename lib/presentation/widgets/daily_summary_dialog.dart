@@ -718,6 +718,11 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
                 _buildDetailItem(l10n?.translate('cancelled_tickets') ?? 'Cancelled Tickets', '${session.cancelledTickets}', cs.error),
                 _buildDetailItem(l10n?.translate('cancelled_amount') ?? 'Cancelled Amount', currencyFormatter.format(session.cancelledAmount), cs.error),
               ],
+              // Own line, counted in none of the sales figures above.
+              if (session.deliveryFees.abs() > 0.005)
+                _buildDetailItem(
+                    l10n?.translate('delivery_fees') ?? 'Delivery Fees',
+                    currencyFormatter.format(session.deliveryFees)),
             ],
           ),
           const Divider(height: 24),

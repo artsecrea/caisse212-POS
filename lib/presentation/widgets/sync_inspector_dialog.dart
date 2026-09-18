@@ -5,6 +5,8 @@ import '../../providers/database_providers.dart';
 import '../../services/data_sync_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../data/database/app_database.dart';
+import '../../core/theme/app_theme.dart';
 
 class SyncInspectorDialog extends ConsumerStatefulWidget {
   const SyncInspectorDialog({super.key});
@@ -18,10 +20,47 @@ class _SyncInspectorDialogState extends ConsumerState<SyncInspectorDialog> {
   Map<String, String?>? _meta;
   bool _isPulling = false;
 
+  /// Refunds the server refused. They are deliberately never auto-retried —
+  /// every rejection reason is deterministic — so this dialog is the only place
+  /// they surface. A parked refund means money left the drawer with no server
+  /// record, which is exactly the thing that must not sit invisible.
+  List<Refund> _parked = const [];
+
   @override
   void initState() {
     super.initState();
     _loadMeta();
+    _loadParked();
+  }
+
+  Future<void> _loadParked() async {
+    final parked = await _sync().parkedRefunds();
+    if (mounted) setState(() => _parked = parked);
+  }
+
+  Future<void> _retryParked(Refund refund) async {
+    final l10n = AppLocalizations.of(context);
+    // Clears the marker and pushes again. Manual on purpose: the cause is
+    // usually fixed elsewhere (the order finally synced, a mapping corrected),
+    // and a human deciding "try it now" is the signal that changed.
+    await _sync().unparkRefund(refund.id);
+    await _sync().syncRefundsBulk();
+    await _loadParked();
+    if (mounted) {
+      SnackBarHelper.showSnackBar(context, ref,
+          l10n?.translate('refund_retry_queued') ?? 'Retrying…');
+    }
+  }
+
+  Future<void> _copyCode(String code) async {
+    final l10n = AppLocalizations.of(context);
+    // Support asks for the refund code, and reading a 20-character string off a
+    // till screen over the phone is how digits get transposed.
+    await Clipboard.setData(ClipboardData(text: code));
+    if (mounted) {
+      SnackBarHelper.showSnackBar(
+          context, ref, l10n?.translate('copied') ?? 'Copied');
+    }
   }
 
   Future<void> _loadMeta() async {
@@ -116,6 +155,78 @@ class _SyncInspectorDialogState extends ConsumerState<SyncInspectorDialog> {
                     l10n: l10n,
                     colorScheme: colorScheme,
                   ),
+                  if (_parked.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _SectionHeader(
+                        label:
+                            '${l10n?.translate('refunds_refused') ?? 'Refused refunds'} (${_parked.length})'),
+                    const SizedBox(height: 4),
+                    // Capped height: a terminal that has accumulated a dozen of
+                    // these must not push the dialog's actions off screen.
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _parked.length,
+                        itemBuilder: (context, i) {
+                          final r = _parked[i];
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: colorScheme.errorContainer
+                                  .withValues(alpha: 0.35),
+                              borderRadius: AppTheme.brSm,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        r.code,
+                                        style: const TextStyle(
+                                            fontFamily: 'monospace',
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 12),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      tooltip: l10n?.translate('copy_code') ??
+                                          'Copy code',
+                                      icon: const Icon(Icons.copy, size: 16),
+                                      onPressed: () => _copyCode(r.code),
+                                    ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      tooltip:
+                                          l10n?.translate('retry') ?? 'Retry',
+                                      icon: const Icon(Icons.refresh, size: 16),
+                                      onPressed: () => _retryParked(r),
+                                    ),
+                                  ],
+                                ),
+                                // The server's own words, verbatim — a
+                                // paraphrase is useless to whoever has to fix it.
+                                Text(
+                                  r.syncError ?? '',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: colorScheme.error,
+                                      fontFamily: 'monospace'),
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                   if (_meta!['lastError'] != null) ...[
                     const SizedBox(height: 12),
                     _SectionHeader(

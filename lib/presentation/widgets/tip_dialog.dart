@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart'
-    show OnscreenKeyboardTextField;
 
 import '../../providers/settings_provider.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import './adaptive_text_field.dart';
 
 enum _TipMode { amount, percentage }
 
@@ -228,7 +227,7 @@ class _TipDialogState extends ConsumerState<TipDialog> {
 
             // Input field
             (showKeyboard
-                ? OnscreenKeyboardTextField(
+                ? AdaptiveKeyboardTextField(
                     controller: _controller,
                     focusNode: _focusNode,
                     keyboardType: const TextInputType.numberWithOptions(

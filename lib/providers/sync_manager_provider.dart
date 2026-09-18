@@ -6,6 +6,7 @@ import '../providers/settings_provider.dart';
 import '../providers/session_rules_provider.dart';
 import '../services/api_service.dart';
 import '../services/data_sync_service.dart';
+import '../utils/pos_log.dart';
 
 /// Provider to manage auto-sync and bulk sync functionality
 class SyncManagerNotifier extends StateNotifier<SyncState> {
@@ -29,13 +30,13 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
       final settingsNotifier = ref.read(settingsProvider.notifier);
 
       if (settingsNotifier.shouldClearDataToday()) {
-        print('Daily data clear check: clearing synced data...');
+        posLog('Daily data clear check: clearing synced data...');
         await _clearOldSyncedData();
         await settingsNotifier.setLastDataClearDate();
-        print('Daily data clear completed');
+        posLog('Daily data clear completed');
       }
     } catch (e) {
-      print('Error during daily data clear check: $e');
+      posLog('Error during daily data clear check: $e');
     }
   }
 
@@ -49,9 +50,9 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
       final settings = ref.read(settingsProvider);
 
       await syncService.clearOldSyncedData(settings.dataRetentionDays);
-      print('Cleared synced data older than ${settings.dataRetentionDays} days');
+      posLog('Cleared synced data older than ${settings.dataRetentionDays} days');
     } catch (e) {
-      print('Error clearing old synced data: $e');
+      posLog('Error clearing old synced data: $e');
     }
   }
 
@@ -70,13 +71,13 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
   Future<void> _runPeriodicSyncJob() async {
     if (state.isSyncing) return; // Skip if already syncing
 
-    print('Running periodic sync job...');
+    posLog('Running periodic sync job...');
 
     // Check actual server connectivity
     final isOnline = await _checkServerConnectivity();
 
     if (!isOnline) {
-      print('Periodic sync skipped - server not reachable');
+      posLog('Periodic sync skipped - server not reachable');
       return;
     }
 
@@ -94,9 +95,9 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
         await syncService.syncPendingOperations();
       }
 
-      print('Periodic sync job completed');
+      posLog('Periodic sync job completed');
     } catch (e) {
-      print('Periodic sync job error: $e');
+      posLog('Periodic sync job error: $e');
     }
   }
 
@@ -126,7 +127,7 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
       // This avoids extra health check requests
       return true;
     } catch (e) {
-      print('Connectivity check failed: $e');
+      posLog('Connectivity check failed: $e');
       return false;
     }
   }
@@ -137,7 +138,7 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
       final hasNetwork = result != ConnectivityResult.none;
 
       if (hasNetwork && !state.isSyncing) {
-        print('Connection restored - triggering auto-sync');
+        posLog('Connection restored - triggering auto-sync');
         // Let the actual sync fail if server is down, no need for health check
         await performFullSync();
       }
@@ -180,7 +181,7 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
         try {
           await syncService.syncTicketsForOrder(orderId);
         } catch (e) {
-          print('Auto-sync tickets failed for order #$orderId: $e');
+          posLog('Auto-sync tickets failed for order #$orderId: $e');
         }
 
         state = state.copyWith(
@@ -191,7 +192,7 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
 
       return success;
     } catch (e) {
-      print('Auto-sync order failed: $e');
+      posLog('Auto-sync order failed: $e');
       return false;
     }
   }
@@ -233,7 +234,7 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
 
       return syncedCount;
     } catch (e) {
-      print('Bulk sync failed: $e');
+      posLog('Bulk sync failed: $e');
       return 0;
     }
   }
@@ -274,35 +275,35 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
       try {
         syncedCustomers = await syncService.syncCustomersBulk();
       } catch (e) {
-        print('Error syncing customers: $e');
+        posLog('Error syncing customers: $e');
       }
 
       // 2. Sync orders
       try {
         syncedOrders = await syncService.syncOrdersBulk(batchSize: 100);
       } catch (e) {
-        print('Error syncing orders: $e');
+        posLog('Error syncing orders: $e');
       }
 
       // 3. Sync tickets for synced orders
       try {
         syncedTickets = await syncService.syncTicketsBulk();
       } catch (e) {
-        print('Error syncing tickets: $e');
+        posLog('Error syncing tickets: $e');
       }
 
       // 4. Sync ended sessions
       try {
         syncedSessions = await syncService.syncSessionsBulk();
       } catch (e) {
-        print('Error syncing sessions: $e');
+        posLog('Error syncing sessions: $e');
       }
 
       // 5. Process any pending delete/update operations
       try {
         await syncService.syncPendingOperations();
       } catch (e) {
-        print('Error syncing pending operations: $e');
+        posLog('Error syncing pending operations: $e');
       }
 
       state = state.copyWith(
@@ -324,7 +325,7 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
       );
     } catch (e) {
       state = state.copyWith(isSyncing: false);
-      print('Full sync failed: $e');
+      posLog('Full sync failed: $e');
       return SyncResult(success: false, message: 'Sync failed: $e');
     }
   }

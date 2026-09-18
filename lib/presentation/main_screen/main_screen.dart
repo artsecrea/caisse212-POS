@@ -1,7 +1,7 @@
 import 'dart:async';
+import 'package:caisse212/domain/models/order_course.dart';
 import 'package:caisse212/domain/models/order_models.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
@@ -11,9 +11,13 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/z_day_provider.dart';
 import '../../domain/models/app_settings.dart';
+import '../../domain/models/external_order_models.dart';
 import '../../services/permission_service.dart';
 import '../../services/printing_service.dart';
+import '../../services/sound_service.dart';
+import '../../utils/currency_formatter.dart';
 import '../../utils/app_localizations.dart';
 import '../order_confirmation/order_confirmation_screen.dart';
 import '../paymen_screen/payment_screen.dart';
@@ -21,6 +25,7 @@ import '../paymen_screen/payment_screen.dart';
 // with the four commented-out blocks below (`case 'tip'`, the two payment
 // helpers, the table-pay branch).
 // import '../widgets/tip_flow.dart';
+import '../widgets/print_status_indicator.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/category_grid.dart';
 import '../widgets/commercial_selection_dialog.dart';
@@ -28,11 +33,14 @@ import '../widgets/customer_selection_dialog.dart';
 import '../widgets/daily_summary_dialog.dart';
 import '../widgets/manual_discount_dialog.dart';
 import '../widgets/print_options_dialog.dart';
+import '../widgets/quick_product_dialog.dart';
 import '../widgets/product_grid.dart';
 import '../widgets/order_panel.dart';
+import '../widgets/serial_conflict_alert.dart';
 import '../widgets/table_selection_dialog.dart';
 import '../widgets/waiter_selection_dialog.dart';
 import '../widgets/top_bar.dart';
+import '../../utils/order_permissions.dart';
 import '../../utils/order_validation.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/responsive_utils.dart';
@@ -45,6 +53,8 @@ import '../../services/customer_display_service.dart';
 import '../../services/scale_barcode_service.dart';
 import '../../domain/models/scale_config.dart';
 import '../../providers/scale_config_provider.dart';
+import '../widgets/adaptive_text_field.dart';
+import '../../core/theme/app_theme.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({Key? key}) : super(key: key);
@@ -68,6 +78,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   /// can't be triggered twice by an impatient double-tap (root cause of
   /// duplicate-order inserts).
   bool _isSavingOrder = false;
+
+  /// Guard against a second dialog stacking on the first: the stream fires
+  /// again the moment the rows are acknowledged.
+  bool _serialConflictShowing = false;
 
   @override
   void initState() {
@@ -104,11 +118,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       }
     });
 
-    // Request focus for barcode scanner
+    // Request focus for barcode scanner — but never over a modal. This node
+    // wraps the whole scaffold and swallows key events into the scan buffer, so
+    // holding focus while a dialog is open sends the cashier's typing to the
+    // barcode parser instead of the field in front of them.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _focusNode.requestFocus();
-      }
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return;
+      _focusNode.requestFocus();
     });
   }
 
@@ -172,15 +190,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
         // Load the order
         ref.read(orderProvider.notifier).loadOrder(order);
-
-        if (mounted) {
-          SnackBarHelper.showSuccessSnackBar(
-            context,
-            ref,
-            'Order $barcode loaded',
-            duration: const Duration(seconds: 2),
-          );
-        }
       } else {
         if (mounted) {
           SnackBarHelper.showWarningSnackBar(
@@ -232,22 +241,22 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final database = ref.read(databaseProvider);
 
     try {
-      final product = await (database.select(database.products)
-        ..where((tbl) => tbl.barcode.equals(barcode))
+      // Match a scanned/typed code against barcode OR reference (SKU).
+      final matches = await (database.select(database.products)
+        ..where((tbl) =>
+            tbl.barcode.equals(barcode) | tbl.reference.equals(barcode))
         ..where((tbl) => tbl.isActive.equals(true)))
-        .getSingleOrNull();
+        .get();
+      // Prefer an exact barcode hit if a reference on another product collides.
+      final product = matches.isEmpty
+          ? null
+          : matches.firstWhere((p) => p.barcode == barcode,
+              orElse: () => matches.first);
 
       if (product != null) {
         // Adding to a SAVED order requires the add-item permission.
-        final currentOrder = ref.read(orderProvider);
-        if (currentOrder.orderId != null &&
-            !ref.read(permissionServiceProvider).hasPermission(Permissions.ordersItemAdd)) {
-          if (mounted) {
-            SnackBarHelper.error(
-              context, AppLocalizations.of(context)!.translate('no_permission'));
-          }
-          return;
-        }
+        if (!mounted) return;
+        if (!ensureCanAddItemToOrder(context, ref)) return;
         ref.read(orderProvider.notifier).addItem(
           OrderItem(
             productId: product.id,
@@ -260,21 +269,78 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           ),
         );
 
-        if (mounted) {
-          SnackBarHelper.success(
-            context,
-            '${product.name} added to order',
-            duration: const Duration(seconds: 1),
-          );
-        }
       } else {
         _logger.warning('Barcode lookup: no active product found for barcode "$barcode"');
-        if (mounted) {
+        if (!mounted) return;
+
+        // Scan-to-create: the cashier is holding an item the catalogue does not
+        // know. Offering to create it here — barcode already filled — turns a
+        // dead end into one gesture. Gated: without pos:catalog this stays the
+        // plain "not found" it always was.
+        final canCreate = ref
+            .read(permissionServiceProvider)
+            .hasPermission(Permissions.catalog);
+        if (!canCreate) {
           SnackBarHelper.warning(
             context,
             'Product with barcode $barcode not found',
             duration: const Duration(seconds: 2),
           );
+          return;
+        }
+
+        final l10n = AppLocalizations.of(context)!;
+        final create = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            icon: const Icon(Icons.qr_code_scanner, size: 36),
+            title: Text(l10n.translate('unknown_barcode')),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(barcode,
+                    style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
+                const SizedBox(height: 8),
+                Text(l10n.translate('create_product_with_barcode')),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(l10n.translate('cancel')),
+              ),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(ctx, true),
+                icon: const Icon(Icons.add),
+                label: Text(l10n.translate('create')),
+              ),
+            ],
+          ),
+        );
+        if (create != true || !mounted) return;
+
+        final product = await showQuickProductDialog(
+          context: context,
+          ref: ref,
+          initialBarcode: barcode,
+        );
+        // Straight onto the open ticket: creating it and then making the
+        // cashier find it again would defeat the point of scanning. The
+        // catalogue entry stands either way — only the add is gated, and it
+        // says so, so a scan never ends in silence.
+        if (product != null && mounted) {
+          if (canAddItemToCurrentOrder(ref)) {
+            _addProductToOrder(product);
+          } else {
+            SnackBarHelper.error(
+              context,
+              AppLocalizations.of(context)!
+                  .translate('product_created_not_added'),
+            );
+          }
         }
       }
     } catch (e) {
@@ -287,6 +353,21 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         );
       }
     }
+  }
+
+  /// Add a freshly created product to the open ticket.
+  void _addProductToOrder(Product product) {
+    ref.read(orderProvider.notifier).addItem(
+          OrderItem(
+            productId: product.id,
+            productName: product.name,
+            finalPrice: product.finalPrice,
+            quantity: 1,
+            tva: product.tvaAmount,
+            discount: product.discountAmount,
+            imageUrl: product.imageUrl,
+          ),
+        );
   }
 
   Future<void> _handleWeightedBarcode(WeightedItem result) async {
@@ -378,18 +459,31 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       unitName: product.unitName,
     );
 
-    if (mounted) {
-      SnackBarHelper.success(
-        context,
-        '${product.name} ${weightKg.toStringAsFixed(3)} kg added',
-        duration: const Duration(seconds: 1),
-      );
-    }
   }
 
   void _startAutoCloseTimer() {
     _autoCloseTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
+
+      // Day lock: the manager may have closed the day (here or on another
+      // terminal) while this one sat idle. Checked BEFORE the session-rules
+      // early-return below, which bails out entirely when no rules are set.
+      // Deliberately not fired on plain day rollover — that would eject a
+      // cashier mid-shift at midnight, which is the opposite of Z mode's point.
+      final zSettings = ref.read(settingsProvider);
+      if (zSettings.zTrackingEnabled && zSettings.zDayLockEnabled) {
+        final today =
+            zBusinessDayKey(DateTime.now(), zSettings.zDayStartHour);
+        final dayState = ref.read(zDayStateProvider);
+        final openSession = ref.read(currentSessionProvider);
+        if (openSession != null &&
+            dayState.isLockedFor(today) &&
+            ref.read(orderProvider).items.isEmpty) {
+          _autoCloseSession(openSession, 'auto_close_day_closed');
+          return;
+        }
+      }
+
       final rules = ref.read(sessionRulesProvider);
       if (rules.maxEndHour == null && rules.maxSessionDurationMinutes == null) {
         return;
@@ -497,18 +591,27 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final searchQuery = ref.watch(productSearchQueryProvider);
     final l10n = AppLocalizations.of(context)!;
 
-    // Activate SSE connection while MainScreen is mounted
-    ref.watch(sseLifecycleProvider);
+    // The SSE connection is owned by main.dart now, so it survives navigating
+    // away from the till. Nothing to activate here.
 
-    // Force-logout: fires when the server rejects the refresh token (4xx on
-    // /pos/refresh). Clears focus and navigates to login on the next frame.
-    ref.listen<AsyncValue<void>>(forceLogoutStreamProvider, (_, next) {
-      next.whenData((_) {
+    // Force-logout (refresh token rejected, 4xx on /pos/refresh) is now handled
+    // by the app-wide obligatory re-auth overlay (main.dart / reauthProvider),
+    // which re-authenticates in place instead of kicking to the login screen
+    // and losing the cart. Nothing to do here.
+
+    // A unit this till sold that another till got first. Raised here rather
+    // than swallowed into a log, because the shop-floor problem it describes —
+    // two customers holding paperwork for one box — is not one the software
+    // can settle on its own.
+    ref.listen<AsyncValue<List<SerialConflict>>>(
+        unacknowledgedSerialConflictsProvider, (_, next) {
+      final pending = next.valueOrNull ?? const <SerialConflict>[];
+      if (pending.isEmpty || _serialConflictShowing) return;
+      _serialConflictShowing = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        FocusManager.instance.primaryFocus?.unfocus();
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) Navigator.of(context).pushReplacementNamed('/login');
-        });
+        await showSerialConflictAlert(context, ref, pending);
+        if (mounted) _serialConflictShowing = false;
       });
     });
 
@@ -560,6 +663,158 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       ref.read(sseAlertProvider.notifier).state = null;
     });
 
+    // A queued order was cancelled on the platform. Two very different cases:
+    // if it was still pending, a toast is enough — nothing was started. If it
+    // was already CONFIRMED, the kitchen may be cooking food nobody will
+    // collect, so it gets a blocking dialog and the alert sound. That is worth
+    // interrupting someone for; a toast at the bottom of a busy screen is not.
+    ref.listen<({String? orderCode, String? reason, bool wasConfirmed})?>(
+        sseOrderCancelledProvider, (_, cancelled) {
+      if (cancelled == null || !mounted) return;
+      ref.read(sseOrderCancelledProvider.notifier).state = null;
+
+      final l10n = AppLocalizations.of(context);
+      final code = cancelled.orderCode ?? '';
+
+      if (!cancelled.wasConfirmed) {
+        SnackBarHelper.warning(
+          context,
+          '${l10n?.translate('external_order_cancelled') ?? 'Online order cancelled'} $code',
+        );
+        return;
+      }
+
+      ref.read(soundServiceProvider).newOrderAlert();
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: Icon(Icons.cancel_schedule_send,
+              color: Theme.of(ctx).colorScheme.error, size: 40),
+          title: Text(l10n?.translate('external_order_cancelled') ??
+              'Online order cancelled'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (code.isNotEmpty)
+                Text(code,
+                    style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
+              const SizedBox(height: 8),
+              Text(l10n?.translate('external_order_cancelled_confirmed') ??
+                  'This order was already accepted. Stop preparing it and check '
+                      'with the kitchen.'),
+              if ((cancelled.reason ?? '').isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(cancelled.reason!,
+                    style: TextStyle(
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+              ],
+            ],
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(l10n?.translate('ok') ?? 'OK'),
+            ),
+          ],
+        ),
+      );
+    });
+
+    // Chime + toast when an online order lands. Until now `sseNewOrderProvider`
+    // was set by the SSE handler and read by nobody, so an order could sit in
+    // the queue unnoticed until someone happened to open the Orders screen.
+    // This listener is on MainScreen rather than on the external-orders tab on
+    // purpose: the whole point is to reach a cashier who is NOT looking at that
+    // tab. MainScreen stays mounted under pushed routes, so the toast still
+    // surfaces (via the root ScaffoldMessenger) while another screen is open.
+    ref.listen<Map<String, dynamic>?>(sseNewOrderProvider, (_, payload) {
+      if (payload == null || !mounted) return;
+      ref.read(sseNewOrderProvider.notifier).state = null;
+
+      ref.read(soundServiceProvider).newOrderAlert();
+
+      ExternalQueueItem? item;
+      try {
+        item = ExternalQueueItem.fromJson(payload);
+      } catch (e) {
+        // A payload shape we can't read is still an order that arrived — chime
+        // and toast generically rather than swallowing the event.
+        Logger.instance.error('new-order toast: unreadable payload: $e');
+      }
+
+      final l10n = AppLocalizations.of(context);
+      final title = l10n?.translate('new_order') ?? 'New Order';
+      final currency = ref.read(currencySymbolProvider);
+
+      final details = <String>[];
+      if (item != null) {
+        details.add(item.sourceLabel);
+        details.add(item.orderCode);
+        final count = item.order.items.length;
+        if (count > 0) details.add('$count×');
+        final total = item.order.total;
+        if (total != null && total > 0) {
+          details.add(CurrencyFormatter.formatWithCurrency(total, currency));
+        }
+      }
+
+      final unmapped = item?.order.hasUnmappedItems ?? false;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.receipt_long, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    if (details.isNotEmpty)
+                      Text(details.join('  ·  '),
+                          style: const TextStyle(fontSize: 12)),
+                    // Surfaced here because it decides what the cashier can do
+                    // next: an unmapped line blocks confirm, so sending them to
+                    // the tab expecting a one-tap accept would waste the trip.
+                    if (unmapped)
+                      Text(
+                        l10n?.translate('unmapped_items_blocked') ??
+                            'Some items are not mapped — confirm is blocked',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: unmapped ? Colors.deepOrange : Colors.teal.shade700,
+          duration: const Duration(seconds: 8),
+          action: SnackBarAction(
+            label: l10n?.translate('view') ?? 'View',
+            textColor: Colors.white,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  // Tab 1 = the online queue on the confirm screen, where the
+                  // queue now lives, so "View" lands on the order that just
+                  // arrived with its Confirm/Cancel actions to hand.
+                  builder: (_) => const OrderConfirmationScreen(),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    });
+
     // Push order updates to customer display if enabled
     ref.listen<CurrentOrder>(orderProvider, (previous, next) {
       final s = ref.read(settingsProvider);
@@ -594,11 +849,21 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       child: const OrderPanel(),
     );
 
+    // The back tile does the bar's whole job in full-page mode — return to the
+    // categories — so keeping both is two controls for one action and 70px of
+    // screen for nothing. The calculator that used to live in the bar moved to
+    // the top bar, so nothing is lost with it.
+    //
+    // Gone at BOTH levels, not just inside a category: on the category page
+    // the bar was a button reading "All Categories" directly above a grid of
+    // categories, which is a label for what the reader is already looking at.
+    final hideCategoryBar = ref.watch(categoryBarHiddenProvider);
+
     final mainContent = Expanded(
       flex: 2,
       child: Column(
         children: [
-          const CategorySelector(),
+          if (!hideCategoryBar) const CategorySelector(),
           Expanded(
             // ✅ Use showCategoryGrid instead of settings.categoryDisplayMode
             child: showCategoryGrid
@@ -613,6 +878,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     return Focus(
       focusNode: _focusNode,
       onKeyEvent: (node, event) {
+        // Belt and braces with the focus guard above: even if this node somehow
+        // holds focus while a dialog is open, the scan buffer must not eat the
+        // keystrokes meant for that dialog's fields.
+        final route = ModalRoute.of(context);
+        if (route != null && !route.isCurrent) return KeyEventResult.ignored;
         final barcodeService = ref.read(barcodeScannerServiceProvider);
         return barcodeService.handleKeyEvent(event);
       },
@@ -633,54 +903,39 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               Container(
                 height: _barHeight,
                 padding: const EdgeInsets.all(8),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: _buildOrderedActionButtons(context, ref, currentOrder, settings, l10n),
-                  ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      // The Row is unbounded inside the scroll view, so
+                      // mainAxisAlignment alone does nothing. Forcing it to at
+                      // least the viewport width gives the alignment something
+                      // to work against while still letting it scroll once the
+                      // buttons overflow.
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: switch (settings.actionButtonAlignment) {
+                            ActionButtonAlignment.left => MainAxisAlignment.start,
+                            ActionButtonAlignment.center => MainAxisAlignment.center,
+                            ActionButtonAlignment.right => MainAxisAlignment.end,
+                          },
+                          children: _buildOrderedActionButtons(context, ref, currentOrder, settings, l10n),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
           ),
-          // Printing status overlay
-          StreamBuilder<String?>(
-            stream: ref.read(printingServiceProvider).printingStatusStream,
-            builder: (context, snapshot) {
-              if (!snapshot.hasData || snapshot.data == null) {
-                return const SizedBox.shrink();
-              }
-              return Container(
-                color: Colors.black54,
-                child: Center(
-                  child: Card(
-                    elevation: 8,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(
-                            width: 48,
-                            height: 48,
-                            child: CircularProgressIndicator(strokeWidth: 4),
-                          ),
-                          const SizedBox(height: 20),
-                          Text(
-                            snapshot.data!,
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
+          // Print status — a corner pill, not the full-screen scrim this used
+          // to be. Prints no longer block the cashier's tap, so a background
+          // job must not black out the till to report on itself. Print
+          // FAILURES still stick here until acknowledged, which is what stops
+          // a dead printer from being silent now that nothing waits on it.
+          const PrintStatusIndicator(),
         ],
       ),
       ),
@@ -729,7 +984,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final selected = await showDialog<String>(
       context: context,
       builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: AppTheme.brLg),
         child: SizedBox(
           width: 400,
           child: Padding(
@@ -752,7 +1007,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         backgroundColor: _orderTypeColor(type),
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
+                            borderRadius: AppTheme.brLg),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -787,45 +1042,165 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     }
   }
 
-  /// Touch-friendly delivery-address entry (uses the on-screen keyboard).
+  /// Touch-friendly delivery details — address plus the delivery fee (uses the
+  /// on-screen keyboard).
+  ///
+  /// The fee field distinguishes empty from zero on purpose: leaving it blank
+  /// means "no delivery fee recorded", typing `0` means "delivery is free".
+  /// See [CurrentOrder.deliveryFee].
   Future<void> _showDeliveryAddressDialog(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
-    final controller = TextEditingController(
-        text: ref.read(orderProvider).deliveryAddress ?? '');
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.delivery_dining, color: Colors.blue),
-            const SizedBox(width: 8),
-            Text(l10n.translate('delivery_address')),
-          ],
-        ),
-        content: OnscreenKeyboardTextField(
-          controller: controller,
-          autofocus: true,
-          maxLines: 3,
-          decoration: InputDecoration(
-            hintText: l10n.translate('enter_delivery_address'),
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(l10n.translate('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: Text(l10n.translate('save')),
-          ),
-        ],
-      ),
+    final order = ref.read(orderProvider);
+    final addressController =
+        TextEditingController(text: order.deliveryAddress ?? '');
+    final feeController = TextEditingController(
+      text: order.hasDeliveryFee ? _trimAmount(order.deliveryFee!) : '',
     );
-    if (result != null) {
-      ref.read(orderProvider.notifier).setDeliveryAddress(result);
-    }
+    final currency = ref.read(currencySymbolProvider);
+
+    // The shop's own one-tap fees. Most deliveries cost one of two or three
+    // amounts, and typing the same number every time is the slow part.
+    final feePresets = ref.read(settingsProvider).deliveryFeePresets;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final media = MediaQuery.of(ctx).size;
+        return StatefulBuilder(builder: (ctx, setLocal) {
+          return AlertDialog(
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            titlePadding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+            contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            title: Row(
+              children: [
+                const Icon(Icons.delivery_dining, color: Colors.blue, size: 28),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(l10n.translate('delivery_details'),
+                      style: const TextStyle(fontSize: 22)),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: media.width * 0.72 > 820 ? 820 : media.width * 0.72,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    AdaptiveKeyboardTextField(
+                      controller: addressController,
+                      autofocus: true,
+                      maxLines: 3,
+                      style: const TextStyle(fontSize: 18),
+                      decoration: InputDecoration(
+                        labelText: l10n.translate('delivery_address'),
+                        hintText: l10n.translate('enter_delivery_address'),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    AdaptiveKeyboardTextField(
+                      controller: feeController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      style: const TextStyle(fontSize: 18),
+                      decoration: InputDecoration(
+                        labelText:
+                            '${l10n.translate('delivery_fee')} ($currency)',
+                        hintText: l10n.translate('delivery_fee_hint'),
+                        helperText: l10n.translate('delivery_fee_helper'),
+                        helperMaxLines: 2,
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                    if (feePresets.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          for (final fee in feePresets)
+                            ChoiceChip(
+                              label: Text(
+                                '${_trimAmount(fee)} $currency',
+                                style: const TextStyle(fontSize: 17),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 12),
+                              // A preset REPLACES the fee rather than appending
+                              // to it — unlike a note, two fees are not a fee.
+                              selected: feeController.text.trim() ==
+                                  _trimAmount(fee),
+                              onSelected: (_) {
+                                feeController.text = _trimAmount(fee);
+                                feeController.selection =
+                                    TextSelection.collapsed(
+                                        offset: feeController.text.length);
+                                setLocal(() {});
+                              },
+                            ),
+                          if (feeController.text.trim().isNotEmpty)
+                            ActionChip(
+                              avatar: const Icon(Icons.close, size: 18),
+                              label: Text(l10n.translate('clear'),
+                                  style: const TextStyle(fontSize: 17)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 12),
+                              onPressed: () {
+                                feeController.clear();
+                                setLocal(() {});
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 16),
+                    textStyle: const TextStyle(fontSize: 17)),
+                child: Text(l10n.translate('cancel')),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 16),
+                    textStyle: const TextStyle(fontSize: 17)),
+                child: Text(l10n.translate('save')),
+              ),
+            ],
+          );
+        });
+      },
+    );
+
+    if (saved != true) return;
+
+    final notifier = ref.read(orderProvider.notifier);
+    notifier.setDeliveryAddress(addressController.text.trim());
+
+    // Blank (or unparseable) clears the fee rather than storing 0 — the two
+    // states carry different meanings all the way to the server.
+    final raw = feeController.text.trim().replaceAll(',', '.');
+    notifier.setDeliveryFee(raw.isEmpty ? null : double.tryParse(raw));
+  }
+
+  /// Money as the cashier would type it: drop a trailing `.00` so reopening
+  /// the dialog shows `15`, not `15.00`.
+  static String _trimAmount(double value) {
+    final fixed = value.toStringAsFixed(2);
+    return fixed.endsWith('.00') ? fixed.substring(0, fixed.length - 3) : fixed;
   }
 
   Widget _buildActionButton({
@@ -879,7 +1254,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               onLongPress: onLongPress,
               style: OutlinedButton.styleFrom(
                 foregroundColor: color,
-                side: BorderSide(color: color ?? Colors.grey),
+                side: BorderSide(color: color ?? Theme.of(context).colorScheme.outline),
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.zero,
                 ),
@@ -946,7 +1321,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               icon: _orderTypeIcon(currentOrder.type),
               label: _orderTypeLabel(currentOrder.type, l10n),
               color: isTableSelected
-                  ? Colors.grey // Disabled look when table is selected
+                  ? Theme.of(context).colorScheme.onSurfaceVariant // Disabled look when table is selected
                   : _orderTypeColor(currentOrder.type),
               onPressed: isTableSelected
                   ? null // Disable when a table is selected (table ⇒ dine-in)
@@ -1007,14 +1382,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                       // Refresh tables provider
                       ref.invalidate(areaTablesProvider);
-
-                      if (context.mounted) {
-                        SnackBarHelper.showSuccessSnackBar(
-                          context,
-                          ref,
-                          '${l10n.translate('order_transferred_to')} $tableName',
-                        );
-                      }
                     }
                     return;
                   }
@@ -1042,41 +1409,23 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     //   order = await applyTipIfEnabled(context, ref, order);
                     // }
                     if (!context.mounted) return;
-                    final paymentResult = await showDialog<bool>(
+                    // The result is not inspected: PaymentScreen already
+                    // committed the payment and cleared the order, and the
+                    // confirmation snackbar this used to show is gone.
+                    await showDialog<bool>(
                       context: context,
                       builder: (context) => PaymentScreen(order: order),
                     );
-
-                    if (paymentResult == true && context.mounted) {
-                      SnackBarHelper.showSuccessSnackBar(
-                        context,
-                        ref,
-                        l10n.translate('payment_successful'),
-                      );
-                    }
                     return;
                   }
 
                   if (action == 'cleared') {
-                    final clearedTableName = result['tableName'];
-                    SnackBarHelper.showSuccessSnackBar(
-                      context,
-                      ref,
-                      '$clearedTableName ${l10n.translate('table_cleared')}',
-                    );
                     return;
                   }
 
                   if (action == 'addItems') {
                     if (existingOrder != null) {
                       ref.read(orderProvider.notifier).loadOrder(existingOrder);
-                      if (context.mounted) {
-                        SnackBarHelper.showInfoSnackBar(
-                          context,
-                          ref,
-                          'Adding items to $tableName order',
-                        );
-                      }
                     }
                     return;
                   }
@@ -1101,13 +1450,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       }
                     }
                     ref.read(orderProvider.notifier).loadOrder(existingOrder);
-                    if (context.mounted) {
-                      SnackBarHelper.showInfoSnackBar(
-                        context,
-                        ref,
-                        '${l10n.translate('order')} ${l10n.translate('for')} $tableName',
-                      );
-                    }
                   } else {
                     // Empty table — preserve the cashier's current cart and
                     // just attach the table. setTable() clears items, so we
@@ -1225,16 +1567,23 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           }
           break;
 
-        case 'coupon':
-          shouldShow = settings.showCouponButton;
-          if (shouldShow) {
-            button = _buildActionButton(
-              icon: Icons.discount,
-              label: l10n.translate('coupon'),
-              onPressed: () {},
-            );
-          }
-          break;
+        // Coupon button hidden. Its handler was an empty `onPressed: () {}` —
+        // it drew a button that did nothing at all, which is worse than not
+        // being there. With no case here `button` stays null and the loop
+        // below skips the key, so a saved button order containing 'coupon'
+        // simply renders nothing. Uncomment to bring it back, and give it a
+        // handler before you do.
+        //
+        // case 'coupon':
+        //   shouldShow = settings.showCouponButton;
+        //   if (shouldShow) {
+        //     button = _buildActionButton(
+        //       icon: Icons.discount,
+        //       label: l10n.translate('coupon'),
+        //       onPressed: () {},
+        //     );
+        //   }
+        //   break;
 
         case 'discount':
           shouldShow = settings.showDiscountButton &&
@@ -1253,14 +1602,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         context: context,
                         builder: (context) => ManualDiscountDialog(
                           currentPercentage: currentOrder.discountPercentage,
-                          currentNote: currentOrder.note,
+                          // The dialog's field is "reason for discount" — it
+                          // used to be stored in `order.note`, which the KDS
+                          // and the kitchen ticket read, so a discount wiped
+                          // the kitchen instruction. It has its own field now.
+                          currentNote: currentOrder.discountReason,
                         ),
                       );
                       if (result != null) {
                         final percentage = result['percentage'] as double? ?? 0.0;
-                        final note = result['note'] as String?;
+                        final reason = result['note'] as String?;
                         ref.read(orderProvider.notifier).setDiscountPercentage(percentage);
-                        ref.read(orderProvider.notifier).setNote(note);
+                        ref.read(orderProvider.notifier).setDiscountReason(reason);
                       }
                     },
             );
@@ -1282,13 +1635,39 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       final orderRepo = ref.read(orderRepositoryProvider);
                       final settings = ref.read(settingsProvider);
 
+                      if (currentUser == null) return;
+                      if (printSession == null) {
+                        if (context.mounted) SnackBarHelper.showErrorSnackBar(context, ref, 'No active session');
+                        return;
+                      }
+
+                      // Printing PERSISTS first, on update as well as on
+                      // insert. It used to save only a brand-new order and
+                      // print `currentOrder` straight from memory for one that
+                      // already existed, so items added since the last save
+                      // were printed but never written. Two things went wrong
+                      // with that: the added lines were lost on the next
+                      // reload, and — because an unsaved line has no id —
+                      // `_markItemsAsPrinted` skipped them, so the kitchen and
+                      // the additions-only order ticket both re-sent them the
+                      // next time round.
+                      //
+                      // Skipped for an order this cashier may not write to, so
+                      // Print stays a reprint rather than becoming a way round
+                      // the waiter-order guard (updateOrder also claims the
+                      // order for the current user). They cannot have added
+                      // anything to it either — canAddItemToCurrentOrder gates
+                      // on the same rule — so there is nothing to persist.
+                      final mayPersist = canEditWaiterOrder(ref);
+
                       int? orderId = currentOrder.orderId;
-                      if (!currentOrder.isSaved() && currentUser != null) {
-                        if (printSession == null) {
-                          if (context.mounted) SnackBarHelper.showErrorSnackBar(context, ref, 'No active session');
-                          return;
-                        }
-                        try {
+                      try {
+                        if (currentOrder.isSaved()) {
+                          if (mayPersist) {
+                            _logger.debug('Print: Updating order $orderId with ${currentOrder.items.length} items');
+                            await orderRepo.updateOrder(currentOrder);
+                          }
+                        } else {
                           _logger.debug('Print: Saving new order with ${currentOrder.items.length} items');
                           orderId = await orderRepo.saveOrder(
                             currentOrder,
@@ -1300,39 +1679,111 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           if (currentOrder.tableId != null) {
                             await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
                           }
-
-                          final reloadedOrder = await orderRepo.getOrderById(orderId);
-                          if (reloadedOrder != null) {
-                            ref.read(orderProvider.notifier).loadOrder(reloadedOrder);
-                          }
-                        } catch (e) {
-                          _logger.error('Error saving order for print: $e');
-                          if (context.mounted) {
-                            SnackBarHelper.showErrorSnackBar(
-                              context,
-                              ref,
-                              'Error saving order: $e',
-                            );
-                          }
-                          return;
                         }
+                      } catch (e) {
+                        _logger.error('Error saving order for print: $e');
+                        if (context.mounted) {
+                          SnackBarHelper.showErrorSnackBar(
+                            context,
+                            ref,
+                            'Error saving order: $e',
+                          );
+                        }
+                        return;
                       }
 
                       if (context.mounted) {
-                        final orderToPrint = currentOrder.isSaved()
-                            ? currentOrder
-                            : (orderId != null ? await orderRepo.getOrderById(orderId) : null);
+                        // Always print the reloaded row, never the in-memory
+                        // cart: the reload is what gives every line its
+                        // database id and its true printed quantities, which
+                        // is what the delta filter and the printed-mark both
+                        // run on.
+                        final orderToPrint =
+                            orderId == null ? null : await orderRepo.getOrderById(orderId);
+                        if (orderToPrint != null) {
+                          ref.read(orderProvider.notifier).loadOrder(orderToPrint);
+                        }
 
                         if (orderToPrint != null) {
-                          await showPrintOptionsDialog(
+                          // Identity deliberately not passed: the printing
+                          // service resolves the store name, address and phone
+                          // from settings. This site used to pass an EMPTY
+                          // store name, which is not null, so the header
+                          // printed a blank line and the shop's name never
+                          // appeared on a button-printed ticket while the
+                          // automatic one carried it.
+                          final printed = await showPrintOptionsDialog(
                             context,
                             order: orderToPrint,
-                            cashierName: currentUser?.firstName,
-                            storeName: "",
+                            cashierName: currentUser.firstName,
                           );
+
+                          // Reload once the print has landed. Printing stamps
+                          // kdsPrintedQuantity / orderTicketPrintedQuantity on
+                          // the rows it actually sent, and updateOrder
+                          // re-inserts every unpaid line FROM MEMORY — so a
+                          // cart still holding the pre-print zeros writes them
+                          // straight back over the stamps, and the next round
+                          // re-sends the kitchen everything it already has.
+                          if (printed == true && context.mounted && orderId != null) {
+                            final refreshed = await orderRepo.getOrderById(orderId);
+                            if (refreshed != null) {
+                              ref.read(orderProvider.notifier).loadOrder(refreshed);
+                            }
+                          }
                         }
                       }
                     },
+            );
+          }
+          break;
+
+        case 'cancelOrder':
+          shouldShow = settings.showCancelOrderButton &&
+              permissionService.hasPermission(Permissions.ordersCancel);
+          if (shouldShow) {
+            // Only ever enabled for an order that has been saved. Cancelling
+            // an unsaved basket is what the clear button is for, and there is
+            // nothing on the server to cancel.
+            final canCancel = currentOrder.isSaved() &&
+                currentOrder.status != 'CANCELED' &&
+                !_isSavingOrder;
+            button = _buildActionButton(
+              icon: Icons.cancel_outlined,
+              label: l10n.translate('cancel_order'),
+              color: canCancel ? Colors.red[700] : null,
+              onPressed: canCancel ? _cancelCurrentOrder : null,
+            );
+          }
+          break;
+
+        case 'cashDrawer':
+          shouldShow = settings.showCashDrawerButton;
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.point_of_sale,
+              label: l10n.translate('open_drawer_now_action'),
+              color: Colors.brown,
+              // Independent of the auto-open-on-payment setting: that one is
+              // about what happens when a payment lands, this is the cashier
+              // needing the drawer open between sales — for change, a float
+              // top-up, or a spot count.
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final ok = await ref
+                    .read(printingServiceProvider)
+                    .kickCashDrawer();
+                if (!context.mounted) return;
+                // Only the failure is worth a snackbar: a drawer that opened
+                // announced itself, one that stayed shut needs saying.
+                if (ok) return;
+                messenger
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(SnackBar(
+                    content: Text(l10n.translate('drawer_open_failed')),
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                  ));
+              },
             );
           }
           break;
@@ -1419,32 +1870,62 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               icon: Icons.payment,
               label: l10n.translate('pay'),
               color: Colors.green[700],
+              // A tap does whatever settings say. A long press always opens
+              // the payment screen with the ticket-division grid forced
+              // open, so a cashier can divide the order into tickets before
+              // anything is paid — independent of payButtonAction, which
+              // only governs what a plain tap does.
               onPressed: (currentOrder.items.isEmpty || _isSavingOrder)
                   ? null
-                  : () => _payDirectly(),
+                  : (settings.payButtonAction == PayButtonAction.quickCash
+                      ? _payDirectly
+                      : _showPaymentDialog),
               onLongPress: (currentOrder.items.isEmpty || _isSavingOrder)
                   ? null
-                  : () => _showPaymentDialog(),
+                  : () => _showPaymentDialog(forceSplitOpen: true),
             );
           }
           break;
 
         case 'proceed':
-          // Proceed button is always shown (primary button).
+          // Primary button, but now hideable from settings like the others.
+          shouldShow = settings.showProceedButton;
           // New order needs orders:create; persisting a saved order is allowed if
           // the user can make any kind of edit (add/remove/modify) or has update.
           final canProceed = currentOrder.isSaved()
-              ? permissionService.hasAnyPermission([
-                  Permissions.ordersUpdate,
-                  Permissions.ordersItemAdd,
-                  Permissions.ordersItemRemove,
-                  Permissions.ordersItemModify,
-                ])
+              // Proceed on a saved order PERSISTS edits (updateOrder), so a
+              // waiter's order is off limits here too — otherwise the item
+              // guards could be satisfied line-by-line and the whole order
+              // still written back by a cashier who may not touch it.
+              ? (canEditWaiterOrder(ref) &&
+                  permissionService.hasAnyPermission([
+                    Permissions.ordersUpdate,
+                    Permissions.ordersItemAdd,
+                    Permissions.ordersItemRemove,
+                    Permissions.ordersItemModify,
+                  ]))
               : permissionService.hasPermission(Permissions.ordersCreate);
+          // Long-press additionally opens the payment screen (with the
+          // ticket-division grid forced open) — same downstream action the
+          // Pay button gates behind ticketsCreate, so the long-press on
+          // Proceed can't reach it when Pay itself would refuse to.
+          final canOpenPaymentFromProceed =
+              permissionService.hasPermission(Permissions.ticketsCreate);
           button = _buildActionButton(
             icon: Icons.check_circle,
             label: l10n.translate('proceed'),
             isPrimary: true,
+            onLongPress: (currentOrder.items.isEmpty ||
+                    !canProceed ||
+                    !canOpenPaymentFromProceed ||
+                    _isSavingOrder)
+                ? null
+                : () => _showPaymentDialog(
+                      forceSplitOpen: true,
+                      // Stands in for a Continue, so it owes the kitchen its
+                      // ticket — see [_firePostSavePrints].
+                      printOnSave: true,
+                    ),
             onPressed:
                 (currentOrder.items.isEmpty || !canProceed || _isSavingOrder)
                     ? null
@@ -1453,11 +1934,21 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     final orderRepo = ref.read(orderRepositoryProvider);
                     final currentUser = ref.read(currentUserProvider);
                     final settings = ref.read(settingsProvider);
-                    final printingService = ref.read(printingServiceProvider);
+                    // Printing now goes through _firePostSavePrints, which
+                    // reads the service itself.
 
                     if (currentUser == null) return;
                     final session = ref.read(currentSessionProvider);
-                    if (session == null) return;
+                    if (session == null) {
+                      // Surface the reason instead of silently doing nothing —
+                      // otherwise the cashier thinks the order saved when it
+                      // didn't. No session ⇒ no order (would be orphaned).
+                      if (mounted) {
+                        SnackBarHelper.showErrorSnackBar(
+                            context, ref, 'No active session — open a session first');
+                      }
+                      return;
+                    }
 
                     final ok = await _resolveRuleViolations();
                     if (!ok) return;
@@ -1486,68 +1977,32 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         }
                       }
 
+                      // The order is committed and durable at this point, so
+                      // the till is free. Clearing HERE — before the prints —
+                      // is the whole point: printing used to be awaited first,
+                      // which left the cart on screen for the duration of the
+                      // order slip plus every KDS station ticket.
+                      ref.read(orderProvider.notifier).clearOrder();
+
+                      // Prints are detached and self-serialising: PrintingService
+                      // queues them behind anything a waiter is already printing.
+                      // Failures are logged there and cannot lose kitchen work —
+                      // items are only marked printed on a confirmed success, so
+                      // KdsPrintMode.modificationsOnly re-sends them next time.
                       final reloadedOrder = await orderRepo.getOrderById(orderId);
 
                       if (reloadedOrder != null) {
-                        try {
-                          final prefs = ref.read(sharedPreferencesProvider);
-                          final businessName = prefs.getString('business_name');
-                          final hasTable = reloadedOrder.tableId != null;
-
-                          if (printingService.shouldPrint(
-                            PrintOutput.orderTicket,
-                            orderType: reloadedOrder.type,
-                            hasTable: hasTable,
-                          )) {
-                            await printingService.printOrderReceipt(
-                              order: reloadedOrder,
-                              cashierName: currentUser.firstName,
-                              storeName: businessName,
-                            );
-                          }
-
-                          if (printingService.config.kdsEnabled &&
-                              printingService.shouldPrint(
-                                PrintOutput.kds,
-                                orderType: reloadedOrder.type,
-                                hasTable: hasTable,
-                              )) {
-                            await printingService.printKdsTicket(
-                              order: reloadedOrder,
-                              cashierName: currentUser.firstName,
-                            );
-                          }
-                        } catch (printError) {
-                          _logger.error('Print error on proceed: $printError');
-                        }
+                        unawaited(_firePostSavePrints(reloadedOrder));
                       } else {
                         _logger.error('Failed to reload order after save - orderId: $orderId');
                       }
-                      
-                      // Always clear order after successful save, regardless of reload/print outcome
-                      ref.read(orderProvider.notifier).clearOrder();
 
-                      // Auto-sync if online
-                      {
-                        final isOnline = ref.read(lastKnownOnlineStatusProvider);
-                        if (isOnline) {
-                          try {
-                            final syncManager = ref.read(syncManagerProvider.notifier);
-                            await syncManager.autoSyncOrder(orderId);
-                            _logger.info('Auto-synced COMPLETED order #$orderId on proceed');
-                          } catch (e) {
-                            _logger.error('Auto-sync failed on proceed: $e');
-                          }
-                        }
-                      }
+                      // NOTE: no autoSyncOrder here. OrderRepository.saveOrder /
+                      // updateOrder already push this order (detached), and the
+                      // isSynced=false sweep is the backstop either way — this
+                      // call was a second, awaited copy of the same two HTTP
+                      // round-trips.
 
-                      if (context.mounted) {
-                        SnackBarHelper.showSuccessSnackBar(
-                          context,
-                          ref,
-                          'Order saved successfully',
-                        );
-                      }
                     } catch (e) {
                       if (context.mounted) {
                         SnackBarHelper.showErrorSnackBar(
@@ -1667,141 +2122,164 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           ? unpaidTotal * (1 - reloadedOrder.discountPercentage / 100)
           : unpaidTotal;
 
-      // Insert ticket with default payment method (cash)
-      final ticketId = await database.into(database.tickets).insert(
-        TicketsCompanion.insert(
-          num: ticketNumStr,
-          orderId: orderId,
-          paymentMethod: TransactionType.cash.value,
-          amount: total,
-          sessionId: Value(session.id),
-          // z_day = the session's opening calendar day (constant across midnight).
-          zDay: Value(ref.read(currentZDayProvider)),
-          isPaid: const Value(true),
-          printCount: const Value(0),
-          date: Value(DateTime.now()),
-        ),
+      // Insert ticket + mark the unpaid items PAID atomically — mirrors
+      // payment_screen._processPayment. Without the transaction, a failure
+      // between the ticket insert and the item updates would leave a paid
+      // ticket with still-PENDING items: the order reads as paid on the ticket
+      // but unpaid on the lines, so settleOrderAndFreeTable never completes it
+      // and the table is never freed.
+      final zDay = ref.read(currentZDayProvider);
+      late final int ticketId;
+      await database.transaction(() async {
+        ticketId = await database.into(database.tickets).insert(
+          TicketsCompanion.insert(
+            num: ticketNumStr,
+            orderId: orderId,
+            paymentMethod: TransactionType.cash.value,
+            amount: total,
+            sessionId: Value(session.id),
+            // z_day = the session's opening calendar day (constant across midnight).
+            zDay: Value(zDay),
+            isPaid: const Value(true),
+            printCount: const Value(0),
+            date: Value(DateTime.now()),
+          ),
+        );
+
+        // ✅ Update only UNPAID order items (don't touch already-paid items)
+        for (final item in unpaidItems) {
+          if (item.id != null) {
+            await (database.update(database.orderProducts)
+              ..where((tbl) => tbl.id.equals(item.id!))).write(
+              OrderProductsCompanion(
+                ticketId: Value(ticketId),
+                state: const Value('PAID'),
+                updatedAt: Value(DateTime.now()),
+              ),
+            );
+          }
+        }
+      });
+
+      // Everything below builds the paperwork for the items just paid. All of
+      // it is read off local state NOW and printed DETACHED further down, so
+      // the cashier never waits on a printer to get the till back.
+      final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
+      final storeAddress = prefs.getString('business_address');
+      final storePhone = prefs.getString('business_phone');
+
+      final itemsForPrint = unpaidItems.map((item) {
+        return {
+          'name': item.displayName,
+          'quantity': item.quantity,
+          'price': item.totalPrice,
+          'components': item.components.map((c) => {'name': c.name, 'quantity': c.quantity}).toList(),
+        };
+      }).toList();
+
+      final hasTable = reloadedOrder.tableId != null;
+      final feeForThisTicket = PrintingService.feeForThisTicket(
+        reloadedOrder.deliveryFee,
+        anythingAlreadyPaid: existingTickets.any((t) => t.isPaid),
       );
 
-      // ✅ Update only UNPAID order items (don't touch already-paid items)
-      for (final item in unpaidItems) {
-        if (item.id != null) {
-          await (database.update(database.orderProducts)
-            ..where((tbl) => tbl.id.equals(item.id!))).write(
-            OrderProductsCompanion(
-              ticketId: Value(ticketId),
-              state: const Value('PAID'),
-              updatedAt: Value(DateTime.now()),
-            ),
+      // Detached print job. PrintingService serialises it behind anything a
+      // waiter is already printing, and a failure cannot lose kitchen work:
+      // items are only marked printed on a confirmed success, so
+      // KdsPrintMode.modificationsOnly re-sends them on the next fire.
+      unawaited(() async {
+        try {
+          // Print KDS ticket first (for kitchen)
+          if (printingService.config.kdsEnabled &&
+              printingService.shouldPrint(
+                PrintOutput.kds,
+                orderType: reloadedOrder.type,
+                hasTable: hasTable,
+              )) {
+            try {
+              await printingService.printKdsTicket(
+                order: reloadedOrder,
+                cashierName: currentUser.firstName,
+              );
+            } catch (kdsError) {
+              _logger.error('KDS print failed on direct payment: $kdsError');
+              // Continue even if KDS fails
+            }
+          }
+
+          // Then print customer receipt + store copy + drawer via orchestrator
+          await printingService.printPaymentDocuments(
+            ticketId: ticketId,
+            ticketNumber: ticketNumStr,
+            // Products only — the figure the ticket row carries and every sales
+            // total is built from. The fee travels beside it as its own line.
+            amount: total,
+            deliveryFee: feeForThisTicket,
+            paymentMethod: TransactionType.cash.value,
+            createdAt: DateTime.now(),
+            items: itemsForPrint,
+            orderType: reloadedOrder.type,
+            hasTable: hasTable,
+            orderCode: reloadedOrder.orderCode,
+            cashierName: currentUser.firstName,
+            waiterName: reloadedOrder.waiterName,
+            storeName: businessName,
+            storeAddress: storeAddress,
+            storePhone: storePhone,
+            customerName: reloadedOrder.customerName,
+            customerPhone: reloadedOrder.customerPhone,
+            deliveryAddress: reloadedOrder.deliveryAddress,
+            tableName: reloadedOrder.tableName,
+            numberOfPersons: reloadedOrder.numberOfPersons,
           );
+
+          await database.customStatement(
+            'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
+            [ticketId],
+          );
+        } catch (e) {
+          _logger.error('Print failed: $e');
         }
+      }());
+
+      // Finalize atomically: mark paid + free the table (occupancy-based, so a
+      // stale in-memory tableId can't strand the table) in one transaction.
+      // Tolerates CANCELED lines. See OrderRepository.settleOrderAndFreeTable.
+      // Local writes, kept on the critical path: the table must be released
+      // before the cashier is told the till is free.
+      final paidStatus = settings.paidOrderDefaultStatus;
+      // Paying it here makes it this cashier's, wherever it came from.
+      await orderRepo.claimOrderForCurrentUser(orderId);
+
+      final completed = await orderRepo.settleOrderAndFreeTable(
+        orderId,
+        paidStatus: paidStatus,
+        clearTable: settings.autoClearTableAfterPaying,
+      );
+
+      // Money is recorded and the table is released — the till is free.
+      if (context.mounted) {
+        ref.read(orderProvider.notifier).clearOrder();
       }
 
-      // Print receipt using only the unpaid items being paid now
-      try {
-        final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
-
-        final itemsForPrint = unpaidItems.map((item) {
-          return {
-            'name': item.displayName,
-            'quantity': item.quantity,
-            'price': item.totalPrice,
-            'components': item.components.map((c) => {'name': c.name, 'quantity': c.quantity}).toList(),
-          };
-        }).toList();
-
-        final hasTable = reloadedOrder.tableId != null;
-
-        // Print KDS ticket first (for kitchen)
-        if (printingService.config.kdsEnabled &&
-            printingService.shouldPrint(
-              PrintOutput.kds,
-              orderType: reloadedOrder.type,
-              hasTable: hasTable,
-            )) {
-          try {
-            await printingService.printKdsTicket(
-              order: reloadedOrder,
-              cashierName: currentUser.firstName,
-            );
-          } catch (kdsError) {
-            _logger.error('KDS print failed on direct payment: $kdsError');
-            // Continue even if KDS fails
-          }
-        }
-
-        // Then print customer receipt + store copy + drawer via orchestrator
-        await printingService.printPaymentDocuments(
-          ticketId: ticketId,
-          ticketNumber: ticketNumStr,
-          amount: total,
-          paymentMethod: TransactionType.cash.value,
-          createdAt: DateTime.now(),
-          items: itemsForPrint,
-          orderType: reloadedOrder.type,
-          hasTable: hasTable,
-          orderCode: reloadedOrder.orderCode,
-          cashierName: currentUser.firstName,
-          storeName: businessName,
-          storeAddress: prefs.getString('business_address'),
-          storePhone: prefs.getString('business_phone'),
-          customerName: reloadedOrder.customerName,
-          customerPhone: reloadedOrder.customerPhone,
-          deliveryAddress: reloadedOrder.deliveryAddress,
-          tableName: reloadedOrder.tableName,
-          numberOfPersons: reloadedOrder.numberOfPersons,
-        );
-
-        await database.customStatement(
-          'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-          [ticketId],
-        );
-      } catch (e) {
-        _logger.error('Print failed: $e');
-      }
-
-      // Check if ALL order items are now paid
-      final updatedOrder = await orderRepo.getOrderById(orderId);
-      final allItemsPaid = updatedOrder != null && updatedOrder.unpaidItems.isEmpty;
-
-      if (allItemsPaid) {
-        // Update order status to paid default status (skip internal sync, we handle it below)
-        final paidStatus = settings.paidOrderDefaultStatus;
-        await orderRepo.updateOrderStatus(orderId, paidStatus, queueSyncOperation: false);
-
-        // Optional: free the table now that the whole order is paid.
-        if (settings.autoClearTableAfterPaying &&
-            currentOrder.tableId != null) {
-          try {
-            await orderRepo.clearTableOrder(currentOrder.tableId!);
-            ref.invalidate(areaTablesProvider);
-          } catch (e) {
-            _logger.error('Auto-clear table failed: $e');
-          }
-        }
-
-        // Auto-sync if online
+      if (completed) {
+        // Detached. Kept rather than deleted (unlike the Proceed path, where
+        // the repository already pushes): settleOrderAndFreeTable passes
+        // queueSyncOperation: false, so this is the paid order's only prompt
+        // push. It still writes isSynced = false, so the periodic sweep
+        // remains the backstop if this fails.
         final isOnline = ref.read(lastKnownOnlineStatusProvider);
         if (isOnline) {
-          try {
-            final syncManager = ref.read(syncManagerProvider.notifier);
-            await syncManager.autoSyncOrder(orderId);
-            _logger.info('Auto-synced $paidStatus order #$orderId after direct payment');
-          } catch (e) {
-            _logger.error('Auto-sync failed after direct payment: $e');
-          }
+          final syncManager = ref.read(syncManagerProvider.notifier);
+          unawaited(() async {
+            try {
+              await syncManager.autoSyncOrder(orderId);
+              _logger.info('Auto-synced $paidStatus order #$orderId after direct payment');
+            } catch (e) {
+              _logger.error('Auto-sync failed after direct payment: $e');
+            }
+          }());
         }
-      }
-
-      if (context.mounted) {
-        // Clear order
-        ref.read(orderProvider.notifier).clearOrder();
-
-        SnackBarHelper.showSuccessSnackBar(
-          context,
-          ref,
-          'Payment completed! Ticket #$ticketNumStr',
-        );
       }
     } catch (e) {
       _logger.error('Direct payment failed: $e');
@@ -1820,7 +2298,158 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   }
 
   /// Show payment dialog for split payment
-  Future<void> _showPaymentDialog() async {
+  /// Cancel the saved order currently on the panel.
+  ///
+  /// Asks first, and asks for a reason — a cancelled order is a hole in the
+  /// day's takings that somebody will ask about, and "no reason given" is a
+  /// worse answer than a hurried one. The reason is optional because refusing
+  /// to cancel until a cashier types something just gets a full stop typed.
+  ///
+  /// The status change flows through OrderRepository, which is what flags the
+  /// order's tickets as cancelled so its money leaves the session totals and
+  /// the Z report.
+  Future<void> _cancelCurrentOrder() async {
+    final l10n = AppLocalizations.of(context)!;
+    final order = ref.read(orderProvider);
+    if (!order.isSaved() || order.orderId == null) return;
+
+    final reasonCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.cancel_outlined,
+            color: Theme.of(ctx).colorScheme.error, size: 30),
+        title: Text(l10n.translate('cancel_order')),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '${l10n.translate('cancel_saved_order_confirm')}\n'
+                '${order.orderCode ?? ''}',
+                style: const TextStyle(fontSize: 15),
+              ),
+              const SizedBox(height: 14),
+              AdaptiveKeyboardTextField(
+                controller: reasonCtrl,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: l10n.translate('cancellation_reason'),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.translate('no')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            child: Text(l10n.translate('cancel_order')),
+          ),
+        ],
+      ),
+    );
+    final reason = reasonCtrl.text.trim();
+    reasonCtrl.dispose();
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ref.read(orderRepositoryProvider).updateOrderStatus(
+            order.orderId!,
+            'CANCELED',
+            cancellationReason: reason.isEmpty ? null : reason,
+            userId: ref.read(currentUserProvider)?.id,
+          );
+      // The table is only freed once the cancel actually landed — releasing it
+      // first would hand the table to the next party while the order it is
+      // still carrying failed to cancel.
+      if (order.tableId != null) {
+        await ref
+            .read(orderRepositoryProvider)
+            .setTableOrderId(order.tableId!, null);
+      }
+      ref.read(orderProvider.notifier).clearOrder();
+    } catch (e) {
+      if (mounted) SnackBarHelper.failure(context, e);
+    }
+  }
+
+  /// The order ticket + kitchen ticket a just-saved order fires, honouring the
+  /// cashier's per-output print rules.
+  ///
+  /// Shared by the Continue (Proceed) tap and by the long-press that opens the
+  /// payment screen to divide an order before collecting — that long-press
+  /// stands in for a Continue, so the kitchen has to receive the order exactly
+  /// as it would have. Without this, dividing a bill before paying sent the
+  /// food order nowhere.
+  ///
+  /// KDS mode is deliberately left to `config.defaultKdsMode`, the same as
+  /// every other caller: a shop on `modificationsOnly` gets only the items the
+  /// kitchen has not already seen, which is what makes re-firing this on an
+  /// order that was already sent safe.
+  ///
+  /// Print failures are logged and swallowed — the order is saved either way,
+  /// and a dead printer must not look like a failed save.
+  Future<void> _firePostSavePrints(CurrentOrder reloadedOrder) async {
+    final printingService = ref.read(printingServiceProvider);
+    final currentUser = ref.read(currentUserProvider);
+    final prefs = ref.read(sharedPreferencesProvider);
+    final hasTable = reloadedOrder.tableId != null;
+
+    try {
+      if (printingService.shouldPrint(
+        PrintOutput.orderTicket,
+        orderType: reloadedOrder.type,
+        hasTable: hasTable,
+      )) {
+        await printingService.printOrderReceipt(
+          order: reloadedOrder,
+          cashierName: currentUser?.firstName,
+          storeName: prefs.getString('business_name'),
+          storeAddress: prefs.getString('business_address'),
+          storePhone: prefs.getString('business_phone'),
+          // Only the round just added. Continue on an open table used to
+          // reprint the whole bill every time — a table on its third round
+          // got three full bills instead of a slip per round. The kitchen
+          // has worked this way since KdsPrintMode existed; this brings the
+          // customer slip in line. A full bill is still one tap away from
+          // the division window's print button.
+          mode: OrderTicketPrintMode.additionsOnly,
+        );
+      }
+
+      if (printingService.config.kdsEnabled &&
+          printingService.shouldPrint(
+            PrintOutput.kds,
+            orderType: reloadedOrder.type,
+            hasTable: hasTable,
+          )) {
+        await printingService.printKdsTicket(
+          order: reloadedOrder,
+          cashierName: currentUser?.firstName,
+        );
+      }
+    } catch (e) {
+      _logger.error('Post-save print failed: $e');
+    }
+  }
+
+  /// [printOnSave] fires [_firePostSavePrints] after the save — true only for
+  /// the long-press on Continue, which replaces a Proceed and therefore owes
+  /// the kitchen its ticket. The long-press on Pay leaves it false: that order
+  /// was already proceeded, so the kitchen has it.
+  Future<void> _showPaymentDialog({
+    bool forceSplitOpen = false,
+    bool printOnSave = false,
+  }) async {
     if (_isSavingOrder) return;
     var currentOrder = ref.read(orderProvider);
     final orderRepo = ref.read(orderRepositoryProvider);
@@ -1873,24 +2502,45 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         throw Exception('Failed to reload order');
       }
 
+      // Fired before the dialog, not after: the kitchen should start on the
+      // food while the cashier is still dividing the bill. Detached, so the
+      // division window opens immediately rather than behind the kitchen
+      // ticket — the print is already queued by the time it appears.
+      if (printOnSave) {
+        unawaited(_firePostSavePrints(reloadedOrder));
+      }
+
       if (context.mounted) {
-        // Open payment screen dialog
+        // Straight to the payment screen: it owns the cash pad, so there is
+        // no prompt in front of it to answer the same question twice.
         final result = await showDialog<bool>(
           context: context,
-          builder: (context) => PaymentScreen(order: reloadedOrder),
+          builder: (context) => PaymentScreen(
+            order: reloadedOrder,
+            forceSplitOpen: forceSplitOpen,
+          ),
         );
 
         if (result == true && context.mounted) {
           // Payment completed - order already marked COMPLETED and synced by PaymentScreen
           // Clear order
           ref.read(orderProvider.notifier).clearOrder();
-          SnackBarHelper.showSuccessSnackBar(
-            context,
-            ref,
-            'Payment completed successfully',
-          );
+        } else if ((result == false || forceSplitOpen) && context.mounted) {
+          // "Divide now, collect later": the order is saved, its table is
+          // linked and its division is remembered, so the till should be free
+          // for the next customer — exactly as a plain Continue leaves it.
+          // Reloading it into the panel instead (what the branch below does)
+          // left the cashier unable to start another order without manually
+          // clearing this one.
+          //
+          // `result == false` is the payment screen's own "Save & continue"
+          // button, which means the same thing however the screen was opened
+          // — a cashier who reached it through plain Pay and then chose to
+          // save the division rather than collect wants the till freed too.
+          ref.read(orderProvider.notifier).clearOrder();
         } else if (context.mounted) {
-          // Dialog closed without completion, reload order state
+          // Backed out of a normal payment: keep the order in the panel, the
+          // cashier is still working on it.
           final updatedOrder = await orderRepo.getOrderById(orderId);
           if (updatedOrder != null) {
             ref.read(orderProvider.notifier).loadOrder(updatedOrder);
@@ -1918,14 +2568,106 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   /// intermediate "missing required field" alert. After each pick we
   /// re-validate; we bail out only if the cashier cancels a picker without
   /// supplying a value, so they never get trapped in an infinite re-prompt.
+  /// Walk the order past every rule it breaks, one picker at a time.
+  ///
+  /// Returns false when the cashier backs out of a picker, and SAYS SO before
+  /// it does. Silence here was the bug behind "I press pay, the table dialog
+  /// opens, I close it, and nothing happens": the payment was abandoned
+  /// correctly and invisibly, so the button looked broken rather than blocked.
+  ///
+  /// It also refuses to carry on into a payment for a DIFFERENT order than the
+  /// one the cashier pressed pay on. Picking a table that already has an open
+  /// order swaps the whole basket for that order — carrying straight on would
+  /// take money for a ticket nobody had looked at.
+  /// Ask the cashier to finish tagging courses, when they started.
+  ///
+  /// Returns false only if they back out entirely — "Send anyway" is a real
+  /// answer, because a kitchen waiting on food should never be held up by a
+  /// bookkeeping prompt. The untagged lines then print under "Other", which
+  /// is honest about what the cashier actually said.
+  Future<bool> _resolveMissingCourses() async {
+    if (!ref.read(settingsProvider).coursesEnabled) return true;
+    final order = ref.read(orderProvider);
+    // Paid lines are already on a printed ticket; nothing can be done about
+    // their course now, so they must not trigger the prompt.
+    final open = [
+      for (final item in order.items)
+        if (item.ticketId == null) item,
+    ];
+    if (!hasPartialCourses([for (final i in open) i.courseNo])) return true;
+    if (!mounted) return true;
+
+    final l10n = AppLocalizations.of(context)!;
+    final missing = [
+      for (final i in open)
+        if (OrderCourse.fromNumber(i.courseNo) == null) i.displayName,
+    ];
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('course_missing_title')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.translate('course_missing_hint')),
+            const SizedBox(height: 12),
+            // Naming them turns "go and look" into "go and fix these three".
+            Text(
+              missing.take(6).join(', ') + (missing.length > 6 ? '…' : ''),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.translate('send_anyway')),
+          ),
+        ],
+      ),
+    );
+    return go == true;
+  }
+
   Future<bool> _resolveRuleViolations() async {
+    if (!await _resolveMissingCourses()) return false;
     final settings = ref.read(settingsProvider);
+    final startedOnOrderId = ref.read(orderProvider).orderId;
     while (true) {
       final order = ref.read(orderProvider);
       final violation = validateOrderRules(order, settings);
-      if (violation == null) return true;
+      if (violation == null) {
+        if (order.orderId != startedOnOrderId) {
+          if (mounted) {
+            SnackBarHelper.showErrorSnackBar(
+              context,
+              ref,
+              AppLocalizations.of(context)!
+                  .translate('order_switched_check_before_paying'),
+            );
+          }
+          return false;
+        }
+        return true;
+      }
       final picked = await _runRuleFix(violation.fix);
-      if (!picked) return false; // cancelled the picker — abort save/pay
+      if (!picked) {
+        // Say which rule stopped it. The picker they just closed is the clue,
+        // but only if they connect the two.
+        if (mounted) {
+          SnackBarHelper.showErrorSnackBar(
+            context,
+            ref,
+            AppLocalizations.of(context)!.translate(violation.errorKey),
+          );
+        }
+        return false;
+      }
     }
   }
 

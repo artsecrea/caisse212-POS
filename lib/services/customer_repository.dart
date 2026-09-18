@@ -1,4 +1,4 @@
-import 'package:drift/drift.dart' show Value;
+import 'package:drift/drift.dart' show Value, OrderingTerm;
 
 import '../data/database/app_database.dart';
 import '../utils/phone_normalizer.dart';
@@ -43,9 +43,17 @@ class CustomerRepository {
     final phoneNorm = normalizePhone(phoneRaw);
     if (phoneNorm.isEmpty) return null;
 
-    final existing = await (_db.select(_db.customers)
-          ..where((c) => c.phoneNormalized.equals(phoneNorm)))
-        .getSingleOrNull();
+    // Duplicate-tolerant lookup: the table SHOULD be single-row-per-phone, but
+    // historical/synced data can hold duplicates. `getSingleOrNull()` THROWS on
+    // >1 match ("Too many elements"), which froze the external-order dialogs
+    // (the error escaped and the busy flag never reset). Take the oldest row
+    // deterministically instead.
+    final matches = await (_db.select(_db.customers)
+          ..where((c) => c.phoneNormalized.equals(phoneNorm))
+          ..orderBy([(c) => OrderingTerm(expression: c.id)])
+          ..limit(1))
+        .get();
+    final existing = matches.isEmpty ? null : matches.first;
 
     if (existing != null) {
       await (_db.update(_db.customers)

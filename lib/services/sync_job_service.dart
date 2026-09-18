@@ -96,6 +96,13 @@ class SyncJobService {
 
       final bulkSize = _prefs.getInt(_bulkSyncSizeKey) ?? 50;
 
+      // 2b. Sync Z (shift) rows BEFORE sessions — sessions reference the Z code,
+      //     so the server must know the Z first.
+      final zsSynced = await _syncService.syncZsBulk(batchSize: bulkSize);
+      if (zsSynced > 0) {
+        _logger.info('Synced $zsSynced Z shifts');
+      }
+
       // 3. Sync ended sessions FIRST (tickets may reference sessions)
       final sessionsSynced = await _syncService.syncSessionsBulk(batchSize: bulkSize);
       if (sessionsSynced > 0) {
@@ -121,10 +128,15 @@ class SyncJobService {
         _logger.info('Synced $customersSynced customers');
       }
 
-      // 7. Pull server-side deltas (admin edits, tombstones)
-      await _syncService.pullAllDeltas(_prefs);
+      // 7. NOTE: the periodic job deliberately does NOT pull server-side order
+      // deltas. Re-downloading and rebuilding orders this POS already owns is
+      // wasted work (and used to clobber client-only state). Local orders are
+      // still PUSHED above; the down-pull now happens ONLY on an explicit
+      // request — the top-bar Sync button, the Sync Inspector, or a backend
+      // `sync_orders` command. Restore `pullAllDeltas` here to re-enable
+      // automatic reconciliation for multi-till / server-side edits.
 
-      _logger.info('Sync job completed');
+      _logger.info('Sync job completed (push-only; order pull is manual)');
     } catch (e) {
       _logger.error('Sync job failed: $e');
     }
@@ -183,6 +195,47 @@ class SyncJobService {
   Future<void> syncNow() async {
     _logger.info('Manual sync triggered');
     await _runSyncJob();
+  }
+
+  /// Whether any locally-queued data (orders/tickets/sessions/customers/Z
+  /// shifts) is still waiting to reach the server. Returns false when offline —
+  /// there's nothing we could push anyway. Used by the exit flow so a clean
+  /// (fully-synced) exit doesn't block on a sync at all.
+  Future<bool> hasPendingForExit() async {
+    if (!_isOnlineCallback()) return false;
+    try {
+      final status = await _syncService.getSyncStatus();
+      final queued = status.values.fold<int>(0, (a, b) => a + b);
+      return queued > 0 || (await _syncService.countUnsyncedZs()) > 0;
+    } catch (e) {
+      _logger.error('hasPendingForExit check failed: $e');
+      return false;
+    }
+  }
+
+  /// Push-only flush for app exit. Unlike [syncNow] it uploads locally-queued
+  /// rows and stops — it deliberately skips `pullAllDeltas` and the daily
+  /// housekeeping (retention/clear/identity-fix). Exit only needs to guarantee
+  /// local data reaches the server; the full cycle is slow and pointless while
+  /// the app is closing (and was the cause of the "frozen on exit" hang even
+  /// when everything was already synced).
+  Future<void> flushForExit() async {
+    if (!_isOnlineCallback()) return;
+    _logger.info('Exit flush: pushing pending data');
+    try {
+      await _syncService.syncPendingOperations();
+
+      final bulkSize = _prefs.getInt(_bulkSyncSizeKey) ?? 50;
+      // Z before sessions before orders before tickets (referential order).
+      await _syncService.syncZsBulk(batchSize: bulkSize);
+      await _syncService.syncSessionsBulk(batchSize: bulkSize);
+      await _syncService.syncOrdersBulk(batchSize: bulkSize);
+      await _syncService.syncTicketsBulk(batchSize: bulkSize);
+      await _syncService.syncCustomersBulk(batchSize: bulkSize);
+      _logger.info('Exit flush completed');
+    } catch (e) {
+      _logger.error('Exit flush failed: $e');
+    }
   }
 
   /// Check if the job is running

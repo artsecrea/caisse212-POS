@@ -6,7 +6,6 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
@@ -15,8 +14,11 @@ import '../../providers/database_providers.dart';
 import '../../providers/device_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/printing_service.dart';
+import 'logo_editor_dialog.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/escpos_parser.dart';
+import './adaptive_text_field.dart';
+import 'settings_lock_dialog.dart';
 
 class PrintersManagementScreen extends ConsumerStatefulWidget {
   const PrintersManagementScreen({super.key});
@@ -30,6 +32,13 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   bool _isScanning = false;
   PrinterConfig _config = const PrinterConfig();
   final TextEditingController _businessNameController = TextEditingController();
+  // The rest of the letterhead. Read all over the printing code
+  // (`business_address`, `business_phone`) but, until now, written by nothing —
+  // so every ticket header printed the shop name alone. `business_ice` is the
+  // Moroccan tax id the X / Z report carries.
+  final TextEditingController _businessAddressController = TextEditingController();
+  final TextEditingController _businessPhoneController = TextEditingController();
+  final TextEditingController _businessIceController = TextEditingController();
   final TextEditingController _ticketHeaderController = TextEditingController();
   final TextEditingController _ticketFooterController = TextEditingController();
   Uint8List? _logoBytes;
@@ -37,26 +46,62 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   // Local mirrors of the printing service's per-station routing state.
   // Refreshed from the singleton after every save so the UI re-renders.
   List<NamedPrinter> _printerPool = [];
-  Map<int, String> _stationAssignments = {};
+  // stationId -> printer ids. More than one id = the same station ticket is
+  // printed on each of them.
+  Map<int, List<String>> _stationAssignments = {};
+  // What each station's ticket SHOWS — see [StationTicketRule].
+  Map<int, StationTicketRule> _stationRules = {};
+  bool _openingDrawer = false;
+
+  /// Null while the gate is still being answered, true once it has been
+  /// passed. The screen renders nothing until then — printer addresses, the
+  /// business identity and the ticket text would otherwise be readable behind
+  /// the pin prompt, which defeats the prompt.
+  bool? _unlocked;
 
   @override
   void initState() {
     super.initState();
+    // Gate first, load second. `/printers` is a named route, so the menu item
+    // is not the only way in — the print-options dialog pushes it directly,
+    // and anything else that learns the route name would too. Guarding here
+    // covers every entrance at once.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _gate());
+  }
+
+  Future<void> _gate() async {
+    final ok = await SettingsLockDialog.unlockPrinters(context, ref);
+    if (!mounted) return;
+    if (!ok) {
+      // Bounce rather than show a locked shell: the caller pushed this route
+      // and the user declined, so the natural place to be is where they were.
+      Navigator.of(context).maybePop();
+      return;
+    }
+    setState(() => _unlocked = true);
     _initializePrinting();
     _loadBusinessInfo();
     _loadTicketSettings();
     _loadStationRouting();
   }
 
+  /// Deep copy — the service hands out unmodifiable inner lists.
+  static Map<int, List<String>> _copyAssignments(Map<int, List<String>> src) =>
+      {for (final e in src.entries) e.key: List<String>.of(e.value)};
+
   void _loadStationRouting() {
     final service = ref.read(printingServiceProvider);
+    _stationRules = Map.of(service.stationRules);
     _printerPool = List.of(service.printerPool);
-    _stationAssignments = Map.of(service.stationAssignments);
+    _stationAssignments = _copyAssignments(service.stationAssignments);
   }
 
   @override
   void dispose() {
     _businessNameController.dispose();
+    _businessAddressController.dispose();
+    _businessPhoneController.dispose();
+    _businessIceController.dispose();
     _ticketHeaderController.dispose();
     _ticketFooterController.dispose();
     super.dispose();
@@ -66,6 +111,9 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     final prefs = ref.read(sharedPreferencesProvider);
     final savedName = prefs.getString('business_name') ?? '';
     _businessNameController.text = savedName;
+    _businessAddressController.text = prefs.getString('business_address') ?? '';
+    _businessPhoneController.text = prefs.getString('business_phone') ?? '';
+    _businessIceController.text = prefs.getString('business_ice') ?? '';
 
     final base64Logo = prefs.getString('business_logo');
     if (base64Logo != null && base64Logo.isNotEmpty) {
@@ -83,13 +131,57 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     _ticketFooterController.text = settings.ticketFooter;
   }
 
-  Future<void> _saveBusinessName(String name) async {
+  Future<void> _saveBusinessName(String name) async =>
+      _saveIdentityField('business_name', name);
+
+  /// Empty clears the key rather than storing '', because every reader treats
+  /// null as "no such line" and an empty string as a line with nothing on it —
+  /// which prints a blank row in the letterhead.
+  Future<void> _saveIdentityField(String key, String value) async {
     final prefs = ref.read(sharedPreferencesProvider);
-    if (name.isEmpty) {
-      await prefs.remove('business_name');
+    if (value.isEmpty) {
+      await prefs.remove(key);
     } else {
-      await prefs.setString('business_name', name);
+      await prefs.setString(key, value);
     }
+  }
+
+  /// One letterhead row: type it, tap save (or press enter).
+  Widget _identityField({
+    required TextEditingController controller,
+    required String prefsKey,
+    required String label,
+    required IconData icon,
+    TextInputType? keyboardType,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    void save() {
+      _saveIdentityField(prefsKey, controller.text.trim());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translate('success')),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        prefixIcon: Icon(icon),
+        suffixIcon: IconButton(
+          icon: const Icon(Icons.save),
+          tooltip: l10n.translate('save'),
+          onPressed: save,
+        ),
+      ),
+      style: const TextStyle(fontSize: 17),
+      onSubmitted: (_) => save(),
+    );
   }
 
   Future<void> _pickLogo() async {
@@ -112,6 +204,15 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         final prefs = ref.read(sharedPreferencesProvider);
         final base64Logo = base64Encode(bytes);
         await prefs.setString('business_logo', base64Logo);
+        // A crop belongs to the image it was drawn on. Carrying it over to
+        // a newly picked logo would cut a corner off a picture nobody has
+        // looked at yet.
+        _updateConfig(_config.copyWith(
+          logoCropLeft: 0.0,
+          logoCropTop: 0.0,
+          logoCropRight: 1.0,
+          logoCropBottom: 1.0,
+        ));
         if (mounted) {
           setState(() {
             _logoBytes = bytes;
@@ -126,6 +227,30 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         }
       }
     }
+  }
+
+  /// Crop, size and position the printed logo.
+  ///
+  /// The picked bytes are left alone: the dialog returns a box in fractions
+  /// of the source, which the printer applies when it rasterises. That is
+  /// what lets the operator open this again and widen a crop they went too
+  /// far with.
+  Future<void> _editLogo() async {
+    final bytes = _logoBytes;
+    if (bytes == null) return;
+    final result = await showDialog<LogoEditResult>(
+      context: context,
+      builder: (_) => LogoEditorDialog(imageBytes: bytes, config: _config),
+    );
+    if (result == null) return;
+    _updateConfig(_config.copyWith(
+      logoCropLeft: result.cropLeft,
+      logoCropTop: result.cropTop,
+      logoCropRight: result.cropRight,
+      logoCropBottom: result.cropBottom,
+      logoWidthPercent: result.widthPercent,
+      logoAlign: result.align,
+    ));
   }
 
   Future<void> _clearLogo() async {
@@ -308,9 +433,85 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     }
   }
 
+  /// Test-print to a specific per-station pool printer.
+  Future<void> _testPoolPrinter(NamedPrinter p) async {
+    final l10n = AppLocalizations.of(context)!;
+    final ok = await ref.read(printingServiceProvider).testPoolPrinter(p);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              '${p.label}: ${ok ? l10n.translate('test_print_success') : l10n.translate('test_print_failed')}'),
+          backgroundColor: ok ? Colors.green : Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  /// Compact, consistent section header: a small colored icon + bold title,
+  /// with an optional one-line hint underneath explaining what the section
+  /// does. Replaces the old bulky `Icon(32) + 20sp title` rows so the page
+  /// reads as a structured settings page rather than a stack of big blocks.
+  Widget _cardHeader(IconData icon, String title, {String? hint}) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 22, color: cs.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(title,
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+        if (hint != null) ...[
+          const SizedBox(height: 4),
+          Text(hint,
+              style: TextStyle(
+                  fontSize: 13, height: 1.3, color: cs.onSurfaceVariant)),
+        ],
+      ],
+    );
+  }
+
+  /// Small uppercase group label to cluster related cards visually.
+  Widget _groupLabel(String text) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 10, top: 4),
+      child: Text(
+        text.toUpperCase(),
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.1,
+          color: cs.primary,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+
+    // Nothing at all until the gate is answered — see [_unlocked].
+    if (_unlocked != true) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
+
+    // Desktop layout: cap the content width and center it (horizontal padding
+    // grows with the window) instead of stretching full-bleed like a phone.
+    // `wide` gates the side-by-side printer cards.
+    final screenW = MediaQuery.of(context).size.width;
+    const maxContentWidth = 1160.0;
+    final sidePad = ((screenW - maxContentWidth) / 2).clamp(20.0, 400.0);
+    final wide = screenW >= 1000;
 
     return Scaffold(
       appBar: AppBar(
@@ -325,203 +526,13 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.fromLTRB(sidePad, 20, sidePad, 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Business Info
-            Card(
-              elevation: 3,
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.store, size: 32),
-                        const SizedBox(width: 16),
-                        Text(
-                          l10n.translate('business_info'),
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    // Business Name
-                    TextField(
-                      controller: _businessNameController,
-                      decoration: InputDecoration(
-                        labelText: l10n.translate('business_name'),
-                        hintText: l10n.translate('enter_business_name'),
-                        border: const OutlineInputBorder(),
-                        prefixIcon: const Icon(Icons.business),
-                        suffixIcon: IconButton(
-                          icon: const Icon(Icons.save),
-                          tooltip: l10n.translate('save'),
-                          onPressed: () {
-                            _saveBusinessName(_businessNameController.text.trim());
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(l10n.translate('success')),
-                                backgroundColor: Colors.green,
-                                duration: const Duration(seconds: 2),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      style: const TextStyle(fontSize: 17),
-                      onSubmitted: (value) => _saveBusinessName(value.trim()),
-                    ),
-                    const SizedBox(height: 20),
-                    // Business Logo
-                    Text(
-                      l10n.translate('business_logo'),
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Logo preview
-                        Container(
-                          width: 120,
-                          height: 120,
-                          decoration: BoxDecoration(
-                            color: Colors.grey[100],
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.grey[300]!, width: 2),
-                          ),
-                          child: _logoBytes != null
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: Image.memory(
-                                    _logoBytes!,
-                                    fit: BoxFit.contain,
-                                    errorBuilder: (_, __, ___) => const Icon(
-                                      Icons.broken_image,
-                                      size: 48,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                )
-                              : const Center(
-                                  child: Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
-                                ),
-                        ),
-                        const SizedBox(width: 20),
-                        // Logo actions
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ElevatedButton.icon(
-                              onPressed: _pickLogo,
-                              icon: const Icon(Icons.upload_file),
-                              label: Text(l10n.translate('select_logo')),
-                              style: ElevatedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                                textStyle: const TextStyle(fontSize: 16),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            if (_logoBytes != null)
-                              OutlinedButton.icon(
-                                onPressed: _clearLogo,
-                                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                label: Text(
-                                  l10n.translate('remove_logo'),
-                                  style: const TextStyle(color: Colors.red),
-                                ),
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                                  textStyle: const TextStyle(fontSize: 16),
-                                  side: const BorderSide(color: Colors.red),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Ticket Header & Footer
-            Card(
-              elevation: 3,
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.receipt_long, size: 32),
-                        const SizedBox(width: 16),
-                        Text(
-                          l10n.translate('ticket_settings'),
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    // Ticket Header
-                    Text(
-                      l10n.translate('ticket_header'),
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      l10n.translate('ticket_header_subtitle'),
-                      style: const TextStyle(color: Colors.grey, fontSize: 15),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _ticketHeaderController,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        hintText: l10n.translate('ticket_header_hint'),
-                        border: const OutlineInputBorder(),
-                        prefixIcon: const Icon(Icons.article),
-                      ),
-                      style: const TextStyle(fontSize: 17),
-                      onChanged: (value) {
-                        ref.read(settingsProvider.notifier).setTicketHeader(value);
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    // Ticket Footer
-                    Text(
-                      l10n.translate('ticket_footer'),
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      l10n.translate('ticket_footer_subtitle'),
-                      style: const TextStyle(color: Colors.grey, fontSize: 15),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _ticketFooterController,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        hintText: l10n.translate('ticket_footer_hint'),
-                        border: const OutlineInputBorder(),
-                        prefixIcon: const Icon(Icons.notes),
-                      ),
-                      style: const TextStyle(fontSize: 17),
-                      onChanged: (value) {
-                        ref.read(settingsProvider.notifier).setTicketFooter(value);
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            _groupLabel(l10n.translate('grp_printers')),
+            // Receipt + KDS printers — side by side on wide (desktop) screens.
+            _printerSectionsLayout(context, l10n, wide),
 
             const SizedBox(height: 24),
 
@@ -535,17 +546,15 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.search, size: 32),
-                        const SizedBox(width: 16),
-                        Text(
-                          l10n.translate('scan_for_printers'),
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        Expanded(
+                          child: _cardHeader(
+                              Icons.search, l10n.translate('scan_for_printers'),
+                              hint: l10n.translate('scan_hint')),
                         ),
-                        const Spacer(),
                         if (_isScanning)
                           const SizedBox(
-                            width: 28,
-                            height: 28,
+                            width: 24,
+                            height: 24,
                             child: CircularProgressIndicator(strokeWidth: 3),
                           ),
                       ],
@@ -598,209 +607,6 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
 
             const SizedBox(height: 24),
 
-            // Settings
-            Card(
-              elevation: 3,
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.settings, size: 32),
-                        const SizedBox(width: 16),
-                        Text(
-                          l10n.translate('printer_settings'),
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    // Master Printing Toggle
-                    SwitchListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                      title: Text(
-                        l10n.translate('enable_printing'),
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      subtitle: Text(
-                        l10n.translate('enable_printing_subtitle'),
-                        style: const TextStyle(fontSize: 15),
-                      ),
-                      value: _config.printingEnabled,
-                      onChanged: _togglePrinting,
-                      activeTrackColor: Colors.green.withValues(alpha: 0.5),
-                      inactiveTrackColor: Colors.grey.withValues(alpha: 0.3),
-                    ),
-                    const Divider(height: 32),
-                    // KDS Toggle
-                    SwitchListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                      title: Text(
-                        l10n.translate('enable_kds_printing'),
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: _config.printingEnabled ? null : Colors.grey,
-                        ),
-                      ),
-                      subtitle: Text(
-                        l10n.translate('print_kitchen_tickets_automatically'),
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: _config.printingEnabled ? null : Colors.grey,
-                        ),
-                      ),
-                      value: _config.kdsEnabled,
-                      onChanged: _config.printingEnabled ? _toggleKds : null,
-                    ),
-                    const Divider(height: 32),
-                    // Paper Size
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                      title: Text(
-                        l10n.translate('paper_size'),
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: _config.printingEnabled ? null : Colors.grey,
-                        ),
-                      ),
-                      subtitle: Text(
-                        _config.paperSize == PaperSize.mm58 ? '58mm' : '80mm',
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: _config.printingEnabled ? null : Colors.grey,
-                        ),
-                      ),
-                      trailing: SegmentedButton<PaperSize>(
-                        style: SegmentedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                          textStyle: const TextStyle(fontSize: 16),
-                        ),
-                        segments: const [
-                          ButtonSegment(value: PaperSize.mm58, label: Text('58mm')),
-                          ButtonSegment(value: PaperSize.mm80, label: Text('80mm')),
-                        ],
-                        selected: {_config.paperSize},
-                        onSelectionChanged: _config.printingEnabled
-                            ? (values) => _setPaperSize(values.first)
-                            : null,
-                      ),
-                    ),
-                    const Divider(height: 32),
-                    // Text Size
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                      title: Text(
-                        l10n.translate('text_size'),
-                        style: const TextStyle(fontSize: 18),
-                      ),
-                      subtitle: Text(
-                        _config.textSize == 1
-                          ? l10n.translate('normal')
-                          : (_config.textSize == 2
-                            ? l10n.translate('large')
-                            : l10n.translate('extra_large')),
-                        style: const TextStyle(fontSize: 15),
-                      ),
-                      trailing: SegmentedButton<int>(
-                        style: SegmentedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                          textStyle: const TextStyle(fontSize: 16),
-                        ),
-                        segments: [
-                          ButtonSegment(value: 1, label: Text(l10n.translate('normal'))),
-                          ButtonSegment(value: 2, label: Text(l10n.translate('large'))),
-                          ButtonSegment(value: 3, label: Text(l10n.translate('extra'))),
-                        ],
-                        selected: {_config.textSize},
-                        onSelectionChanged: (values) => _setTextSize(values.first),
-                      ),
-                    ),
-                    const Divider(height: 32),
-                    // Printing Language
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                      title: Text(
-                        l10n.translate('printing_language'),
-                        style: const TextStyle(fontSize: 18),
-                      ),
-                      subtitle: Text(
-                        l10n.translate('printing_language_subtitle'),
-                        style: const TextStyle(fontSize: 15),
-                      ),
-                      trailing: SegmentedButton<String>(
-                        style: SegmentedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                          textStyle: const TextStyle(fontSize: 16),
-                        ),
-                        segments: [
-                          ButtonSegment(value: 'en', label: Text(l10n.translate('english'))),
-                          ButtonSegment(value: 'fr', label: Text(l10n.translate('french'))),
-                        ],
-                        selected: {_config.printingLanguage},
-                        onSelectionChanged: (values) => _setPrintingLanguage(values.first),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Auto-print & copies
-            _buildAutoPrintCard(l10n),
-
-            const SizedBox(height: 24),
-
-            // Per-output print rules
-            _buildPrintRulesCard(l10n),
-
-            const SizedBox(height: 24),
-
-            // Cash drawer
-            _buildCashDrawerCard(l10n),
-
-            const SizedBox(height: 24),
-
-            // Kitchen
-            _buildKitchenCard(l10n),
-
-            const SizedBox(height: 24),
-
-            // Station printer routing — pool + per-station assignments
-            _buildStationPrintersCard(l10n),
-
-            const SizedBox(height: 24),
-
-            // Receipt Printer
-            _buildPrinterSection(
-              context: context,
-              title: l10n.translate('receipt_printer'),
-              subtitle: l10n.translate('for_customer_receipts'),
-              icon: Icons.receipt_long,
-              purpose: PrinterPurpose.receipt,
-              configuredName: _config.receiptPrinterName,
-              configuredType: _config.receiptConnectionType,
-            ),
-
-            const SizedBox(height: 20),
-
-            // KDS Printer
-            _buildPrinterSection(
-              context: context,
-              title: l10n.translate('kds_printer'),
-              subtitle: l10n.translate('for_kitchen_display_tickets'),
-              icon: Icons.restaurant,
-              purpose: PrinterPurpose.kds,
-              configuredName: _config.kdsPrinterName,
-              configuredType: _config.kdsConnectionType,
-              enabled: _config.kdsEnabled,
-            ),
-
-            const SizedBox(height: 24),
-
             // Available Printers
             Card(
               elevation: 3,
@@ -811,16 +617,14 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.print, size: 32),
-                        const SizedBox(width: 16),
-                        Text(
-                          l10n.translate('available_printers'),
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        Expanded(
+                          child: _cardHeader(
+                              Icons.print, l10n.translate('available_printers'),
+                              hint: l10n.translate('available_printers_hint')),
                         ),
-                        const Spacer(),
                         Text(
                           '${_printers.length} ${l10n.translate('found')}',
-                          style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 16),
                         ),
                       ],
                     ),
@@ -831,7 +635,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                           padding: const EdgeInsets.all(40),
                           child: Column(
                             children: [
-                              const Icon(Icons.print_disabled, size: 64, color: Colors.grey),
+                              Icon(Icons.print_disabled, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
                               const SizedBox(height: 16),
                               Text(
                                 l10n.translate('no_printers_found'),
@@ -840,7 +644,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                               const SizedBox(height: 8),
                               Text(
                                 l10n.translate('click_start_scan'),
-                                style: TextStyle(color: Colors.grey, fontSize: 15),
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 15),
                               ),
                             ],
                           ),
@@ -926,13 +730,13 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                                           leading: Icon(
                                             Icons.restaurant,
                                             size: 32,
-                                            color: _config.kdsEnabled ? null : Colors.grey,
+                                            color: _config.kdsEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant,
                                           ),
                                           title: Text(
                                             l10n.translate('set_as_kds_printer'),
                                             style: TextStyle(
                                               fontSize: 18,
-                                              color: _config.kdsEnabled ? null : Colors.grey,
+                                              color: _config.kdsEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant,
                                             ),
                                           ),
                                           onTap: _config.kdsEnabled
@@ -982,6 +786,399 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                 ),
               ),
             ),
+
+            const SizedBox(height: 24),
+
+            // Station printer routing — pool + per-station assignments
+            _buildStationPrintersCard(l10n),
+
+            const SizedBox(height: 24),
+
+            _groupLabel(l10n.translate('grp_receipt')),
+            // Business Info
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _cardHeader(Icons.store, l10n.translate('business_info'),
+                        hint: l10n.translate('business_info_hint')),
+                    const SizedBox(height: 20),
+                    // Business Name
+                    TextField(
+                      controller: _businessNameController,
+                      decoration: InputDecoration(
+                        labelText: l10n.translate('business_name'),
+                        hintText: l10n.translate('enter_business_name'),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.business),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.save),
+                          tooltip: l10n.translate('save'),
+                          onPressed: () {
+                            _saveBusinessName(_businessNameController.text.trim());
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(l10n.translate('success')),
+                                backgroundColor: Colors.green,
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      style: const TextStyle(fontSize: 17),
+                      onSubmitted: (value) => _saveBusinessName(value.trim()),
+                    ),
+                    const SizedBox(height: 16),
+                    _identityField(
+                      controller: _businessAddressController,
+                      prefsKey: 'business_address',
+                      label: l10n.translate('business_address'),
+                      icon: Icons.place_outlined,
+                    ),
+                    const SizedBox(height: 16),
+                    _identityField(
+                      controller: _businessPhoneController,
+                      prefsKey: 'business_phone',
+                      label: l10n.translate('business_phone'),
+                      icon: Icons.phone_outlined,
+                      keyboardType: TextInputType.phone,
+                    ),
+                    const SizedBox(height: 16),
+                    _identityField(
+                      controller: _businessIceController,
+                      prefsKey: 'business_ice',
+                      label: l10n.translate('business_ice'),
+                      icon: Icons.badge_outlined,
+                    ),
+                    const SizedBox(height: 20),
+                    // Business Logo
+                    Text(
+                      l10n.translate('business_logo'),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Logo preview
+                        Container(
+                          width: 120,
+                          height: 120,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Theme.of(context).colorScheme.outlineVariant, width: 2),
+                          ),
+                          child: _logoBytes != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Image.memory(
+                                    _logoBytes!,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (_, __, ___) => Icon(
+                                      Icons.broken_image,
+                                      size: 48,
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                )
+                              : Center(
+                                  child: Icon(Icons.image_not_supported, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                ),
+                        ),
+                        const SizedBox(width: 20),
+                        // Logo actions
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: _pickLogo,
+                              icon: const Icon(Icons.upload_file),
+                              label: Text(l10n.translate('select_logo')),
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                                textStyle: const TextStyle(fontSize: 16),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            if (_logoBytes != null)
+                              OutlinedButton.icon(
+                                onPressed: _editLogo,
+                                icon: const Icon(Icons.crop),
+                                label: Text(l10n.translate('edit_logo')),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 20, vertical: 14),
+                                  textStyle: const TextStyle(fontSize: 16),
+                                ),
+                              ),
+                            const SizedBox(height: 12),
+                            if (_logoBytes != null)
+                              OutlinedButton.icon(
+                                onPressed: _clearLogo,
+                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                label: Text(
+                                  l10n.translate('remove_logo'),
+                                  style: const TextStyle(color: Colors.red),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                                  textStyle: const TextStyle(fontSize: 16),
+                                  side: const BorderSide(color: Colors.red),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Ticket Header & Footer
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _cardHeader(
+                        Icons.receipt_long, l10n.translate('ticket_settings'),
+                        hint: l10n.translate('ticket_settings_hint')),
+                    const SizedBox(height: 20),
+                    // Ticket Header
+                    Text(
+                      l10n.translate('ticket_header'),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      l10n.translate('ticket_header_subtitle'),
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 15),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _ticketHeaderController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        hintText: l10n.translate('ticket_header_hint'),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.article),
+                      ),
+                      style: const TextStyle(fontSize: 17),
+                      onChanged: (value) {
+                        ref.read(settingsProvider.notifier).setTicketHeader(value);
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    // Ticket Footer
+                    Text(
+                      l10n.translate('ticket_footer'),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      l10n.translate('ticket_footer_subtitle'),
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 15),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _ticketFooterController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        hintText: l10n.translate('ticket_footer_hint'),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.notes),
+                      ),
+                      style: const TextStyle(fontSize: 17),
+                      onChanged: (value) {
+                        ref.read(settingsProvider.notifier).setTicketFooter(value);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+
+            // Settings
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _cardHeader(Icons.settings, l10n.translate('printer_settings'),
+                        hint: l10n.translate('printer_settings_hint')),
+                    const SizedBox(height: 20),
+                    // Master Printing Toggle
+                    SwitchListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('enable_printing'),
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(
+                        l10n.translate('enable_printing_subtitle'),
+                        style: const TextStyle(fontSize: 15),
+                      ),
+                      value: _config.printingEnabled,
+                      onChanged: _togglePrinting,
+                      activeTrackColor: Colors.green.withValues(alpha: 0.5),
+                      inactiveTrackColor: Colors.grey.withValues(alpha: 0.3),
+                    ),
+                    const Divider(height: 32),
+                    // KDS Toggle
+                    SwitchListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('enable_kds_printing'),
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: _config.printingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      subtitle: Text(
+                        l10n.translate('print_kitchen_tickets_automatically'),
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: _config.printingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      value: _config.kdsEnabled,
+                      onChanged: _config.printingEnabled ? _toggleKds : null,
+                    ),
+                    const Divider(height: 32),
+                    // Paper Size
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('paper_size'),
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: _config.printingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      subtitle: Text(
+                        _config.paperSize == PaperSize.mm58 ? '58mm' : '80mm',
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: _config.printingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      trailing: SegmentedButton<PaperSize>(
+                        style: SegmentedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
+                        segments: const [
+                          ButtonSegment(value: PaperSize.mm58, label: Text('58mm')),
+                          ButtonSegment(value: PaperSize.mm80, label: Text('80mm')),
+                        ],
+                        selected: {_config.paperSize},
+                        onSelectionChanged: _config.printingEnabled
+                            ? (values) => _setPaperSize(values.first)
+                            : null,
+                      ),
+                    ),
+                    const Divider(height: 32),
+                    // Text Size
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('text_size'),
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                      subtitle: Text(
+                        _config.textSize == 1
+                          ? l10n.translate('normal')
+                          : (_config.textSize == 2
+                            ? l10n.translate('large')
+                            : l10n.translate('extra_large')),
+                        style: const TextStyle(fontSize: 15),
+                      ),
+                      trailing: SegmentedButton<int>(
+                        style: SegmentedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
+                        segments: [
+                          ButtonSegment(value: 1, label: Text(l10n.translate('normal'))),
+                          ButtonSegment(value: 2, label: Text(l10n.translate('large'))),
+                          ButtonSegment(value: 3, label: Text(l10n.translate('extra'))),
+                        ],
+                        selected: {_config.textSize},
+                        onSelectionChanged: (values) => _setTextSize(values.first),
+                      ),
+                    ),
+                    const Divider(height: 32),
+                    // Printing Language
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      title: Text(
+                        l10n.translate('printing_language'),
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                      subtitle: Text(
+                        l10n.translate('printing_language_subtitle'),
+                        style: const TextStyle(fontSize: 15),
+                      ),
+                      trailing: SegmentedButton<String>(
+                        style: SegmentedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
+                        segments: [
+                          ButtonSegment(value: 'en', label: Text(l10n.translate('english'))),
+                          ButtonSegment(value: 'fr', label: Text(l10n.translate('french'))),
+                          ButtonSegment(value: 'es', label: Text(l10n.translate('spanish'))),
+                        ],
+                        selected: {_config.printingLanguage},
+                        onSelectionChanged: (values) => _setPrintingLanguage(values.first),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Auto-print & copies
+            _buildAutoPrintCard(l10n),
+
+            const SizedBox(height: 24),
+
+            // Per-output print rules
+            _buildPrintRulesCard(l10n),
+
+            const SizedBox(height: 24),
+
+            // Cash drawer
+            _buildCashDrawerCard(l10n),
+
+            const SizedBox(height: 24),
+
+            // Kitchen
+            _groupLabel(l10n.translate('grp_kitchen')),
+            _buildKitchenCard(l10n),
+
+            const SizedBox(height: 24),
+
+            // Per-ticket field visibility (customer / store / KDS)
+            _buildTicketFieldsCard(l10n),
+
           ],
         ),
       ),
@@ -1088,7 +1285,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Text(l10n.translate('print_rules_subtitle'),
-              style: const TextStyle(color: Colors.grey, fontSize: 14)),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 14)),
         ),
         const SizedBox(height: 8),
         _buildRuleEditor(l10n, PrintOutput.orderTicket,
@@ -1162,8 +1359,8 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
               child: Align(
                 alignment: AlignmentDirectional.centerStart,
                 child: Text(l10n.translate('order_types'),
-                    style: const TextStyle(
-                        fontSize: 13, color: Colors.grey)),
+                    style: TextStyle(
+                        fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
               ),
             ),
             Padding(
@@ -1194,8 +1391,8 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
               child: Align(
                 alignment: AlignmentDirectional.centerStart,
                 child: Text(l10n.translate('order_sources'),
-                    style: const TextStyle(
-                        fontSize: 13, color: Colors.grey)),
+                    style: TextStyle(
+                        fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
               ),
             ),
             Padding(
@@ -1236,11 +1433,70 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     );
   }
 
+  /// Kick the drawer open right now.
+  ///
+  /// Deliberately independent of the auto-open switch above it: that one is
+  /// about what happens when a payment lands, this is the cashier needing the
+  /// drawer open between sales. The drawer is often out of sight under the
+  /// counter, so both outcomes get a message — a silent failure would just be
+  /// pressed again.
+  Future<void> _openDrawerNow() async {
+    final l10n = AppLocalizations.of(context)!;
+    setState(() => _openingDrawer = true);
+    final ok = await ref.read(printingServiceProvider).kickCashDrawer();
+    if (!mounted) return;
+    setState(() => _openingDrawer = false);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(ok
+            ? l10n.translate('drawer_opened')
+            : l10n.translate('drawer_open_failed')),
+        backgroundColor: ok ? null : Theme.of(context).colorScheme.error,
+      ));
+  }
+
   Widget _buildCashDrawerCard(AppLocalizations l10n) {
     return _sectionCard(
       icon: Icons.point_of_sale,
       title: l10n.translate('cash_drawer_settings'),
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(l10n.translate('open_drawer_now'),
+                        style: const TextStyle(fontSize: 18)),
+                    const SizedBox(height: 4),
+                    Text(l10n.translate('open_drawer_now_subtitle'),
+                        style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: _openingDrawer ? null : _openDrawerNow,
+                icon: _openingDrawer
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.point_of_sale),
+                label: Text(l10n.translate('open_drawer_now_action')),
+                style: FilledButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  textStyle: const TextStyle(fontSize: 16),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 24),
         SwitchListTile(
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),
           title: Text(l10n.translate('open_cash_drawer'),
@@ -1256,7 +1512,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
           title: Text(l10n.translate('cash_payments_only'),
               style: TextStyle(
                   fontSize: 16,
-                  color: _config.cashDrawerKick ? null : Colors.grey)),
+                  color: _config.cashDrawerKick ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
           value: _config.cashDrawerCashOnly,
           onChanged: _config.cashDrawerKick
               ? (v) => _updateConfig(_config.copyWith(cashDrawerCashOnly: v))
@@ -1266,20 +1522,384 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     );
   }
 
+  /// Immutably set one ticket-field toggle and persist the config.
+  void _setTicketField(String type, String field, bool value) {
+    final map = <String, Map<String, bool>>{
+      for (final e in _config.ticketFields.entries)
+        e.key: Map<String, bool>.from(e.value),
+    };
+    (map[type] ??= <String, bool>{})[field] = value;
+    _updateConfig(_config.copyWith(ticketFields: map));
+  }
+
+  /// Pin one ticket field to a text size, or drop it back to the global size.
+  ///
+  /// Tier 0 removes the entry rather than storing a zero, so "follows the
+  /// global size" stays the absence of a choice — a config that has never been
+  /// touched and one that was set back to Default are the same thing.
+  void _setTicketFieldSize(String type, String field, int tier) {
+    final map = <String, Map<String, int>>{
+      for (final e in _config.ticketFieldSizes.entries)
+        e.key: Map<String, int>.from(e.value),
+    };
+    final inner = map[type] ??= <String, int>{};
+    if (tier <= 0) {
+      inner.remove(field);
+    } else {
+      inner[field] = tier;
+    }
+    _updateConfig(_config.copyWith(ticketFieldSizes: map));
+  }
+
+  /// Persist a new row order for one band, leaving the other bands alone.
+  ///
+  /// Stored flattened, every band in print order, because that is the shape
+  /// [PrinterConfig.orderedFields] reads back.
+  void _setTicketFieldOrder(String type, String zone, List<String> order) {
+    final flat = <String>[
+      for (final z in PrinterConfig.fieldZones)
+        ...(z == zone ? order : _config.orderedFields(type, z)),
+    ];
+    final map = <String, List<String>>{
+      for (final e in _config.ticketFieldOrder.entries)
+        e.key: List<String>.from(e.value),
+    };
+    map[type] = flat;
+    _updateConfig(_config.copyWith(ticketFieldOrder: map));
+  }
+
+  /// What each band is called in the settings UI. Matching the labels to
+  /// the rules printed on the ticket is what makes it obvious why a row
+  /// cannot be dragged out of its band.
+  static const _ticketZoneLabels = {
+    'header': 'Letterhead',
+    'info': 'Order info',
+    'note': 'Order note',
+    'totals': 'Totals',
+    'trailer': 'Barcode',
+  };
+
+  static const _ticketFieldLabels = {
+    'storeName': 'Store name',
+    'storeAddress': 'Store address',
+    'storePhone': 'Store phone',
+    'stationName': 'Station name',
+    'orderCode': 'Order code',
+    'date': 'Date / time',
+    'time': 'Time',
+    'cashier': 'Cashier',
+    'waiter': 'Waiter',
+    'orderType': 'Order type',
+    'table': 'Table',
+    'persons': 'Persons',
+    'customerName': 'Customer name',
+    'customerPhone': 'Customer phone',
+    'deliveryAddress': 'Delivery address',
+    'paymentMethod': 'Payment method',
+    'items': 'Product lines',
+    'subtotal': 'Subtotal',
+    'discount': 'Discount',
+    'tva': 'VAT / TVA amount',
+    'total': 'Total',
+    'amountGiven': 'Cash given by customer',
+    'change': 'Change returned',
+    'orderNote': 'Order note',
+    'barcode': 'Barcode',
+  };
+
+  // The extras only print when a tender was actually keyed, which is worth
+  // saying next to the switch — otherwise "I turned it on and nothing
+  // changed" on a card payment reads as a bug.
+  static const _ticketFieldHints = {
+    'waiter': 'Only prints when a waiter is attached to the order',
+    'tva': 'Prints the VAT already included in the total',
+    'amountGiven': 'Only when the cashier keyed the amount received',
+    'change': 'Only when the cashier keyed the amount received',
+    'items': 'Product name, quantity, price and any components',
+  };
+
+  /// The size picker that sits at the end of every ticket-content row.
+  Widget _fieldSizePicker(String type, String field, {required bool enabled}) {
+    final theme = Theme.of(context);
+    return Container(
+      width: 124,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: DropdownButton<int>(
+        value: _config.fieldSize(type, field),
+        isDense: true,
+        isExpanded: true,
+        underline: const SizedBox.shrink(),
+        style: TextStyle(
+          fontSize: 14,
+          color: enabled ? theme.colorScheme.onSurface : theme.disabledColor,
+        ),
+        items: [
+          const DropdownMenuItem(value: 0, child: Text('Default')),
+          for (final e in PrinterConfig.textTiers.entries)
+            DropdownMenuItem(value: e.key, child: Text(e.value)),
+        ],
+        onChanged:
+            enabled ? (v) => _setTicketFieldSize(type, field, v ?? 0) : null,
+      ),
+    );
+  }
+
+  /// One row: the switch (when the field can be turned off), its label, and
+  /// its size. Structural parts of the ticket — the store name, the product
+  /// lines, the total — get the size input without a switch, because a receipt
+  /// with no total is not a receipt.
+  Widget _ticketFieldRow(String type, String field,
+      {required bool toggleable, int? dragIndex}) {
+    final on = !toggleable ||
+        (_config.ticketFields[type]?[field] ??
+            PrinterConfig.fieldDefaultOn(field, type));
+    final hint = _ticketFieldHints[field];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      child: Row(
+        children: [
+          if (dragIndex != null) ...[
+            ReorderableDragStartListener(
+              index: dragIndex,
+              child: Icon(Icons.drag_handle, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(width: 8),
+          ],
+          SizedBox(
+            width: 56,
+            child: toggleable
+                ? Switch(
+                    value: on,
+                    onChanged: (v) => _setTicketField(type, field, v),
+                  )
+                : null,
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_ticketFieldLabels[field] ?? field,
+                    style: TextStyle(
+                        fontSize: 16,
+                        color: on ? null : Theme.of(context).disabledColor)),
+                if (hint != null)
+                  Text(hint,
+                      style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _fieldSizePicker(type, field, enabled: on),
+        ],
+      ),
+    );
+  }
+
+  /// One band of a ticket: its label, then its rows, draggable into any
+  /// order within the band.
+  ///
+  /// Bands, rather than one list per ticket, because the ticket itself has
+  /// bands: the letterhead is above the header rule, the totals are below
+  /// the items. A row dragged out of its band would not print in a new
+  /// place, so it cannot leave.
+  List<Widget> _ticketZoneSection(String type, String zone) {
+    final fields = _config.orderedFields(type, zone);
+    if (fields.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        child: Text(
+          (_ticketZoneLabels[zone] ?? zone).toUpperCase(),
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.6,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ),
+      ReorderableListView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        buildDefaultDragHandles: false,
+        itemCount: fields.length,
+        onReorder: (oldIndex, newIndex) {
+          final next = List<String>.from(fields);
+          if (newIndex > oldIndex) newIndex--;
+          next.insert(newIndex, next.removeAt(oldIndex));
+          _setTicketFieldOrder(type, zone, next);
+        },
+        itemBuilder: (context, index) => KeyedSubtree(
+          key: ValueKey('$type.$zone.${fields[index]}'),
+          child: _ticketFieldRow(type, fields[index],
+              toggleable: true, dragIndex: fields.length > 1 ? index : null),
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildTicketFieldsCard(AppLocalizations l10n) {
+    const sectionTitles = {
+      'order': 'Order ticket',
+      'customer': 'Customer receipt',
+      'store': 'Store copy',
+      'kds': 'Kitchen (KDS) ticket',
+    };
+    return _sectionCard(
+      icon: Icons.receipt_long,
+      title: l10n.translate('ticket_content'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 8, bottom: 8),
+          child: Text(l10n.translate('ticket_content_subtitle'),
+              style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ),
+        for (final type in const ['order', 'customer', 'store', 'kds'])
+          ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+            title: Text(sectionTitles[type]!,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            childrenPadding: const EdgeInsets.only(bottom: 8),
+            children: [
+              for (final zone in PrinterConfig.fieldZones)
+                ..._ticketZoneSection(type, zone),
+              const Divider(height: 16, indent: 16, endIndent: 16),
+              for (final field in PrinterConfig.sizeOnlyCatalog[type]!)
+                _ticketFieldRow(type, field, toggleable: false),
+            ],
+          ),
+      ],
+    );
+  }
+
   Widget _buildKitchenCard(AppLocalizations l10n) {
+    // Whole-order mode overrides every station control below it, so those are
+    // greyed rather than removed — the operator can see what they turned off.
+    final simple = _config.kdsFullOrderMode;
     return _sectionCard(
       icon: Icons.restaurant_menu,
       title: l10n.translate('kitchen_settings'),
       children: [
         SwitchListTile(
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-          title: Text(l10n.translate('split_by_station'),
+          title: Text(l10n.translate('kds_full_order'),
               style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('kds_full_order_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          value: simple,
+          onChanged: (v) =>
+              _updateConfig(_config.copyWith(kdsFullOrderMode: v)),
+        ),
+        if (simple)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(l10n.translate('kds_copies'),
+                          style: const TextStyle(fontSize: 17)),
+                      const SizedBox(height: 4),
+                      Text(l10n.translate('kds_copies_subtitle'),
+                          style: TextStyle(
+                              fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // A stepper rather than a text field: the number is one digit
+                // and the cashier is standing up.
+                IconButton.filledTonal(
+                  iconSize: 26,
+                  onPressed: _config.kdsCopies > 1
+                      ? () => _updateConfig(_config.copyWith(
+                          kdsCopies: _config.kdsCopies - 1))
+                      : null,
+                  icon: const Icon(Icons.remove),
+                ),
+                SizedBox(
+                  width: 52,
+                  child: Text(
+                    '${_config.kdsCopies}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton.filledTonal(
+                  iconSize: 26,
+                  onPressed: _config.kdsCopies < 9
+                      ? () => _updateConfig(_config.copyWith(
+                          kdsCopies: _config.kdsCopies + 1))
+                      : null,
+                  icon: const Icon(Icons.add),
+                ),
+              ],
+            ),
+          ),
+        const Divider(height: 24),
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('print_linked_components'),
+              style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('print_linked_components_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          value: _config.printLinkedComponents,
+          onChanged: (v) =>
+              _updateConfig(_config.copyWith(printLinkedComponents: v)),
+        ),
+        if (_config.printLinkedComponents)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l10n.translate('linked_component_label'),
+                    style: const TextStyle(fontSize: 16)),
+                const SizedBox(height: 8),
+                SegmentedButton<LinkedComponentLabel>(
+                  segments: [
+                    ButtonSegment(
+                      value: LinkedComponentLabel.component,
+                      label: Text(l10n.translate('label_component_name')),
+                      icon: const Icon(Icons.tune),
+                    ),
+                    ButtonSegment(
+                      value: LinkedComponentLabel.product,
+                      label: Text(l10n.translate('label_product_name')),
+                      icon: const Icon(Icons.inventory_2_outlined),
+                    ),
+                  ],
+                  selected: {_config.linkedComponentLabel},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (selection) => _updateConfig(
+                    _config.copyWith(linkedComponentLabel: selection.first),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(l10n.translate('linked_component_label_hint'),
+                    style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              ],
+            ),
+          ),
+        const Divider(height: 24),
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('split_by_station'),
+              style: TextStyle(
+                  fontSize: 18, color: simple ? Theme.of(context).colorScheme.onSurfaceVariant : null)),
           subtitle: Text(l10n.translate('split_by_station_subtitle'),
               style: const TextStyle(fontSize: 14)),
           value: _config.splitKdsByStation,
-          onChanged: (v) =>
-              _updateConfig(_config.copyWith(splitKdsByStation: v)),
+          onChanged: simple
+              ? null
+              : (v) => _updateConfig(_config.copyWith(splitKdsByStation: v)),
         ),
         // Consolidated-job toggle. Only meaningful when split-by-station
         // is on (otherwise everything is already one job).
@@ -1288,16 +1908,27 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
           title: Text(l10n.translate('consolidate_kds_job'),
               style: TextStyle(
                   fontSize: 18,
-                  color: _config.splitKdsByStation ? null : Colors.grey)),
+                  color: _config.splitKdsByStation ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
           subtitle: Text(
               l10n.translate('consolidate_kds_job_subtitle'),
               style: TextStyle(
                   fontSize: 14,
-                  color: _config.splitKdsByStation ? null : Colors.grey)),
+                  color: _config.splitKdsByStation ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
           value: _config.consolidateKdsJob,
           onChanged: _config.splitKdsByStation
               ? (v) => _updateConfig(_config.copyWith(consolidateKdsJob: v))
               : null,
+        ),
+        // Whether products with no station assignment print on the KDS.
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('print_unassigned_kds'),
+              style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('print_unassigned_kds_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          value: _config.printKdsUnassigned,
+          onChanged: (v) =>
+              _updateConfig(_config.copyWith(printKdsUnassigned: v)),
         ),
         const Divider(height: 24),
         ListTile(
@@ -1322,6 +1953,122 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                 _updateConfig(_config.copyWith(defaultKdsMode: values.first)),
           ),
         ),
+
+        // ── Courier code (Glovo / Kooul) ─────────────────────────────────
+        const Divider(height: 24),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [
+              Icon(Icons.qr_code_2,
+                  size: 20, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
+              Text(l10n.translate('courier_code_group'),
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+          child: Text(
+            l10n.translate('courier_code_group_subtitle'),
+            style: TextStyle(
+                fontSize: 13,
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
+        ),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('courier_code_mode'),
+              style: const TextStyle(fontSize: 18)),
+          trailing: SegmentedButton<CourierCodeMode>(
+            style: SegmentedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              textStyle: const TextStyle(fontSize: 14),
+            ),
+            segments: [
+              ButtonSegment(
+                  value: CourierCodeMode.sameTicket,
+                  label: Text(l10n.translate('courier_mode_same'))),
+              ButtonSegment(
+                  value: CourierCodeMode.separateTicket,
+                  label: Text(l10n.translate('courier_mode_separate'))),
+              ButtonSegment(
+                  value: CourierCodeMode.off,
+                  label: Text(l10n.translate('off'))),
+            ],
+            selected: {_config.courierCodeMode},
+            onSelectionChanged: (values) =>
+                _updateConfig(_config.copyWith(courierCodeMode: values.first)),
+          ),
+        ),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          title: Text(l10n.translate('courier_code_symbology'),
+              style: const TextStyle(fontSize: 18)),
+          // Pointless while nothing is printed — grey it out rather than hide
+          // it, so the option does not appear to vanish.
+          enabled: _config.courierCodeMode != CourierCodeMode.off,
+          trailing: SegmentedButton<CourierCodeSymbology>(
+            style: SegmentedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              textStyle: const TextStyle(fontSize: 14),
+            ),
+            segments: const [
+              ButtonSegment(
+                  value: CourierCodeSymbology.qr, label: Text('QR')),
+              ButtonSegment(
+                  value: CourierCodeSymbology.code128,
+                  label: Text('Code128')),
+              ButtonSegment(
+                  value: CourierCodeSymbology.text, label: Text('Texte')),
+            ],
+            selected: {_config.courierCodeSymbology},
+            onSelectionChanged: _config.courierCodeMode == CourierCodeMode.off
+                ? null
+                : (values) => _updateConfig(
+                    _config.copyWith(courierCodeSymbology: values.first)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Receipt + KDS printer cards: stacked on narrow screens, side by side on
+  /// wide (desktop) ones so the horizontal space isn't wasted.
+  Widget _printerSectionsLayout(
+      BuildContext context, AppLocalizations l10n, bool wide) {
+    final receipt = _buildPrinterSection(
+      context: context,
+      title: l10n.translate('receipt_printer'),
+      subtitle: l10n.translate('for_customer_receipts'),
+      icon: Icons.receipt_long,
+      purpose: PrinterPurpose.receipt,
+      configuredName: _config.receiptPrinterName,
+      configuredType: _config.receiptConnectionType,
+    );
+    final kds = _buildPrinterSection(
+      context: context,
+      title: l10n.translate('kds_printer'),
+      subtitle: l10n.translate('for_kitchen_display_tickets'),
+      icon: Icons.restaurant,
+      purpose: PrinterPurpose.kds,
+      configuredName: _config.kdsPrinterName,
+      configuredType: _config.kdsConnectionType,
+      enabled: _config.kdsEnabled,
+    );
+    if (!wide) {
+      return Column(
+        children: [receipt, const SizedBox(height: 20), kds],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: receipt),
+        const SizedBox(width: 20),
+        Expanded(child: kds),
       ],
     );
   }
@@ -1341,7 +2088,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
 
     return Card(
       elevation: 3,
-      color: enabled ? null : Colors.grey[100],
+      color: enabled ? null : Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -1349,7 +2096,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
           children: [
             Row(
               children: [
-                Icon(icon, size: 32, color: enabled ? null : Colors.grey),
+                Icon(icon, size: 32, color: enabled ? null : Theme.of(context).colorScheme.onSurfaceVariant),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
@@ -1360,7 +2107,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
-                          color: enabled ? null : Colors.grey,
+                          color: enabled ? null : Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -1368,7 +2115,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         subtitle,
                         style: TextStyle(
                           fontSize: 15,
-                          color: enabled ? Colors.grey[600] : Colors.grey,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ],
@@ -1377,8 +2124,11 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                 if (!enabled)
                   Chip(
                     label: Text(l10n.translate('disabled')),
-                    backgroundColor: Colors.grey,
-                    labelStyle: const TextStyle(color: Colors.white, fontSize: 15),
+                    backgroundColor:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                    labelStyle: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 15),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
               ],
@@ -1411,7 +2161,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                           const SizedBox(height: 4),
                           Text(
                             configuredType?.name ?? l10n.translate('unknown'),
-                            style: TextStyle(fontSize: 15, color: Colors.grey[600]),
+                            style: TextStyle(fontSize: 15, color: Theme.of(context).colorScheme.onSurfaceVariant),
                           ),
                         ],
                       ),
@@ -1453,11 +2203,11 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.print_disabled, color: Colors.grey[400], size: 32),
+                    Icon(Icons.print_disabled, color: Theme.of(context).colorScheme.outline, size: 32),
                     const SizedBox(width: 12),
                     Text(
                       l10n.translate('no_printer_configured'),
-                      style: TextStyle(color: Colors.grey[600], fontSize: 17),
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 17),
                     ),
                   ],
                 ),
@@ -1560,7 +2310,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      OnscreenKeyboardTextField(
+                      AdaptiveKeyboardTextField(
                         controller: nameCtrl,
                         decoration: InputDecoration(
                           labelText: l10n.translate('network_printer'),
@@ -1569,7 +2319,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         ),
                       ),
                       const SizedBox(height: 12),
-                      OnscreenKeyboardTextField(
+                      AdaptiveKeyboardTextField(
                         controller: ipCtrl,
                         decoration: InputDecoration(
                           labelText: l10n.translate('ip_address'),
@@ -1579,7 +2329,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         ),
                       ),
                       const SizedBox(height: 12),
-                      OnscreenKeyboardTextField(
+                      AdaptiveKeyboardTextField(
                         controller: portCtrl,
                         decoration: InputDecoration(
                           labelText: l10n.translate('port'),
@@ -1706,8 +2456,8 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(l10n.translate('raw_escpos_hint'),
-                        style: const TextStyle(
-                            color: Colors.grey, fontSize: 13)),
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13)),
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 8,
@@ -1725,7 +2475,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                           .toList(),
                     ),
                     const SizedBox(height: 12),
-                    OnscreenKeyboardTextField(
+                    AdaptiveKeyboardTextField(
                       controller: inputCtrl,
                       maxLines: 5,
                       minLines: 5,
@@ -1774,18 +2524,18 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     setState(() {
       _printerPool = List.of(service.printerPool);
       // savePrinterPool may have pruned stale assignments — re-read so the
-      // dropdowns stay in sync.
-      _stationAssignments = Map.of(service.stationAssignments);
+      // pickers stay in sync.
+      _stationAssignments = _copyAssignments(service.stationAssignments);
     });
   }
 
-  Future<void> _persistAssignments(Map<int, String> updated) async {
+  Future<void> _persistAssignments(Map<int, List<String>> updated) async {
     final service = ref.read(printingServiceProvider);
     final prefs = ref.read(sharedPreferencesProvider);
     await service.saveStationAssignments(prefs, updated);
     if (!mounted) return;
     setState(() {
-      _stationAssignments = Map.of(service.stationAssignments);
+      _stationAssignments = _copyAssignments(service.stationAssignments);
     });
   }
 
@@ -1907,6 +2657,13 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
           l10n.translate('assign_printers_to_stations'),
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.translate('station_printers_hint'),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: 8),
         stationsAsync.when(
           loading: () => const Padding(
@@ -1967,6 +2724,11 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
             ),
           ),
           IconButton(
+            icon: const Icon(Icons.print_outlined),
+            tooltip: l10n.translate('test_print'),
+            onPressed: () => _testPoolPrinter(p),
+          ),
+          IconButton(
             icon: const Icon(Icons.edit_outlined),
             tooltip: l10n.translate('edit'),
             onPressed: () => _openPrinterDialog(existing: p),
@@ -1990,13 +2752,42 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   ) {
     final int stationId = station.id as int;
     final String stationName = station.name as String;
-    final String? selectedId = _stationAssignments[stationId];
-    final selectedExists =
-        selectedId != null && _printerPool.any((p) => p.id == selectedId);
+    final selected = _stationAssignments[stationId] ?? const <String>[];
+    final silenced = selected.contains(kNoPrinterAssignment);
+    // A pool printer can be deleted while an assignment still names it, so
+    // only the ids that still resolve are worth showing.
+    final labels = <String>[
+      for (final id in selected)
+        for (final p in _printerPool)
+          if (p.id == id) (p.label.isNotEmpty ? p.label : p.address),
+    ];
+
+    final String summary;
+    final IconData icon;
+    final Color? color;
+    if (silenced) {
+      summary = l10n.translate('no_printer_kds_only');
+      icon = Icons.print_disabled;
+      color = Colors.redAccent;
+    } else if (labels.isEmpty) {
+      summary = l10n.translate('use_default_kds_printer');
+      icon = Icons.print_outlined;
+      color = theme.colorScheme.onSurfaceVariant;
+    } else {
+      // More than one printer = the same station ticket on each of them.
+      summary = labels.join('  +  ');
+      icon = labels.length > 1 ? Icons.layers_outlined : Icons.print_outlined;
+      color = theme.colorScheme.primary;
+    }
+
+    final rule = _stationRules[stationId] ?? const StationTicketRule();
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
         children: [
           Expanded(
             flex: 3,
@@ -2007,38 +2798,236 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
           ),
           Expanded(
             flex: 4,
-            child: DropdownButton<String?>(
-              value: selectedExists ? selectedId : null,
-              isExpanded: true,
-              hint: Text(l10n.translate('use_default_kds_printer')),
-              items: [
-                DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text(l10n.translate('use_default_kds_printer')),
-                ),
-                for (final p in _printerPool)
-                  DropdownMenuItem<String?>(
-                    value: p.id,
-                    child: Text(
-                      p.label.isNotEmpty ? p.label : p.address,
-                      overflow: TextOverflow.ellipsis,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _openStationPrinterPicker(stationId, stationName),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 16, color: color),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        summary,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: color),
+                      ),
                     ),
-                  ),
-              ],
-              onChanged: (value) {
-                final updated = Map<int, String>.from(_stationAssignments);
-                if (value == null) {
-                  updated.remove(stationId);
-                } else {
-                  updated[stationId] = value;
-                }
-                _persistAssignments(updated);
-              },
+                    if (labels.length > 1)
+                      Padding(
+                        padding: const EdgeInsetsDirectional.only(end: 4),
+                        child: Text(
+                          '\u00d7${labels.length}',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    const Icon(Icons.arrow_drop_down, size: 20),
+                  ],
+                ),
+              ),
             ),
           ),
         ],
       ),
+          // What this station's ticket shows. Hidden for a silenced station —
+          // it prints nothing at all, so there is nothing to scope.
+          if (!silenced)
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 4),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  DropdownButton<StationTicketScope>(
+                    value: rule.scope,
+                    isDense: true,
+                    underline: const SizedBox.shrink(),
+                    style: theme.textTheme.bodySmall,
+                    items: [
+                      for (final s in StationTicketScope.values)
+                        DropdownMenuItem(
+                          value: s,
+                          child: Text(l10n.translate(_scopeKey(s))),
+                        ),
+                    ],
+                    onChanged: (v) => _setStationRule(
+                        stationId, StationTicketRule(
+                            scope: v ?? rule.scope, private: rule.private)),
+                  ),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () => _setStationRule(
+                        stationId,
+                        StationTicketRule(
+                            scope: rule.scope, private: !rule.private)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            rule.private
+                                ? Icons.lock_outline
+                                : Icons.lock_open_outlined,
+                            size: 15,
+                            color: rule.private
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            l10n.translate('station_private'),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: rule.private
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurfaceVariant,
+                              fontWeight: rule.private
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
+  }
+
+  /// Label key for a scope, kept out of the widget so the three strings sit
+  /// together and cannot drift from the enum.
+  String _scopeKey(StationTicketScope scope) {
+    switch (scope) {
+      case StationTicketScope.ownItems:
+        return 'scope_own_items';
+      case StationTicketScope.wholeOrderWhenUsed:
+        return 'scope_whole_when_used';
+      case StationTicketScope.wholeOrderAlways:
+        return 'scope_whole_always';
+    }
+  }
+
+  Future<void> _setStationRule(int stationId, StationTicketRule rule) async {
+    final updated = Map<int, StationTicketRule>.of(_stationRules);
+    updated[stationId] = rule;
+    await ref
+        .read(printingServiceProvider)
+        .saveStationRules(ref.read(sharedPreferencesProvider), updated);
+    if (!mounted) return;
+    setState(() => _stationRules =
+        Map.of(ref.read(printingServiceProvider).stationRules));
+  }
+
+  /// Multi-select printer picker for one station: the default KDS printer,
+  /// "don't print at all", or any number of pool printers — every printer
+  /// ticked gets its own copy of this station's ticket. The two exclusive
+  /// options clear the checkboxes, and ticking a printer clears them.
+  Future<void> _openStationPrinterPicker(
+    int stationId,
+    String stationName,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    var current = List<String>.of(_stationAssignments[stationId] ?? const []);
+
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final silenced = current.contains(kNoPrinterAssignment);
+          final chosen =
+              current.where((id) => id != kNoPrinterAssignment).toList();
+          return AlertDialog(
+            title: Text('$stationName \u2014 ${l10n.translate('printers')}'),
+            content: SizedBox(
+              width: 420,
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  ListTile(
+                    leading: Icon(chosen.isEmpty && !silenced
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked),
+                    title: Text(l10n.translate('use_default_kds_printer')),
+                    onTap: () => setLocal(() => current = []),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      silenced
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: silenced ? Colors.redAccent : null,
+                    ),
+                    title: Text(l10n.translate('no_printer_kds_only')),
+                    onTap: () =>
+                        setLocal(() => current = [kNoPrinterAssignment]),
+                  ),
+                  const Divider(),
+                  if (_printerPool.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        l10n.translate('no_printers_found'),
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  for (final p in _printerPool)
+                    CheckboxListTile(
+                      value: chosen.contains(p.id),
+                      title: Text(p.label.isNotEmpty ? p.label : p.address),
+                      subtitle: Text(
+                          '${p.connectionType.name} \u00b7 ${p.address}'),
+                      onChanged: (v) => setLocal(() {
+                        // Rebuilt from `chosen`, which already excludes the
+                        // sentinel — ticking a printer un-silences the station.
+                        final next = List<String>.of(chosen);
+                        if (v == true) {
+                          if (!next.contains(p.id)) next.add(p.id);
+                        } else {
+                          next.remove(p.id);
+                        }
+                        current = next;
+                      }),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(l10n.translate('cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, current),
+                child: Text(l10n.translate('save')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (result == null) return; // cancelled
+    final updated = _copyAssignments(_stationAssignments);
+    if (result.isEmpty) {
+      updated.remove(stationId);
+    } else {
+      updated[stationId] = result;
+    }
+    await _persistAssignments(updated);
   }
 }
 

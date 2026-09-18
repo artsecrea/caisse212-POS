@@ -1,7 +1,5 @@
 import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart'
-    show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/database/app_database.dart';
@@ -9,6 +7,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import './adaptive_text_field.dart';
 
 /// Dialog opened from the empty [OrderPanel] to let the cashier pick an
 /// existing unpaid order to resume.
@@ -48,6 +47,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
   Map<int, AreaTable> _tablesById = const {};
   Map<int, Customer> _customersByOrderClientId = const {};
   Map<int, double> _totalsByOrderId = const {};
+  Map<int, OrderContentSummary> _contentsByOrderId = const {};
   List<Order> _orders = const [];
   bool _isLoading = true;
 
@@ -78,7 +78,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
   }
 
   /// Live-search customers by name/phone/email substring. Called from
-  /// the OnscreenKeyboardTextField's onChanged on every keystroke.
+  /// the AdaptiveKeyboardTextField's onChanged on every keystroke.
   Future<void> _refreshCustomerMatches(String query) async {
     final needle = query.trim().toLowerCase();
     if (needle.length < 2) {
@@ -150,12 +150,17 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
     final orderIds = filtered.map((o) => o.id).toList();
     final totalsByOrderId =
         await orderRepo.getOrderTotals(orderIds);
+    // Batched alongside the totals — a waiter picking a parked table needs to
+    // know what is in it, and resuming each one to find out is the alternative.
+    final contentsByOrderId =
+        await orderRepo.getOrderContentSummaries(orderIds);
 
     if (!mounted) return;
     setState(() {
       _orders = filtered;
       _customersByOrderClientId = byClientId;
       _totalsByOrderId = totalsByOrderId;
+      _contentsByOrderId = contentsByOrderId;
       _isLoading = false;
     });
   }
@@ -339,7 +344,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        OnscreenKeyboardTextField(
+        AdaptiveKeyboardTextField(
           controller: _customerController,
           focusNode: _customerFocusNode,
           decoration: InputDecoration(
@@ -493,6 +498,8 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
             ? null
             : _customersByOrderClientId[order.clientId!];
 
+        final content = _contentsByOrderId[order.id];
+
         final metaParts = <String>[
           _orderTypeLabel(order.type, l10n),
           if (table != null) table.name,
@@ -558,8 +565,43 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
                                     .withValues(alpha: 0.6),
                               ),
                             ),
+                            if (content != null && !content.isEmpty) ...[
+                              const SizedBox(width: 8),
+                              Icon(Icons.shopping_basket_outlined,
+                                  size: 11,
+                                  color:
+                                      colors.onSurface.withValues(alpha: 0.5)),
+                              const SizedBox(width: 3),
+                              Text(
+                                '${content.unitsLabel} ${l10n.translate('items')}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: colors.onSurface
+                                      .withValues(alpha: 0.7),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
+                        // Capped at two lines with an explicit "+N", so a table
+                        // with forty lines takes the same room as one with two
+                        // and the list stays scannable.
+                        if (content != null && content.preview.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              content.previewLabel,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                height: 1.25,
+                                color:
+                                    colors.onSurface.withValues(alpha: 0.6),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -597,7 +639,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
       case 'DELIVERED':
         return Colors.green.shade700;
       default:
-        return Colors.grey.shade700;
+        return Theme.of(context).colorScheme.onSurface;
     }
   }
 }

@@ -4,9 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../data/database/app_database.dart';
+import '../../domain/models/booking_models.dart';
+import '../../providers/booking_providers.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
+import '../../services/booking_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
+import '../../utils/currency_formatter.dart';
 import '../../utils/customer_display.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -20,7 +25,15 @@ enum _ViewMode { waiterGrid, orderTimeline, list }
 // ═══════════════════════════════════════════════════════════════════════════
 
 class AgendaEntry {
-  final int orderProductId;
+  /// This device's `order_products.id`, or null for a booking pulled from the
+  /// diary whose order this terminal has never held.
+  final int? orderProductId;
+
+  /// The server's `order_products.id` — the only id `PATCH`/`DELETE
+  /// /order-products/{id}/schedule` understands. Null until the order has been
+  /// synced, which is exactly when booking must refuse to act.
+  final int? serverOrderProductId;
+
   final int orderId;
   final String orderCode;
   final String productName;
@@ -31,11 +44,21 @@ class AgendaEntry {
   final DateTime end;
   final int? waiterId;
   final String? waiterName;
+  final int? resourceId;
+  final String? resourceName;
+  /// Kitchen line state. Display only — never a booking decision. Scheduling
+  /// status comes from the plan times alone, and the server already excludes
+  /// canceled orders, so everything that arrives here is live.
   final String state;
+
+  /// Net line value (no TVA): money expected on this booking.
+  final double? value;
+
   final Color color;
 
   const AgendaEntry({
     required this.orderProductId,
+    this.serverOrderProductId,
     required this.orderId,
     required this.orderCode,
     required this.productName,
@@ -46,11 +69,26 @@ class AgendaEntry {
     required this.end,
     this.waiterId,
     this.waiterName,
+    this.resourceId,
+    this.resourceName,
     required this.state,
+    this.value,
     required this.color,
   });
 
   Duration get duration => end.difference(start);
+
+  /// Where this booking sits relative to [now]. Derived, never stored — see
+  /// [bookingTimeStatus].
+  BookingTimeStatus timeStatus({DateTime? now}) =>
+      bookingTimeStatus(start, end, now: now);
+
+  bool get isCancelled => state == 'CANCELED';
+
+  /// Whether this booking can be rescheduled or freed from here. A row that
+  /// only exists in the pulled diary still can — the server id is what the
+  /// schedule endpoints address.
+  bool get isActionable => serverOrderProductId != null && !isCancelled;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -63,61 +101,148 @@ final agendaEntriesProvider =
   final dayStart = DateTime(date.year, date.month, date.day);
   final dayEnd = dayStart.add(const Duration(days: 1));
 
-  final orderProducts = await (db.select(db.orderProducts)
+  // Overlap, matching the endpoint: an appointment that started at 23:30
+  // yesterday and runs past midnight is occupying a chair today, and a
+  // start-in-day filter would leave it off the grid it is sitting on.
+  final rows = await (db.select(db.orderProducts)
         ..where((t) =>
             t.planStartAt.isNotNull() &
-            t.planStartAt.isBiggerOrEqualValue(dayStart) &
-            t.planStartAt.isSmallerThanValue(dayEnd)))
+            t.planEndAt.isNotNull() &
+            t.planStartAt.isSmallerThanValue(dayEnd) &
+            t.planEndAt.isBiggerThanValue(dayStart)))
       .get();
+  final ops =
+      rows.where((op) => op.planStartAt != null && op.planEndAt != null).toList();
+  if (ops.isEmpty) return const [];
+
+  // Batch-load every referenced entity in one query each (no per-entry N+1).
+  final productIds = ops.map((o) => o.productId).toSet().toList();
+  final orderIds = ops.map((o) => o.orderId).toSet().toList();
+  final waiterIds =
+      ops.map((o) => o.planWaiterId).whereType<int>().toSet().toList();
+  final resourceIds =
+      ops.map((o) => o.planResourceId).whereType<int>().toSet().toList();
+
+  final products = {
+    for (final p in await (db.select(db.products)
+          ..where((t) => t.id.isIn(productIds)))
+        .get())
+      p.id: p
+  };
+  final orders = {
+    for (final o
+        in await (db.select(db.orders)..where((t) => t.id.isIn(orderIds))).get())
+      o.id: o
+  };
+  final clientIds =
+      orders.values.map((o) => o.clientId).whereType<int>().toSet().toList();
+  final customers = clientIds.isEmpty
+      ? const <int, Customer>{}
+      : {
+          for (final c in await (db.select(db.customers)
+                ..where((t) => t.id.isIn(clientIds)))
+              .get())
+            c.id: c
+        };
+  final waiters = waiterIds.isEmpty
+      ? const <int, Waiter>{}
+      : {
+          for (final w in await (db.select(db.waiters)
+                ..where((t) => t.id.isIn(waiterIds)))
+              .get())
+            w.id: w
+        };
+  final resources = resourceIds.isEmpty
+      ? const <int, Resource>{}
+      : {
+          for (final r in await (db.select(db.resources)
+                ..where((t) => t.id.isIn(resourceIds)))
+              .get())
+            r.id: r
+        };
+
+  // Bookable staff first, waiters as the fallback: `planWaiterId` is a
+  // provider employee id, and a shop that has migrated to providers may have
+  // no waiter row with that id at all.
+  final serviceProviders = {
+    for (final sp in await db.select(db.providers).get()) sp.id: sp
+  };
 
   final entries = <AgendaEntry>[];
-  for (final op in orderProducts) {
-    if (op.planStartAt == null || op.planEndAt == null) continue;
+  for (final op in ops) {
+    final order = orders[op.orderId];
+    final product = products[op.productId];
+    final customer =
+        order?.clientId != null ? customers[order!.clientId!] : null;
+    final waiter = op.planWaiterId != null ? waiters[op.planWaiterId!] : null;
+    final resource =
+        op.planResourceId != null ? resources[op.planResourceId!] : null;
 
-    final product = await (db.select(db.products)
-          ..where((t) => t.id.equals(op.productId)))
-        .getSingleOrNull();
-
-    final order = await (db.select(db.orders)
-          ..where((t) => t.id.equals(op.orderId)))
-        .getSingleOrNull();
-
-    String? customerName;
-    String? customerPhone;
-    if (order?.clientId != null) {
-      final customer = await (db.select(db.customers)
-            ..where((t) => t.id.equals(order!.clientId!)))
-          .getSingleOrNull();
-      if (customer != null) {
-        customerName = customer.displayLabel;
-        customerPhone = customer.phone;
-      }
-    }
-
-    String? waiterName;
-    if (op.planWaiterId != null) {
-      final waiter = await (db.select(db.waiters)
-            ..where((t) => t.id.equals(op.planWaiterId!)))
-          .getSingleOrNull();
-      if (waiter != null) {
-        waiterName = '${waiter.firstName} ${waiter.lastName ?? ''}'.trim();
-      }
-    }
+    final sp = op.planWaiterId != null ? serviceProviders[op.planWaiterId!] : null;
+    final staffName = sp != null
+        ? '${sp.firstName} ${sp.lastName ?? ''}'.trim()
+        : (waiter == null
+            ? null
+            : '${waiter.firstName} ${waiter.lastName ?? ''}'.trim());
 
     entries.add(AgendaEntry(
       orderProductId: op.id,
+      serverOrderProductId: op.serverId,
       orderId: op.orderId,
       orderCode: order?.code ?? '#${op.orderId}',
       productName: product?.name ?? 'Product #${op.productId}',
-      customerName: customerName,
-      customerPhone: customerPhone,
+      customerName: customer?.displayLabel,
+      customerPhone: customer?.phone,
       note: op.note,
       start: op.planStartAt!,
       end: op.planEndAt!,
       waiterId: op.planWaiterId,
-      waiterName: waiterName,
+      waiterName: staffName,
+      resourceId: op.planResourceId,
+      resourceName: resource?.name,
       state: op.state,
-      color: _stateColor(op.state),
+      color: _entryColor(
+          bookingTimeStatus(op.planStartAt!, op.planEndAt!)),
+    ));
+  }
+
+  // Fold in the pulled diary. A booking can belong to an order this terminal
+  // never held — another till's sale, or one taken on the web — and it still
+  // occupies a chair here. Local rows win where both exist: they carry this
+  // device's ids and any edit made since the last pull.
+  final localServerIds = entries
+      .map((e) => e.serverOrderProductId)
+      .whereType<int>()
+      .toSet();
+
+  final cached = await (db.select(db.agendaBookings)
+        ..where((t) =>
+            t.planStartAt.isSmallerThanValue(dayEnd) &
+            t.planEndAt.isBiggerThanValue(dayStart)))
+      .get();
+
+  for (final b in cached) {
+    if (localServerIds.contains(b.orderProductId)) continue;
+    final sp = b.planWaiterId != null ? serviceProviders[b.planWaiterId!] : null;
+    entries.add(AgendaEntry(
+      orderProductId: null,
+      serverOrderProductId: b.orderProductId,
+      orderId: b.orderId ?? -1,
+      orderCode: b.orderCode ?? '#${b.orderId ?? '?'}',
+      productName: b.productName ?? 'Product #${b.productId ?? '?'}',
+      customerName: b.customerName,
+      customerPhone: b.customerPhone,
+      note: b.note,
+      start: b.planStartAt,
+      end: b.planEndAt,
+      waiterId: b.planWaiterId,
+      waiterName: b.planWaiterName ??
+          (sp == null ? null : '${sp.firstName} ${sp.lastName ?? ''}'.trim()),
+      resourceId: b.planResourceId,
+      resourceName: b.planResourceName,
+      state: b.state,
+      value: b.value,
+      color: _entryColor(bookingTimeStatus(b.planStartAt, b.planEndAt)),
     ));
   }
 
@@ -125,7 +250,26 @@ final agendaEntriesProvider =
   return entries;
 });
 
-Color _stateColor(String state) {
+/// The colour a booking is drawn in — from the clock, and nothing else.
+///
+/// There is deliberately no booking-status axis to blend in: the line's
+/// kitchen state answers a different question, and a canceled order's lines
+/// never reach the agenda at all because cancelling frees the slot server-side.
+/// So the only thing worth colouring is when the appointment sits.
+Color _entryColor(BookingTimeStatus status) {
+  switch (status) {
+    case BookingTimeStatus.notYet:
+      return const Color(0xFF1E88E5); // upcoming
+    case BookingTimeStatus.inProgress:
+      return const Color(0xFFFB8C00); // in the chair now
+    case BookingTimeStatus.done:
+      return const Color(0xFF43A047); // finished
+  }
+}
+
+/// Colour for the line's own state chip (COMPLETED / PREPARING / CANCELED).
+/// Distinct from [_entryColor], which answers "when", not "what stage".
+Color _lineStateColor(String state) {
   switch (state) {
     case 'COMPLETED':
       return const Color(0xFF43A047);
@@ -135,6 +279,17 @@ Color _stateColor(String state) {
       return const Color(0xFFE53935);
     default:
       return const Color(0xFF1E88E5);
+  }
+}
+
+String timeStatusLabel(BookingTimeStatus status, AppLocalizations l10n) {
+  switch (status) {
+    case BookingTimeStatus.notYet:
+      return l10n.translate('booking_not_yet');
+    case BookingTimeStatus.inProgress:
+      return l10n.translate('booking_in_progress');
+    case BookingTimeStatus.done:
+      return l10n.translate('booking_done');
   }
 }
 
@@ -259,6 +414,19 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
   double _cachedColWidth = _colWidth;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncDay());
+  }
+
+  /// Pull the day's diary, then repaint from the cache. Silent on failure —
+  /// offline the screen keeps showing the last pull, which beats a blank grid.
+  Future<void> _syncDay() async {
+    final ok = await _pullAgenda();
+    if (ok && mounted) ref.invalidate(agendaEntriesProvider(_selectedDate));
+  }
+
+  @override
   void dispose() {
     _vScrollCtrl.dispose();
     _hScrollCtrl.dispose();
@@ -280,15 +448,23 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
     }
   }
 
-  void _previousDay() => setState(() {
-        _selectedDate = _selectedDate.subtract(const Duration(days: 1));
-        _scrolledToNow = false;
-      });
+  void _previousDay() {
+    final previous = _selectedDate;
+    setState(() {
+      _selectedDate = _selectedDate.subtract(const Duration(days: 1));
+      _scrolledToNow = false;
+    });
+    _syncWeekIfChanged(previous);
+  }
 
-  void _nextDay() => setState(() {
-        _selectedDate = _selectedDate.add(const Duration(days: 1));
-        _scrolledToNow = false;
-      });
+  void _nextDay() {
+    final previous = _selectedDate;
+    setState(() {
+      _selectedDate = _selectedDate.add(const Duration(days: 1));
+      _scrolledToNow = false;
+    });
+    _syncWeekIfChanged(previous);
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Root build
@@ -301,6 +477,11 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
     final entriesAsync = ref.watch(agendaEntriesProvider(_selectedDate));
     final waitersAsync = ref.watch(allWaitersProvider);
     final timeStep = ref.watch(settingsProvider).agendaTimeStep;
+    final canBook = ref.watch(canBookProvider);
+    // Repaints once a minute so blocks change colour as bookings start and
+    // finish — the time status is derived from the clock, so without this the
+    // grid would keep showing 9am as "upcoming" all afternoon.
+    ref.watch(clockTickProvider);
 
     entriesAsync.whenData((_) {
       WidgetsBinding.instance
@@ -366,7 +547,34 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
       ),
       body: Column(
         children: [
+          // Says the diary on screen may be behind, without hiding it. A shop
+          // mid-outage still needs to know who is coming at 3pm.
+          if (!canBook)
+            Container(
+              width: double.infinity,
+              color: theme.colorScheme.secondaryContainer,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.cloud_off_rounded,
+                      size: 18,
+                      color: theme.colorScheme.onSecondaryContainer),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      l10n.translate('agenda_offline_cached'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           _buildDateHeader(context, theme),
+          _buildWeekSummary(theme, l10n),
           Expanded(
             child: entriesAsync.when(
               loading: () =>
@@ -380,6 +588,55 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
                 data: (waiters) =>
                     _buildContent(context, entries, waiters, timeStep, theme),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bookings and money on the books for the week on screen.
+  ///
+  /// Labelled *reserved*, and kept away from any takings figure, because it is
+  /// a forecast: a service becomes revenue on the day it is performed, not the
+  /// day it was booked or the day a deposit landed. Only shown when the server
+  /// has actually summarised the week — an invented total is worse than none.
+  Widget _buildWeekSummary(ThemeData theme, AppLocalizations l10n) {
+    final monday = weekOf(_selectedDate).start;
+    final summary = ref.watch(agendaWeekSummaryProvider)[monday];
+    if (summary == null || summary.count == 0) return const SizedBox.shrink();
+
+    final formatter = ref.watch(currencyFormatterProvider);
+    final today = DateTime(
+        _selectedDate.year, _selectedDate.month, _selectedDate.day);
+    final day = summary.days
+        .where((d) => DateTime(d.date.year, d.date.month, d.date.day) == today)
+        .firstOrNull;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        border: Border(bottom: BorderSide(color: theme.dividerColor)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.event_note_outlined,
+              size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            '${day?.count ?? 0} ${l10n.translate('today')}'
+            '  ·  ${summary.count} ${l10n.translate('this_week')}',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const Spacer(),
+          Text(
+            '${l10n.translate('reserved_value')}: '
+            '${formatter.format(summary.reservedValue)}',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.primary,
             ),
           ),
         ],
@@ -867,7 +1124,7 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
   }
 
   Widget _stateChipSmall(String state) {
-    final color = _stateColor(state);
+    final color = _lineStateColor(state);
     final label = switch (state) {
       'COMPLETED' => 'Done',
       'PREPARING' => 'Prep',
@@ -1809,7 +2066,7 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
   }
 
   Widget _stateIndicator(String state) {
-    final color = _stateColor(state);
+    final color = _lineStateColor(state);
     return Container(
       width: 8,
       height: 8,
@@ -1899,30 +2156,14 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
       newWaiterId = _waiterIds[colIdx];
     }
 
-    final db = ref.read(databaseProvider);
-    await (db.update(db.orderProducts)
-          ..where((t) => t.id.equals(entry.orderProductId)))
-        .write(OrderProductsCompanion(
-      planStartAt: Value(newStart),
-      planEndAt: Value(newEnd),
-      planWaiterId: Value(newWaiterId),
-      updatedAt: Value(DateTime.now()),
-    ));
-
-    ref.invalidate(agendaEntriesProvider(_selectedDate));
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-              '${entry.productName} → ${DateFormat.Hm().format(newStart)}'),
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10)),
-        ),
-      );
-    }
+    await _commitSchedule(
+      entry: entry,
+      newStart: newStart,
+      newEnd: newEnd,
+      newWaiterId: newWaiterId,
+      successMessage:
+          '${entry.productName} → ${DateFormat.Hm().format(newStart)}',
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2007,12 +2248,31 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
                     DateFormat('dd/MM/yyyy HH:mm').format(e.end)),
                 _detailRow(context, Icons.timer_outlined, 'Duration',
                     _formatDuration(e.duration)),
+                if (e.value != null)
+                  _detailRow(
+                    context,
+                    Icons.sell_outlined,
+                    AppLocalizations.of(context)!.translate('reserved_value'),
+                    ref.read(currencyFormatterProvider).format(e.value!),
+                  ),
                 const Divider(height: 12),
                 if (e.waiterName != null)
                   _detailRow(context, Icons.badge_outlined, 'With',
                       e.waiterName!),
+                if (e.resourceName != null)
+                  _detailRow(context, Icons.meeting_room_outlined,
+                      AppLocalizations.of(context)?.translate('resource') ??
+                          'Resource',
+                      e.resourceName!),
                 _detailRow(
                     context, Icons.info_outline, 'Status', e.state),
+                _detailRow(
+                  context,
+                  Icons.schedule_outlined,
+                  'Timing',
+                  timeStatusLabel(e.timeStatus(),
+                      AppLocalizations.of(context)!),
+                ),
                 if (e.note != null && e.note!.isNotEmpty) ...[
                   const Divider(height: 12),
                   _detailRow(context, Icons.sticky_note_2_outlined,
@@ -2029,6 +2289,20 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Close'),
           ),
+          // Freeing a slot only makes sense for a booking the server knows
+          // about, and only online — the diary it belongs to lives there.
+          if (e.isActionable)
+            TextButton.icon(
+              icon: const Icon(Icons.event_busy_outlined, size: 16),
+              label: Text(
+                  AppLocalizations.of(ctx)!.translate('unschedule')),
+              style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(ctx).colorScheme.error),
+              onPressed: () {
+                Navigator.pop(ctx);
+                _unschedule(e);
+              },
+            ),
           FilledButton.icon(
             icon: const Icon(Icons.edit_calendar, size: 16),
             label: const Text('Edit Time'),
@@ -2260,28 +2534,181 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
 
     if (saved != true || !context.mounted) return;
 
-    final db = ref.read(databaseProvider);
-    await (db.update(db.orderProducts)
-          ..where((t) => t.id.equals(e.orderProductId)))
-        .write(OrderProductsCompanion(
-      planStartAt: Value(newStart),
-      planEndAt: Value(newEnd),
-      planWaiterId: Value(newWaiterId),
-      updatedAt: Value(DateTime.now()),
-    ));
+    await _commitSchedule(
+      entry: e,
+      newStart: newStart,
+      newEnd: newEnd,
+      newWaiterId: newWaiterId,
+      successMessage: AppLocalizations.of(context)?.translate('booking_updated') ??
+          'Booking updated',
+    );
+  }
 
-    ref.invalidate(agendaEntriesProvider(_selectedDate));
+  /// Move or reassign a booking.
+  ///
+  /// Server first, local second, and **never** queued. Scheduling is the one
+  /// POS action that may not ride the offline queue: the slot lives in the
+  /// shop's single diary, so a local write held for later reconciliation is a
+  /// promise this terminal cannot keep — two tills offline would each hand out
+  /// the same chair. Writing local state only after the server accepts also
+  /// means a rejected move never leaves the agenda showing an appointment
+  /// nobody owns, so there is nothing to revert.
+  Future<void> _commitSchedule({
+    required AgendaEntry entry,
+    required DateTime newStart,
+    required DateTime newEnd,
+    required int? newWaiterId,
+    int? newResourceId,
+    String? successMessage,
+  }) async {
+    final l10n = AppLocalizations.of(context)!;
+    final booking = ref.read(bookingServiceProvider);
 
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Booking updated'),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10)),
-        ),
-      );
+    if (!booking.canBook) {
+      _agendaToast(l10n.translate('reconnect_to_book'), isError: true);
+      return;
     }
+
+    final serverId = entry.serverOrderProductId ??
+        (entry.orderProductId == null
+            ? null
+            : await booking.resolveServerLineId(entry.orderProductId!));
+    if (serverId == null) {
+      // The order has never reached the backend, so there is no line for
+      // /schedule to address. Selling it offline was fine; booking it is not.
+      if (mounted) {
+        _agendaToast(l10n.translate('booking_order_sync_failed'), isError: true);
+      }
+      return;
+    }
+
+    try {
+      await booking.schedule(
+        serverOrderProductId: serverId,
+        localOrderProductId: entry.orderProductId,
+        planStartAt: newStart,
+        planEndAt: newEnd,
+        planWaiterId: newWaiterId,
+        planResourceId: newResourceId ?? entry.resourceId,
+      );
+      await _pullAgenda();
+      ref.invalidate(agendaEntriesProvider(_selectedDate));
+      if (mounted && successMessage != null) _agendaToast(successMessage);
+    } on ScheduleConflict catch (c) {
+      final detail =
+          c.capacity != null ? ' (${c.current ?? '?'}/${c.capacity})' : '';
+      // The diary moved under us — pull it so the grid shows what actually
+      // holds that time before staff try again.
+      await _pullAgenda();
+      ref.invalidate(agendaEntriesProvider(_selectedDate));
+      if (mounted) _agendaToast('${c.message}$detail', isError: true);
+    } on ScheduleValidationError catch (v) {
+      if (mounted) _agendaToast(v.message, isError: true);
+    } on OfflineBookingException {
+      if (mounted) {
+        _agendaToast(l10n.translate('reconnect_to_book'), isError: true);
+      }
+    } catch (e) {
+      if (mounted) _agendaToast(errorText(e, l10n), isError: true);
+    }
+  }
+
+  /// Pull the whole week around the day on screen. Silent on failure: the grid
+  /// keeps showing the last pull rather than emptying itself.
+  ///
+  /// A week, not a day, because staff step through days constantly — one
+  /// request covers the whole run, and the days either side are already there
+  /// if the connection drops before the next tap.
+  Future<bool> _pullAgenda() async {
+    final summary = await refreshAgendaWeek(
+      api: ref.read(apiServiceProvider),
+      sync: ref.read(dataSyncServiceProvider),
+      isOnline: ref.read(bookingServiceProvider).canBook,
+      date: _selectedDate,
+    );
+    if (summary == null) return false;
+    if (mounted) {
+      final monday = weekOf(_selectedDate).start;
+      ref.read(agendaWeekSummaryProvider.notifier).update(
+            (m) => {...m, monday: summary},
+          );
+    }
+    return true;
+  }
+
+  /// Skip the pull when the week on screen has not changed — flicking between
+  /// Tuesday and Wednesday should not re-fetch the same seven days.
+  Future<void> _syncWeekIfChanged(DateTime previous) async {
+    if (weekOf(previous).start == weekOf(_selectedDate).start) return;
+    await _syncDay();
+  }
+
+  /// Free a slot. The sale stays on the order — only the appointment goes.
+  Future<void> _unschedule(AgendaEntry entry) async {
+    final l10n = AppLocalizations.of(context)!;
+    final booking = ref.read(bookingServiceProvider);
+
+    if (!booking.canBook) {
+      _agendaToast(l10n.translate('reconnect_to_book'), isError: true);
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('unschedule')),
+        content: Text(l10n.translate('unschedule_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.translate('unschedule')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final serverId = entry.serverOrderProductId ??
+        (entry.orderProductId == null
+            ? null
+            : await booking.resolveServerLineId(entry.orderProductId!));
+    if (serverId == null) {
+      if (mounted) {
+        _agendaToast(l10n.translate('booking_order_sync_failed'), isError: true);
+      }
+      return;
+    }
+
+    try {
+      await booking.unschedule(
+        serverOrderProductId: serverId,
+        localOrderProductId: entry.orderProductId,
+      );
+      ref.invalidate(agendaEntriesProvider(_selectedDate));
+      if (mounted) _agendaToast(l10n.translate('unscheduled'));
+    } on OfflineBookingException {
+      if (mounted) {
+        _agendaToast(l10n.translate('reconnect_to_book'), isError: true);
+      }
+    } catch (e) {
+      if (mounted) _agendaToast(errorText(e, l10n), isError: true);
+    }
+  }
+
+  void _agendaToast(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: Duration(seconds: isError ? 4 : 2),
+        backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   Widget _timeChip(

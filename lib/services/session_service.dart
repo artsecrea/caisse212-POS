@@ -3,7 +3,10 @@ import 'package:drift/drift.dart';
 import '../core/enums.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/session_rules.dart';
+import 'cash_movement_service.dart';
+import 'refund_service.dart';
 import 'pending_operations_service.dart';
+import '../utils/pos_log.dart';
 
 /// Per-method money breakdown for a set of tickets.
 ///
@@ -96,10 +99,31 @@ class SessionSummary {
   final PaymentBreakdown breakdown;
   final int ticketCount;
 
+  /// Signed net of non-sale cash movements (paid-in minus paid-out) for this
+  /// session. Positive = money was added to the drawer.
+  final double cashMovementsNet;
+
+  /// Gross sides of [cashMovementsNet], so a report can show both lines — a
+  /// float top-up and a payout of the same size net to zero but are two
+  /// separate facts the owner wants on the Z.
+  final double cashPaidIn;
+  final double cashPaidOut;
+
+  /// Refunds recorded against this session. [refundsTotal] is every method —
+  /// a report line; [refundsCash] is the cash-only part, the only one that
+  /// physically left the drawer.
+  final double refundsTotal;
+  final double refundsCash;
+
   SessionSummary({
     required this.session,
     required this.breakdown,
     required this.ticketCount,
+    this.cashMovementsNet = 0,
+    this.cashPaidIn = 0,
+    this.cashPaidOut = 0,
+    this.refundsTotal = 0,
+    this.refundsCash = 0,
   });
 
   double get totalCash => breakdown.cash;
@@ -116,8 +140,22 @@ class SessionSummary {
   /// Backward-compatible alias for [totalPaid].
   double get totalAmount => breakdown.totalPaid;
 
-  /// Physical cash expected in the drawer: opening float + cash takings only.
-  double get expectedCashAtEnd => session.moneyAtStart + breakdown.cash;
+  /// Physical cash expected in the drawer: opening float + cash takings, plus
+  /// whatever was paid in, minus whatever was paid out, minus cash refunds.
+  ///
+  /// The movements term is what stops a petty-cash withdrawal from showing up
+  /// as an unexplained shortfall in [CloseSessionDialog]'s variance line.
+  ///
+  /// Refunds are NOT transactions — nothing in the refund path writes to
+  /// `transactions`, so `breakdown.cash` has never seen them. Without the last
+  /// term the drawer reads short by exactly the cash refunded, every close.
+  /// Only the cash part is subtracted: a card sale refunded to a card moves no
+  /// notes, and counting it would invent a surplus instead.
+  double get expectedCashAtEnd =>
+      session.moneyAtStart +
+      breakdown.cash +
+      cashMovementsNet -
+      refundsCash;
 
   /// Key/value snapshot persisted on the session at close.
   Map<String, dynamic> get details => {
@@ -125,6 +163,10 @@ class SessionSummary {
         'ticketCount': ticketCount,
         'moneyAtStart': session.moneyAtStart,
         'expectedCashAtEnd': expectedCashAtEnd,
+        'cashPaidIn': cashPaidIn,
+        'cashPaidOut': cashPaidOut,
+        'refundsTotal': refundsTotal,
+        'refundsCash': refundsCash,
       };
 }
 
@@ -141,6 +183,35 @@ class SessionWithCashier {
 }
 
 /// cash session service
+/// Whether closing this session needs a supervisor's sign-off.
+///
+/// Two ways a session fails to balance, and the rule treats them the same:
+/// the drawer is short or over against what the tickets say, or orders are
+/// still unpaid on the floor. Either is a discrepancy somebody should have to
+/// own; a shop that wants one supervised almost always wants the other.
+///
+/// [tolerance] is the same epsilon the close dialog uses to decide the
+/// variance is "on target" — a count that is off by a rounding penny is not a
+/// discrepancy and must not summon a manager.
+///
+/// Returns false when the feature is off, which is the default and the
+/// behaviour every existing till already has.
+bool closeNeedsSignOff({
+  required bool featureEnabled,
+  required double? countedCash,
+  required double expectedCash,
+  required bool hasUnpaidOrders,
+  double tolerance = 0.005,
+}) {
+  if (!featureEnabled) return false;
+  if (hasUnpaidOrders) return true;
+  // A blank count is not a clean close: nobody counted the drawer, so nobody
+  // can say it balances. The dialog pre-fills the expected figure, so reaching
+  // here with null means the cashier deliberately cleared it.
+  if (countedCash == null) return true;
+  return (countedCash - expectedCash).abs() > tolerance;
+}
+
 class SessionService {
   final AppDatabase _database;
 
@@ -350,9 +421,9 @@ class SessionService {
           entityId: sessionId,
           sessionCode: session.code,
         );
-        print('Queued delete operation for synced session code=${session.code}');
+        posLog('Queued delete operation for synced session code=${session.code}');
       } catch (e) {
-        print('Failed to queue session delete operation: $e');
+        posLog('Failed to queue session delete operation: $e');
       }
     }
 
@@ -378,10 +449,27 @@ class SessionService {
 
     final tickets = await getSessionTickets(sessionId);
 
+    // Non-sale drawer movements. Folded in here, at the single place the summary
+    // is built, so every consumer (close dialog, sessions list, X/Z reports,
+    // email report) gets the same expected-cash figure.
+    final movements = CashMovementService(_database);
+    final totals = await movements.totalsForSessions([sessionId]);
+
+    // Refunds, folded in at the same single place for the same reason: every
+    // consumer must agree on the expected-cash figure.
+    final refunds = RefundService(_database);
+    final refundsTotal = await refunds.totalForSession(sessionId);
+    final refundsCash = await refunds.cashTotalForSession(sessionId);
+
     return SessionSummary(
       session: session,
       breakdown: PaymentBreakdown.fromTickets(tickets),
       ticketCount: tickets.length,
+      cashMovementsNet: totals.paidIn - totals.paidOut,
+      cashPaidIn: totals.paidIn,
+      cashPaidOut: totals.paidOut,
+      refundsTotal: refundsTotal,
+      refundsCash: refundsCash,
     );
   }
 

@@ -1,28 +1,34 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:drift/drift.dart' hide Column;
-import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/domain/models/external_order_models.dart';
 import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/providers/external_order_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
 import 'package:caisse212/presentation/paymen_screen/payment_screen.dart';
 import 'package:caisse212/presentation/widgets/external_customer_review_dialog.dart';
+import 'package:caisse212/presentation/widgets/external_queue_controls.dart';
 // TEMP-TIP-HIDDEN: restore together with the two commented blocks in
 // _confirmAndPay and _confirmExternalAndPay.
 // import 'package:caisse212/presentation/widgets/tip_flow.dart';
+import 'package:caisse212/presentation/order_confirmation/external_orders_live_page.dart';
+import 'package:caisse212/providers/settings_provider.dart';
+import 'package:caisse212/presentation/widgets/order_source_badge.dart';
 import 'package:caisse212/utils/app_localizations.dart';
 import 'package:caisse212/utils/currency_formatter.dart';
 import 'package:caisse212/utils/snackbar_helper.dart';
+import 'package:caisse212/services/printing_service.dart';
 
-final _waitersProvider = FutureProvider.autoDispose<List<Waiter>>((ref) async {
-  final db = ref.read(databaseProvider);
-  return (db.select(db.waiters)..where((w) => w.isActive.equals(true))).get();
-});
-
+/// The external order queue — marketplace and messaging orders (DealUp,
+/// WhatsApp, Glovo) waiting to be accepted into the POS.
+///
+/// On-hold orders used to share this screen as a second tab. They are ordinary
+/// saved orders, not incoming work, and they already have a home in Orders
+/// Management with its own ONHOLD filter — so the tab bar is gone and this is
+/// a single-purpose queue screen again.
 class OrderConfirmationScreen extends ConsumerStatefulWidget {
-  final int initialTab;
-  const OrderConfirmationScreen({super.key, this.initialTab = 0});
+  const OrderConfirmationScreen({super.key});
 
   @override
   ConsumerState<OrderConfirmationScreen> createState() =>
@@ -33,292 +39,22 @@ class _OrderConfirmationScreenState
     extends ConsumerState<OrderConfirmationScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
-
-  // On-hold order state
-  Order? _selectedOrder;
-  Waiter? _selectedWaiter;
-  bool _waiterMissing = false;
-
-  // External order state
   ExternalQueueItem? _selectedExternalItem;
   bool _isConfirmingExternal = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(
-      length: 2,
-      vsync: this,
-      initialIndex: widget.initialTab,
-    );
-    _tabController.addListener(() {
-      if (_tabController.indexIsChanging) {
-        setState(() {
-          _selectedOrder = null;
-          _selectedExternalItem = null;
-          _selectedWaiter = null;
-          _waiterMissing = false;
-        });
-      }
+    _tabController = TabController(length: 2, vsync: this);
+
+    // Pull the queue when the screen opens. Nothing else does: the SSE listener
+    // that refreshes on `connected` is off by default, so without this the tab
+    // sat empty (and the tab badge read 0) until the cashier found the refresh
+    // button. Post-frame so the provider isn't mutated during initState.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(externalOrderProvider.notifier).load();
     });
   }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  // ── On-hold helpers ─────────────────────────────────────────────────────────
-
-  Future<List<Order>> _getOnHoldOrders() async {
-    final database = ref.read(databaseProvider);
-    final orders = await (database.select(database.orders)
-          ..where((tbl) => tbl.status.equals('ONHOLD'))
-          ..orderBy([(tbl) => OrderingTerm.desc(tbl.updatedAt)]))
-        .get();
-    if (_searchQuery.isEmpty) return orders;
-    return orders
-        .where((o) =>
-            o.code.toLowerCase().contains(_searchQuery.toLowerCase()))
-        .toList();
-  }
-
-  bool _requireWaiter(Order order) {
-    if (order.type != 'DINE_IN') return true;
-    if (order.waiterId != null) return true;
-    if (_selectedWaiter != null) return true;
-    setState(() => _waiterMissing = true);
-    return false;
-  }
-
-  Future<void> _confirmOrder(Order order) async {
-    if (!_requireWaiter(order)) return;
-    setState(() => _waiterMissing = false);
-    try {
-      final orderRepo = ref.read(orderRepositoryProvider);
-      final sessionId = ref.read(currentSessionProvider)?.id;
-      final userId = ref.read(currentUserProvider)?.id;
-      final waiterId = _selectedWaiter?.id ?? order.waiterId;
-      await orderRepo.updateOrderStatus(order.id, 'PENDING',
-          sessionId: sessionId, userId: userId, waiterId: waiterId);
-      if (mounted) {
-        SnackBarHelper.showSuccessSnackBar(
-            context, ref, 'Order ${order.code} confirmed and sent to KDS');
-        Navigator.of(context).pop();
-      }
-    } catch (e) {
-      if (mounted) {
-        SnackBarHelper.showErrorSnackBar(
-            context, ref, 'Error confirming order: $e');
-      }
-    }
-  }
-
-  Future<void> _confirmAndPay(Order order) async {
-    if (!_requireWaiter(order)) return;
-    setState(() => _waiterMissing = false);
-    try {
-      final orderRepo = ref.read(orderRepositoryProvider);
-      final sessionId = ref.read(currentSessionProvider)?.id;
-      final userId = ref.read(currentUserProvider)?.id;
-      final waiterId = _selectedWaiter?.id ?? order.waiterId;
-      await orderRepo.updateOrderStatus(order.id, 'PENDING',
-          sessionId: sessionId, userId: userId, waiterId: waiterId);
-      final fullOrder = await orderRepo.getOrderById(order.id);
-      if (fullOrder == null) throw Exception('Order not found');
-      // TEMP-TIP-HIDDEN: tip dialog before PaymentScreen disabled.
-      // Original kept the order in a `withTip` local so it could swap
-      // for the tipped copy; with the flow hidden we go straight to
-      // fullOrder.
-      // var withTip = fullOrder;
-      // if (mounted) {
-      //   withTip = await applyTipIfEnabled(context, ref, fullOrder);
-      //   if (withTip.tip != fullOrder.tip) {
-      //     await orderRepo.updateOrder(withTip);
-      //   }
-      // }
-      if (mounted) {
-        Navigator.of(context).pop();
-        Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => PaymentScreen(order: fullOrder)));
-      }
-    } catch (e) {
-      if (mounted) {
-        SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
-      }
-    }
-  }
-
-  Future<void> _cancelOrder(Order order) async {
-    final l10n = AppLocalizations.of(context)!;
-    final reasonController = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.translate('cancel_order')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${l10n.translate('confirm_cancel_order')} ${order.code}?'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonController,
-              decoration: InputDecoration(
-                labelText: l10n.translate('cancellation_reason'),
-                hintText: l10n.translate('enter_cancellation_reason'),
-                border: const OutlineInputBorder(),
-              ),
-              maxLines: 2,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(l10n.translate('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange[700],
-                foregroundColor: Colors.white),
-            child: Text(l10n.translate('cancel_order')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      final orderRepo = ref.read(orderRepositoryProvider);
-      final reason = reasonController.text.trim().isEmpty
-          ? null
-          : reasonController.text.trim();
-      await orderRepo.updateOrderStatus(order.id, 'CANCELLED',
-          cancellationReason: reason);
-      if (mounted) {
-        setState(() => _selectedOrder = null);
-        SnackBarHelper.showSuccessSnackBar(
-            context, ref, l10n.translate('order_canceled_successfully'));
-      }
-    } catch (e) {
-      if (mounted) {
-        SnackBarHelper.showErrorSnackBar(context, ref,
-            '${l10n.translate('error_canceling_order')}: $e');
-      }
-    } finally {
-      reasonController.dispose();
-    }
-  }
-
-  Future<void> _deleteOrder(Order order) async {
-    final l10n = AppLocalizations.of(context)!;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.translate('delete_order')),
-        content: Text(
-            '${l10n.translate('confirm_delete_order')} ${order.code}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(l10n.translate('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red[700],
-                foregroundColor: Colors.white),
-            child: Text(l10n.translate('delete')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      final orderRepo = ref.read(orderRepositoryProvider);
-      await orderRepo.deleteOrder(order.id);
-      if (mounted) {
-        setState(() => _selectedOrder = null);
-        SnackBarHelper.showSuccessSnackBar(
-            context, ref, l10n.translate('order_deleted_successfully'));
-      }
-    } catch (e) {
-      if (mounted) {
-        SnackBarHelper.showErrorSnackBar(
-            context, ref, 'Error deleting order: $e');
-      }
-    }
-  }
-
-  Future<int> _getOrderItemCount(int orderId) async {
-    final db = ref.read(databaseProvider);
-    final items = await (db.select(db.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(orderId)))
-        .get();
-    return items.length;
-  }
-
-  Future<double> _getOrderTotal(int orderId) async {
-    final db = ref.read(databaseProvider);
-    final items = await (db.select(db.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(orderId)))
-        .get();
-    double total = 0;
-    for (final item in items) {
-      final comps = await (db.select(db.orderProductComponents)
-            ..where((tbl) => tbl.orderProductId.equals(item.id)))
-          .get();
-      final compTotal =
-          comps.fold<double>(0, (s, c) => s + c.price * c.quantity);
-      total += (item.unitaryPrice + compTotal - item.manualDiscount) *
-          item.quantity;
-    }
-    return total;
-  }
-
-  Future<List<Map<String, dynamic>>> _getOrderItemsWithDetails(
-      int orderId) async {
-    final db = ref.read(databaseProvider);
-    final orderProducts = await (db.select(db.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(orderId)))
-        .get();
-    final items = <Map<String, dynamic>>[];
-    for (final op in orderProducts) {
-      final product = await (db.select(db.products)
-            ..where((tbl) => tbl.id.equals(op.productId)))
-          .getSingleOrNull();
-      final orderComps = await (db.select(db.orderProductComponents)
-            ..where((tbl) => tbl.orderProductId.equals(op.id)))
-          .get();
-      final components = <Map<String, dynamic>>[];
-      for (final oc in orderComps) {
-        final comp = await (db.select(db.components)
-              ..where((tbl) => tbl.id.equals(oc.componentId)))
-            .getSingleOrNull();
-        if (comp != null) {
-          components.add({
-            'name': comp.name,
-            'quantity': oc.quantity,
-            'price': oc.price,
-            'isSpecial': oc.isSpecial,
-          });
-        }
-      }
-      items.add({
-        'orderProduct': op,
-        'productName': product?.name ?? 'Unknown Product',
-        'components': components,
-      });
-    }
-    return items;
-  }
-
-  // ── External order helpers ──────────────────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> _resolveExternalItems(
       ExternalQueueItem item) async {
@@ -342,10 +78,17 @@ class _OrderConfirmationScreenState
           variantName = variant.name;
         }
       }
-      // Components carry their own unit price + quantity per the
-      // OrderProductComponent contract; for the display layer we surface
-      // each one's per-unit cost and sum them into a per-item components
-      // total: Σ (component.price × component.quantity).
+      // The price the order was actually validated at wins over the local
+      // catalogue, which may have moved since the customer ordered. It is the
+      // bare product/variant price on every source now — options never ride
+      // in it — so the components below can be added on top without
+      // double-counting.
+      unitPrice = qi.unitPrice ?? unitPrice;
+      // Components carry the option money: what was charged after any free
+      // allowance, and a partly-covered selection arrives already split into a
+      // 0.00 row and a charged row. Take the sent price when there is one —
+      // falling back to the catalogue would re-bill a free row at full price
+      // and quote the cashier more than the customer agreed to.
       final comps = <Map<String, dynamic>>[];
       double componentsPerItem = 0.0;
       for (final c in qi.components) {
@@ -353,7 +96,7 @@ class _OrderConfirmationScreenState
               ..where((cc) => cc.id.equals(c.componentId)))
             .getSingleOrNull();
         if (comp == null) continue;
-        final compPrice = comp.price;
+        final compPrice = c.price ?? comp.price;
         componentsPerItem += compPrice * c.quantity;
         comps.add({
           'name': comp.name,
@@ -437,11 +180,16 @@ class _OrderConfirmationScreenState
       }
     } catch (e) {
       if (mounted) {
-        SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
+        SnackBarHelper.failure(context, e);
         setState(() => _isConfirmingExternal = false);
       }
     }
   }
+
+  /// Glovo has no inbound cancel: the server logs the rejection and nothing
+  /// reaches the platform. Kooul does reject properly, and DealUp/Web are ours.
+  bool _isGlovo(ExternalQueueItem item) =>
+      item.source.toUpperCase() == 'GLOVO';
 
   Future<void> _cancelExternalOrder(ExternalQueueItem item) async {
     final l10n = AppLocalizations.of(context)!;
@@ -449,7 +197,40 @@ class _OrderConfirmationScreenState
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(l10n.translate('reject_order')),
-        content: Text(l10n.translate('cancel_order_confirm')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.translate('cancel_order_confirm')),
+            // Rejecting a Glovo order does NOT reach Glovo — the platform has
+            // no inbound cancel for us. Said before the tap, not after, because
+            // afterwards the cashier believes it is handled.
+            if (_isGlovo(item)) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.phone_in_talk,
+                        size: 18, color: Colors.deepOrange),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l10n.translate('glovo_cancel_warning'),
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -457,8 +238,8 @@ class _OrderConfirmationScreenState
           ),
           FilledButton.tonal(
             style: FilledButton.styleFrom(
-              backgroundColor: Colors.red[100],
-              foregroundColor: Colors.red[900],
+              backgroundColor: AppTheme.tintFill(context, Colors.red),
+              foregroundColor: AppTheme.tintOn(context, Colors.red),
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(l10n.translate('reject_order')),
@@ -475,12 +256,35 @@ class _OrderConfirmationScreenState
           .cancel(item.id, userId: userId);
       if (!mounted) return;
       if (orderId != null) {
-        SnackBarHelper.showSuccessSnackBar(context, ref,
-            'Order ${item.orderCode} rejected');
         setState(() {
           _selectedExternalItem = null;
           _isConfirmingExternal = false;
         });
+        if (_isGlovo(item)) {
+          // Removed from OUR queue only. Telling the cashier it was "rejected"
+          // would be a lie that ends with a courier arriving for an order
+          // nobody made — Glovo still believes it is live until someone phones.
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              icon: const Icon(Icons.phone_in_talk,
+                  color: Colors.deepOrange, size: 40),
+              title: Text(l10n.translate('call_glovo_title')),
+              content: Text(l10n
+                  .translate('call_glovo_body')
+                  .replaceAll('{0}', item.orderCode)),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(l10n.translate('ok')),
+                ),
+              ],
+            ),
+          );
+        } else {
+          SnackBarHelper.showSuccessSnackBar(context, ref,
+              'Order ${item.orderCode} rejected');
+        }
       } else {
         final err = ref.read(externalOrderProvider).error ??
             'Failed to reject order';
@@ -489,7 +293,7 @@ class _OrderConfirmationScreenState
       }
     } catch (e) {
       if (mounted) {
-        SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
+        SnackBarHelper.failure(context, e);
         setState(() => _isConfirmingExternal = false);
       }
     }
@@ -532,11 +336,11 @@ class _OrderConfirmationScreenState
       // }
       if (!mounted) return;
       Navigator.of(context).pop();
-      Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => PaymentScreen(order: fullOrder)));
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => PaymentScreen(order: fullOrder)));
     } catch (e) {
       if (mounted) {
-        SnackBarHelper.showErrorSnackBar(context, ref, 'Error: $e');
+        SnackBarHelper.failure(context, e);
         setState(() => _isConfirmingExternal = false);
       }
     }
@@ -545,26 +349,59 @@ class _OrderConfirmationScreenState
   // ── Build ───────────────────────────────────────────────────────────────────
 
   @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final cs = Theme.of(context).colorScheme;
     final externalState = ref.watch(externalOrderProvider);
-    final externalCount = externalState.items.length;
+    // Waiting-work badge. Uses the server's total for the PENDING filter, not
+    // items.length — that is one page, so 64 pending across 4 pages used to
+    // read "20". Hidden while the cashier is browsing another status, where a
+    // count of cancelled rows would not mean "work waiting".
+    final externalCount = externalState.statusFilter == 'PENDING'
+        ? externalState.totalElements
+        : 0;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(l10n.translate('confirm_order')),
+        title: Text(l10n.translate('external_orders')),
+        actions: [
+          // Only the queue has two shapes to switch between; the in-progress
+          // page is one card per order by nature.
+          if (_tabController.index == 0)
+            IconButton(
+              tooltip: l10n.translate(
+                  _queueAsGrid ? 'view_as_list' : 'view_as_grid'),
+              icon: Icon(_queueAsGrid
+                  ? Icons.view_list_outlined
+                  : Icons.grid_view_outlined),
+              onPressed: () => ref
+                  .read(settingsProvider.notifier)
+                  .setExternalQueueGridView(!_queueAsGrid),
+            ),
+          const SizedBox(width: 4),
+        ],
         bottom: TabBar(
           controller: _tabController,
+          // The action button above depends on which tab is showing.
+          onTap: (_) => setState(() {}),
           tabs: [
             Tab(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.pending_actions, size: 18),
+                  const Icon(Icons.cloud_download_outlined, size: 18),
                   const SizedBox(width: 6),
-                  const Text('On Hold'),
+                  Text(l10n.translate('incoming')),
+                  if (externalCount > 0) ...[
+                    const SizedBox(width: 6),
+                    _CountBadge(count: externalCount),
+                  ],
                 ],
               ),
             ),
@@ -572,13 +409,9 @@ class _OrderConfirmationScreenState
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.cloud_download_outlined, size: 18),
+                  const Icon(Icons.local_shipping_outlined, size: 18),
                   const SizedBox(width: 6),
-                  const Text('External'),
-                  if (externalCount > 0) ...[
-                    const SizedBox(width: 6),
-                    _CountBadge(count: externalCount),
-                  ],
+                  Text(l10n.translate('in_progress')),
                 ],
               ),
             ),
@@ -588,122 +421,33 @@ class _OrderConfirmationScreenState
       body: TabBarView(
         controller: _tabController,
         children: [
-          // ── Tab 0: On Hold ───────────────────────────────────────────────
-          _buildOnHoldTab(l10n, isDark, cs),
-          // ── Tab 1: External orders ───────────────────────────────────────
           _buildExternalTab(l10n, cs, externalState),
+          const ExternalOrdersLivePage(),
         ],
       ),
     );
   }
 
-  // ── On-hold tab ─────────────────────────────────────────────────────────────
-
-  Widget _buildOnHoldTab(
-      AppLocalizations l10n, bool isDark, ColorScheme cs) {
-    return Row(
-      children: [
-        // Left: search + list
-        Expanded(
-          flex: 5,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: l10n.translate('search_by_code'),
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                    filled: true,
-                    fillColor:
-                        isDark ? Colors.grey[800] : Colors.white,
-                    isDense: true,
-                  ),
-                  onChanged: (v) => setState(() => _searchQuery = v),
-                ),
-              ),
-              Expanded(
-                child: FutureBuilder<List<Order>>(
-                  future: _getOnHoldOrders(),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState ==
-                        ConnectionState.waiting) {
-                      return const Center(
-                          child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError) {
-                      return Center(
-                          child: Text('Error: ${snapshot.error}'));
-                    }
-                    final orders = snapshot.data ?? [];
-                    if (orders.isEmpty) {
-                      return _EmptyPane(
-                        icon: Icons.inbox,
-                        label: l10n.translate('no_onhold_orders'),
-                      );
-                    }
-                    return ListView.builder(
-                      padding: const EdgeInsets.all(8),
-                      itemCount: orders.length,
-                      itemBuilder: (context, i) {
-                        final order = orders[i];
-                        final isSelected =
-                            _selectedOrder?.id == order.id;
-                        return FutureBuilder<Map<String, dynamic>>(
-                          future: Future.wait([
-                            _getOrderItemCount(order.id),
-                            _getOrderTotal(order.id),
-                          ]).then((r) =>
-                              {'itemCount': r[0], 'total': r[1]}),
-                          builder: (context, ds) {
-                            final itemCount =
-                                ds.data?['itemCount'] as int? ?? 0;
-                            final total =
-                                ds.data?['total'] as double? ?? 0.0;
-                            return _OnHoldCard(
-                              order: order,
-                              isSelected: isSelected,
-                              itemCount: itemCount,
-                              total: total,
-                              l10n: l10n,
-                              onTap: () => setState(() {
-                                _selectedOrder = order;
-                                _selectedExternalItem = null;
-                                _selectedWaiter = null;
-                                _waiterMissing = false;
-                              }),
-                            );
-                          },
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        // Right: details
-        Expanded(
-          flex: 4,
-          child: _selectedOrder == null
-              ? _EmptyPane(
-                  icon: Icons.touch_app,
-                  label: l10n.translate('select_order_to_confirm'),
-                )
-              : _buildOrderDetails(_selectedOrder!, l10n),
-        ),
-      ],
-    );
-  }
-
-  // ── External tab ─────────────────────────────────────────────────────────────
+  bool get _queueAsGrid => ref.watch(settingsProvider).externalQueueGridView;
 
   Widget _buildExternalTab(
       AppLocalizations l10n, ColorScheme cs, ExternalOrderState state) {
+    // Resolve the selection out of the CURRENT page rather than trusting the
+    // stored object. Now that filters and paging exist, the selected item can
+    // leave the list under the cashier (filter change, page turn, or another
+    // terminal confirming it), and a stale right-hand pane would offer Confirm
+    // on a row that is no longer there. Deriving also means the pane picks up
+    // the item's new status after a refresh instead of showing the old one.
+    ExternalQueueItem? selected;
+    if (_selectedExternalItem != null) {
+      for (final i in state.items) {
+        if (i.id == _selectedExternalItem!.id) {
+          selected = i;
+          break;
+        }
+      }
+    }
+
     return Row(
       children: [
         // Left: external items list
@@ -717,381 +461,102 @@ class _OrderConfirmationScreenState
                   onDismiss: () =>
                       ref.read(externalOrderProvider.notifier).load(),
                 ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Row(
-                  children: [
-                    Text(
-                      '${state.items.length} pending',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: cs.onSurface.withValues(alpha: 0.6)),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.refresh, size: 20),
-                      tooltip: l10n.translate('refresh'),
-                      onPressed: state.isLoading
-                          ? null
-                          : () => ref
-                              .read(externalOrderProvider.notifier)
-                              .load(),
-                    ),
-                  ],
-                ),
-              ),
+              // Status + per-source filters with live counts. The old header
+              // here showed only "N pending" and a refresh button, which made
+              // the CONFIRMED / CANCELLED history and the other platforms
+              // unreachable from the screen the cashier actually works in.
+              ExternalQueueFilterBar(state: state, l10n: l10n),
               Expanded(
                 child: state.isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : state.items.isEmpty
-                        ? const _EmptyPane(
+                        // Filter-aware: with status/source filters in play,
+                        // "no pending orders" would be a lie on the CANCELLED
+                        // or Glovo chip. Says what is actually true — nothing
+                        // matches the current filters.
+                        ? _EmptyPane(
                             icon: Icons.cloud_off_outlined,
-                            label: 'No pending external orders',
+                            label: l10n.translate('no_orders_for_filters'),
                             subtitle:
-                                'DealUp / WhatsApp orders will appear here',
+                                l10n.translate('no_orders_for_filters_hint'),
                           )
-                        : ListView.builder(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            itemCount: state.items.length,
-                            itemBuilder: (context, i) {
-                              final item = state.items[i];
-                              final isSelected =
-                                  _selectedExternalItem?.id == item.id;
-                              return _ExternalItemCard(
-                                key: ValueKey(item.id),
-                                item: item,
-                                isSelected: isSelected,
-                                onTap: () => setState(() {
-                                  _selectedExternalItem = item;
-                                  _selectedOrder = null;
-                                  _isConfirmingExternal = false;
-                                }),
-                              );
-                            },
-                          ),
+                        : _buildQueueItems(state, selected),
               ),
+              ExternalQueuePager(state: state, l10n: l10n),
             ],
           ),
         ),
         // Right: external order details
         Expanded(
           flex: 4,
-          child: _selectedExternalItem == null
+          child: selected == null
               ? const _EmptyPane(
                   icon: Icons.touch_app,
                   label: 'Select an order to review',
                 )
-              : _buildExternalOrderDetails(_selectedExternalItem!, l10n),
+              : _buildExternalOrderDetails(selected, l10n),
         ),
       ],
     );
   }
 
-  // ── On-hold detail pane ─────────────────────────────────────────────────────
+  /// The queue, as a list or a grid.
+  ///
+  /// Same card either way — only the arrangement changes, so nothing about an
+  /// order reads differently depending on the shape. The grid sizes itself off
+  /// the available width rather than a fixed column count, because this pane
+  /// is half a till on one site and a whole tablet on another.
+  Widget _buildQueueItems(ExternalOrderState state, ExternalQueueItem? selected) {
+    void select(ExternalQueueItem item) => setState(() {
+          _selectedExternalItem = item;
+          _isConfirmingExternal = false;
+        });
 
-  Widget _buildOrderDetails(Order order, AppLocalizations l10n) {
-    final cs = Theme.of(context).colorScheme;
-    final currencyFormatter = ref.watch(currencyFormatterProvider);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      decoration: BoxDecoration(
-        border:
-            Border(left: BorderSide(color: Theme.of(context).dividerColor)),
-      ),
-      child: Column(
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: isDark ? cs.surfaceContainerHigh : Colors.orange.shade50,
-            child: Row(
-              children: [
-                Icon(Icons.pending_actions,
-                    color: Colors.orange[700], size: 28),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        order.code,
-                        style: const TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          _TypeChip(type: order.type),
-                          if (order.persons > 1) ...[
-                            const SizedBox(width: 6),
-                            Icon(Icons.people,
-                                size: 14,
-                                color: cs.onSurface.withValues(alpha: 0.6)),
-                            const SizedBox(width: 2),
-                            Text('${order.persons}',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: cs.onSurface
-                                        .withValues(alpha: 0.6))),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Items
-          Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: _getOrderItemsWithDetails(order.id),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final items = snapshot.data ?? [];
-                if (items.isEmpty) {
-                  return Center(
-                    child: Text('No items',
-                        style: TextStyle(
-                            color: cs.onSurface.withValues(alpha: 0.5))),
-                  );
-                }
-                return ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                  itemCount: items.length,
-                  itemBuilder: (context, i) {
-                    final item = items[i];
-                    final op = item['orderProduct'] as OrderProduct;
-                    final name = item['productName'] as String;
-                    final comps =
-                        item['components'] as List<Map<String, dynamic>>;
-                    final compLineTotal = comps.fold<double>(0.0,
-                        (s, c) =>
-                            s +
-                            (c['price'] as double) *
-                                (c['quantity'] as int));
-                    final lineTotal =
-                        (op.unitaryPrice + compLineTotal - op.manualDiscount) *
-                            op.quantity;
-                    return _ItemCard(
-                      quantityLabel: '${op.quantity}x',
-                      name: name,
-                      trailingLabel: currencyFormatter.format(lineTotal),
-                      chips: comps.map((c) {
-                        return _CompChip(
-                          label: '${c['quantity']}x ${c['name']}',
-                          isSpecial: c['isSpecial'] as bool,
-                        );
-                      }).toList(),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-
-          // Waiter
-          if (order.type == 'DINE_IN') _buildWaiterSection(order),
-
-          // Actions
-          _buildOnHoldActions(order, l10n),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWaiterSection(Order order) {
-    final cs = Theme.of(context).colorScheme;
-    final waitersAsync = ref.watch(_waitersProvider);
-
-    if (order.waiterId != null) {
-      return waitersAsync.maybeWhen(
-        data: (waiters) {
-          final w =
-              waiters.where((w) => w.id == order.waiterId).firstOrNull;
-          return Container(
-            margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.green.shade50,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.green.shade200),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.person, size: 18, color: Colors.green),
-                const SizedBox(width: 8),
-                Text(
-                  w != null
-                      ? '${w.firstName} ${w.lastName}'.trim()
-                      : 'Waiter #${order.waiterId}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.green),
-                ),
-              ],
-            ),
+    if (!_queueAsGrid) {
+      return ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        itemCount: state.items.length,
+        itemBuilder: (context, i) {
+          final item = state.items[i];
+          return _ExternalItemCard(
+            key: ValueKey(item.id),
+            item: item,
+            isSelected: selected?.id == item.id,
+            onTap: () => select(item),
           );
         },
-        orElse: () => const SizedBox.shrink(),
       );
     }
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: _waiterMissing ? cs.error : cs.outline,
-          width: _waiterMissing ? 2 : 1,
-        ),
-        color: _waiterMissing
-            ? cs.errorContainer.withValues(alpha: 0.15)
-            : cs.surfaceContainerLow,
-      ),
-      child: waitersAsync.when(
-        loading: () => const SizedBox(
-            height: 40,
-            child: Center(
-                child: CircularProgressIndicator(strokeWidth: 2))),
-        error: (_, __) => const Text('Failed to load waiters'),
-        data: (waiters) => Row(
-          children: [
-            Icon(Icons.person_search,
-                size: 18,
-                color: _waiterMissing
-                    ? cs.error
-                    : cs.onSurface.withValues(alpha: 0.6)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<Waiter>(
-                  isExpanded: true,
-                  isDense: true,
-                  hint: Text(
-                    _waiterMissing
-                        ? 'Waiter required *'
-                        : 'Assign waiter',
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: _waiterMissing
-                            ? cs.error
-                            : cs.onSurface.withValues(alpha: 0.6)),
-                  ),
-                  value: _selectedWaiter,
-                  items: waiters.map((w) => DropdownMenuItem(
-                        value: w,
-                        child: Text(
-                            '${w.firstName} ${w.lastName}'.trim(),
-                            style: const TextStyle(fontSize: 13)),
-                      )).toList(),
-                  onChanged: (w) => setState(() {
-                    _selectedWaiter = w;
-                    _waiterMissing = false;
-                  }),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // ~260px is the narrowest a card stays readable at; below that the
+        // grid degrades to a single column rather than clipping.
+        final columns = (constraints.maxWidth / 260).floor().clamp(1, 4);
+        return GridView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 4,
+            crossAxisSpacing: 8,
+            // Tall enough for the card's own content, which is a fixed set of
+            // rows — a ratio, not a height, so it scales with the column width.
+            childAspectRatio: 1.35,
+          ),
+          itemCount: state.items.length,
+          itemBuilder: (context, i) {
+            final item = state.items[i];
+            return _ExternalItemCard(
+              key: ValueKey(item.id),
+              item: item,
+              isSelected: selected?.id == item.id,
+              onTap: () => select(item),
+            );
+          },
+        );
+      },
     );
   }
-
-  Widget _buildOnHoldActions(Order order, AppLocalizations l10n) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-      decoration: BoxDecoration(
-          border: Border(
-              top: BorderSide(color: Theme.of(context).dividerColor))),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _confirmOrder(order),
-                  icon: const Icon(Icons.check_circle, size: 18),
-                  label: Text(l10n.translate('confirm_order')),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[600],
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _confirmAndPay(order),
-                  icon: const Icon(Icons.payment, size: 18),
-                  label: Text(l10n.translate('confirm_and_pay')),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[600],
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _cancelOrder(order),
-                  icon: const Icon(Icons.cancel_outlined, size: 18),
-                  label: Text(l10n.translate('cancel_order')),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.orange[700],
-                    side: BorderSide(color: Colors.orange.shade300),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _deleteOrder(order),
-                  icon: const Icon(Icons.delete_forever, size: 18),
-                  label: Text(l10n.translate('delete_order')),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red[700],
-                    side: BorderSide(color: Colors.red.shade300),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          OutlinedButton.icon(
-            onPressed: () => setState(() {
-              _selectedOrder = null;
-              _selectedWaiter = null;
-              _waiterMissing = false;
-            }),
-            icon: const Icon(Icons.arrow_back, size: 18),
-            label: Text(l10n.translate('cancel')),
-            style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── External order detail pane ──────────────────────────────────────────────
 
   Widget _buildExternalOrderDetails(
       ExternalQueueItem item, AppLocalizations l10n) {
@@ -1106,6 +571,27 @@ class _OrderConfirmationScreenState
       ),
       child: Column(
         children: [
+          // Safety and money first, above everything else on the pane. These
+          // three change what staff physically DO — cook differently, take
+          // money, or read a code to a courier — so they must not be findable
+          // only by scrolling past the item list.
+          if (order.hasAllergyInfo)
+            _AlertBanner(
+              icon: Icons.warning_amber_rounded,
+              background: Colors.red.shade700,
+              title: l10n.translate('allergy_warning'),
+              body: order.allergyInfo!,
+            ),
+          if (order.isCashOnHandover)
+            _AlertBanner(
+              icon: Icons.payments,
+              background: Colors.green.shade800,
+              title: l10n.translate('collect_cash'),
+              body: order.totalCustomerToPay != null
+                  ? '${order.totalCustomerToPay!.toStringAsFixed(2)} ${order.currency ?? ''}'.trim()
+                  : l10n.translate('collect_cash_hint'),
+            ),
+
           // Header
           Container(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
@@ -1113,7 +599,7 @@ class _OrderConfirmationScreenState
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _SourceIcon(source: item.source),
+                OrderSourceBadge(source: item.source),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -1132,10 +618,36 @@ class _OrderConfirmationScreenState
                           _TypeChip(type: order.type),
                         ],
                       ),
+                      // The platform's code is what the courier reads out; ours
+                      // means nothing to them. GLOVO/KOOUL only — DealUp and Web
+                      // have no courier and no such code.
+                      if (PrintingService.sourceHasCourierCode(item.source) &&
+                          ((order.externalOrderCode ?? '').isNotEmpty ||
+                              (order.pickUpCode ?? '').isNotEmpty))
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Wrap(
+                            spacing: 8,
+                            children: [
+                              if ((order.externalOrderCode ?? '').isNotEmpty)
+                                _CodeChip(
+                                  label: l10n.translate('platform_code'),
+                                  value: order.externalOrderCode!,
+                                ),
+                              if ((order.pickUpCode ?? '').isNotEmpty)
+                                _CodeChip(
+                                  // Fuller label on screen; the printed line
+                                  // uses the short form to fit 58mm.
+                                  label: l10n.translate('pickup_code_label'),
+                                  value: order.pickUpCode!,
+                                ),
+                            ],
+                          ),
+                        ),
                       const SizedBox(height: 4),
                       Row(
                         children: [
-                          _SourceLabel(source: item.source),
+                          OrderSourceLabel(source: item.source),
                           const SizedBox(width: 8),
                           Icon(Icons.access_time,
                               size: 12,
@@ -1394,8 +906,8 @@ class _OrderConfirmationScreenState
             icon: const Icon(Icons.cancel_outlined, size: 18),
             label: Text(l10n.translate('reject_order')),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red[100],
-              foregroundColor: Colors.red[900],
+              backgroundColor: AppTheme.tintFill(context, Colors.red),
+              foregroundColor: AppTheme.tintOn(context, Colors.red),
               padding: const EdgeInsets.symmetric(vertical: 12),
             ),
           ),
@@ -1549,92 +1061,6 @@ class _CompChip extends StatelessWidget {
   }
 }
 
-class _OnHoldCard extends StatelessWidget {
-  final Order order;
-  final bool isSelected;
-  final int itemCount;
-  final double total;
-  final AppLocalizations l10n;
-  final VoidCallback onTap;
-
-  const _OnHoldCard({
-    required this.order,
-    required this.isSelected,
-    required this.itemCount,
-    required this.total,
-    required this.l10n,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      elevation: isSelected ? 3 : 1,
-      color: isSelected ? cs.primaryContainer : null,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: isSelected
-            ? BorderSide(color: cs.primary, width: 2)
-            : BorderSide.none,
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: Colors.orange[100],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(Icons.pending_actions,
-                    color: Colors.orange[700]),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(order.code,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 14)),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        _TypeChip(type: order.type),
-                        const SizedBox(width: 6),
-                        Text('$itemCount items',
-                            style: TextStyle(
-                                fontSize: 11,
-                                color:
-                                    cs.onSurface.withValues(alpha: 0.6))),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              Consumer(
-                builder: (context, ref, _) {
-                  final fmt = ref.watch(currencyFormatterProvider);
-                  return Text(fmt.format(total),
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15));
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ExternalItemCard extends StatelessWidget {
   final ExternalQueueItem item;
   final bool isSelected;
@@ -1670,7 +1096,7 @@ class _ExternalItemCard extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              _SourceIcon(source: item.source, size: 44),
+              OrderSourceBadge(source: item.source, size: 44),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -1710,7 +1136,7 @@ class _ExternalItemCard extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  _SourceLabel(source: item.source),
+                  OrderSourceLabel(source: item.source),
                   const SizedBox(height: 4),
                   Text(
                     _formatTimeAgo(item.createdAt),
@@ -1746,19 +1172,19 @@ class _TypeChip extends StatelessWidget {
     String label;
     switch (type) {
       case 'DINE_IN':
-        bg = Colors.blue.shade100;
+        bg = AppTheme.tintFill(context, Colors.blue);
         label = 'Dine In';
         break;
       case 'TAKE_AWAY':
-        bg = Colors.purple.shade100;
+        bg = AppTheme.tintFill(context, Colors.purple);
         label = 'Take Away';
         break;
       case 'DELIVERY':
-        bg = Colors.teal.shade100;
+        bg = AppTheme.tintFill(context, Colors.teal);
         label = 'Delivery';
         break;
       default:
-        bg = Colors.grey.shade200;
+        bg = Theme.of(context).colorScheme.surfaceContainerHighest;
         label = type;
     }
     return Container(
@@ -1772,54 +1198,117 @@ class _TypeChip extends StatelessWidget {
   }
 }
 
-class _SourceIcon extends StatelessWidget {
-  final String source;
-  final double size;
-  const _SourceIcon({required this.source, this.size = 40});
+/// Full-width, high-contrast banner for the facts that change what staff do.
+///
+/// Deliberately loud: a coloured chip among other chips is exactly what gets
+/// skimmed past on a busy counter, and the two things this carries — an allergy
+/// and "collect the money" — are the two that cost the most when missed.
+class _AlertBanner extends StatelessWidget {
+  final IconData icon;
+  final Color background;
+  final String title;
+  final String body;
+
+  const _AlertBanner({
+    required this.icon,
+    required this.background,
+    required this.title,
+    required this.body,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final (color, icon) = switch (source.toUpperCase()) {
-      'DEALUP' => (Colors.deepPurple, Icons.local_offer),
-      'WHATSAPP' => (Colors.green[700]!, Icons.chat),
-      _ => (Colors.blueGrey, Icons.cloud),
-    };
     return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      color: background,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: Colors.white, size: 24),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title.toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Text(
+                  body,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
-      child: Icon(icon, color: color, size: size * 0.45),
     );
   }
 }
 
-class _SourceLabel extends StatelessWidget {
-  final String source;
-  const _SourceLabel({required this.source});
+/// A code the courier will say out loud, in monospace so it can be compared
+/// character by character.
+class _CodeChip extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _CodeChip({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
-    final (color, label) = switch (source.toUpperCase()) {
-      'DEALUP' => (Colors.deepPurple, 'DealUp'),
-      'WHATSAPP' => (Colors.green[700]!, 'WhatsApp'),
-      _ => (Colors.blueGrey as Color, source),
-    };
+    final cs = Theme.of(context).colorScheme;
+    // Copyable: staff read this code to Glovo/Kooul support on the phone, and
+    // re-typing a 10-character code off a screen is how digits get transposed.
+    return InkWell(
+      onLongPress: () async {
+        await Clipboard.setData(ClipboardData(text: value));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$label: $value'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      },
+      child: _chip(context, cs),
+    );
+  }
+
+  Widget _chip(BuildContext context, ColorScheme cs) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: cs.primary.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: Text(label,
-          style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: color)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('$label ',
+              style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 14,
+              fontFamily: 'monospace',
+              fontWeight: FontWeight.w800,
+              color: cs.primary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

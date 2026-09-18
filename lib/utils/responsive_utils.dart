@@ -4,7 +4,16 @@ import 'package:flutter/material.dart';
 const double kBreakpointCompact = 900.0;
 const double kBreakpointMedium = 1200.0;
 
+/// Width of the order panel.
+///
+/// Fixed widths above the compact breakpoint, where there is plenty of room.
+/// Below ~700px a fixed 260 was taking 43% of a 600px screen and starving the
+/// product grid, so the panel becomes proportional down to a 200px floor — the
+/// narrowest that still fits a quantity, a name and a price on one line.
 double orderPanelWidth(double screenWidth) {
+  if (screenWidth < 700) {
+    return (screenWidth * 0.36).clamp(200.0, 260.0);
+  }
   if (screenWidth < kBreakpointCompact) return 260.0;
   if (screenWidth < kBreakpointMedium) return 320.0;
   return 400.0;

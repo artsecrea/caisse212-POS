@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
 import '../../providers/database_providers.dart';
 import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
@@ -8,6 +7,7 @@ import '../../utils/button_styles.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/customer_display.dart';
 import '../../services/customer_repository.dart';
+import './adaptive_text_field.dart';
 
 class CustomerSelectionDialog extends ConsumerStatefulWidget {
   const CustomerSelectionDialog({Key? key}) : super(key: key);
@@ -60,7 +60,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
               ],
             ),
             const SizedBox(height: 16),
-            OnscreenKeyboardTextField(
+            AdaptiveKeyboardTextField(
               controller: _searchController,
               focusNode: _searchFocusNode,
               decoration: InputDecoration(
@@ -126,16 +126,16 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.search, size: 64, color: Colors.grey[400]),
+            Icon(Icons.search, size: 64, color: Theme.of(context).colorScheme.outline),
             const SizedBox(height: 16),
             Text(
               l10n.translate('start_typing_to_search'),
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 8),
             Text(
               l10n.translate('search_by_name_phone_email'),
-              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+              style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -156,16 +156,16 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.person_off, size: 64, color: Colors.grey[400]),
+                Icon(Icons.person_off, size: 64, color: Theme.of(context).colorScheme.outline),
                 const SizedBox(height: 16),
                 Text(
                   l10n.translate('no_customers_found'),
-                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                  style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   l10n.translate('try_different_search_or_add'),
-                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                  style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -487,11 +487,20 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
 
+    final media = MediaQuery.of(context);
     return Dialog(
+      insetPadding: const EdgeInsets.all(16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Container(
-        width: 500,
-        constraints: const BoxConstraints(maxHeight: 650),
+      child: ConstrainedBox(
+        // Responsive: caps at 500 wide on big screens, shrinks on phones, and
+        // caps height to the visible area minus the keyboard. The form itself
+        // is a Flexible SingleChildScrollView below, so it scrolls rather than
+        // overflowing when the keyboard is up.
+        constraints: BoxConstraints(
+          maxWidth: 500,
+          maxHeight: media.size.height - media.viewInsets.bottom - 32,
+        ),
+        child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -550,7 +559,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
                     Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          OnscreenKeyboardTextField(
+                          AdaptiveKeyboardTextField(
                             controller: _firstNameController,
                             focusNode: _firstNameFocus,
                             enabled: !_isLoading,
@@ -583,7 +592,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        OnscreenKeyboardTextField(
+                        AdaptiveKeyboardTextField(
                           controller: _lastNameController,
                           focusNode: _lastNameFocus,
                           enabled: !_isLoading,
@@ -627,7 +636,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        OnscreenKeyboardTextField(
+                        AdaptiveKeyboardTextField(
                           controller: _phoneController,
                           focusNode: _phoneFocus,
                           enabled: !_isLoading,
@@ -661,7 +670,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        OnscreenKeyboardTextField(
+                        AdaptiveKeyboardTextField(
                           controller: _emailController,
                           focusNode: _emailFocus,
                           enabled: !_isLoading,
@@ -694,11 +703,11 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
                     // Required fields note
                     Row(
                       children: [
-                        Icon(Icons.info_outline, size: 16, color: Colors.grey[600]),
+                        Icon(Icons.info_outline, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                         const SizedBox(width: 4),
                         Text(
                           '* ${l10n.translate('required_fields')}',
-                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                         ),
                       ],
                     ),
@@ -755,6 +764,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
             ],
           ),
         ),
+      ),
       );
     }
   }

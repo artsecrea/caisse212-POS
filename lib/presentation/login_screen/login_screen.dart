@@ -1,9 +1,8 @@
 import 'dart:async' show unawaited;
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart'
-    show OnscreenKeyboardTextField;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:loggecrea/loggecrea.dart';
@@ -11,6 +10,10 @@ import 'package:window_manager/window_manager.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../services/permission_service.dart';
+import '../../services/z_actions.dart';
+import '../../utils/admin_auth.dart';
+import '../widgets/z_management_dialog.dart';
 import '../../providers/user_provider.dart';
 import '../../services/activity_log_service.dart';
 import '../../utils/tenant_auth.dart';
@@ -20,15 +23,23 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
 import '../../services/api_service.dart';
 import '../../services/data_sync_service.dart';
+import '../../services/notification_params.dart';
 import '../../services/session_service.dart';
 import '../../providers/session_rules_provider.dart';
+import '../../providers/z_day_provider.dart';
+import '../../domain/models/z_day_state.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
 import '../../utils/button_styles.dart';
+import '../../utils/snackbar_helper.dart';
 import '../../utils/user_display.dart';
 import '../main_screen/main_screen.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../widgets/report_issue_dialog.dart';
 import '../widgets/update_dialog.dart';
+import '../widgets/adaptive_text_field.dart';
+import '../widgets/session_expiry_notice.dart';
+import '../widgets/keypad_lab_screen.dart';
 
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -51,6 +62,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   bool _isFullScreen = false;
   bool _isTogglingFullscreen = false;
   String? _errorMessage;
+  /// Set when the last login attempt was refused by the Z-mode day lock, so a
+  /// "Reopen the day" button appears under the error banner.
+  bool _dayLocked = false;
+  /// Set during login when the open Z is older than `zMaxHours`; surfaced on the
+  /// main screen after navigation so it isn't lost with the login route.
+  String? _pendingZAgeWarning;
   String? _appVersion;
   List<User> _availableUsers = [];
   String? _selectedUsername;
@@ -385,8 +402,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         SizedBox(
           width: 100,
           child: Text(label,
-              style: const TextStyle(
-                  fontWeight: FontWeight.w600, color: Colors.grey)),
+              style: TextStyle(
+                  fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ),
         Expanded(
           child: Text(value,
@@ -612,6 +629,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         return;
       }
 
+      // Day lock. Checked here — after the password is verified but BEFORE any
+      // state is set — so a blocked login leaves the app cleanly logged out.
+      // Inside the session try/catch below, currentUser would already be set
+      // and a login audit row written, making a block look like a success.
+      if (!await _passesDayLock(user)) return;
+
       ref.read(currentUserProvider.notifier).state =
           CurrentUser.fromUser(user);
       // New session — never inherit a prior user's admin-mode elevation.
@@ -632,6 +655,45 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         final sessionService = SessionService(database);
         final startingBalance =
             double.tryParse(_startingBalanceController.text) ?? 0.0;
+
+        // Ensure a Z (shift) is open BEFORE opening the session — otherwise a
+        // session would be created and then orphaned when Z-open is required
+        // but unavailable. Auto-opens when allowed; blocks until a manager
+        // opens one otherwise.
+        final zSettings = ref.read(settingsProvider);
+        int? activeZId;
+        if (zSettings.zTrackingEnabled) {
+          final zService = ref.read(zServiceProvider);
+          final posId = ref.read(apiServiceProvider).getPosId();
+          var z = await zService.getOpenZ(posId: posId);
+          // 'manager' open mode: a manager must open the Z first (no auto-open).
+          if (z == null && zSettings.zOpenMode != 'auto') {
+            throw Exception(l10n.translate('no_open_z_message'));
+          }
+          z ??= await openActiveZ(ref, createdBy: user.id);
+          ref.read(currentZProvider.notifier).state = z;
+          activeZId = z.id;
+
+          // zMaxHours: warn when the shift has been open too long.
+          //
+          // This setting has existed (and been editable in Settings) since Z
+          // tracking shipped, but nothing ever read it — so a Z left open over
+          // a weekend silently accumulated several days of takings into one
+          // report. Deliberately a WARNING, not a block: refusing the login
+          // would strand the till, and only a human can decide whether to close
+          // the old shift or keep it running.
+          final maxHours = zSettings.zMaxHours;
+          if (maxHours > 0) {
+            final openFor = DateTime.now().difference(z.startedAt);
+            if (openFor.inHours >= maxHours) {
+              _pendingZAgeWarning = l10n
+                  .translate('z_open_too_long')
+                  .replaceAll('{0}', openFor.inHours.toString())
+                  .replaceAll('{1}', maxHours.toString());
+            }
+          }
+        }
+
         final existingSession =
             await sessionService.getActiveSession(user.id);
 
@@ -681,15 +743,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           // Fire-and-forget: notify admin devices that a session was opened.
           unawaited(ref.read(apiServiceProvider).postNotification(
             type: 'POS_SESSION_OPENED',
-            params: {
-              'v': '1',
-              'terminalName': ref.read(apiServiceProvider).getPosName() ?? '',
-              'cashierName': actorName,
-              'cashierId': user.id.toString(),
-              'openedAt': newSession.startedAt.toIso8601String(),
-              'startingBalance': startingBalance.toStringAsFixed(2),
-              'currency': ref.read(settingsProvider).currency,
-            },
+            params: NotificationParams.sessionOpened(
+              terminalName: ref.read(apiServiceProvider).getPosName() ?? '',
+              cashierName: actorName,
+              cashierId: user.id,
+              openedAt: newSession.startedAt,
+              startingBalance: startingBalance,
+              currency: ref.read(settingsProvider).currency,
+            ),
             refId: newSession.id.toString(),
           ));
           if (mounted) {
@@ -699,6 +760,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                   .replaceAll('{0}', newSession.id.toString())),
               backgroundColor: Colors.blue,
             ));
+          }
+        }
+
+        // Stamp the active session with the Z ensured above.
+        if (activeZId != null) {
+          final active = ref.read(currentSessionProvider);
+          if (active != null && active.zId != activeZId) {
+            await ref
+                .read(zServiceProvider)
+                .attachSession(active.id, activeZId);
+            ref.read(currentSessionProvider.notifier).state =
+                await sessionService.getSessionById(active.id);
           }
         }
       } catch (e) {
@@ -716,12 +789,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       }
 
       if (mounted) {
+        // Carry the stale-Z warning across the navigation: shown on the main
+        // screen, where the cashier can act on it, rather than on a login screen
+        // that is about to be replaced.
+        final warning = _pendingZAgeWarning;
+        _pendingZAgeWarning = null;
         Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const MainScreen()));
+        if (warning != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(warning),
+              backgroundColor: Colors.orange.shade800,
+              duration: const Duration(seconds: 8),
+            ));
+          });
+        }
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Login failed: ${e.toString()}';
+        _errorMessage = errorText(e, AppLocalizations.of(context)!);
         _isLoading = false;
       });
       _shakeCtrl.forward(from: 0);
@@ -755,6 +843,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
       ref.read(currentUserProvider.notifier).state = null;
       ref.read(currentSessionProvider.notifier).state = null;
+      // Drop the active Z too — clearAllData wipes the zs table below, so a
+      // lingering in-memory Z would point at a deleted row.
+      ref.read(currentZProvider.notifier).state = null;
+      // Same reasoning for the day/Z-number counter: it lives in prefs, which
+      // clearAllData does not touch, so a re-provisioned terminal would inherit
+      // a "day closed" lock with no Z rows left to explain it.
+      await ref.read(zDayStateProvider.notifier).reset();
 
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
@@ -793,13 +888,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     final l10n = AppLocalizations.of(context)!;
     final isWide = MediaQuery.sizeOf(context).width >= 860;
 
-    // Show the update dialog the moment an available update is detected.
+    // React the moment an available update is detected.
+    //   • Mandatory        → blocking modal (force download + auto-apply).
+    //   • Auto-update ON    → silently download in the background (NO dialog);
+    //                         the global "ready" banner appears when staged.
+    //   • Auto-update OFF   → the legacy "update available" modal.
+    // The policy lives here (login only) on purpose: the manual Settings
+    // "check for updates" path shows its own dialog and must stay unaffected.
     ref.listen<UpdateState>(updateProvider, (prev, next) {
       if (prev?.availableUpdate == null &&
           next.availableUpdate != null &&
           !next.updateReady &&
           mounted) {
-        showUpdateDialog(context, isMandatory: next.updateRequired);
+        if (next.updateRequired) {
+          showUpdateDialog(context, isMandatory: true);
+        } else if (ref.read(settingsProvider).autoUpdate) {
+          // Silent background download — stages the update, no prompt.
+          ref.read(updateProvider.notifier).startDownload();
+        } else {
+          showUpdateDialog(context, isMandatory: false);
+        }
       }
     });
 
@@ -1014,6 +1122,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           ),
           const SizedBox(height: 28),
 
+          // ── Sign-in expiry warning ────────────────────────────────────────
+          // Above the form, because it is about whether this till will work
+          // next week rather than about the login being attempted now. Draws
+          // nothing until the last seven days, and steps aside inside the last
+          // day when the blocking gate takes over.
+          const SessionExpiryNotice(),
+
           // ── User selector ─────────────────────────────────────────────────
           _buildUserSelector(l10n),
 
@@ -1034,7 +1149,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           // ── Starting balance ──────────────────────────────────────────────
           // Pre-filled with '0.0' in the controller, so the hint is suppressed
           // to avoid the visible "0.0  0.0" double-render that read like a bug.
-          OnscreenKeyboardTextField(
+          AdaptiveKeyboardTextField(
             controller: _startingBalanceController,
             keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
@@ -1061,6 +1176,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
               ),
               child: _ErrorBanner(message: _errorMessage!),
             ),
+            // The lock's way out for a cashier: a manager types their password
+            // here rather than the shop waiting for midnight.
+            if (_dayLocked) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.lock_open),
+                  label: Text(
+                      AppLocalizations.of(context)!.translate('reopen_day')),
+                  onPressed: _handleReopenDay,
+                ),
+              ),
+            ],
           ],
 
           const SizedBox(height: 28),
@@ -1099,6 +1228,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     ),
             ),
           ),
+
+          // Bench for the numeric keypad, which is not wired into any real
+          // screen yet. `kReleaseMode` keeps it out of what ships — the tree
+          // shaker drops the whole branch, so the lab never reaches a till.
+          if (!kReleaseMode) ...[
+            const SizedBox(height: 16),
+            Center(
+              child: TextButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const KeypadLabScreen()),
+                ),
+                icon: const Icon(Icons.dialpad, size: 18),
+                label: const Text('Keypad lab (debug)'),
+              ),
+            ),
+          ],
 
           if (_appVersion != null) ...[
             const SizedBox(height: 16),
@@ -1154,7 +1299,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   }
 
   Widget _buildPasswordField(AppLocalizations l10n) {
-    return OnscreenKeyboardTextField(
+    return AdaptiveKeyboardTextField(
       controller: _passwordController,
       obscureText: _obscurePassword,
       textInputAction: TextInputAction.next,
@@ -1250,8 +1395,156 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           tooltip: l10n.translate('tooltip_report_issue'),
           child: const Icon(Icons.bug_report),
         ),
+        // Z (shift) management — admin/manager, works pre-login.
+        //
+        // Shown whether or not Z tracking is switched on. That setting governs
+        // whether this terminal RUNS a Z lifecycle (day locks, forced closes);
+        // it was never meant to decide whether an admin may reach the Z screen
+        // at all, and hiding the button left a shop that had not enabled Z
+        // with no way in — including no way to enable it from here. The dialog
+        // behind it still demands admin (or pos:z:open) credentials.
+        const SizedBox(width: 6),
+        _GlassButton(
+          onTap: _handleManageZ,
+          onBrand: onBrand,
+          tooltip: l10n.translate('manage_z'),
+          child: const Icon(Icons.point_of_sale),
+        ),
       ],
     );
+  }
+
+  /// Z-mode day lock. Returns true when [user] may proceed with the login.
+  ///
+  /// Rolls the business day first (which is what makes "next day → unlocked,
+  /// Z number incremented" happen on its own), then blocks non-admins while
+  /// the current day is closed. Admins are offered an inline reopen.
+  Future<bool> _passesDayLock(User user) async {
+    final l10n = AppLocalizations.of(context)!;
+    final settings = ref.read(settingsProvider);
+    if (!settings.zTrackingEnabled || !settings.zDayLockEnabled) return true;
+
+    final today = zBusinessDayKey(DateTime.now(), settings.zDayStartHour);
+    final day =
+        await ref.read(zDayStateProvider.notifier).ensureDay(today);
+    if (!day.isLockedFor(today)) return true;
+    if (await _dayLockFailOpen(day)) return true;
+
+    if (user.type.toLowerCase() != 'admin') {
+      setState(() {
+        _errorMessage = l10n.translate('day_closed_login_blocked');
+        _isLoading = false;
+        _dayLocked = true;
+      });
+      _shakeCtrl.forward(from: 0);
+      return false;
+    }
+
+    // Admin: confirm, then lift the lock and continue this login.
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('reopen_day')),
+        content: Text(l10n.translate('reopen_day_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.translate('reopen_day')),
+          ),
+        ],
+      ),
+    );
+    if (go != true) {
+      if (mounted) setState(() => _isLoading = false);
+      return false;
+    }
+    await ref.read(zDayStateProvider.notifier).reopenDay(byUserId: user.id);
+    await ref.read(activityLogServiceProvider).logZDayReopened(
+          today,
+          userId: user.id,
+          username: '${user.firstName} ${user.lastName}'.trim(),
+        );
+    return true;
+  }
+
+  /// Situations where enforcing the lock would strand the terminal with no way
+  /// back in. Any of these and the lock is ignored — a POS that cannot be
+  /// opened is worse than a day that closed twice.
+  Future<bool> _dayLockFailOpen(ZDayState day) async {
+    // 1. Nobody could ever reopen: no admin and no holder of pos:z:close.
+    //    The credential dialog would render with its confirm button disabled.
+    try {
+      final db = ref.read(databaseProvider);
+      final users = await db.select(db.users).get();
+      final canReopen = users.any((u) =>
+          u.type.toLowerCase() == 'admin' ||
+          userHasPermission(u, Permissions.zClose));
+      if (!canReopen) return true;
+    } catch (_) {
+      return true; // can't tell → don't lock anyone out
+    }
+
+    // 2. The stored day is in the future — the system clock moved backwards.
+    final settings = ref.read(settingsProvider);
+    final today = zBusinessDayKey(DateTime.now(), settings.zDayStartHour);
+    if (day.businessDay.compareTo(today) > 0) return true;
+
+    // 3. Closed more than 48h ago but still "today" — only reachable through
+    //    clock tampering, and always wrong to keep enforcing.
+    final closedAt = day.closedAt;
+    if (closedAt != null &&
+        DateTime.now().difference(closedAt) > const Duration(hours: 48)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Manager reopen from the login screen, for cashiers who hit the lock.
+  Future<void> _handleReopenDay() async {
+    final l10n = AppLocalizations.of(context)!;
+    final settings = ref.read(settingsProvider);
+    final elevation = await showAdminCredentialDialog(
+      context,
+      ref,
+      title: l10n.translate('reopen_day'),
+      description: l10n.translate('reopen_day_subtitle'),
+      permission: Permissions.zClose,
+    );
+    if (elevation == null || !mounted) return;
+    final today = zBusinessDayKey(DateTime.now(), settings.zDayStartHour);
+    await ref.read(zDayStateProvider.notifier).reopenDay(
+          byUserId: elevation.adminId,
+        );
+    await ref.read(activityLogServiceProvider).logZDayReopened(
+          today,
+          userId: elevation.adminId,
+          username: elevation.adminUsername,
+        );
+    if (!mounted) return;
+    setState(() {
+      _dayLocked = false;
+      _errorMessage = null;
+    });
+    SnackBarHelper.success(context, l10n.translate('day_reopened'));
+  }
+
+  /// Login-screen "Manage Z" flow: credential gate (admin OR Z-permission
+  /// holder), then the Z management dialog.
+  Future<void> _handleManageZ() async {
+    final l10n = AppLocalizations.of(context)!;
+    final elevation = await showAdminCredentialDialog(
+      context,
+      ref,
+      title: l10n.translate('manage_z'),
+      description: l10n.translate('enter_admin_credentials'),
+      permission: Permissions.zOpen,
+    );
+    if (elevation == null || !mounted) return;
+    await showZManagementDialog(context, ref, elevation);
   }
 
   PopupMenuItem<String> _langItem(String code, String flag, String label) {
@@ -1348,10 +1641,14 @@ class _UpdateStatusBar extends ConsumerWidget {
               children: [
                 Icon(Icons.download_rounded, size: 14, color: cs.primary),
                 const SizedBox(width: 6),
-                Text(
-                  'Downloading update ${update.availableUpdate?.version ?? ""}… '
-                  '${(update.downloadProgress * 100).toStringAsFixed(0)}%',
-                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                Expanded(
+                  child: Text(
+                    'Downloading update ${update.availableUpdate?.version ?? ""}… '
+                    '${(update.downloadProgress * 100).toStringAsFixed(0)}%',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
                 ),
               ],
             ),
@@ -1366,38 +1663,9 @@ class _UpdateStatusBar extends ConsumerWidget {
       );
     }
 
-    if (update.updateReady) {
-      final isMandatory = update.updateRequired;
-      return Container(
-        color: isMandatory
-            ? Colors.orange.withValues(alpha: 0.15)
-            : cs.primaryContainer.withValues(alpha: 0.9),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            Icon(
-              isMandatory ? Icons.warning_amber_rounded : Icons.check_circle_outline,
-              size: 16,
-              color: isMandatory ? Colors.orange[700] : cs.primary,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                isMandatory
-                    ? 'Mandatory update ${update.pendingVersion} — restart required'
-                    : 'Update ${update.pendingVersion} ready — reopen the app to apply',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isMandatory ? Colors.orange[900] : cs.onPrimaryContainer,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
+    // The "ready" state is owned by the global UpdateReadyBanner (main.dart),
+    // which offers Restart-now / Later on every screen — so this login-only bar
+    // shows only live download progress.
     return const SizedBox.shrink();
   }
 }

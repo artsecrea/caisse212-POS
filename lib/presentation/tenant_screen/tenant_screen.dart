@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bcrypt/bcrypt.dart';
-import '../../utils/app_localizations.dart';
 import '../login_screen/login_screen.dart';
 import '../widgets/report_issue_dialog.dart';
 import '../widgets/caisse212_logo.dart';
+import '../widgets/adaptive_text_field.dart';
 
 class TenantScreen extends ConsumerStatefulWidget {
   const TenantScreen({super.key});
@@ -72,7 +74,7 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Failed to save tenant data: ${e.toString()}';
+        _errorMessage = errorText(e, AppLocalizations.of(context)!);
         _isLoading = false;
       });
     }
@@ -90,9 +92,11 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
+                // See [AppTheme.bar] — white content needs a dark ground in
+                // both themes, and a dark scheme's `primary` is a pale blue.
                 colors: [
-                  Theme.of(context).primaryColor,
-                  Theme.of(context).primaryColor.withValues(alpha: 0.7),
+                  AppTheme.bar(Theme.of(context).colorScheme),
+                  AppTheme.barAlt(Theme.of(context).colorScheme),
                 ],
               ),
             ),
@@ -121,11 +125,11 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 16,
-                                color: Colors.grey[600],
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
                               ),
                             ),
                             const SizedBox(height: 32),
-                            OnscreenKeyboardTextField(
+                            AdaptiveKeyboardTextField(
                               controller: _tenantIdController,
                               decoration: InputDecoration(
                                 labelText: l10n.translate('tenant_id'),
@@ -169,18 +173,18 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: Colors.red[50],
+                                  color: AppTheme.tintFill(context, Colors.red),
                                   borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.red[300]!),
+                                  border: Border.all(color: AppTheme.tintBorder(context, Colors.red)),
                                 ),
                                 child: Row(
                                   children: [
-                                    Icon(Icons.error_outline, color: Colors.red[700]),
+                                    Icon(Icons.error_outline, color: AppTheme.tintOn(context, Colors.red)),
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
                                         _errorMessage!,
-                                        style: TextStyle(color: Colors.red[700]),
+                                        style: TextStyle(color: AppTheme.tintOn(context, Colors.red)),
                                       ),
                                     ),
                                   ],
@@ -192,8 +196,8 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
                               onPressed: _isLoading ? null : _handleSubmit,
                               style: ElevatedButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(vertical: 16),
-                                backgroundColor: Theme.of(context).primaryColor,
-                                foregroundColor: Colors.white,
+                                backgroundColor: Theme.of(context).colorScheme.primary,
+                                foregroundColor: Theme.of(context).colorScheme.onPrimary,
                               ),
                               child: _isLoading
                                   ? const SizedBox(
@@ -215,7 +219,7 @@ class _TenantScreenState extends ConsumerState<TenantScreen> {
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.grey[600],
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ],

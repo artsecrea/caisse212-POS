@@ -4,6 +4,7 @@ import 'database_providers.dart';
 import '../services/sync_job_service.dart';
 import '../services/activity_log_service.dart';
 import '../services/identity_fix_service.dart';
+import '../utils/pos_log.dart';
 
 /// Provider for network connectivity status
 final connectivityProvider = StreamProvider<ConnectivityResult>((ref) async* {
@@ -39,14 +40,14 @@ class OnlineStatusNotifier extends StateNotifier<bool> {
 
     ref.listen(isOnlineProvider, (previous, next) {
       next.whenData((isOnline) {
-        print('is online $isOnline');
+        posLog('is online $isOnline');
         state = isOnline;
 
         // Trigger sync when network comes back online
         if (isOnline && previous?.value == false) {
           final syncService = ref.read(dataSyncServiceProvider);
           syncService.syncPendingOperations().catchError((e) {
-            print('Auto-sync failed: $e');
+            posLog('Auto-sync failed: $e');
           });
         }
       });

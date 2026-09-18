@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' show Value, OrderingTerm;
 import '../../data/database/app_database.dart';
@@ -7,6 +6,7 @@ import '../../providers/notes_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/app_localizations.dart';
+import './adaptive_text_field.dart';
 
 const _kNoteColors = [
   '#FFFF88', // yellow
@@ -156,8 +156,8 @@ class _NoteEditDialogState extends ConsumerState<NoteEditDialog> {
                                 : null,
                           ),
                           child: isSelected
-                              ? const Icon(Icons.check,
-                                  size: 18, color: Colors.black54)
+                              ? Icon(Icons.check,
+                                  size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant)
                               : null,
                         ),
                       ),
@@ -170,7 +170,7 @@ class _NoteEditDialogState extends ConsumerState<NoteEditDialog> {
               // Content textarea with onscreen keyboard
               Text(l10n.translate('note_content'), style: labelStyle),
               const SizedBox(height: 8),
-              OnscreenKeyboardTextField(
+              AdaptiveKeyboardTextField(
                 controller: _contentController,
                 focusNode: _contentFocus,
                 maxLines: 6,

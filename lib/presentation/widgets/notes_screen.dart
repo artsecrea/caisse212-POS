@@ -339,7 +339,7 @@ class _DraggableNoteState extends State<_DraggableNote> {
     final note = widget.note;
     final bgColor = _hexToColor(note.color);
     final isDark = bgColor.computeLuminance() < 0.5;
-    final textColor = isDark ? Colors.white : Colors.black87;
+    final textColor = isDark ? Colors.white : Theme.of(context).colorScheme.onSurface;
     final headerColor = isDark
         ? Colors.black.withValues(alpha: 0.25)
         : Colors.black.withValues(alpha: 0.08);

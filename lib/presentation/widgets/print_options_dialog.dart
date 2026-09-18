@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/database_providers.dart';
@@ -78,6 +79,11 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
 
     try {
       if (_printReceipt) {
+        // Store identity, the courier block and the separate courier slip are
+        // all the service's job now — passing them from here is what let this
+        // dialog's ticket drift from the automatic one. Anything this dialog
+        // does NOT pass is resolved from settings and the order row, so both
+        // paths produce the same paper.
         receiptSuccess = await printingService.printOrderReceipt(
           order: widget.order,
           cashierName: widget.cashierName,
@@ -157,7 +163,9 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
             // ── Header ──────────────────────────────────────────────────
             Container(
               padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
-              color: theme.primaryColor,
+              // White content on top: needs a dark background in both themes,
+              // which `primaryColor` is not. See [AppTheme.bar].
+              color: AppTheme.bar(theme.colorScheme),
               child: Row(
                 children: [
                   const Icon(Icons.print, color: Colors.white, size: 22),
@@ -204,7 +212,7 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                     Text(
                       'Print options',
                       style: theme.textTheme.labelLarge?.copyWith(
-                        color: Colors.grey[600],
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                         letterSpacing: 0.5,
                       ),
                     ),
@@ -305,8 +313,8 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                   ElevatedButton.icon(
                     onPressed: _isPrinting ? null : _handlePrint,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: theme.primaryColor,
-                      foregroundColor: Colors.white,
+                      backgroundColor: theme.colorScheme.primary,
+                      foregroundColor: theme.colorScheme.onPrimary,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 20, vertical: 12),
                     ),
@@ -352,14 +360,14 @@ class _OrderSummaryCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.receipt, size: 16, color: Colors.grey[600]),
+              Icon(Icons.receipt, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
               const SizedBox(width: 6),
               Text(
                 'Order Summary',
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
-                  color: Colors.grey[700],
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
             ],
@@ -410,7 +418,7 @@ class _SummaryChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: highlight
             ? theme.primaryColor.withValues(alpha: 0.1)
-            : Colors.white,
+            : theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
             color: highlight
@@ -422,7 +430,7 @@ class _SummaryChip extends StatelessWidget {
         children: [
           Icon(icon,
               size: 13,
-              color: highlight ? theme.primaryColor : Colors.grey[600]),
+              color: highlight ? theme.primaryColor : Theme.of(context).colorScheme.onSurfaceVariant),
           const SizedBox(width: 4),
           Text(
             label,
@@ -430,7 +438,7 @@ class _SummaryChip extends StatelessWidget {
               fontSize: 12,
               fontWeight:
                   highlight ? FontWeight.w600 : FontWeight.normal,
-              color: highlight ? theme.primaryColor : Colors.grey[800],
+              color: highlight ? theme.primaryColor : Theme.of(context).colorScheme.onSurface,
             ),
           ),
         ],
@@ -500,8 +508,8 @@ class _PrintTypeCard extends StatelessWidget {
                   icon,
                   size: 20,
                   color: ready
-                      ? (selected ? activeColor : Colors.grey[600])
-                      : Colors.grey[400],
+                      ? (selected ? activeColor : Theme.of(context).colorScheme.onSurfaceVariant)
+                      : Theme.of(context).colorScheme.outline,
                 ),
               ),
               const SizedBox(width: 12),
@@ -514,7 +522,7 @@ class _PrintTypeCard extends StatelessWidget {
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 14,
-                        color: ready ? null : Colors.grey[400],
+                        color: ready ? null : Theme.of(context).colorScheme.outline,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -538,7 +546,7 @@ class _PrintTypeCard extends StatelessWidget {
                           size: 22)
                       : Icon(Icons.circle_outlined,
                           key: const ValueKey('unchecked'),
-                          color: Colors.grey[400],
+                          color: Theme.of(context).colorScheme.outline,
                           size: 22),
                 ),
             ],
@@ -575,7 +583,7 @@ class _KdsOptions extends StatelessWidget {
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: Colors.grey[600],
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
             letterSpacing: 0.3,
           ),
         ),
@@ -651,7 +659,7 @@ class _ModeButton extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                color: selected ? color : Colors.grey[700],
+                color: selected ? color : Theme.of(context).colorScheme.onSurface,
               ),
             ),
             const SizedBox(height: 2),
@@ -659,7 +667,7 @@ class _ModeButton extends StatelessWidget {
               '$count item${count != 1 ? 's' : ''}',
               style: TextStyle(
                 fontSize: 11,
-                color: selected ? color.withValues(alpha: 0.8) : Colors.grey[500],
+                color: selected ? color.withValues(alpha: 0.8) : Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
           ],
@@ -697,7 +705,7 @@ class _StationSelector extends StatelessWidget {
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: Colors.grey[600],
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
             letterSpacing: 0.3,
           ),
         ),
@@ -730,7 +738,7 @@ class _StationSelector extends StatelessWidget {
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               '${selectedIds.length} station${selectedIds.length != 1 ? 's' : ''} selected',
-              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ),
       ],
@@ -771,7 +779,14 @@ class _StationChip extends StatelessWidget {
           style: TextStyle(
             fontSize: 12,
             fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-            color: selected ? Colors.white : Colors.grey[700],
+            // `color` is caller-supplied, so pick the readable foreground for
+            // it rather than assuming it is dark enough for white.
+            color: selected
+                ? (ThemeData.estimateBrightnessForColor(color) ==
+                        Brightness.dark
+                    ? Colors.white
+                    : Colors.black)
+                : Theme.of(context).colorScheme.onSurface,
           ),
         ),
       ),

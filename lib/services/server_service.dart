@@ -10,8 +10,12 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../core/enums.dart' show TransactionType;
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:archive/archive.dart' show ZipDecoder;
+import 'package:crypto/crypto.dart' show md5;
+import 'package:path_provider/path_provider.dart' show getTemporaryDirectory;
 import '../data/database/app_database.dart';
+import '../domain/models/order_course.dart';
 import '../domain/models/socket_models.dart';
 import '../providers/database_providers.dart';
 import '../providers/order_provider.dart' show orderRepositoryProvider;
@@ -20,9 +24,25 @@ import '../providers/network_provider.dart' show lastKnownOnlineStatusProvider;
 import '../providers/sync_manager_provider.dart' show syncManagerProvider;
 import 'activity_log_service.dart' show activityLogServiceProvider;
 import 'order_log_service.dart';
+import 'discovery_service.dart' show DiscoveryService;
 import 'printing_service.dart' show PrintOutput, KdsPrintMode, printingServiceProvider;
 import '../utils/order_code.dart';
 import 'package:drift/drift.dart' as drift;
+import '../utils/pos_log.dart';
+import 'package:loggecrea/loggecrea.dart';
+import 'product_cost_resolver.dart';
+
+/// Thrown inside a DB transaction to abort it (rolling back all writes) and
+/// surface a specific HTTP error to the client. Lets a race-safe check *inside*
+/// a transaction (e.g. table occupancy) reject cleanly without leaving a
+/// half-written order behind. Caught by the endpoint and turned into a JSON
+/// `{error, message}` response with [status].
+class _WaiterConflict implements Exception {
+  final int status;
+  final String code;
+  final String message;
+  const _WaiterConflict(this.status, this.code, this.message);
+}
 
 class ServerService {
   final Ref _ref;
@@ -31,12 +51,18 @@ class ServerService {
   String? _serverPassword;
   bool _isRunning = false;
 
+  // Embedded KDS web bundle: extracted once from assets/kds_web.zip to a temp
+  // dir, then served as static files. `_kdsExtraction` dedupes concurrent
+  // first-hits (a browser fires many parallel requests on load).
+  String? _kdsWebDir;
+  Future<String?>? _kdsExtraction;
+
   ServerService(this._ref, {int port = 8080}) : _port = port;
 
   /// Start the HTTP server
   Future<void> start({int? port, String? password}) async {
     if (_isRunning) {
-      print('⚠️ Server already running on port $_port');
+      Logger.instance.warning('Server already running on port $_port');
       return;
     }
 
@@ -53,9 +79,14 @@ class ServerService {
     try {
       _server = await shelf_io.serve(handler, InternetAddress.anyIPv4, _port);
       _isRunning = true;
-      print('✅ Server started on http://${_server!.address.host}:${_server!.port}');
+      // The server binds to 0.0.0.0 (all interfaces); log the REACHABLE LAN URL
+      // instead of 0.0.0.0 so the console shows what a KDS/waiter should connect
+      // to.
+      final lanIp = await DiscoveryService.getLocalIp();
+      posLog('✅ Server started on http://$lanIp:${_server!.port} '
+          '(bound to ${_server!.address.host}:${_server!.port})');
     } catch (e) {
-      print('❌ Failed to start server: $e');
+      Logger.instance.error('Failed to start server: $e');
       rethrow;
     }
   }
@@ -66,7 +97,7 @@ class ServerService {
       await _server!.close(force: true);
       _server = null;
       _isRunning = false;
-      print('🛑 Server stopped');
+      posLog('🛑 Server stopped');
     }
   }
 
@@ -84,7 +115,16 @@ class ServerService {
     router.put('/orders/products/<id>', _updateOrderProduct);
     router.get('/stations', _getStations);
 
+    // Embedded KDS web app — the pre-built Flutter web bundle, served straight
+    // from the LAN server so any browser/TV on the network can open the board
+    // at http://<pos-ip>:<port>/kds (no install). Its API calls hit /orders on
+    // this same origin. Exempt from the password in _authMiddleware.
+    router.get('/kds', (Request r) => _serveKdsWeb(''));
+    router.get('/kds/', (Request r) => _serveKdsWeb(''));
+    router.get('/kds/<path|.*>', (Request r, String path) => _serveKdsWeb(path));
+
     // Waiter-specific endpoints
+    router.get('/waiters/profiles', _waiterProfiles);
     router.post('/waiters/login', _waiterLogin);
     router.get('/waiters/dashboard', _waiterDashboard);
     router.get('/waiters/products', _waiterProducts);
@@ -92,12 +132,18 @@ class ServerService {
     router.get('/waiters/components', _waiterComponents);
     router.get('/waiters/component-groups', _waiterComponentGroups);
     router.get('/waiters/product-components', _waiterProductComponents);
+    router.get('/waiters/product-component-groups', _waiterProductComponentGroups);
     router.get('/waiters/product-variants', _waiterProductVariants);
     router.get('/waiters/tables', _waiterTables);
     router.get('/waiters/orders', _waiterOrders);
+    router.get('/waiters/orders/<code>', _waiterOrderDetail);
     router.post('/waiters/orders', _waiterCreateOrder);
     router.put('/waiters/orders/<code>/add-product', _waiterAddProductToOrder);
     router.post('/waiters/orders/<code>/print', _waiterPrintOrder);
+    router.post('/waiters/orders/<code>/cancel', _waiterCancelOrder);
+    router.post('/waiters/orders/<code>/transfer-table', _waiterTransferTable);
+    router.delete('/waiters/orders/<code>/products/<opId>', _waiterRemoveProduct);
+    router.post('/waiters/tables/<tableId>/clear', _waiterClearTable);
 
     // Catch-all for 404
     router.all('/<ignored|.*>', _notFound);
@@ -123,8 +169,11 @@ class ServerService {
   Middleware _authMiddleware() {
     return (Handler innerHandler) {
       return (Request request) async {
-        // Skip auth for health check
-        if (request.url.path == 'health') {
+        // Skip auth for the health check and the embedded KDS web bundle
+        // (a browser can't attach the password header to static asset loads;
+        // the KDS's own API calls still carry it).
+        final p = request.url.path;
+        if (p == 'health' || p == 'kds' || p.startsWith('kds/')) {
           return innerHandler(request);
         }
 
@@ -153,16 +202,125 @@ class ServerService {
   // ==================== ENDPOINT HANDLERS ====================
 
   /// Health check endpoint
+  /// GET /health — liveness, plus the handful of terminal-wide switches a
+  /// LAN client needs before (and during) a session.
+  ///
+  /// [coursesEnabled] rides here rather than on a catalogue or dashboard
+  /// endpoint at the waiter app's request, and the reasoning is sound: this is
+  /// the only route they call BEFORE login (their connect screen probes it)
+  /// and they re-poll it every 15s for the reconnect banner, so a cashier
+  /// toggling courses mid-shift reaches every waiter within 15s without a
+  /// restart or a re-login. It is also exempt from the server password, so it
+  /// is readable in exactly the state where a client can talk to us at all.
+  /// The catalogue routes are cached for a whole session by design, so a
+  /// toggle would not have propagated until the next login.
+  ///
+  /// Always present, never null: their parse treats an absent field as false,
+  /// which is the right degradation for an older POS build but a confusing
+  /// one to debug if we started omitting it on purpose.
   Future<Response> _healthCheck(Request request) async {
     return Response.ok(
       jsonEncode({
         'status': 'ok',
         'timestamp': DateTime.now().toIso8601String(),
         'port': _port,
+        'coursesEnabled': _ref.read(settingsProvider).coursesEnabled,
+        // Opaque to the client: compare it with the last one seen and re-fetch
+        // the catalogue when it differs. See [_catalogVersion].
+        'catalogVersion': await _catalogVersion(),
       }),
       headers: {'Content-Type': 'application/json'},
     );
   }
+
+  /// Drops the products a hidden category would have leaked.
+  ///
+  /// The waiter app's search filters by name across every product it holds and
+  /// never consults the category list, so scoping only the category route would
+  /// enforce the scope in the grid and bypass it in the search box beside it.
+  /// Filtering here means the tablet receives a smaller menu and needs no
+  /// notion of scope at all.
+  ///
+  /// The filter itself is the one the till's own grid uses — one function, not
+  /// a second copy that can drift away from it.
+  List<Product> _scopeProducts(List<Product> products) =>
+      scopedProducts(products, _ref.read(categoryScopeProvider));
+
+  /// A fingerprint of everything a waiter's menu depends on, for clients that
+  /// cache the catalogue: when this changes, their copy is stale.
+  ///
+  /// DERIVED, never incremented. A counter is only correct while every writer
+  /// remembers to bump it, and the first one that forgets leaves tablets
+  /// confidently stale. A hash moves for any change — scope edit, price, a new
+  /// product, a sync delta — including the ones nobody thought about here.
+  ///
+  /// It hashes rather than taking `max(updatedAt)` because 86'ing a product
+  /// writes `isAvailable` alone and never touches the timestamp, so a
+  /// timestamp-based version would sit still while tablets kept offering an
+  /// item the kitchen just killed.
+  ///
+  /// Briefly memoised: `/health` is polled every 15 s by every connected
+  /// tablet, and this reads both tables in full.
+  Future<String> _catalogVersion() async {
+    final cached = _catalogVersionCache;
+    final at = _catalogVersionAt;
+    if (cached != null &&
+        at != null &&
+        DateTime.now().difference(at) < const Duration(seconds: 3)) {
+      return cached;
+    }
+
+    final database = _ref.read(databaseProvider);
+    final categories = scopedCategories(
+        await (database.select(database.categories)
+              ..where((c) => c.isActive.equals(true)))
+            .get(),
+        _ref.read(categoryScopeProvider));
+    final products = _scopeProducts(await (database.select(database.products)
+          ..where((p) => p.isActive.equals(true))
+          ..orderBy([(p) => drift.OrderingTerm(expression: p.id)]))
+        .get());
+
+    final buf = StringBuffer();
+    for (final c in categories) {
+      buf
+        ..write(c.id)
+        ..write('')
+        ..write(c.name)
+        ..write('')
+        ..write(c.displayOrder)
+        ..write('')
+        ..write(c.color)
+        ..write('');
+    }
+    buf.write('');
+    for (final p in products) {
+      buf
+        ..write(p.id)
+        ..write('')
+        ..write(p.name)
+        ..write('')
+        ..write(p.price)
+        ..write('')
+        ..write(p.finalPrice)
+        ..write('')
+        ..write(p.categoryId)
+        ..write('')
+        ..write(p.stationId)
+        ..write('')
+        ..write(p.isAvailable)
+        ..write('');
+    }
+
+    final version =
+        md5.convert(utf8.encode(buf.toString())).toString().substring(0, 16);
+    _catalogVersionCache = version;
+    _catalogVersionAt = DateTime.now();
+    return version;
+  }
+
+  String? _catalogVersionCache;
+  DateTime? _catalogVersionAt;
 
 
 
@@ -194,7 +352,16 @@ class ServerService {
       // ── 1. Parse params ─────────────────────────────────────────────────
       final afterId = int.tryParse(q['after_id'] ?? '');
       final statusStr = q['status'];
-      final stationName = q['station'];
+      // `station` accepts a CSV of names so one KDS can cover several stations
+      // (the "printer covers these stations" model). Lower-cased for matching.
+      final stationParam = q['station'];
+      final stationNames = stationParam != null
+          ? stationParam
+              .split(',')
+              .map((s) => s.trim().toLowerCase())
+              .where((s) => s.isNotEmpty)
+              .toList()
+          : <String>[];
 
       // Status: ONHOLD never reaches KDS
       final List<String> status = statusStr != null
@@ -202,8 +369,15 @@ class ServerService {
           : [];
       status.removeWhere((s) => s == 'ONHOLD');
 
-      // Lower-bound date — ALWAYS set; log cursor never replaces it
-      DateTime since;
+      // Scope: default to the CURRENT SESSION (LAN KDS shows the open shift).
+      // Any date param (since/from_date/to_date) OVERRIDES to a date window
+      // (history / reprints). `since` is the log-cursor lower bound; in session
+      // mode it's set to the session's start below, with `sessionScopeId` doing
+      // the real scoping in applyFilters.
+      final hasDateOverride = q['since'] != null ||
+          q['from_date'] != null ||
+          q['to_date'] != null;
+      late DateTime since;
       if (q['since'] != null || q['from_date'] != null) {
         try {
           since = DateTime.parse(q['since'] ?? q['from_date']!);
@@ -213,10 +387,12 @@ class ServerService {
             headers: {'Content-Type': 'application/json'},
           );
         }
-      } else {
+      } else if (hasDateOverride) {
+        // Only `to_date` given → lower bound is start of today.
         final now = DateTime.now();
         since = DateTime(now.year, now.month, now.day);
       }
+      // else: session mode — `since` is assigned from the session below.
 
       // Upper-bound date (optional)
       DateTime? toDate;
@@ -255,44 +431,95 @@ class ServerService {
         );
       }
 
+      // Session scope (default). Resolved here so emptyResponse is in scope.
+      // No open shift → nothing to cook; return empty rather than all history.
+      int? sessionScopeId;
+      if (!hasDateOverride) {
+        final session = _ref.read(currentSessionProvider);
+        if (session == null) return emptyResponse();
+        sessionScopeId = session.id;
+        since = session.startedAt; // loose lower bound; sessionId does real scoping
+      }
+
+      // Orders are born COMPLETED (see AppSettings.defaultOrderStatus); the
+      // KITCHEN state lives on each PRODUCT, not on order.status. So the KDS is
+      // selected by product state — never by order.status, which reads COMPLETED
+      // for every kitchen order.
+      //
+      //   orderIdsForStation → every order with a product for this KDS's
+      //     stations (the KEEP scope: updates + reconcile).
+      //   activeOrderIds     → orders with a product in one of the requested
+      //     states (e.g. PENDING/PREPARING) (the ADD scope: new tickets).
+      //   stationFilters     → resolved lower-cased station names, passed to
+      //     _buildSocketOrder so each order's line items are filtered to this
+      //     KDS's stations (a line is kept if it belongs to ANY of them).
       Set<int>? orderIdsForStation;
-      if (stationName != null) {
-        final station = await (database.select(database.stations)
-              ..where((tbl) => tbl.name.lower().equals(stationName.toLowerCase())))
-            .getSingleOrNull();
-        if (station == null) return emptyResponse();
+      Set<int>? activeOrderIds;
+      Set<String>? stationFilters;
 
-        // A product belongs to this station via its primary stationId OR via the
-        // product_stations join table (multi-station products).
-        final extraStationProductIds = database.selectOnly(database.productStations)
-          ..addColumns([database.productStations.productId])
-          ..where(database.productStations.stationId.equals(station.id));
-
-        final rows = await (database.select(database.orderProducts).join([
+      if (stationNames.isNotEmpty || status.isNotEmpty) {
+        final joinQuery = database.select(database.orderProducts).join([
           drift.innerJoin(
             database.products,
             database.products.id.equalsExp(database.orderProducts.productId),
           ),
-        ])..where(database.products.stationId.equals(station.id) |
-            database.products.id.isInQuery(extraStationProductIds))).get();
+        ]);
 
-        orderIdsForStation =
-            rows.map((r) => r.readTable(database.orderProducts).orderId).toSet();
-        if (orderIdsForStation.isEmpty) return emptyResponse();
+        if (stationNames.isNotEmpty) {
+          final stations = await (database.select(database.stations)
+                ..where((tbl) => tbl.name.lower().isIn(stationNames)))
+              .get();
+          if (stations.isEmpty) return emptyResponse();
+
+          final stationIds = stations.map((s) => s.id).toList();
+          stationFilters = stations.map((s) => s.name.toLowerCase()).toSet();
+
+          // A product belongs to a station via its primary stationId OR via the
+          // product_stations join table (multi-station products).
+          final extraStationProductIds = database.selectOnly(database.productStations)
+            ..addColumns([database.productStations.productId])
+            ..where(database.productStations.stationId.isIn(stationIds));
+
+          joinQuery.where(database.products.stationId.isIn(stationIds) |
+              database.products.id.isInQuery(extraStationProductIds));
+        }
+
+        final rows = await joinQuery.get();
+
+        if (stationNames.isNotEmpty) {
+          orderIdsForStation =
+              rows.map((r) => r.readTable(database.orderProducts).orderId).toSet();
+          if (orderIdsForStation.isEmpty) return emptyResponse();
+        }
+
+        if (status.isNotEmpty) {
+          activeOrderIds = rows
+              .where((r) => status.contains(r.readTable(database.orderProducts).state))
+              .map((r) => r.readTable(database.orderProducts).orderId)
+              .toSet();
+        }
       }
 
+      // ADD scope for new tickets: the product-state set when a status filter is
+      // present (initial fetch), else the full station scope (incremental /
+      // reconcile polls carry no status).
+      final Set<int>? newOrderScope =
+          status.isNotEmpty ? activeOrderIds : orderIdsForStation;
+
       // ── Helper: apply shared filters to a select statement ───────────────
-      void applyFilters(drift.SimpleSelectStatement<$OrdersTable, Order> sel,
-          {bool applyStatus = true}) {
+      // The KEEP scope (date/session, station, exclude held ONHOLD). Kitchen
+      // state is NOT matched here — it lives on products, and order.status reads
+      // COMPLETED for every kitchen order. The product-state ADD scope is applied
+      // to new orders only (see below), preserving the original "adding applies
+      // the live filter, reconcile only removes" contract.
+      void applyFilters(drift.SimpleSelectStatement<$OrdersTable, Order> sel) {
         sel..where((o) => o.createdAt.isBiggerOrEqualValue(since));
         if (toDate != null) sel..where((o) => o.createdAt.isSmallerOrEqualValue(toDate!));
-        if (applyStatus) {
-          if (status.isNotEmpty) {
-            sel..where((o) => o.status.isIn(status));
-          } else {
-            sel..where((o) => o.status.equals('ONHOLD').not());
-          }
+        if (sessionScopeId != null) {
+          sel..where((o) => o.sessionId.equals(sessionScopeId!));
         }
+        // Held (cart) orders never reach the KDS.
+        sel..where((o) => o.status.equals('ONHOLD').not());
         if (orderIdsForStation != null) {
           sel..where((o) => o.id.isIn(orderIdsForStation!.toList()));
         }
@@ -301,6 +528,11 @@ class ServerService {
       // ── 3. New orders (created within date window) ───────────────────────
       final newOrdersQuery = database.select(database.orders);
       applyFilters(newOrdersQuery);
+      // ADD scope: only surface a new ticket when it has a product in one of the
+      // requested kitchen states for this station (empty set ⇒ nothing new).
+      if (newOrderScope != null) {
+        newOrdersQuery..where((o) => o.id.isIn(newOrderScope.toList()));
+      }
       if (afterId != null) {
         newOrdersQuery..where((o) => o.id.isBiggerThanValue(afterId));
       }
@@ -328,8 +560,8 @@ class ServerService {
 
       // ── 6. Build socket models + respond ────────────────────────────────
       final [socketNewRaw, socketUpdatedRaw, lastLogIdRaw] = await Future.wait([
-        Future.wait(newOrders.map((o) => _buildSocketOrder(o, stationName))),
-        Future.wait(updatedOrders.map((o) => _buildSocketOrder(o, stationName))),
+        Future.wait(newOrders.map((o) => _buildSocketOrder(o, stationFilters))),
+        Future.wait(updatedOrders.map((o) => _buildSocketOrder(o, stationFilters))),
         logService.getLastUpdateLogId(),
       ]);
 
@@ -350,8 +582,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _getOrders: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _getOrders: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Internal server error', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -367,7 +599,7 @@ class ServerService {
       final body = await request.readAsString();
       final json = jsonDecode(body) as Map<String, dynamic>;
 
-      print('📥 _createOrder: $json');
+      posLog('📥 _createOrder: $json');
 
       // Read extra fields not in SocketOrderModel
       final waiterId = json['waiterId'] as int?;
@@ -453,6 +685,12 @@ class ServerService {
             variantId: drift.Value(product.variantId),
             quantity: drift.Value(product.quantity),
             unitaryPrice: unitPrice,
+            // Cost stamped for LAN-created orders too, so a waiter-app sale
+            // reports the same margin as one rung up on the till.
+            cost: drift.Value(await ProductCostResolver(database)
+                .resolve(
+                    productId: product.productId,
+                    variantId: product.variantId)),
             unitaryDiscount: drift.Value(unitDiscount),
             unitaryTva: drift.Value(unitTva),
             note: drift.Value(product.note),
@@ -470,6 +708,7 @@ class ServerService {
               quantity: drift.Value(component.quantity),
               price: drift.Value(component.extraPrice ?? 0.0),
               isSpecial: drift.Value(component.isSpecial),
+              name: drift.Value(component.componentName),
             ),
           );
         }
@@ -478,7 +717,7 @@ class ServerService {
       // Log order creation
       await logService.logOrderCreated(orderId, 'Order created via API: code=${socketOrder.code}');
 
-      print('✅ _createOrder: inserted order #$orderId code=${socketOrder.code}');
+      posLog('✅ _createOrder: inserted order #$orderId code=${socketOrder.code}');
 
       return Response(
         201,
@@ -486,8 +725,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _createOrder: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _createOrder: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to create order', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -537,11 +776,20 @@ class ServerService {
           takenBy: isConfirming && userId != null
               ? drift.Value(userId)
               : const drift.Value.absent(),
+          // Kitchen micro-states stay LOCAL (LAN-only KDS); only a TERMINAL
+          // state marks the order for cloud sync.
+          isSynced: _isTerminalState(newStatus)
+              ? const drift.Value(false)
+              : const drift.Value.absent(),
         );
 
         await (database.update(database.orders)
               ..where((tbl) => tbl.id.equals(id)))
             .write(companion);
+
+        if (_isTerminalState(newStatus)) {
+          _autoSyncWaiterOrder(id, 'kds-terminal');
+        }
 
         if (isConfirming) {
           await logService.logOrderUpdated(
@@ -618,8 +866,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _updateOrder: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _updateOrder: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to update order', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -650,48 +898,88 @@ class ServerService {
         );
       }
 
-      final updated = await (database.update(database.orderProducts)
-            ..where((tbl) => tbl.id.equals(productId)))
-          .write(
-        OrderProductsCompanion(
-          state: drift.Value(statusParam.toUpperCase()),
-        ),
-      );
+      final newState = statusParam.toUpperCase();
+      final now = DateTime.now();
 
-      if (updated == 0) {
+      // Read the current row first: needed to stamp each KDS stage timestamp
+      // only the FIRST time the item enters that stage (a remake bouncing back
+      // to PREPARING must not overwrite the original prep start).
+      final existing = await (database.select(database.orderProducts)
+            ..where((tbl) => tbl.id.equals(productId)))
+          .getSingleOrNull();
+      if (existing == null) {
         return Response.notFound(
           jsonEncode({'error': 'Order product not found'}),
           headers: {'Content-Type': 'application/json'},
         );
       }
 
-      final orderProduct = await (database.select(database.orderProducts)
-        ..where((tbl) => tbl.id.equals(productId)))
-        .getSingleOrNull();
-      if (orderProduct != null) {
-        final orderId = orderProduct.orderId;
-        final allProducts = await (database.select(database.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(orderId)))
+      await (database.update(database.orderProducts)
+            ..where((tbl) => tbl.id.equals(productId)))
+          .write(OrderProductsCompanion(
+        state: drift.Value(newState),
+        updatedAt: drift.Value(now),
+        // KDS stage timestamps for LOCAL kitchen stats — first entry only.
+        preparingAt: (newState == 'PREPARING' && existing.preparingAt == null)
+            ? drift.Value(now)
+            : const drift.Value.absent(),
+        readyAt: (newState == 'READY' && existing.readyAt == null)
+            ? drift.Value(now)
+            : const drift.Value.absent(),
+        servedAt: (_isTerminalState(newState) && existing.servedAt == null)
+            ? drift.Value(now)
+            : const drift.Value.absent(),
+      ));
+
+      final orderId = existing.orderId;
+      final allProducts = await (database.select(database.orderProducts)
+            ..where((tbl) => tbl.orderId.equals(orderId)))
           .get();
-        final allSameStatus = allProducts.every((p) => p.state == statusParam.toUpperCase());
-        if (allSameStatus) {
-          await (database.update(database.orders)
-            ..where((tbl) => tbl.id.equals(orderId)))
-            .write(OrdersCompanion(
-              status: drift.Value(statusParam.toUpperCase()),
-              updatedAt: drift.Value(DateTime.now()),
-            ));
-        }
-        await logService.logOrderUpdated(orderId, 'Product status updated via API to $statusParam');
+      final allSameStatus = allProducts.every((p) => p.state == newState);
+      // Whole order finished in the kitchen → tell the delivery platform.
+      // Fired on READY and on any terminal rollup, because a station that goes
+      // straight from PREPARING to COMPLETED never passes through READY.
+      if (allSameStatus &&
+          (newState == 'READY' || _isTerminalState(newState))) {
+        // ignore: unawaited_futures
+        _signalOrderReadyIfDelivery(orderId);
       }
+      if (allSameStatus) {
+        final terminal = _isTerminalState(newState);
+        // Orders are born COMPLETED (cloud-terminal); the kitchen flow lives on
+        // the PRODUCTS. So a KDS micro-state rollup (PENDING/PREPARING/READY)
+        // must NOT drag order.status back down — that would un-complete a
+        // cloud-terminal order. Only a genuinely terminal rollup
+        // (COMPLETED/CANCELED/DELIVERED) writes order.status, and only a
+        // non-COMPLETED terminal (CANCELED/DELIVERED) is a real change worth
+        // re-syncing.
+        if (terminal) {
+          await (database.update(database.orders)
+                ..where((tbl) => tbl.id.equals(orderId)))
+              .write(OrdersCompanion(
+            status: drift.Value(newState),
+            updatedAt: drift.Value(now),
+            isSynced: const drift.Value(false),
+          ));
+          _autoSyncWaiterOrder(orderId, 'kds-terminal');
+        } else {
+          // Micro-state rollup: bump updatedAt only, so the change-log cursor
+          // still surfaces the order to the KDS on the next poll.
+          await (database.update(database.orders)
+                ..where((tbl) => tbl.id.equals(orderId)))
+              .write(OrdersCompanion(updatedAt: drift.Value(now)));
+        }
+      }
+      await logService.logOrderUpdated(
+          orderId, 'Product status updated via API to $newState');
 
       return Response.ok(
         jsonEncode({'message': 'Product status updated', 'id': productId}),
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _updateOrderProduct: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _updateOrderProduct: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to update product', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -704,8 +992,16 @@ class ServerService {
     try {
       final database = _ref.read(databaseProvider);
       final stations = await database.select(database.stations).get();
+      // `description` is NULLABLE in the DB. Never send null here: a KDS that
+      // decodes it as a non-nullable String crashes its whole station list with
+      // "null is not a subtype of type 'String'". Coalescing server-side also
+      // fixes older KDS builds already deployed in the field.
       final stationList = stations
-          .map((s) => {'id': s.id, 'name': s.name, "description": s.description})
+          .map((s) => {
+                'id': s.id,
+                'name': s.name,
+                'description': s.description ?? '',
+              })
           .toList();
 
       return Response.ok(
@@ -713,8 +1009,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _getStations: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _getStations: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch stations', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -728,6 +1024,127 @@ class ServerService {
       jsonEncode({'error': 'Endpoint not found'}),
       headers: {'Content-Type': 'application/json'},
     );
+  }
+
+  // ==================== EMBEDDED KDS WEB APP ====================
+
+  /// Serve a file from the extracted KDS web bundle. [rel] is the path under
+  /// `/kds/` ('' → index.html). Unknown paths fall back to index.html so the
+  /// single-page app's client-side routes resolve.
+  Future<Response> _serveKdsWeb(String rel) async {
+    final root = await _ensureKdsWebExtracted();
+    if (root == null) {
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'KDS web bundle unavailable'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+
+    var path = rel.replaceFirst(RegExp(r'^/+'), '');
+    if (path.isEmpty) path = 'index.html';
+    // Block path traversal.
+    if (path.contains('..')) return Response.forbidden('Forbidden');
+
+    // Neutralise the Flutter service worker. A cached SW would keep serving a
+    // STALE JS bundle on refresh (the cause of "orders disappear / old app after
+    // F5"). We instead return a self-unregistering SW that caches nothing and
+    // wipes any existing caches, so every load fetches fresh from the POS.
+    if (path == 'flutter_service_worker.js') {
+      const noop = '''
+self.addEventListener('install', (e) => self.skipWaiting());
+self.addEventListener('activate', (e) => {
+  e.waitUntil((async () => {
+    for (const k of await caches.keys()) { await caches.delete(k); }
+    await self.clients.claim();
+  })());
+});
+self.addEventListener('fetch', () => {}); // pass-through, no caching
+''';
+      return Response.ok(noop, headers: {
+        'Content-Type': 'text/javascript',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      });
+    }
+
+    var file = File('$root/$path');
+    if (!await file.exists()) {
+      file = File('$root/index.html');
+      path = 'index.html';
+    }
+    try {
+      // index.html: force the base href to /kds/ so the bundle's assets
+      // (flutter_bootstrap.js, main.dart.js, canvaskit, …) resolve under /kds/
+      // instead of the site root. This makes serving path-independent of how
+      // the web bundle was built.
+      if (path == 'index.html') {
+        var html = await file.readAsString();
+        html = html.replaceFirst(
+            RegExp(r'<base\s+href="[^"]*"\s*/?>'), '<base href="/kds/">');
+        return Response.ok(html, headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        });
+      }
+      final bytes = await file.readAsBytes();
+      return Response.ok(bytes, headers: {
+        'Content-Type': _kdsMimeType(path),
+        'Cache-Control': 'no-cache',
+      });
+    } catch (e) {
+      return Response.internalServerError(body: 'Failed to read $path');
+    }
+  }
+
+  /// Extract `assets/kds_web.zip` to a temp dir once and return its path.
+  Future<String?> _ensureKdsWebExtracted() {
+    if (_kdsWebDir != null) return Future.value(_kdsWebDir);
+    return _kdsExtraction ??= () async {
+      try {
+        final tmp = await getTemporaryDirectory();
+        final dir = Directory('${tmp.path}/kds_web');
+        // Fresh extraction once per app launch (deduped by _kdsExtraction), so
+        // an updated bundle isn't shadowed by a previous run's stale files.
+        if (await dir.exists()) await dir.delete(recursive: true);
+        await dir.create(recursive: true);
+        final data = await rootBundle.load('assets/kds_web.zip');
+        final archive = ZipDecoder().decodeBytes(data.buffer.asUint8List());
+        for (final entry in archive) {
+          final outPath = '${dir.path}/${entry.name}';
+          if (entry.isFile) {
+            final f = File(outPath);
+            await f.parent.create(recursive: true);
+            await f.writeAsBytes(entry.content as List<int>);
+          } else {
+            await Directory(outPath).create(recursive: true);
+          }
+        }
+        posLog('✅ Extracted KDS web bundle to ${dir.path}');
+        _kdsWebDir = dir.path;
+        return _kdsWebDir;
+      } catch (e, st) {
+        Logger.instance.error('Failed to extract KDS web bundle: $e\n$st');
+        _kdsExtraction = null; // allow a retry on the next request
+        return null;
+      }
+    }();
+  }
+
+  String _kdsMimeType(String p) {
+    if (p.endsWith('.html')) return 'text/html; charset=utf-8';
+    if (p.endsWith('.js') || p.endsWith('.mjs')) return 'text/javascript';
+    if (p.endsWith('.json')) return 'application/json';
+    if (p.endsWith('.wasm')) return 'application/wasm';
+    if (p.endsWith('.css')) return 'text/css';
+    if (p.endsWith('.png')) return 'image/png';
+    if (p.endsWith('.jpg') || p.endsWith('.jpeg')) return 'image/jpeg';
+    if (p.endsWith('.svg')) return 'image/svg+xml';
+    if (p.endsWith('.ico')) return 'image/x-icon';
+    if (p.endsWith('.mp3')) return 'audio/mpeg';
+    if (p.endsWith('.otf')) return 'font/otf';
+    if (p.endsWith('.ttf')) return 'font/ttf';
+    if (p.endsWith('.woff')) return 'font/woff';
+    if (p.endsWith('.woff2')) return 'font/woff2';
+    return 'application/octet-stream';
   }
 
   // ==================== WAITER ENDPOINTS ====================
@@ -751,11 +1168,54 @@ class ServerService {
   /// Deliberately returns the SAME error code for "no such pin" and
   /// "pin matches an inactive waiter" so the response can't be used as an
   /// oracle to enumerate valid pins.
+  /// GET /waiters/profiles
+  ///
+  /// Roster for the login profile-picker: the active waiters the app shows so
+  /// the user taps their face/name and then enters their PIN (instead of a
+  /// blind PIN entry). Deliberately carries NO pin — the PIN is still the
+  /// credential, verified by [_waiterLogin]. Names/photos are not secret.
+  ///
+  /// 200: `{ "waiters": [ { id, firstName, lastName, imageUrl } ] }`
+  Future<Response> _waiterProfiles(Request request) async {
+    try {
+      final db = _ref.read(databaseProvider);
+      final waiters = await (db.select(db.waiters)
+            ..where((w) => w.isActive.equals(true))
+            ..orderBy([(w) => drift.OrderingTerm(expression: w.firstName)]))
+          .get();
+      return Response.ok(
+        jsonEncode({
+          'waiters': waiters
+              .map((w) => {
+                    'id': w.id,
+                    'firstName': w.firstName,
+                    'lastName': w.lastName,
+                    'imageUrl': w.imageUrl,
+                  })
+              .toList(),
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, st) {
+      Logger.instance.error('_waiterProfiles failed: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode(
+            {'error': 'Failed to fetch profiles', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
   Future<Response> _waiterLogin(Request request) async {
     try {
       final body =
           jsonDecode(await request.readAsString()) as Map<String, dynamic>;
       final pin = (body['pin'] as String?)?.trim();
+      // Optional: the profile the user picked on the login screen. When sent,
+      // the PIN is validated against THIS waiter (so picking profile A but
+      // typing B's PIN fails). When absent, we fall back to pin-only lookup
+      // for backward compatibility with the original blind-PIN flow.
+      final selectedWaiterId = body['waiterId'] as int?;
 
       if (pin == null || pin.isEmpty) {
         return Response.badRequest(
@@ -765,11 +1225,15 @@ class ServerService {
       }
 
       final db = _ref.read(databaseProvider);
-      // Look up by pin alone. The partial unique index guarantees at most
-      // one match; `getSingleOrNull` collapses the null case for us.
-      final waiter = await (db.select(db.waiters)
-            ..where((w) => w.pin.equals(pin)))
-          .getSingleOrNull();
+      // With a selected profile: match by id AND pin. Without: look up by pin
+      // alone (the partial unique index guarantees at most one match).
+      final waiter = selectedWaiterId != null
+          ? await (db.select(db.waiters)
+                ..where((w) => w.id.equals(selectedWaiterId) & w.pin.equals(pin)))
+              .getSingleOrNull()
+          : await (db.select(db.waiters)
+                ..where((w) => w.pin.equals(pin)))
+              .getSingleOrNull();
 
       if (waiter == null || !waiter.isActive) {
         return Response.forbidden(
@@ -805,8 +1269,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterLogin: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterLogin: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'login_failed', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -816,6 +1280,75 @@ class ServerService {
 
     /// GET /waiters/dashboard?waiterId=1
   /// Returns: total orders, active orders, expected cash, total cash
+  /// Canonical per-line total — the SINGLE formula the waiter endpoints must
+  /// use so their amounts match the POS. Mirrors [OrderItem.totalPrice] and
+  /// `OrderRepository.getOrderTotals`:
+  ///
+  ///   (unitaryPrice + Σ(component.price × component.quantity) − manualDiscount)
+  ///       × quantity
+  ///
+  /// Two mistakes the older inline math made — which made waiter totals differ
+  /// from the POS — are fixed here: (1) each component is multiplied by the
+  /// product `quantity` (it was added only once, so a qty-2 line with add-ons
+  /// under-counted the add-ons); (2) `unitaryDiscount` is NOT subtracted — the
+  /// per-unit pre-discount is already baked into `unitaryPrice`, so subtracting
+  /// it again double-discounted the line. Order-level `discountPercentage` is
+  /// applied by the caller where relevant (waiter orders default to 0).
+  double _waiterLineTotal(
+      OrderProduct p, Iterable<OrderProductComponent> comps) {
+    var componentTotal = 0.0;
+    for (final c in comps) {
+      componentTotal += c.price * c.quantity;
+    }
+    return (p.unitaryPrice + componentTotal - p.manualDiscount) * p.quantity;
+  }
+
+  /// Terminal (done) order/product states — the only ones that mark an order
+  /// for cloud sync from the KDS path. Everything else (PENDING, PREPARING,
+  /// READY, …) is a kitchen micro-state that stays LOCAL on the LAN-only KDS.
+  static bool _isTerminalState(String s) =>
+      s == 'COMPLETED' || s == 'CANCELED' || s == 'DELIVERED';
+
+  /// The active cash-session id, or null when none is open. The read endpoints
+  /// (`dashboard`, `orders`) scope to THIS session (the current shift) rather
+  /// than a calendar day, so opening a new session gives the waiter app a clean
+  /// slate and closing one hides its orders. (`tables` is deliberately NOT
+  /// scoped — see [_waiterTables].)
+  int? _currentWaiterSessionId() => _ref.read(currentSessionProvider)?.id;
+
+  /// Returns an error [Response] when a waiter may NOT create an order right
+  /// now — no session open, or the session is paused — or null when creation
+  /// is allowed. The session's status is re-read LIVE from the DB because the
+  /// in-memory `currentSessionProvider` copy can be stale (a pause-in-place
+  /// updates the row but not the provider). Emits a machine `error` code plus a
+  /// human `message` (see `docs/waiter_api_errors.md`).
+  Future<Response?> _blockOrderCreationIfSessionUnavailable() async {
+    Response err(String code, String message) => Response(
+          409,
+          body: jsonEncode({'error': code, 'message': message}),
+          headers: {'Content-Type': 'application/json'},
+        );
+
+    final session = _ref.read(currentSessionProvider);
+    if (session == null) {
+      return err('no_open_session',
+          'No cash session is open. Ask the cashier to open a session before taking orders.');
+    }
+    final database = _ref.read(databaseProvider);
+    final live = await (database.select(database.cashSessions)
+          ..where((s) => s.id.equals(session.id)))
+        .getSingleOrNull();
+    if (live == null || live.status == 'ended') {
+      return err('no_open_session',
+          'No cash session is open. Ask the cashier to open a session before taking orders.');
+    }
+    if (live.status == 'paused') {
+      return err('session_paused',
+          'The cash session is paused. Ask the cashier to resume it before taking orders.');
+    }
+    return null;
+  }
+
   Future<Response> _waiterDashboard(Request request) async {
     try {
       final database = _ref.read(databaseProvider);
@@ -837,19 +1370,35 @@ class ServerService {
         );
       }
 
-      final now = DateTime.now();
-      final startOfDay = DateTime(now.year, now.month, now.day);
+      // Scope to the CURRENT cash session (the shift), not a calendar day.
+      // No session open ⇒ nothing to report (stable zero shape).
+      final sessionId = _currentWaiterSessionId();
+      if (sessionId == null) {
+        return Response.ok(
+          jsonEncode({
+            'totalOrders': 0,
+            'activeOrders': 0,
+            'cancelledOrders': 0,
+            'expectedCash': 0.0,
+            'totalCash': 0.0,
+            'cancelledAmount': 0.0,
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
 
       final allWaiterOrders = await (database.select(database.orders)
-        ..where((o) => o.waiterId.equals(waiterId) & o.createdAt.isBiggerOrEqualValue(startOfDay)))
+        ..where((o) => o.waiterId.equals(waiterId) & o.sessionId.equals(sessionId)))
         .get();
 
       final waiterOrders = allWaiterOrders.where((o) => o.status != 'CANCELED').toList();
       final cancelledOrders = allWaiterOrders.where((o) => o.status == 'CANCELED').toList();
 
       final totalOrders = waiterOrders.length;
-      final activeOrders = waiterOrders.where((o) => o.status != 'COMPLETED').length;
       final cancelledCount = cancelledOrders.length;
+      // `activeOrders` is derived from PRODUCT state below, not order.status:
+      // orders are born COMPLETED (cloud-terminal), so order.status can no
+      // longer tell an in-progress order from a finished one.
 
       // Batch-load all order products, components, and tickets in 3 queries
       final allOrderIds = allWaiterOrders.map((o) => o.id).toList();
@@ -888,26 +1437,28 @@ class ServerService {
         productsByOrderId.putIfAbsent(p.orderId, () => []).add(p);
       }
 
+      // "Active" = still has kitchen/payment work outstanding: at least one
+      // product not in a done state. Mirrors the KDS's product-driven model.
+      const doneProductStates = {'COMPLETED', 'CANCELED', 'DELIVERED', 'PAID'};
+      final activeOrders = waiterOrders.where((o) {
+        final prods = productsByOrderId[o.id] ?? const <OrderProduct>[];
+        return prods.any((p) => !doneProductStates.contains(p.state));
+      }).length;
+
       double expectedCash = 0.0;
       double totalCash = 0.0;
       double cancelledAmount = 0.0;
 
       for (final order in cancelledOrders) {
-        for (final p in productsByOrderId[order.id] ?? []) {
-          double item = p.unitaryPrice * p.quantity;
-          for (final c in componentsByOpId[p.id] ?? []) item += c.price * c.quantity;
-          item -= p.unitaryDiscount * p.quantity;
-          item -= p.manualDiscount * p.quantity;
-          cancelledAmount += item;
+        for (final p in productsByOrderId[order.id] ?? const <OrderProduct>[]) {
+          cancelledAmount +=
+              _waiterLineTotal(p, componentsByOpId[p.id] ?? const []);
         }
       }
 
       for (final order in waiterOrders) {
-        for (final p in productsByOrderId[order.id] ?? []) {
-          double item = p.unitaryPrice * p.quantity;
-          for (final c in componentsByOpId[p.id] ?? []) item += c.price * c.quantity;
-          item -= p.unitaryDiscount * p.quantity;
-          item -= p.manualDiscount * p.quantity;
+        for (final p in productsByOrderId[order.id] ?? const <OrderProduct>[]) {
+          final item = _waiterLineTotal(p, componentsByOpId[p.id] ?? const []);
           expectedCash += item;
           if (p.ticketId != null) {
             final ticket = ticketsMap[p.ticketId];
@@ -934,8 +1485,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterDashboard: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterDashboard: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to get dashboard', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -947,9 +1498,9 @@ class ServerService {
   Future<Response> _waiterProducts(Request request) async {
     try {
       final database = _ref.read(databaseProvider);
-      final products = await (database.select(database.products)
+      final products = _scopeProducts(await (database.select(database.products)
         ..where((p) => p.isActive.equals(true)))
-        .get();
+        .get());
 
       final productList = products.map((p) => {
         'id': p.id,
@@ -965,6 +1516,11 @@ class ServerService {
         'color': p.color,
         'isPlannable': p.isPlannable,
         'planDurationMinutes': p.planDurationMinutes,
+        // The local "86" flag, so a waiter app / kiosk can grey the item out
+        // instead of taking an order the kitchen cannot fill. Sent rather than
+        // filtered so the client can SHOW it as unavailable — silently omitting
+        // it would look like the product had been deleted.
+        'isAvailable': p.isAvailable,
       }).toList();
 
       return Response.ok(
@@ -972,8 +1528,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterProducts: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterProducts: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch products', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -985,10 +1541,12 @@ class ServerService {
   Future<Response> _waiterCategories(Request request) async {
     try {
       final database = _ref.read(databaseProvider);
-      final categories = await (database.select(database.categories)
-        ..where((c) => c.isActive.equals(true))
-        ..orderBy([(c) => drift.OrderingTerm(expression: c.displayOrder)]))
-        .get();
+      final categories = scopedCategories(
+          await (database.select(database.categories)
+                ..where((c) => c.isActive.equals(true))
+                ..orderBy([(c) => drift.OrderingTerm(expression: c.displayOrder)]))
+              .get(),
+          _ref.read(categoryScopeProvider));
 
       final categoryList = categories.map((c) => {
         'id': c.id,
@@ -1004,8 +1562,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterCategories: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterCategories: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch categories', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -1014,28 +1572,39 @@ class ServerService {
   }
 
   /// GET /waiters/components
+  ///
+  /// 86'd components (`isActive = false`) are excluded — same rule the POS
+  /// itself applies (`database_providers.dart`): the row stays for order
+  /// history, but nobody gets to add one to a new line. `isActive` is still
+  /// sent on every surviving row (always `true`) so an older waiter build
+  /// that skips server-side filtering has something to defend itself with.
   Future<Response> _waiterComponents(Request request) async {
-
-
     try {
       final database = _ref.read(databaseProvider);
-      final components = await database.select(database.components).get();
+      final components = await (database.select(database.components)
+            ..where((c) => c.isActive.equals(true))
+            ..orderBy([
+              (c) => drift.OrderingTerm(expression: c.displayOrder),
+              (c) => drift.OrderingTerm(expression: c.name),
+            ]))
+          .get();
 
       final componentList = components.map((c) => {
         'id': c.id,
         'name': c.name,
         'price': c.price,
         'componentGroupId': c.componentGroupId,
+        'displayOrder': c.displayOrder,
+        'isActive': c.isActive,
       }).toList();
 
-      print(componentList);
       return Response.ok(
         jsonEncode({'components': componentList}),
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterComponents: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterComponents: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch components', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -1044,6 +1613,13 @@ class ServerService {
   }
 
   /// GET /waiters/component-groups
+  ///
+  /// `selectionType`/`minSelection`/`maxSelection`/`freeQuantity` are the
+  /// GROUP-LEVEL defaults — see `GET /waiters/product-component-groups` for
+  /// the per-product overrides that win over these field-by-field. An
+  /// unbounded `maxSelection` is sent as a real JSON `null`; the local
+  /// column is nullable, so there is no zero-vs-unbounded ambiguity to guard
+  /// against here the way there is on `/waiters/product-components`.
   Future<Response> _waiterComponentGroups(Request request) async {
     try {
       final database = _ref.read(databaseProvider);
@@ -1056,6 +1632,11 @@ class ServerService {
         'name': g.name,
         'description': g.description,
         'displayOrder': g.displayOrder,
+        'selectionType': g.selectionType,
+        'minSelection': g.minSelection,
+        'maxSelection': g.maxSelection,
+        'freeQuantity': g.freeQuantity,
+        'color': g.color,
       }).toList();
 
       return Response.ok(
@@ -1063,8 +1644,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterComponentGroups: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterComponentGroups: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch component groups', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -1086,6 +1667,7 @@ class ServerService {
         'isRequired': pc.isRequired,
         'minQuantity': pc.minQuantity,
         'maxQuantity': pc.maxQuantity,
+        'chargeOnRemoval': pc.chargeOnRemoval,
       }).toList();
 
       return Response.ok(
@@ -1093,10 +1675,66 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterProductComponents: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterProductComponents: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch product components', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/product-component-groups
+  ///
+  /// Per-product overrides of a component group's selection rules — mirrors
+  /// `ProductComponentGroups` (see the table's own doc comment) and the local
+  /// merge in `database_providers.dart` (`productComponentGroupRulesProvider`,
+  /// group default `?? ` per-product override, field by field).
+  ///
+  /// A row exists ONLY for a genuinely overridden (product, group) pair; a
+  /// product that follows its group's defaults has no row here at all — ask
+  /// `GET /waiters/component-groups` for those.
+  ///
+  /// Within a row, each rule field is OMITTED from the JSON when that
+  /// specific field carries no override — never sent as an explicit `null`,
+  /// never coerced to `0`. On this table `minSelection: 0` would silently
+  /// un-require a group and `maxSelection: 0` would read as unlimited
+  /// (`effectiveMaxQuantity`), so a coerced zero would be indistinguishable
+  /// from a real override in both directions. A `containsKey` test on the
+  /// field name is the wire-level way to ask "is this field overridden here".
+  /// `displayOrder` is the one exception: the column is non-nullable
+  /// (default 0) and always present.
+  Future<Response> _waiterProductComponentGroups(Request request) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final overrides =
+          await database.select(database.productComponentGroups).get();
+
+      final rowList = overrides.map((o) {
+        final row = <String, dynamic>{
+          'productId': o.productId,
+          'componentGroupId': o.groupId,
+          'displayOrder': o.displayOrder,
+        };
+        if (o.selectionType != null) row['selectionType'] = o.selectionType;
+        if (o.minSelection != null) row['minSelection'] = o.minSelection;
+        if (o.maxSelection != null) row['maxSelection'] = o.maxSelection;
+        if (o.freeQuantity != null) row['freeQuantity'] = o.freeQuantity;
+        return row;
+      }).toList();
+
+      return Response.ok(
+        jsonEncode({'productComponentGroups': rowList}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      Logger.instance.error('Error in _waiterProductComponentGroups: $e');
+      posLog(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode({
+          'error': 'Failed to fetch product component group overrides',
+          'details': e.toString(),
+        }),
         headers: {'Content-Type': 'application/json'},
       );
     }
@@ -1239,8 +1877,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterProductVariants: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterProductVariants: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({
           'error': 'Failed to fetch product variants',
@@ -1313,13 +1951,22 @@ class ServerService {
           .map((t) => t.orderId!)
           .toSet()
           .toList();
+      // Tables are intentionally OUTSIDE session scoping: occupancy mirrors the
+      // POS, which marks a table occupied purely by `areaTables.order_id`,
+      // regardless of which session the order belongs to.
       List<Order> ordersRaw = [];
       if (tableOrderIds.isNotEmpty) {
         final ordersQuery = database.select(database.orders)
           ..where((o) => o.id.isIn(tableOrderIds));
-        // Area-restricted waiters only see active (non-completed/cancelled) orders
+        // Occupancy must mirror the POS, which marks a table occupied purely by
+        // `areaTables.order_id`. So we keep COMPLETED orders here — a paid-but-
+        // not-yet-cleared table stays occupied in the waiter app just like on
+        // the POS (balance shows 0). Only CANCELED is dropped: a canceled order
+        // never occupies a table. (Previously this also excluded COMPLETED,
+        // which made paid tables wrongly show empty to area-restricted waiters
+        // while the POS still showed them full.)
         if (areaIds.isNotEmpty) {
-          ordersQuery.where((o) => o.status.isNotIn(['COMPLETED', 'CANCELED']));
+          ordersQuery.where((o) => o.status.equals('CANCELED').not());
         }
         ordersRaw = await ordersQuery.get();
       }
@@ -1358,13 +2005,10 @@ class ServerService {
 
         double totalAmount = 0.0;
         if (order != null) {
-          for (final p in productsByOrderId[order.id] ?? []) {
+          for (final p in productsByOrderId[order.id] ?? const <OrderProduct>[]) {
             if (p.ticketId == null) {
-              double item = p.unitaryPrice * p.quantity;
-              for (final c in componentsByOpId[p.id] ?? []) { item += c.price * c.quantity; }
-              item -= p.unitaryDiscount * p.quantity;
-              item -= p.manualDiscount * p.quantity;
-              totalAmount += item;
+              totalAmount +=
+                  _waiterLineTotal(p, componentsByOpId[p.id] ?? const []);
             }
           }
         }
@@ -1386,8 +2030,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterTables: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterTables: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch tables', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -1423,8 +2067,19 @@ class ServerService {
         );
       }
 
+      // Scope to the current session (the shift), not all-time. No session
+      // open ⇒ no current orders.
+      final sessionId = _currentWaiterSessionId();
+      if (sessionId == null) {
+        return Response.ok(
+          jsonEncode({'orders': [], 'page': page, 'limit': limit, 'count': 0}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
       // Build query
-      var query = database.select(database.orders)..where((o) => o.waiterId.equals(waiterId));
+      var query = database.select(database.orders)
+        ..where((o) => o.waiterId.equals(waiterId) & o.sessionId.equals(sessionId));
 
       // Filter by status if provided
       if (statusStr != null && statusStr.isNotEmpty) {
@@ -1473,6 +2128,14 @@ class ServerService {
               ..where((c) => c.orderProductId.isIn(allOpIds)))
               .get();
 
+      // Resolve display names for the line items (product + component names)
+      // so the waiter app can render an itemised order / split-pay checklist.
+      final productIds = allProducts.map((p) => p.productId).toSet().toList();
+      final productNames = await _loadProductNames(database, productIds);
+      final componentIds =
+          allComponents.map((c) => c.componentId).toSet().toList();
+      final componentNames = await _loadComponentNames(database, componentIds);
+
       final productsByOrderId = <int, List<OrderProduct>>{};
       for (final p in allProducts) {
         productsByOrderId.putIfAbsent(p.orderId, () => []).add(p);
@@ -1487,15 +2150,47 @@ class ServerService {
         final table = order.tableId != null ? tablesMap[order.tableId] : null;
         final products = productsByOrderId[order.id] ?? [];
 
-        double totalAmount = 0.0;
+        double totalAmount = 0.0; // full order total (all lines)
+        double balanceAmount = 0.0; // outstanding (unpaid lines only)
         bool allPaid = true;
+        final lineList = <Map<String, dynamic>>[];
         for (final p in products) {
-          double item = p.unitaryPrice * p.quantity;
-          for (final c in componentsByOpId[p.id] ?? []) { item += c.price * c.quantity; }
-          item -= p.unitaryDiscount * p.quantity;
-          item -= p.manualDiscount * p.quantity;
+          final lineComponents = componentsByOpId[p.id] ?? const [];
+          final compList = <Map<String, dynamic>>[];
+          for (final c in lineComponents) {
+            compList.add({
+              'id': c.id,
+              'componentId': c.componentId,
+              // The name AS SOLD, if it was captured at order time — a
+              // deactivated (86'd) or since-deleted component can no longer
+              // answer the live join below, and a deleted one answers with
+              // nothing at all (`name: null` on the wire). Falls back to the
+              // live join for rows written before this column existed.
+              'name': c.name ?? componentNames[c.componentId],
+              'quantity': c.quantity,
+              'price': c.price,
+            });
+          }
+          // Canonical line total (matches the POS) — components × quantity,
+          // pre-discount already in unitaryPrice.
+          final item = _waiterLineTotal(p, lineComponents);
+          final paid = p.ticketId != null;
+          if (!paid) allPaid = false;
           totalAmount += item;
-          if (p.ticketId == null) allPaid = false;
+          if (!paid) balanceAmount += item;
+
+          lineList.add({
+            'id': p.id,
+            'productId': p.productId,
+            'name': productNames[p.productId] ?? 'Product #${p.productId}',
+            'quantity': p.quantity,
+            'unitaryPrice': p.unitaryPrice,
+            'note': p.note,
+            'courseNo': p.courseNo,
+            'paid': paid,
+            'lineTotal': item,
+            'components': compList,
+          });
         }
 
         orderList.add({
@@ -1507,8 +2202,10 @@ class ServerService {
           'tableId': order.tableId,
           'tableName': table?.name,
           'totalAmount': totalAmount,
+          'balanceAmount': balanceAmount,
           'allPaid': allPaid,
           'productCount': products.length,
+          'products': lineList,
           'createdAt': order.createdAt.toIso8601String(),
           'updatedAt': order.updatedAt.toIso8601String(),
         });
@@ -1519,8 +2216,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterOrders: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterOrders: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch orders', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -1537,8 +2234,6 @@ class ServerService {
       final body = await request.readAsString();
       final json = jsonDecode(body) as Map<String, dynamic>;
 
-      print(json);
-
       final waiterId = json['waiterId'] as int?;
       final tableId = json['tableId'] as int?;
       final type = json['type'] as String? ?? 'DINE_IN';
@@ -1551,6 +2246,12 @@ class ServerService {
           headers: {'Content-Type': 'application/json'},
         );
       }
+
+      // Orders can only be raised while a cash session is OPEN and not paused
+      // (the POS itself requires an open session to ring up). Rejects with
+      // `no_open_session` or `session_paused` — see docs/waiter_api_errors.md.
+      final sessionBlock = await _blockOrderCreationIfSessionUnavailable();
+      if (sessionBlock != null) return sessionBlock;
 
       // Validate table for DINE_IN
       if (type == 'DINE_IN' && tableId == null) {
@@ -1606,6 +2307,10 @@ class ServerService {
           }
         }
       }
+      // NOTE: the table-occupancy check ("already has another waiter's order")
+      // is done INSIDE the transaction below, not here — otherwise two waiters
+      // opening the same table at the same instant could both pass a pre-check
+      // before either links the table (a TOCTOU race). See the transaction.
 
       // Generate a short uppercase alphanumeric order code (e.g. RGH7IE3H3LR),
       // verified unique against existing orders.
@@ -1614,10 +2319,10 @@ class ServerService {
 
       // Create order. `source: 'WAITER'` lets the print-rule engine filter
       // this row out (or in) per cashier config — see [PrintRule.sources].
-      // Initial status is cashier-configurable via
-      // `AppSettings.waiterOrderDefaultStatus` (default PENDING) so shops
-      // that pre-pay at the table can set this to COMPLETED, or send
-      // straight to the kitchen with PREPARING.
+      // Initial status uses the SAME `AppSettings.defaultOrderStatus` as the
+      // cashier "normal" flow (main_screen → OrderRepository.saveOrder), so a
+      // waiter order defaults exactly like a POS-created one. The paid-on-
+      // create branch below still bumps it to `paidOrderDefaultStatus`.
       //
       // `sessionId` carries the active cash session at create-time so the
       // order lands inside the current Z-report scope — without this the
@@ -1627,7 +2332,12 @@ class ServerService {
       // falls back to a today-window in that case.
       final settings = _ref.read(settingsProvider);
       final session = _ref.read(currentSessionProvider);
-      final waiterOrderStatus = settings.waiterOrderDefaultStatus;
+      final waiterOrderStatus = settings.defaultOrderStatus;
+      // Product line state mirrors saveOrder: ONHOLD orders keep their lines
+      // ONHOLD (so they never reach the KDS), everything else starts at the
+      // configured default KDS state.
+      final waiterItemState =
+          waiterOrderStatus == 'ONHOLD' ? 'ONHOLD' : settings.defaultKdsState;
       // Attribute the order to whoever is logged into the POS right now, so a
       // waiter order behaves like a normal POS order created by that cashier:
       // `createdBy`/`takenBy` reference `users.id` and drive the "Cashier"
@@ -1635,136 +2345,189 @@ class ServerService {
       // column above still records which waiter raised it (for the waiter
       // app's own order list / dashboard). Null when no cashier is logged in.
       final posUser = _ref.read(currentUserProvider);
-      // z_day from active session — O(1) state read, no DB hit
-      final waiterZDay = _ref.read(currentZDayProvider);
-      final orderId = await database.into(database.orders).insert(
-        OrdersCompanion.insert(
-          code: orderCode,
-          status: drift.Value(waiterOrderStatus),
-          type: drift.Value(type),
-          persons: drift.Value(persons),
-          tableId: drift.Value(tableId),
-          source: const drift.Value('WAITER'),
-          waiterId: drift.Value(waiterId),
-          createdBy: drift.Value(posUser?.id),
-          takenBy: drift.Value(posUser?.id),
-          sessionId: drift.Value(session?.id),
-          zDay: drift.Value(waiterZDay),
-          createdAt: drift.Value(now),
-          updatedAt: drift.Value(now),
-        ),
-      );
-
-      // Insert products
-      for (final productJson in products) {
-        final productId = productJson['productId'] as int;
-        final variantId = productJson['variantId'] as int?;
-        final quantity = (productJson['quantity'] as num?)?.toDouble() ?? 1.0;
-        final productNote = productJson['note'] as String?;
-        final components = productJson['components'] as List<dynamic>? ?? [];
-
-        // Get product details
-        final product = await (database.select(database.products)
-          ..where((p) => p.id.equals(productId)))
-          .getSingleOrNull();
-
-        if (product == null) continue;
-
-        // Use variant price/TVA if a variantId is provided
-        double unitPrice = product.finalPrice;
-        double unitTva = product.tvaAmount;
-        double unitDiscount = product.discountAmount;
-
-        if (variantId != null) {
-          final variant = await (database.select(database.productVariants)
-            ..where((v) => v.id.equals(variantId)))
-            .getSingleOrNull();
-          if (variant != null) {
-            unitPrice = variant.price;
-            unitTva = variant.tvaAmount;
-            unitDiscount = 0.0; // Variants typically have no pre-discount
+      // z_day from THIS order's session (same `session` used for sessionId
+      // below) so it can't drift from the current session. Falls back to the
+      // current/today z_day when no session is open.
+      final waiterZDay =
+          session != null ? zDayForSession(session) : _ref.read(currentZDayProvider);
+      // Everything below is ONE transaction so it commits atomically: no
+      // half-written order is ever visible to a concurrent reader, and — because
+      // drift serializes transactions on the single connection — the occupancy
+      // re-check and the table link commit together, so two waiters can't
+      // double-book the same table. A conflict throws `_WaiterConflict`, which
+      // rolls the whole thing back and is turned into a 409 below.
+      late final int orderId;
+      try {
+        orderId = await database.transaction<int>(() async {
+          // Race-safe table-occupancy check INSIDE the tx (see note above).
+          if (type == 'DINE_IN' && tableId != null) {
+            final t = await (database.select(database.areaTables)
+                  ..where((x) => x.id.equals(tableId)))
+                .getSingleOrNull();
+            if (t != null && t.orderId != null) {
+              final existing = await (database.select(database.orders)
+                    ..where((o) => o.id.equals(t.orderId!)))
+                  .getSingleOrNull();
+              // Whether the sitting order is still LIVE.
+              //
+              // This used to read `existing.status != 'COMPLETED'`, but orders
+              // are born COMPLETED in this app (the cloud-terminal model — the
+              // kitchen flow lives on the products). That made the condition
+              // always false, so the guard never fired: two waiters could open
+              // orders on the same table and the second silently overwrote
+              // `area_tables.orderId`, orphaning the first order's table link.
+              //
+              // Liveness is therefore judged the way the rest of the POS judges
+              // it: an order is done when it is cancelled, or when every line has
+              // been paid for.
+              var stillLive = false;
+              if (existing != null && existing.status != 'CANCELED') {
+                final lines = await (database.select(database.orderProducts)
+                      ..where((op) => op.orderId.equals(existing.id)))
+                    .get();
+                // No lines yet = a just-opened order, definitely live.
+                stillLive = lines.isEmpty ||
+                    lines.any((l) => l.state != 'PAID' && l.state != 'CANCELED');
+              }
+              final occupiedByOther =
+                  existing != null && stillLive && existing.waiterId != waiterId;
+              if (occupiedByOther) {
+                String owner = 'another waiter';
+                if (existing.waiterId != null) {
+                  final other = await (database.select(database.waiters)
+                        ..where((w) => w.id.equals(existing.waiterId!)))
+                      .getSingleOrNull();
+                  if (other != null) {
+                    owner = '${other.firstName} ${other.lastName ?? ''}'.trim();
+                  }
+                } else {
+                  owner = 'the cashier';
+                }
+                throw _WaiterConflict(
+                    409,
+                    'table_taken_by_other_waiter',
+                    'This table already has an open order by $owner. It must be handled by them or the cashier first.');
+              }
+            }
           }
-        }
 
-        final orderProductId = await database.into(database.orderProducts).insert(
-          OrderProductsCompanion.insert(
-            orderId: orderId,
-            productId: productId,
-            variantId: drift.Value(variantId),
-            quantity: drift.Value(quantity),
-            unitaryPrice: unitPrice,
-            unitaryDiscount: drift.Value(unitDiscount),
-            unitaryTva: drift.Value(unitTva),
-            note: drift.Value(productNote),
-            state: const drift.Value('PENDING'),
-            zDay: drift.Value(waiterZDay),
-          ),
-        );
-
-        // Insert components
-        for (final compJson in components) {
-          final componentId = compJson['componentId'] as int;
-          final compQuantity = compJson['quantity'] as int? ?? 1;
-          final price = (compJson['price'] as num?)?.toDouble() ?? 0.0;
-
-          await database.into(database.orderProductComponents).insert(
-            OrderProductComponentsCompanion.insert(
-              orderProductId: orderProductId,
-              componentId: componentId,
-              quantity: drift.Value(compQuantity),
-              price: drift.Value(price),
-              isSpecial: const drift.Value(false),
+          final newOrderId = await database.into(database.orders).insert(
+            OrdersCompanion.insert(
+              code: orderCode,
+              status: drift.Value(waiterOrderStatus),
+              type: drift.Value(type),
+              persons: drift.Value(persons),
+              tableId: drift.Value(tableId),
+              source: const drift.Value('WAITER'),
+              waiterId: drift.Value(waiterId),
+              createdBy: drift.Value(posUser?.id),
+              takenBy: drift.Value(posUser?.id),
+              sessionId: drift.Value(session?.id),
+              zDay: drift.Value(waiterZDay),
+              createdAt: drift.Value(now),
+              updatedAt: drift.Value(now),
             ),
           );
-        }
-      }
 
+          // Insert products
+          for (final productJson in products) {
+            final productId = productJson['productId'] as int;
+            final variantId = productJson['variantId'] as int?;
+            final quantity =
+                (productJson['quantity'] as num?)?.toDouble() ?? 1.0;
+            final productNote = productJson['note'] as String?;
+            // Course (1 entrée, 2 plat, 3 dessert), optional and normally
+            // absent — the waiter app only sends it when the shop works in
+            // courses. Omitted or null means "no course", which is the state
+            // every line has until somebody chooses one.
+            //
+            // Normalised rather than taken as given: a client promising to
+            // send only 1-3 is a promise living in the client's code, not in
+            // this contract, and the next build of it is not this build.
+            // Anything else becomes null here.
+            final productCourse = normalizeCourseNo(productJson['courseNo']);
+            final components =
+                productJson['components'] as List<dynamic>? ?? [];
 
-      // update the tabele order_id
+            final product = await (database.select(database.products)
+                  ..where((p) => p.id.equals(productId)))
+                .getSingleOrNull();
+            if (product == null) continue;
 
-      if (tableId != null) {
-        await (database.update(database.areaTables)..where((t) => t.id.equals(tableId)))
-          .write(AreaTablesCompanion(orderId: drift.Value(orderId)));
-      }
+            // Authoritative price/TVA from the DB (variant overrides product).
+            double unitPrice = product.finalPrice;
+            double unitTva = product.tvaAmount;
+            double unitDiscount = product.discountAmount;
+            if (variantId != null) {
+              final variant = await (database.select(database.productVariants)
+                    ..where((v) => v.id.equals(variantId)))
+                  .getSingleOrNull();
+              if (variant != null) {
+                unitPrice = variant.price;
+                unitTva = variant.tvaAmount;
+                unitDiscount = 0.0; // Variants typically have no pre-discount
+              }
+            }
 
-      // Default-paid path: when `waiterOrderDefaultPaid` is on, create a
-      // CASH ticket covering the full order, mark every product PAID +
-      // linked to that ticket, and bump the order status to the
-      // cashier-configured `paidOrderDefaultStatus` (mirrors the cashier
-      // payment screen at payment_screen.dart:1503-1525). Skipped when
-      // off — today's legacy behaviour kicks in (open order, settle via
-      // the cashier-side WaiterSettlementDialog later).
-      final wasPaidOnCreate = settings.waiterOrderDefaultPaid;
-      if (wasPaidOnCreate) {
-        final orderTotal = await _computeWaiterOrderTotal(database, orderId);
-        final ticketId = await database.into(database.tickets).insert(
-          TicketsCompanion.insert(
-            num: '0001',
-            orderId: orderId,
-            paymentMethod: TransactionType.cash.value,
-            amount: orderTotal,
-            sessionId: drift.Value(session?.id),
-            zDay: drift.Value(waiterZDay),
-            isPaid: const drift.Value(true),
-            printCount: const drift.Value(0),
-            date: drift.Value(DateTime.now()),
-          ),
+            final orderProductId =
+                await database.into(database.orderProducts).insert(
+              OrderProductsCompanion.insert(
+                orderId: newOrderId,
+                productId: productId,
+                variantId: drift.Value(variantId),
+                quantity: drift.Value(quantity),
+                unitaryPrice: unitPrice,
+                cost: drift.Value(await ProductCostResolver(database)
+                    .resolve(productId: productId, variantId: variantId)),
+                unitaryDiscount: drift.Value(unitDiscount),
+                unitaryTva: drift.Value(unitTva),
+                note: drift.Value(productNote),
+                courseNo: drift.Value(productCourse),
+                state: drift.Value(waiterItemState),
+                zDay: drift.Value(waiterZDay),
+              ),
+            );
+
+            // Insert components
+            for (final compJson in components) {
+              final componentId = compJson['componentId'] as int;
+              final compQuantity = compJson['quantity'] as int? ?? 1;
+              final price = (compJson['price'] as num?)?.toDouble() ?? 0.0;
+
+              await database.into(database.orderProductComponents).insert(
+                OrderProductComponentsCompanion.insert(
+                  orderProductId: orderProductId,
+                  componentId: componentId,
+                  quantity: drift.Value(compQuantity),
+                  price: drift.Value(price),
+                  isSpecial: const drift.Value(false),
+                  name: drift.Value(compJson['name'] as String?),
+                ),
+              );
+            }
+          }
+
+          // Link the table INSIDE the tx so the occupancy check above and this
+          // write commit atomically — the guarantee against double-booking.
+          if (tableId != null) {
+            await (database.update(database.areaTables)
+                  ..where((t) => t.id.equals(tableId)))
+                .write(AreaTablesCompanion(orderId: drift.Value(newOrderId)));
+          }
+
+          return newOrderId;
+        });
+      } on _WaiterConflict catch (e) {
+        return Response(
+          e.status,
+          body: jsonEncode({'error': e.code, 'message': e.message}),
+          headers: {'Content-Type': 'application/json'},
         );
-        await (database.update(database.orderProducts)
-              ..where((p) => p.orderId.equals(orderId)))
-            .write(OrderProductsCompanion(
-          ticketId: drift.Value(ticketId),
-          state: const drift.Value('PAID'),
-          updatedAt: drift.Value(now),
-        ));
-        final paidStatus = settings.paidOrderDefaultStatus;
-        await (database.update(database.orders)
-              ..where((o) => o.id.equals(orderId)))
-            .write(OrdersCompanion(
-          status: drift.Value(paidStatus),
-          updatedAt: drift.Value(now),
-        ));
       }
+
+      // Waiter orders are ALWAYS created open/unpaid. All payment happens on
+      // the POS — the cashier settles waiter orders via the waiter
+      // settlement / profile dialog. There is no waiter-side payment.
 
       // Order-level log (visible in order details) + cross-cutting
       // activity log (visible in the Logs screen). The order log carries
@@ -1781,17 +2544,14 @@ class ServerService {
             orderCode: orderCode,
           );
 
-      // Fire the configured auto-prints (order ticket + KDS, plus the
-      // customer receipt + store copy when the order arrived pre-paid)
-      // in the background so the waiter app's POST doesn't block on a
-      // slow / dead printer. The pipeline reads the just-saved row via
-      // OrderRepository, then gates each output via shouldPrint(... source:
-      // 'WAITER') — so the cashier's print rules (incl. the "sources"
-      // checkboxes in `printers_management_screen`) decide whether
-      // this waiter order produces paper.
+      // Fire the configured auto-prints (order ticket + KDS) in the background
+      // so the waiter app's POST doesn't block on a slow / dead printer. The
+      // pipeline reads the just-saved row via OrderRepository, then gates each
+      // output via shouldPrint(... source: 'WAITER') — so the cashier's print
+      // rules (incl. the "sources" checkboxes in `printers_management_screen`)
+      // decide whether this waiter order produces paper.
       // ignore: unawaited_futures
-      _firePrintsForWaiterOrder(orderId, posUser?.firstName,
-          wasPaid: wasPaidOnCreate);
+      _firePrintsForWaiterOrder(orderId, posUser?.firstName);
 
       // Immediate auto-sync when online. Mirrors the cashier-side path in
       // `main_screen.dart` so a default-paid waiter order doesn't sit
@@ -1806,12 +2566,12 @@ class ServerService {
               .read(syncManagerProvider.notifier)
               .autoSyncOrder(orderId)
               .catchError((Object e) {
-            print('⚠️ Waiter order autoSync failed: $e');
+            Logger.instance.warning('Waiter order autoSync failed: $e');
             return false;
           });
         }
       } catch (e) {
-        print('⚠️ Waiter order autoSync kickoff failed: $e');
+        Logger.instance.warning('Waiter order autoSync kickoff failed: $e');
       }
 
       return Response(
@@ -1824,8 +2584,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterCreateOrder: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterCreateOrder: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to create order', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -1833,14 +2593,6 @@ class ServerService {
     }
   }
 
-  /// Sum the just-inserted order's line totals. Mirrors the cashier-side
-  /// math in `OrderRepository._buildOrderFullDetails` but skips the
-  /// discount factors (the waiter endpoint doesn't accept discount
-  /// inputs today): for each `order_products` row, take
-  /// `(unitaryPrice + Σ components.price × components.quantity) × quantity`.
-  ///
-  /// Used by the default-paid path in [_waiterCreateOrder] to compute the
-  /// ticket amount.
   /// Generate a unique order code (see [generateOrderCode]) by re-rolling on
   /// the astronomically rare chance the random code already exists. Falls back
   /// to a timestamp-suffixed code after a few tries to guarantee termination.
@@ -1855,25 +2607,6 @@ class ServerService {
     return 'O${DateTime.now().millisecondsSinceEpoch}';
   }
 
-  Future<double> _computeWaiterOrderTotal(
-      AppDatabase database, int orderId) async {
-    final products = await (database.select(database.orderProducts)
-          ..where((p) => p.orderId.equals(orderId)))
-        .get();
-    var total = 0.0;
-    for (final p in products) {
-      final components = await (database.select(database.orderProductComponents)
-            ..where((c) => c.orderProductId.equals(p.id)))
-          .get();
-      var componentTotal = 0.0;
-      for (final c in components) {
-        componentTotal += c.price * c.quantity;
-      }
-      total += (p.unitaryPrice + componentTotal) * p.quantity;
-    }
-    return total;
-  }
-
   /// Background auto-print for a freshly created waiter order. Reads the
   /// saved row back as a [CurrentOrder] (so the print formatters see the
   /// same shape they do on the cashier side), then fires order ticket and
@@ -1881,10 +2614,6 @@ class ServerService {
   /// `source: 'WAITER'`. The cashier's print-rule config (see
   /// `printers_management_screen.dart`) decides whether any of these
   /// actually produce paper.
-  ///
-  /// When [wasPaid] is true, ALSO fires `printPaymentDocuments` (customer
-  /// receipt + store copy) — the cashier post-payment flow. Same source
-  /// gate applies; the cashier can opt out per-rule.
   ///
   /// [cashierName] is the POS user logged in when the waiter order arrived —
   /// the order is attributed to them (`createdBy`), so the ticket shows the
@@ -1894,14 +2623,19 @@ class ServerService {
   /// All exceptions are swallowed: the order is already persisted, the
   /// waiter app already got its 201, and a printer outage must not crash
   /// the server isolate.
-  Future<void> _firePrintsForWaiterOrder(int orderId, String? cashierName,
-      {bool wasPaid = false}) async {
+  Future<void> _firePrintsForWaiterOrder(
+      int orderId, String? cashierName) async {
     try {
+      // Master switch: when off, NO waiter action prints automatically —
+      // order ticket and KDS are suppressed in one place. Explicit reprints
+      // (`.../print`) still work.
+      if (!_ref.read(settingsProvider).printWaiterPaper) return;
+
       final orderRepo = _ref.read(orderRepositoryProvider);
       final printingService = _ref.read(printingServiceProvider);
       final currentOrder = await orderRepo.getOrderById(orderId);
       if (currentOrder == null) {
-        print('⚠️ _firePrintsForWaiterOrder: order $orderId not found post-insert');
+        Logger.instance.warning('_firePrintsForWaiterOrder: order $orderId not found post-insert');
         return;
       }
       final hasTable = currentOrder.tableId != null;
@@ -1938,7 +2672,7 @@ class ServerService {
             storePhone: storePhone,
           );
         } catch (e) {
-          print('⚠️ Waiter orderTicket print failed: $e');
+          Logger.instance.warning('Waiter orderTicket print failed: $e');
         }
       }
 
@@ -1955,61 +2689,12 @@ class ServerService {
             cashierName: cashierName,
           );
         } catch (e) {
-          print('⚠️ Waiter KDS print failed: $e');
+          Logger.instance.warning('Waiter KDS print failed: $e');
         }
       }
 
-      // Default-paid path: fire the cashier post-payment prints (customer
-      // receipt + store copy). printPaymentDocuments internally calls
-      // shouldPrint for each output with source:'WAITER', so the cashier
-      // can disable per-rule from printers_management without touching
-      // server code. Look up the freshly created ticket by orderId; the
-      // default-paid branch always inserts exactly one with num='0001'.
-      if (wasPaid) {
-        try {
-          final database = _ref.read(databaseProvider);
-          final ticket = await (database.select(database.tickets)
-                ..where((t) => t.orderId.equals(orderId)))
-              .getSingleOrNull();
-          if (ticket != null) {
-            final itemsForPrint = currentOrder.items.map((item) {
-              return {
-                'name': item.displayName,
-                'quantity': item.quantity,
-                'price': item.totalPrice,
-                'components': item.components
-                    .map((c) => {'name': c.name, 'quantity': c.quantity})
-                    .toList(),
-              };
-            }).toList();
-
-            await printingService.printPaymentDocuments(
-              ticketId: ticket.id,
-              ticketNumber: ticket.num,
-              amount: ticket.amount,
-              paymentMethod: ticket.paymentMethod,
-              createdAt: ticket.date,
-              items: itemsForPrint,
-              orderType: currentOrder.type,
-              hasTable: hasTable,
-              source: 'WAITER',
-              orderCode: currentOrder.orderCode,
-              cashierName: cashierName,
-              storeName: storeName,
-              storeAddress: storeAddress,
-              storePhone: storePhone,
-              customerName: currentOrder.customerName,
-              customerPhone: currentOrder.customerPhone,
-              tableName: currentOrder.tableName,
-              numberOfPersons: currentOrder.numberOfPersons,
-            );
-          }
-        } catch (e) {
-          print('⚠️ Waiter paymentDocuments print failed: $e');
-        }
-      }
     } catch (e, st) {
-      print('❌ _firePrintsForWaiterOrder failed: $e\n$st');
+      Logger.instance.error('_firePrintsForWaiterOrder failed: $e\n$st');
     }
   }
 
@@ -2023,12 +2708,15 @@ class ServerService {
   Future<void> _fireKdsForWaiterAddedProduct(
       int orderId, String? cashierName) async {
     try {
+      // Master switch (see [_firePrintsForWaiterOrder]): off = no waiter paper.
+      if (!_ref.read(settingsProvider).printWaiterPaper) return;
+
       final printingService = _ref.read(printingServiceProvider);
       if (!printingService.config.kdsEnabled) return;
       final orderRepo = _ref.read(orderRepositoryProvider);
       final currentOrder = await orderRepo.getOrderById(orderId);
       if (currentOrder == null) {
-        print('⚠️ _fireKdsForWaiterAddedProduct: order $orderId not found');
+        Logger.instance.warning('_fireKdsForWaiterAddedProduct: order $orderId not found');
         return;
       }
       if (!printingService.shouldPrint(
@@ -2045,7 +2733,160 @@ class ServerService {
         mode: KdsPrintMode.modificationsOnly,
       );
     } catch (e, st) {
-      print('❌ _fireKdsForWaiterAddedProduct failed: $e\n$st');
+      Logger.instance.error('_fireKdsForWaiterAddedProduct failed: $e\n$st');
+    }
+  }
+
+  /// Batch-load product display names for the given product ids.
+  Future<Map<int, String>> _loadProductNames(
+      AppDatabase database, List<int> ids) async {
+    if (ids.isEmpty) return {};
+    final rows = await (database.select(database.products)
+          ..where((p) => p.id.isIn(ids)))
+        .get();
+    return {for (final r in rows) r.id: r.name};
+  }
+
+  /// Batch-load component display names for the given component ids.
+  Future<Map<int, String>> _loadComponentNames(
+      AppDatabase database, List<int> ids) async {
+    if (ids.isEmpty) return {};
+    final rows = await (database.select(database.components)
+          ..where((c) => c.id.isIn(ids)))
+        .get();
+    return {for (final r in rows) r.id: r.name};
+  }
+
+  /// GET /waiters/orders/<code>?waiterId=int — full detail for a single order,
+  /// including its itemised line list (with `order_products.id` per line, so
+  /// the waiter app can drive split-pay). Ownership is enforced: the order's
+  /// `waiter_id` must match the `waiterId` query param, else 403.
+  ///
+  /// Returns the same per-order shape as `GET /waiters/orders` (with the
+  /// `products` array + `balanceAmount`).
+  Future<Response> _waiterOrderDetail(Request request, String code) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final waiterIdStr = request.url.queryParameters['waiterId'];
+      final waiterId = waiterIdStr == null ? null : int.tryParse(waiterIdStr);
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final order = await (database.select(database.orders)
+            ..where((o) => o.code.equals(code)))
+          .getSingleOrNull();
+      if (order == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Order not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (order.waiterId != waiterId) {
+        return Response(
+          403,
+          body: jsonEncode({'error': 'Not authorized to view this order'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final table = order.tableId != null
+          ? await (database.select(database.areaTables)
+                ..where((t) => t.id.equals(order.tableId!)))
+              .getSingleOrNull()
+          : null;
+
+      final products = await (database.select(database.orderProducts)
+            ..where((op) => op.orderId.equals(order.id)))
+          .get();
+      final opIds = products.map((p) => p.id).toList();
+      final components = opIds.isEmpty
+          ? <OrderProductComponent>[]
+          : await (database.select(database.orderProductComponents)
+                ..where((c) => c.orderProductId.isIn(opIds)))
+              .get();
+      final componentsByOpId = <int, List<OrderProductComponent>>{};
+      for (final c in components) {
+        componentsByOpId.putIfAbsent(c.orderProductId, () => []).add(c);
+      }
+
+      final productNames = await _loadProductNames(
+          database, products.map((p) => p.productId).toSet().toList());
+      final componentNames = await _loadComponentNames(
+          database, components.map((c) => c.componentId).toSet().toList());
+
+      double totalAmount = 0.0;
+      double balanceAmount = 0.0;
+      bool allPaid = true;
+      final lineList = <Map<String, dynamic>>[];
+      for (final p in products) {
+        final lineComponents = componentsByOpId[p.id] ?? const [];
+        final compList = <Map<String, dynamic>>[];
+        for (final c in lineComponents) {
+          compList.add({
+            'id': c.id,
+            'componentId': c.componentId,
+            // The name AS SOLD, if it was captured at order time — a
+            // deactivated (86'd) or since-deleted component can no longer
+            // answer the live join below, and a deleted one answers with
+            // nothing at all (`name: null` on the wire). Falls back to the
+            // live join for rows written before this column existed.
+            'name': c.name ?? componentNames[c.componentId],
+            'quantity': c.quantity,
+            'price': c.price,
+          });
+        }
+        // Canonical line total (matches the POS) — components × quantity,
+        // pre-discount already in unitaryPrice.
+        final item = _waiterLineTotal(p, lineComponents);
+        final paid = p.ticketId != null;
+        if (!paid) allPaid = false;
+        totalAmount += item;
+        if (!paid) balanceAmount += item;
+
+        lineList.add({
+          'id': p.id,
+          'productId': p.productId,
+          'name': productNames[p.productId] ?? 'Product #${p.productId}',
+          'quantity': p.quantity,
+          'unitaryPrice': p.unitaryPrice,
+          'note': p.note,
+          'courseNo': p.courseNo,
+          'paid': paid,
+          'lineTotal': item,
+          'components': compList,
+        });
+      }
+
+      return Response.ok(
+        jsonEncode({
+          'id': order.id,
+          'code': order.code,
+          'status': order.status,
+          'type': order.type,
+          'persons': order.persons,
+          'tableId': order.tableId,
+          'tableName': table?.name,
+          'totalAmount': totalAmount,
+          'balanceAmount': balanceAmount,
+          'allPaid': allPaid,
+          'productCount': products.length,
+          'products': lineList,
+          'createdAt': order.createdAt.toIso8601String(),
+          'updatedAt': order.updatedAt.toIso8601String(),
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, st) {
+      Logger.instance.error('_waiterOrderDetail failed: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode(
+            {'error': 'Failed to fetch order', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
   }
 
@@ -2146,7 +2987,7 @@ class ServerService {
           storePhone: storePhone,
         );
       } catch (e) {
-        print('⚠️ Waiter reprint orderTicket failed: $e');
+        Logger.instance.warning('Waiter reprint orderTicket failed: $e');
         outputs['orderTicket'] = false;
       }
 
@@ -2158,7 +2999,7 @@ class ServerService {
             mode: KdsPrintMode.full,
           );
         } catch (e) {
-          print('⚠️ Waiter reprint KDS failed: $e');
+          Logger.instance.warning('Waiter reprint KDS failed: $e');
           outputs['kds'] = false;
         }
       }
@@ -2170,9 +3011,457 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, st) {
-      print('❌ _waiterPrintOrder failed: $e\n$st');
+      Logger.instance.error('_waiterPrintOrder failed: $e\n$st');
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to print', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// Whether [waiterId] may act on [table]. Global waiters (no area
+  /// assignments) may use any table; area-restricted waiters only tables in
+  /// their assigned areas. A table with no area is open to everyone. Mirrors
+  /// the ownership model in [_waiterCreateOrder].
+  Future<bool> _waiterMayServeTable(
+      AppDatabase db, int waiterId, AreaTable table) async {
+    if (table.areaId == null) return true;
+    final areas = await (db.select(db.waiterAreas)
+          ..where((wa) => wa.waiterId.equals(waiterId)))
+        .get();
+    if (areas.isEmpty) return true; // global waiter
+    return areas.any((wa) => wa.areaId == table.areaId);
+  }
+
+  /// Fire-and-forget auto-sync of [orderId] when the POS is online. Shared by
+  /// the waiter mutation endpoints so a change doesn't sit unsynced until the
+  /// next periodic cycle. Safe to call unawaited.
+  void _autoSyncWaiterOrder(int orderId, String label) {
+    try {
+      if (_ref.read(lastKnownOnlineStatusProvider)) {
+        // ignore: unawaited_futures
+        _ref
+            .read(syncManagerProvider.notifier)
+            .autoSyncOrder(orderId)
+            .catchError((Object e) {
+          Logger.instance.warning('Waiter $label autoSync failed: $e');
+          return false;
+        });
+      }
+    } catch (e) {
+      Logger.instance.warning('Waiter $label autoSync kickoff failed: $e');
+    }
+  }
+
+  /// Fire-and-forget "kitchen finished" signal for a delivery order, so the
+  /// platform (Glovo / Kooul) gets its ready call.
+  ///
+  /// Deliberately narrow:
+  ///   - only orders that came from, or go out on, a delivery platform;
+  ///   - only once per order (`readySignalAt` guards it — the endpoint is
+  ///     idempotent anyway, this just avoids a pointless round-trip);
+  ///   - only while online, and only after the order exists server-side, since
+  ///     the endpoint 404s on an unsynced order. There is no offline queue by
+  ///     design: a ready signal delivered an hour late is worse than none.
+  /// Intentionally not awaited by its caller — the KDS response must not wait
+  /// on a delivery-platform round-trip.
+  Future<void> _signalOrderReadyIfDelivery(int orderId) async {
+    {
+      try {
+        if (!_ref.read(lastKnownOnlineStatusProvider)) return;
+        final database = _ref.read(databaseProvider);
+        final order = await (database.select(database.orders)
+              ..where((o) => o.id.equals(orderId)))
+            .getSingleOrNull();
+        if (order == null) return;
+        if (order.readySignalAt != null) return; // already signalled
+        if (order.status == 'CANCELED') return;
+
+        final isPlatform =
+            order.externalOrderId != null || order.type == 'DELIVERY';
+        if (!isPlatform) return;
+
+        // The signal 404s until the order exists server-side. Push it first,
+        // then signal — that's the documented order of operations.
+        if (!order.isSynced) {
+          final synced = await _ref
+              .read(dataSyncServiceProvider)
+              .syncSingleOrder(orderId);
+          if (!synced) return;
+        }
+
+        final ok = await _ref.read(apiServiceProvider).signalOrderReady(order.code);
+        if (!ok) return;
+        await (database.update(database.orders)
+              ..where((o) => o.id.equals(orderId)))
+            .write(OrdersCompanion(readySignalAt: drift.Value(DateTime.now())));
+      } catch (e) {
+        Logger.instance.warning('ready-signal failed for order #$orderId: $e');
+      }
+    }
+  }
+
+  /// DELETE /waiters/orders/<code>/products/<opId>?waiterId=int
+  ///
+  /// Remove a single line from an order the waiter owns. A PAID line (already
+  /// on a ticket) cannot be removed — refund is a cashier action.
+  ///
+  ///   - 200 `{ removed: true, removedId }`
+  ///   - 400 bad input / line already paid
+  ///   - 403 not owner
+  ///   - 404 order or line not found
+  Future<Response> _waiterRemoveProduct(
+      Request request, String code, String opId) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
+      final waiterId =
+          int.tryParse(request.url.queryParameters['waiterId'] ?? '');
+      final orderProductId = int.tryParse(opId);
+      if (waiterId == null || orderProductId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId and a valid line id are required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final order = await (database.select(database.orders)
+            ..where((o) => o.code.equals(code)))
+          .getSingleOrNull();
+      if (order == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Order not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (order.waiterId != waiterId) {
+        return Response(403,
+            body: jsonEncode({'error': 'Not authorized to modify this order'}),
+            headers: {'Content-Type': 'application/json'});
+      }
+
+      final line = await (database.select(database.orderProducts)
+            ..where((p) => p.id.equals(orderProductId) & p.orderId.equals(order.id)))
+          .getSingleOrNull();
+      if (line == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Line not found on this order'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (line.ticketId != null) {
+        return Response.badRequest(
+          body: jsonEncode({
+            'error': 'cannot_remove_paid_line',
+            'message':
+                'This line is already paid and can\'t be removed. Ask the cashier to refund it.',
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      await (database.delete(database.orderProductComponents)
+            ..where((c) => c.orderProductId.equals(orderProductId)))
+          .go();
+      await (database.delete(database.orderProducts)
+            ..where((p) => p.id.equals(orderProductId)))
+          .go();
+      await (database.update(database.orders)
+            ..where((o) => o.id.equals(order.id)))
+          .write(OrdersCompanion(updatedAt: drift.Value(DateTime.now())));
+
+      await logService.logOrderUpdated(
+          order.id, 'Line #$orderProductId removed by waiter #$waiterId');
+      _autoSyncWaiterOrder(order.id, 'remove-line');
+
+      return Response.ok(
+        jsonEncode({'removed': true, 'removedId': orderProductId}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, st) {
+      Logger.instance.error('_waiterRemoveProduct failed: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to remove line', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// POST /waiters/orders/<code>/cancel
+  /// Body: `{ "waiterId": int, "reason"?: string }`
+  ///
+  /// Cancel an order the waiter owns: sets the order + its lines to CANCELED
+  /// and frees the table. Blocked when any line is already paid (a paid order
+  /// must be voided/refunded by the cashier).
+  ///
+  ///   - 200 `{ canceled: true, status: "CANCELED" }`
+  ///   - 400 bad input / order has payments
+  ///   - 403 not owner
+  ///   - 404 order not found
+  Future<Response> _waiterCancelOrder(Request request, String code) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
+      final body = await request.readAsString();
+      final json = body.isNotEmpty
+          ? jsonDecode(body) as Map<String, dynamic>
+          : <String, dynamic>{};
+      final waiterId = json['waiterId'] as int?;
+      final reason = (json['reason'] as String?)?.trim();
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final order = await (database.select(database.orders)
+            ..where((o) => o.code.equals(code)))
+          .getSingleOrNull();
+      if (order == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Order not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (order.waiterId != waiterId) {
+        return Response(403,
+            body: jsonEncode({'error': 'Not authorized to cancel this order'}),
+            headers: {'Content-Type': 'application/json'});
+      }
+
+      // Block cancellation once any line is paid — that revenue is on a ticket
+      // and must be voided by the cashier, not silently cancelled here.
+      final lines = await (database.select(database.orderProducts)
+            ..where((p) => p.orderId.equals(order.id)))
+          .get();
+      if (lines.any((p) => p.ticketId != null)) {
+        return Response.badRequest(
+          body: jsonEncode({
+            'error': 'order_has_payments',
+            'message':
+                'This order has payments and can\'t be cancelled. Ask the cashier to void/refund it.',
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final now = DateTime.now();
+      await (database.update(database.orders)
+            ..where((o) => o.id.equals(order.id)))
+          .write(OrdersCompanion(
+        status: const drift.Value('CANCELED'),
+        cancellationReason:
+            reason != null && reason.isNotEmpty ? drift.Value(reason) : const drift.Value.absent(),
+        updatedAt: drift.Value(now),
+      ));
+      await (database.update(database.orderProducts)
+            ..where((p) => p.orderId.equals(order.id)))
+          .write(OrderProductsCompanion(
+        state: const drift.Value('CANCELED'),
+        updatedAt: drift.Value(now),
+      ));
+
+      // Free the table the order occupied — keyed on real occupancy
+      // (area_tables.orderId == order.id) rather than the order's possibly
+      // stale/null tableId, so a waiter-cancelled order can't leave a table
+      // stuck as occupied.
+      try {
+        await _ref.read(orderRepositoryProvider).freeTablesForOrder(order.id);
+      } catch (e) {
+        Logger.instance.warning('Waiter cancel table clear failed: $e');
+      }
+
+      await logService.logOrderUpdated(order.id,
+          'Order canceled by waiter #$waiterId${reason != null && reason.isNotEmpty ? ' — $reason' : ''}');
+      _autoSyncWaiterOrder(order.id, 'cancel');
+
+      return Response.ok(
+        jsonEncode({'canceled': true, 'status': 'CANCELED'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, st) {
+      Logger.instance.error('_waiterCancelOrder failed: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to cancel order', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// POST /waiters/orders/<code>/transfer-table
+  /// Body: `{ "waiterId": int, "tableId": int }`
+  ///
+  /// Move an order the waiter owns to a different (free) table. The waiter must
+  /// be allowed to serve the target table (area rule). The old table is freed
+  /// and the new table linked to the order.
+  ///
+  ///   - 200 `{ transferred: true, tableId }`
+  ///   - 400 bad input / target occupied
+  ///   - 403 not owner / not allowed on target table
+  ///   - 404 order or target table not found
+  Future<Response> _waiterTransferTable(Request request, String code) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
+      final body = await request.readAsString();
+      final json = body.isNotEmpty
+          ? jsonDecode(body) as Map<String, dynamic>
+          : <String, dynamic>{};
+      final waiterId = json['waiterId'] as int?;
+      final newTableId = json['tableId'] as int?;
+      if (waiterId == null || newTableId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId and tableId are required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final order = await (database.select(database.orders)
+            ..where((o) => o.code.equals(code)))
+          .getSingleOrNull();
+      if (order == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Order not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (order.waiterId != waiterId) {
+        return Response(403,
+            body: jsonEncode({'error': 'Not authorized to move this order'}),
+            headers: {'Content-Type': 'application/json'});
+      }
+
+      final newTable = await (database.select(database.areaTables)
+            ..where((t) => t.id.equals(newTableId)))
+          .getSingleOrNull();
+      if (newTable == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Target table not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (!await _waiterMayServeTable(database, waiterId, newTable)) {
+        return Response(403,
+            body: jsonEncode({'error': 'Not allowed to use the target table'}),
+            headers: {'Content-Type': 'application/json'});
+      }
+      final now = DateTime.now();
+      // All table-link writes happen in ONE transaction, with the occupancy
+      // re-check inside it — so two concurrent transfers (or a transfer racing
+      // a create) onto the same target table can't both succeed and stomp the
+      // link. A conflict rolls back and becomes a 400 below.
+      try {
+        await database.transaction(() async {
+          final t = await (database.select(database.areaTables)
+                ..where((x) => x.id.equals(newTableId)))
+              .getSingleOrNull();
+          if (t != null && t.orderId != null && t.orderId != order.id) {
+            throw const _WaiterConflict(400, 'target_table_occupied',
+                'The target table is already occupied by another order.');
+          }
+          // Free the old table (if any) before linking the new one.
+          if (order.tableId != null && order.tableId != newTableId) {
+            await (database.update(database.areaTables)
+                  ..where((x) => x.id.equals(order.tableId!)))
+                .write(const AreaTablesCompanion(orderId: drift.Value(null)));
+          }
+          await (database.update(database.areaTables)
+                ..where((x) => x.id.equals(newTableId)))
+              .write(AreaTablesCompanion(orderId: drift.Value(order.id)));
+          await (database.update(database.orders)
+                ..where((o) => o.id.equals(order.id)))
+              .write(OrdersCompanion(
+            tableId: drift.Value(newTableId),
+            updatedAt: drift.Value(now),
+          ));
+        });
+      } on _WaiterConflict catch (e) {
+        return Response(
+          e.status,
+          body: jsonEncode({'error': e.code, 'message': e.message}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      await logService.logOrderUpdated(order.id,
+          'Order moved to table #$newTableId by waiter #$waiterId');
+      _autoSyncWaiterOrder(order.id, 'transfer-table');
+
+      return Response.ok(
+        jsonEncode({'transferred': true, 'tableId': newTableId}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, st) {
+      Logger.instance.error('_waiterTransferTable failed: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to transfer table', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// POST /waiters/tables/<tableId>/clear
+  /// Body: `{ "waiterId": int }`
+  ///
+  /// Free a table (unlink its order) without touching the order itself — the
+  /// explicit counterpart to `autoClearTableAfterPaying`. The waiter must be
+  /// allowed to serve the table (area rule).
+  ///
+  ///   - 200 `{ cleared: true }`
+  ///   - 400 bad input
+  ///   - 403 not allowed on this table
+  ///   - 404 table not found
+  Future<Response> _waiterClearTable(Request request, String tableId) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
+      final body = await request.readAsString();
+      final json = body.isNotEmpty
+          ? jsonDecode(body) as Map<String, dynamic>
+          : <String, dynamic>{};
+      final waiterId = json['waiterId'] as int?;
+      final tId = int.tryParse(tableId);
+      if (waiterId == null || tId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId and a valid tableId are required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final table = await (database.select(database.areaTables)
+            ..where((t) => t.id.equals(tId)))
+          .getSingleOrNull();
+      if (table == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Table not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (!await _waiterMayServeTable(database, waiterId, table)) {
+        return Response(403,
+            body: jsonEncode({'error': 'Not allowed to clear this table'}),
+            headers: {'Content-Type': 'application/json'});
+      }
+
+      final clearedOrderId = table.orderId;
+      await (database.update(database.areaTables)
+            ..where((t) => t.id.equals(tId)))
+          .write(const AreaTablesCompanion(orderId: drift.Value(null)));
+
+      if (clearedOrderId != null) {
+        await logService.logOrderUpdated(
+            clearedOrderId, 'Table #$tId cleared by waiter #$waiterId');
+      }
+
+      return Response.ok(
+        jsonEncode({'cleared': true}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, st) {
+      Logger.instance.error('_waiterClearTable failed: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to clear table', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
       );
     }
@@ -2192,6 +3481,8 @@ class ServerService {
       final variantId = json['variantId'] as int?;
       final quantity = (json['quantity'] as num?)?.toDouble() ?? 1.0;
       final productNote = json['note'] as String?;
+      // Normalised at the boundary — see the create handler.
+      final productCourse = normalizeCourseNo(json['courseNo']);
       final components = json['components'] as List<dynamic>? ?? [];
 
       if (waiterId == null || productId == null) {
@@ -2258,9 +3549,12 @@ class ServerService {
           variantId: drift.Value(variantId),
           quantity: drift.Value(quantity),
           unitaryPrice: unitPrice,
+          cost: drift.Value(await ProductCostResolver(database)
+              .resolve(productId: productId, variantId: variantId)),
           unitaryDiscount: drift.Value(unitDiscount),
           unitaryTva: drift.Value(unitTva),
           note: drift.Value(productNote),
+          courseNo: drift.Value(productCourse),
           state: const drift.Value('PENDING'),
         ),
       );
@@ -2278,6 +3572,7 @@ class ServerService {
             quantity: drift.Value(compQuantity),
             price: drift.Value(price),
             isSpecial: const drift.Value(false),
+            name: drift.Value(compJson['name'] as String?),
           ),
         );
       }
@@ -2317,8 +3612,8 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e, stackTrace) {
-      print('❌ Error in _waiterAddProductToOrder: $e');
-      print(stackTrace);
+      Logger.instance.error('Error in _waiterAddProductToOrder: $e');
+      posLog(stackTrace);
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to add product', 'details': e.toString()}),
         headers: {'Content-Type': 'application/json'},
@@ -2329,7 +3624,8 @@ class ServerService {
   // ==================== HELPER METHODS ====================
 
   /// Build SocketOrderModel from database order
-  Future<SocketOrderModel?> _buildSocketOrder(Order order, String? stationFilter) async {
+  Future<SocketOrderModel?> _buildSocketOrder(
+      Order order, Set<String>? stationFilters) async {
     final database = _ref.read(databaseProvider);
 
     // Get order products first - if none, return null
@@ -2338,7 +3634,7 @@ class ServerService {
         .get();
 
     if (orderProducts.isEmpty) {
-      print('⚠️ Order ${order.code} has no products, skipping...');
+      Logger.instance.warning('Order ${order.code} has no products, skipping...');
       return null;
     }
 
@@ -2427,23 +3723,27 @@ class ServerService {
         ...?extraStationsByProduct[orderProduct.productId],
       };
 
-      // Filter by station if specified: keep the item if ANY of its stations matches.
-      if (stationFilter != null) {
-        final matches = stationIds.any(
-            (id) => stationsMap[id]?.name?.toLowerCase() == stationFilter.toLowerCase());
+      // Filter by station if specified: keep the item if ANY of its stations is
+      // in this KDS's set of stations.
+      if (stationFilters != null) {
+        final matches = stationIds.any((id) {
+          final n = stationsMap[id]?.name?.toLowerCase();
+          return n != null && stationFilters.contains(n);
+        });
         if (!matches) continue;
       }
 
-      // Station name to surface: the matching station when filtering, else the primary.
+      // Station name to surface: the item's own matching station when filtering
+      // (so a merged multi-station board can label each line), else the primary.
       String? stationName;
-      if (stationFilter != null) {
-        stationName = stationsMap.values
-            .firstWhere(
-              (s) => stationIds.contains(s.id) &&
-                  s.name.toLowerCase() == stationFilter.toLowerCase(),
-              orElse: () => null,
-            )
-            ?.name;
+      if (stationFilters != null) {
+        for (final id in stationIds) {
+          final n = stationsMap[id]?.name;
+          if (n != null && stationFilters.contains(n.toLowerCase())) {
+            stationName = n;
+            break;
+          }
+        }
       } else if (product.stationId != null) {
         stationName = stationsMap[product.stationId]?.name;
       }
@@ -2486,7 +3786,7 @@ class ServerService {
 
     // If no products after filtering, return null
     if (socketProducts.isEmpty) {
-      print('⚠️ Order ${order.code} has no products after station filter, skipping...');
+      Logger.instance.warning('Order ${order.code} has no products after station filter, skipping...');
       return null;
     }
 

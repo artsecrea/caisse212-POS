@@ -8,6 +8,7 @@ import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
 import 'waiter_settlement_dialog.dart';
@@ -265,7 +266,7 @@ class _WaiterProfileDialogState extends ConsumerState<WaiterProfileDialog>
       print('WaiterProfileDialog._load failed: $e\n$st');
       if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = errorText(e, AppLocalizations.of(context)!);
         _isLoading = false;
       });
     }

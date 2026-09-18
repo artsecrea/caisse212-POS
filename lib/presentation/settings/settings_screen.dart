@@ -9,7 +9,6 @@ import '../../providers/settings_provider.dart';
 import '../../providers/server_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
-import '../../providers/desktop_update_provider.dart';
 import '../widgets/users_management_screen.dart' show kPermissionGroups;
 import '../widgets/update_dialog.dart';
 import '../../domain/models/app_settings.dart';
@@ -21,6 +20,14 @@ import '../../domain/models/scale_config.dart';
 import '../../providers/scale_config_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/session_rules_provider.dart';
+import '../../providers/z_day_provider.dart';
+import '../../services/permission_service.dart'
+    show Permissions, permissionServiceProvider;
+import '../../utils/admin_auth.dart' show showAdminCredentialDialog;
+import '../../utils/snackbar_helper.dart';
+import '../../services/autostart_service.dart';
+import '../../utils/full_logout.dart';
+import '../widgets/adaptive_text_field.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -31,6 +38,49 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int _selectedNavIndex = 0;
+
+  // Owned by the State, not rebuilt per frame. A controller created inside
+  // `build` is a fresh object on every rebuild, and every settings write
+  // rebuilds this screen — so the on-screen keyboard kept typing into a
+  // controller that was thrown away before the next keystroke landed, and
+  // the caret reset to the invalid `offset: -1` that makes the keyboard
+  // swallow input outright.
+  late final TextEditingController _portController;
+  late final TextEditingController _serverPasswordController;
+  late final TextEditingController _quickCashController;
+  late final TextEditingController _notePresetsController;
+  late final TextEditingController _deliveryFeePresetsController;
+
+  @override
+  void initState() {
+    super.initState();
+    final settings = ref.read(settingsProvider);
+    _portController = TextEditingController(
+      text: (settings.serverPort ?? 8080).toString(),
+    );
+    _serverPasswordController = TextEditingController(
+      text: settings.serverPassword ?? '',
+    );
+    _notePresetsController = TextEditingController(
+      text: settings.notePresets.join(', '),
+    );
+    _deliveryFeePresetsController = TextEditingController(
+      text: settings.deliveryFeePresets.map(_trimPreset).join(', '),
+    );
+    _quickCashController = TextEditingController(
+      text: settings.quickCashAmounts.join(', '),
+    );
+  }
+
+  @override
+  void dispose() {
+    _portController.dispose();
+    _serverPasswordController.dispose();
+    _quickCashController.dispose();
+    _notePresetsController.dispose();
+    _deliveryFeePresetsController.dispose();
+    super.dispose();
+  }
 
   List<NavItem> _getNavItems(AppLocalizations l10n, {required bool isAdmin}) => [
     NavItem(icon: Icons.palette, label: l10n.translate('appearance')),
@@ -45,6 +95,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     NavItem(icon: Icons.schedule, label: l10n.translate('session_rules')),
     if (isAdmin)
       NavItem(icon: Icons.badge, label: l10n.translate('cashier_role_defaults')),
+    if (isAdmin)
+      NavItem(icon: Icons.point_of_sale, label: l10n.translate('z_settings')),
+    if (isAdmin)
+      NavItem(icon: Icons.lock_outline, label: l10n.translate('settings_lock')),
+    if (isAdmin)
+      NavItem(
+          icon: Icons.assignment_turned_in_outlined,
+          label: l10n.translate('session_close_rules')),
+    if (isAdmin)
+      NavItem(
+          icon: Icons.restaurant_menu,
+          label: l10n.translate('kitchen_rules')),
   ];
 
   @override
@@ -54,6 +116,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final l10n = AppLocalizations.of(context)!;
     final currentUser = ref.watch(currentUserProvider);
     final isAdmin = currentUser?.type.toLowerCase() == 'admin';
+    // `pos:settings:view` gets you in (top_bar gates the menu entry on it);
+    // `pos:settings:update` is what lets you change anything. Enforced once
+    // here rather than on ~200 individual controls — a single AbsorbPointer
+    // cannot be forgotten the way a per-widget `onChanged: canEdit ? … : null`
+    // is forgotten on the next setting somebody adds.
+    final canEditSettings = ref
+        .watch(permissionServiceProvider)
+        .hasPermission(Permissions.settingsUpdate);
     final navItems = _getNavItems(l10n, isAdmin: isAdmin);
     // Clamp selection in case the admin-only tab disappears (e.g. on logout).
     if (_selectedNavIndex >= navItems.length) {
@@ -98,6 +168,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               padding: EdgeInsets.symmetric(horizontal: 24),
               child: Divider(),
             ),
+            if (!canEditSettings)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .secondaryContainer
+                        .withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(children: [
+                    Icon(Icons.lock_outline,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.onSecondaryContainer),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l10n.translate('settings_read_only'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSecondaryContainer,
+                        ),
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
             // Main content with navigation
             Expanded(
               child: Row(
@@ -139,11 +240,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     flex: 3,
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(24),
-                      child: _buildContentForIndex(
-                        index: _selectedNavIndex,
-                        settings: settings,
-                        settingsNotifier: settingsNotifier,
-                        context: context,
+                      child: AbsorbPointer(
+                        // About (index 8) is the update check and the logout —
+                        // not settings writes — so it stays usable read-only.
+                        absorbing: !canEditSettings && _selectedNavIndex != 8,
+                        child: Opacity(
+                          opacity:
+                              (!canEditSettings && _selectedNavIndex != 8)
+                                  ? 0.6
+                                  : 1.0,
+                          child: _buildContentForIndex(
+                            index: _selectedNavIndex,
+                            settings: settings,
+                            settingsNotifier: settingsNotifier,
+                            context: context,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -164,7 +276,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: () async {
+                    onPressed: !canEditSettings ? null : () async {
                       final confirm = await showDialog<bool>(
                         context: context,
                         builder: (context) => AlertDialog(
@@ -205,6 +317,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       side: const BorderSide(color: Colors.red),
                     ),
                   ),
+                  // Full logout — disconnect the terminal from its tenant and
+                  // wipe the local database. Moved here from the top-bar menu:
+                  // it is a setup action, and it had no business sitting one tap
+                  // from Logout in a menu the cashier opens all shift.
+                  //
+                  // Admin-only, and still behind its own credential prompt plus
+                  // a confirmation inside runFullLogout.
+                  if (isAdmin) ...[
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: () => runFullLogout(context, ref),
+                      icon: const Icon(Icons.link_off),
+                      label: Text(l10n.translate('full_logout')),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red,
+                        side: const BorderSide(color: Colors.red),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -287,9 +418,493 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return _buildSessionRulesContent(context);
       case 10:
         return _buildCashierDefaultsContent(settings, settingsNotifier, context);
+      case 11:
+        return _buildZSettingsContent(settings, settingsNotifier, context);
+      case 12:
+        return _buildSettingsLockContent(settings, settingsNotifier, context);
+      case 13:
+        return _buildSessionCloseRulesContent(
+            settings, settingsNotifier, context);
+      case 14:
+        return _buildKitchenRulesContent(settings, settingsNotifier, context);
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  /// Kitchen ticket rules — admin only (the nav entry is behind `isAdmin`).
+  ///
+  /// Admin-only because it adds a control to every order line: a shop that
+  /// does not work in courses should never see it, and a cashier should not
+  /// be able to summon it for themselves.
+  Widget _buildKitchenRulesContent(
+    AppSettings settings,
+    SettingsNotifier settingsNotifier,
+    BuildContext context,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.translate('kitchen_rules'),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          l10n.translate('kitchen_rules_subtitle'),
+          style: TextStyle(color: cs.onSurfaceVariant),
+        ),
+        const SizedBox(height: 24),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: cs.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  value: settings.coursesEnabled,
+                  onChanged: settingsNotifier.setCoursesEnabled,
+                  title: Text(l10n.translate('courses_enabled')),
+                  subtitle: Text(
+                    l10n.translate('courses_enabled_hint'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  isThreeLine: true,
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  value: settings.printKitchenCancellations,
+                  onChanged: settingsNotifier.setPrintKitchenCancellations,
+                  title: Text(l10n.translate('print_kitchen_cancellations')),
+                  subtitle: Text(
+                    l10n.translate('print_kitchen_cancellations_hint'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  isThreeLine: true,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Session-close rules — admin only (the nav entry is behind `isAdmin`).
+  ///
+  /// One switch, off by default. Off is what every till already does: the
+  /// cashier closes their own session whatever the drawer says, and the
+  /// shortfall and any open tables are reported on the X. On makes that a
+  /// supervised moment instead — the discrepancy still prints, but somebody
+  /// with authority has to be standing there to accept it.
+  ///
+  /// Admin-only on purpose: a cashier who could turn this off is not subject
+  /// to it.
+  Widget _buildSessionCloseRulesContent(
+    AppSettings settings,
+    SettingsNotifier settingsNotifier,
+    BuildContext context,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.translate('session_close_rules'),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          l10n.translate('session_close_rules_subtitle'),
+          style: TextStyle(color: cs.onSurfaceVariant),
+        ),
+        const SizedBox(height: 24),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: cs.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: SwitchListTile(
+              value: settings.requireAdminToCloseUnbalanced,
+              onChanged: settingsNotifier.setRequireAdminToCloseUnbalanced,
+              title: Text(l10n.translate('require_admin_close_unbalanced')),
+              subtitle: Text(
+                l10n.translate('require_admin_close_unbalanced_hint'),
+                style: const TextStyle(fontSize: 12),
+              ),
+              isThreeLine: true,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outline, size: 14, color: cs.outline),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                l10n.translate('require_admin_close_note'),
+                style: TextStyle(fontSize: 12, color: cs.outline),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Settings lock page — admin only (the nav entry is behind `isAdmin`).
+  ///
+  /// Deliberately reachable only from INSIDE Settings: whoever is looking at
+  /// this already got past the lock, so there is no circularity. Locking
+  /// yourself out is recoverable through the master code, which is why the
+  /// hint below tells the admin it exists without spelling out the value.
+  Widget _buildSettingsLockContent(
+    AppSettings settings,
+    SettingsNotifier notifier,
+    BuildContext context,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final hasPin = settings.settingsPin.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.translate('settings_lock'),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          l10n.translate('settings_lock_intro'),
+          style: theme.textTheme.bodyMedium
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 20),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.lock_outline,
+          title: l10n.translate('settings_lock_enabled'),
+          subtitle: hasPin
+              ? l10n.translate('settings_lock_enabled_subtitle')
+              : l10n.translate('settings_lock_needs_pin'),
+          value: settings.settingsLockEnabled,
+          onChanged: (value) {
+            // No pin yet: send the admin to set one rather than flip a switch
+            // that cannot arm (setSettingsLock would refuse it silently).
+            if (!hasPin) {
+              _promptForNewPin(context, notifier);
+              return;
+            }
+            notifier.setSettingsLock(enabled: value);
+          },
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.pin_outlined),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        hasPin
+                            ? l10n.translate('settings_pin_set')
+                            : l10n.translate('settings_pin_not_set'),
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: () => _promptForNewPin(context, notifier),
+                      child: Text(hasPin
+                          ? l10n.translate('change_pin')
+                          : l10n.translate('set_pin')),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: 18, color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l10n.translate('settings_master_code_hint'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Ask for a new 4-digit pin, twice, and store it.
+  ///
+  /// Confirming twice because a mistyped pin is only discovered the next time
+  /// somebody needs Settings — by then the admin does not know what they typed.
+  Future<void> _promptForNewPin(
+      BuildContext context, SettingsNotifier notifier) async {
+    final l10n = AppLocalizations.of(context)!;
+    final first = TextEditingController();
+    final second = TextEditingController();
+    String? error;
+
+    final pin = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          Widget field(TextEditingController c, String label,
+                  {bool autofocus = false}) =>
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: AdaptiveKeyboardTextField(
+                  controller: c,
+                  autofocus: autofocus,
+                  obscureText: true,
+                  textAlign: TextAlign.center,
+                  keyboardType: TextInputType.number,
+                  maxLength: 4,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  style: const TextStyle(fontSize: 24, letterSpacing: 10),
+                  decoration: InputDecoration(
+                    labelText: label,
+                    counterText: '',
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              );
+
+          return AlertDialog(
+            title: Text(l10n.translate('set_pin')),
+            content: SizedBox(
+              width: 320,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  field(first, l10n.translate('new_pin'), autofocus: true),
+                  field(second, l10n.translate('confirm_pin')),
+                  if (error != null)
+                    Text(
+                      error!,
+                      style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.error),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(l10n.translate('cancel')),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final a = first.text.trim();
+                  if (a.length != 4) {
+                    setLocal(() => error = l10n.translate('pin_must_be_4'));
+                    return;
+                  }
+                  if (a != second.text.trim()) {
+                    setLocal(() => error = l10n.translate('pins_do_not_match'));
+                    return;
+                  }
+                  Navigator.pop(ctx, a);
+                },
+                child: Text(l10n.translate('save')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    first.dispose();
+    second.dispose();
+    if (pin == null) return;
+    // Setting a pin arms the lock: an admin who just typed one twice means to
+    // use it, and leaving it disarmed reads as "nothing happened".
+    await notifier.setSettingsLock(enabled: true, pin: pin);
+  }
+
+  Widget _buildZSettingsContent(
+    AppSettings settings,
+    SettingsNotifier notifier,
+    BuildContext context,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          l10n.translate('z_settings'),
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.translate('z_settings_subtitle'),
+          style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 16),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(l10n.translate('z_tracking_enabled'),
+              style: const TextStyle(fontSize: 18)),
+          subtitle: Text(l10n.translate('z_tracking_enabled_subtitle'),
+              style: const TextStyle(fontSize: 14)),
+          value: settings.zTrackingEnabled,
+          onChanged: (v) => notifier.setZTrackingEnabled(v),
+        ),
+        const Divider(height: 24),
+        // Open policy.
+        Opacity(
+          opacity: settings.zTrackingEnabled ? 1 : 0.5,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l10n.translate('z_open_mode'),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              Text(l10n.translate('z_open_mode_subtitle'),
+                  style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              const SizedBox(height: 8),
+              SegmentedButton<String>(
+                segments: [
+                  ButtonSegment(
+                      value: 'auto', label: Text(l10n.translate('z_open_auto'))),
+                  ButtonSegment(
+                      value: 'manager',
+                      label: Text(l10n.translate('z_open_manager'))),
+                ],
+                selected: {settings.zOpenMode},
+                onSelectionChanged: settings.zTrackingEnabled
+                    ? (s) => notifier.setZOpenMode(s.first)
+                    : null,
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 24),
+        // Close policy.
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(l10n.translate('z_close_require_manager'),
+              style: TextStyle(
+                  fontSize: 18,
+                  color: settings.zTrackingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
+          subtitle: Text(l10n.translate('z_close_require_manager_subtitle'),
+              style: TextStyle(
+                  fontSize: 14,
+                  color: settings.zTrackingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
+          value: settings.zCloseRequireManager,
+          onChanged: settings.zTrackingEnabled
+              ? (v) => notifier.setZCloseRequireManager(v)
+              : null,
+        ),
+        const Divider(height: 24),
+        // Day lock — the fiscal-day layer on top of Z tracking.
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(l10n.translate('z_day_lock_enabled'),
+              style: TextStyle(
+                  fontSize: 18,
+                  color: settings.zTrackingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
+          subtitle: Text(l10n.translate('z_day_lock_enabled_subtitle'),
+              style: TextStyle(
+                  fontSize: 14,
+                  color: settings.zTrackingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
+          value: settings.zDayLockEnabled,
+          onChanged: settings.zTrackingEnabled
+              ? (v) => notifier.setZDayLockEnabled(v)
+              : null,
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<int>(
+          initialValue: settings.zDayStartHour,
+          decoration: InputDecoration(
+            labelText: l10n.translate('z_day_start_hour'),
+            helperText: l10n.translate('z_day_start_hour_subtitle'),
+            border: const OutlineInputBorder(),
+            isDense: true,
+          ),
+          items: [
+            for (var h = 0; h < 24; h++)
+              DropdownMenuItem(
+                value: h,
+                child: Text('${h.toString().padLeft(2, '0')}:00'),
+              ),
+          ],
+          onChanged: settings.zTrackingEnabled && settings.zDayLockEnabled
+              ? (v) => notifier.setZDayStartHour(v ?? 0)
+              : null,
+        ),
+        const SizedBox(height: 12),
+        const _ZDayStatusCard(),
+        const Divider(height: 24),
+        // Identity & limits.
+        Row(
+          children: [
+            Expanded(
+              child: AdaptiveKeyboardTextField(
+                initialValue: settings.zCodePrefix,
+                enabled: settings.zTrackingEnabled,
+                decoration: InputDecoration(
+                  labelText: l10n.translate('z_code_prefix'),
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (v) => notifier.setZCodePrefix(v),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: AdaptiveKeyboardTextField(
+                initialValue: settings.zMaxHours == 0
+                    ? ''
+                    : settings.zMaxHours.toString(),
+                enabled: settings.zTrackingEnabled,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: l10n.translate('z_max_hours'),
+                  hintText: '0',
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (v) => notifier.setZMaxHours(int.tryParse(v) ?? 0),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(l10n.translate('z_max_hours_subtitle'),
+            style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      ],
+    );
   }
 
   Widget _buildCashierDefaultsContent(
@@ -320,7 +935,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('cashier_role_defaults_subtitle'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 16),
         Container(
@@ -352,7 +967,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w600)),
               subtitle: Text(
                 '${entry.value.where(granted.contains).length} / ${entry.value.length}',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
               childrenPadding: const EdgeInsets.symmetric(horizontal: 8),
               children: [
@@ -368,7 +983,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ? null
                           : Text(desc.subtitle,
                               style: TextStyle(
-                                  fontSize: 12, color: Colors.grey[600])),
+                                  fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                       value: granted.contains(token),
                       onChanged: (v) => toggle(token, v),
                     );
@@ -399,7 +1014,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('appearance_subtitle'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
         _buildSwitchTile(
@@ -434,6 +1049,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           subtitleKey: 'select_logging_language',
           icon: Icons.history_edu,
         ),
+        // Desktop only: there is no equivalent an app may set for itself
+        // on Android or iOS, so the switch would be a lie there.
+        if (AutostartService.isSupported) ...[
+          const SizedBox(height: 12),
+          _buildSwitchTile(
+            context: context,
+            icon: Icons.rocket_launch,
+            title: l10n.translate('open_on_startup'),
+            subtitle: l10n.translate('open_on_startup_subtitle'),
+            value: settings.openOnStartup,
+            onChanged: (value) => notifier.setOpenOnStartup(value),
+          ),
+        ],
       ],
     );
   }
@@ -457,7 +1085,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('display_subtitle'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
         _buildSwitchTile(
@@ -468,6 +1096,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           value: settings.showProductImages,
           onChanged: (value) => notifier.setShowProductImages(value),
         ),
+        // Only meaningful while images are on — with images off there is
+        // nothing for a label to sit on, so the choice would be a dead control.
+        if (settings.showProductImages) ...[
+          const SizedBox(height: 12),
+          _buildLabelLayoutSelector(
+            context: context,
+            overlay: settings.productLabelOverlay,
+            onChanged: (value) => notifier.setProductLabelOverlay(value),
+          ),
+        ],
         const SizedBox(height: 12),
         _buildProductCardSizeSelector(
           context: context,
@@ -479,6 +1117,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           context: context,
           currentMode: settings.categoryDisplayMode,
           onChanged: (value) => notifier.setCategoryDisplayMode(value),
+        ),
+        // Full-page mode only: with the category bar on screen there is
+        // nothing for a back tile to return to, so the toggle would be dead.
+        if (settings.categoryDisplayMode == CategoryDisplayMode.fullPage) ...[
+          const SizedBox(height: 12),
+          _buildSwitchTile(
+            context: context,
+            icon: Icons.arrow_back_rounded,
+            title: l10n.translate('back_tile'),
+            subtitle: l10n.translate('back_tile_subtitle'),
+            value: settings.showBackTileInProductGrid,
+            onChanged: (value) => notifier.setShowBackTileInProductGrid(value),
+          ),
+        ],
+        const SizedBox(height: 12),
+        _buildComponentGroupDisplayModeSelector(
+          context: context,
+          currentMode: settings.componentGroupDisplayMode,
+          onChanged: (value) => notifier.setComponentGroupDisplayMode(value),
         ),
         const SizedBox(height: 12),
         _buildSwitchTile(
@@ -532,6 +1189,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 16),
           _buildKeyboardWidthSlider(context, settings, notifier),
         ],
+        const SizedBox(height: 16),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.filter_center_focus,
+          title: l10n.translate('auto_focus_product_search'),
+          subtitle: l10n.translate('auto_focus_product_search_subtitle'),
+          value: settings.autoFocusProductSearch,
+          onChanged: (value) => notifier.setAutoFocusProductSearch(value),
+        ),
+        const SizedBox(height: 16),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.dialpad,
+          title: l10n.translate('numeric_keypad_beta'),
+          subtitle: l10n.translate('numeric_keypad_beta_subtitle'),
+          value: settings.numericKeypadBeta,
+          onChanged: (value) => notifier.setNumericKeypadBeta(value),
+          badge: 'BETA',
+        ),
       ],
     );
   }
@@ -555,7 +1231,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('order_defaults_subtitle'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
         _buildOrderTypeSelector(
@@ -566,23 +1242,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 12),
         _buildOrderStatusSelector(
           context: context,
+          // Governs BOTH cashier and waiter orders — waiter-created orders
+          // now default to this same status (see server _waiterCreateOrder).
           currentStatus: settings.defaultOrderStatus,
           onChanged: (value) => notifier.setDefaultOrderStatus(value),
         ),
         const SizedBox(height: 12),
-        _buildWaiterOrderStatusSelector(
+        _buildKdsStateSelector(
           context: context,
-          currentStatus: settings.waiterOrderDefaultStatus,
-          onChanged: (value) => notifier.setWaiterOrderDefaultStatus(value),
+          currentState: settings.defaultKdsState,
+          onChanged: (value) => notifier.setDefaultKdsState(value),
         ),
         const SizedBox(height: 12),
         _buildSwitchTile(
           context: context,
-          icon: Icons.attach_money,
-          title: l10n.translate('waiter_order_default_paid'),
-          subtitle: l10n.translate('waiter_order_default_paid_subtitle'),
-          value: settings.waiterOrderDefaultPaid,
-          onChanged: (value) => notifier.setWaiterOrderDefaultPaid(value),
+          icon: Icons.print_disabled,
+          title: l10n.translate('print_waiter_paper'),
+          subtitle: l10n.translate('print_waiter_paper_subtitle'),
+          value: settings.printWaiterPaper,
+          onChanged: (value) => notifier.setPrintWaiterPaper(value),
         ),
         const SizedBox(height: 12),
         _buildSwitchTile(
@@ -590,6 +1268,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           icon: Icons.receipt_long,
           title: l10n.translate('print_waiter_order_ticket'),
           subtitle: l10n.translate('print_waiter_order_ticket_subtitle'),
+          // Sub-toggle of the master switch above; only has effect while
+          // "print waiter paper" is on.
           value: settings.printWaiterOrderTicket,
           onChanged: (value) => notifier.setPrintWaiterOrderTicket(value),
         ),
@@ -605,6 +1285,69 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           currentMethod: settings.defaultPaymentMethod,
           onChanged: (value) => notifier.setDefaultPaymentMethod(value),
         ),
+
+        // ── Payment & tickets ─────────────────────────────────────────────
+        const SizedBox(height: 28),
+        Text(
+          l10n.translate('payment_and_tickets'),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Icon(Icons.touch_app_outlined,
+                color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(l10n.translate('pay_button_tap'),
+                      style: const TextStyle(fontWeight: FontWeight.w500)),
+                  Text(
+                    l10n.translate('pay_button_tap_subtitle'),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<PayButtonAction>(
+          segments: [
+            ButtonSegment(
+              value: PayButtonAction.paymentScreen,
+              icon: const Icon(Icons.point_of_sale),
+              label: Text(l10n.translate('pay_open_payment_screen')),
+            ),
+            ButtonSegment(
+              value: PayButtonAction.quickCash,
+              icon: const Icon(Icons.bolt),
+              label: Text(l10n.translate('pay_quick_cash')),
+            ),
+          ],
+          selected: {settings.payButtonAction},
+          onSelectionChanged: (selection) =>
+              notifier.setPayButtonAction(selection.first),
+        ),
+        const SizedBox(height: 8),
+        _buildQuickCashAmountsField(context, notifier),
+        const SizedBox(height: 8),
+        _buildDeliveryFeePresetsField(context, notifier),
+        const SizedBox(height: 8),
+        _buildNotePresetsField(context, notifier),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.call_split,
+          title: l10n.translate('always_show_ticket_split'),
+          subtitle: l10n.translate('always_show_ticket_split_subtitle'),
+          value: settings.alwaysShowTicketSplit,
+          onChanged: (v) => notifier.setAlwaysShowTicketSplit(v),
+        ),
+        const SizedBox(height: 8),
+        _buildMaxSplitTicketsField(context, settings, notifier),
         // Tip dialog toggle intentionally hidden — full plumbing is still
         // wired (model field, runtime guard in `applyTipIfEnabled`, sync
         // payload, queue replay), the toggle is just removed so the
@@ -685,7 +1428,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('select_currency'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
         _buildCurrencySelector(
@@ -713,16 +1456,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       'waiter': (icon: Icons.person_pin, titleKey: 'waiter_button', subtitleKey: 'waiter_selection', visible: settings.showWaiterButton, setVisible: notifier.setShowWaiterButton),
       'customer': (icon: Icons.person, titleKey: 'customer_button', subtitleKey: 'customer_selection', visible: settings.showCustomerButton, setVisible: notifier.setShowCustomerButton),
       'commercial': (icon: Icons.badge, titleKey: 'commercial_button', subtitleKey: 'commercial_selection', visible: settings.showCommercialButton, setVisible: notifier.setShowCommercialButton),
-      'coupon': (icon: Icons.discount, titleKey: 'coupon_button', subtitleKey: 'apply_coupons', visible: settings.showCouponButton, setVisible: notifier.setShowCouponButton),
+      // Coupon toggle hidden alongside the button itself — same reasoning as
+      // the tip entry below. The `case 'coupon':` branch in main_screen is
+      // commented out, so the switch would have offered a toggle for something
+      // that can never render. Restore both together.
+      // 'coupon': (icon: Icons.discount, titleKey: 'coupon_button', subtitleKey: 'apply_coupons', visible: settings.showCouponButton, setVisible: notifier.setShowCouponButton),
       'discount': (icon: Icons.percent, titleKey: 'discount_button', subtitleKey: 'manual_discount', visible: settings.showDiscountButton, setVisible: notifier.setShowDiscountButton),
       'print': (icon: Icons.print, titleKey: 'print_button', subtitleKey: 'print_orders', visible: settings.showPrintButton, setVisible: notifier.setShowPrintButton),
+      // A cashier who cannot cancel an order has nothing to gain from a
+      // toggle for a button main_screen will refuse to render anyway.
+      if (ref
+          .watch(permissionServiceProvider)
+          .hasPermission(Permissions.ordersCancel))
+        'cancelOrder': (icon: Icons.cancel_outlined, titleKey: 'cancel_order_button', subtitleKey: 'cancel_saved_order', visible: settings.showCancelOrderButton, setVisible: notifier.setShowCancelOrderButton),
+      'cashDrawer': (icon: Icons.point_of_sale, titleKey: 'cash_drawer_button', subtitleKey: 'open_cash_drawer', visible: settings.showCashDrawerButton, setVisible: notifier.setShowCashDrawerButton),
       'dailySummary': (icon: Icons.summarize, titleKey: 'daily_summary_button', subtitleKey: 'daily_report', visible: settings.showDailySummaryButton, setVisible: notifier.setShowDailySummaryButton),
       // Tip button toggle intentionally hidden — same reasoning as the
       // tip dialog toggle above. The `case 'tip':` branch in main_screen
       // checks `settings.showTipButton` which defaults to false, so the
       // button never renders. Restore this map entry to expose the toggle.
       'pay': (icon: Icons.payment, titleKey: 'pay_button', subtitleKey: 'process_payment', visible: settings.showPayButton, setVisible: notifier.setShowPayButton),
-      'proceed': (icon: Icons.check_circle, titleKey: 'proceed_button', subtitleKey: 'save_order', visible: true, setVisible: (_) async {}), // Always visible
+      'proceed': (icon: Icons.check_circle, titleKey: 'proceed_button', subtitleKey: 'save_order', visible: settings.showProceedButton, setVisible: notifier.setShowProceedButton),
     };
 
     return Column(
@@ -738,9 +1492,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('action_buttons_subtitle'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 16),
+        Text(
+          l10n.translate('button_alignment'),
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          l10n.translate('button_alignment_subtitle'),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        SegmentedButton<ActionButtonAlignment>(
+          segments: [
+            ButtonSegment(
+              value: ActionButtonAlignment.left,
+              icon: const Icon(Icons.format_align_left),
+              label: Text(l10n.translate('align_left')),
+            ),
+            ButtonSegment(
+              value: ActionButtonAlignment.center,
+              icon: const Icon(Icons.format_align_center),
+              label: Text(l10n.translate('align_center')),
+            ),
+            ButtonSegment(
+              value: ActionButtonAlignment.right,
+              icon: const Icon(Icons.format_align_right),
+              label: Text(l10n.translate('align_right')),
+            ),
+          ],
+          selected: {settings.actionButtonAlignment},
+          onSelectionChanged: (selection) =>
+              notifier.setActionButtonAlignment(selection.first),
+        ),
+        const SizedBox(height: 24),
         Text(
           l10n.translate('button_arrangement'),
           style: const TextStyle(
@@ -751,7 +1541,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('drag_to_reorder'),
-          style: const TextStyle(color: Colors.grey, fontSize: 12),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
         ),
         const SizedBox(height: 12),
         // Reorderable list for button arrangement
@@ -769,9 +1559,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           itemBuilder: (context, index) {
             final buttonKey = settings.buttonOrder[index];
             final config = buttonConfigs[buttonKey];
-            if (config == null) return const SizedBox.shrink(key: ValueKey('unknown'));
-
-            final isProceeed = buttonKey == 'proceed';
+            if (config == null) return SizedBox.shrink(key: ValueKey('unknown_$buttonKey'));
 
             return Card(
               key: ValueKey(buttonKey),
@@ -782,35 +1570,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     ReorderableDragStartListener(
                       index: index,
-                      child: const Icon(Icons.drag_handle, color: Colors.grey),
+                      child: Icon(Icons.drag_handle, color: Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                     const SizedBox(width: 8),
-                    Icon(config.icon, color: config.visible ? Theme.of(context).colorScheme.primary : Colors.grey),
+                    Icon(config.icon, color: config.visible ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant),
                   ],
                 ),
                 title: Text(
                   l10n.translate(config.titleKey),
                   style: TextStyle(
-                    color: config.visible ? null : Colors.grey,
+                    color: config.visible ? null : Theme.of(context).colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 subtitle: Text(
                   l10n.translate(config.subtitleKey),
                   style: TextStyle(
-                    color: config.visible ? Colors.grey : Colors.grey.shade400,
+                    color: config.visible ? Theme.of(context).colorScheme.onSurfaceVariant : Theme.of(context).colorScheme.outline,
                     fontSize: 12,
                   ),
                 ),
-                trailing: isProceeed
-                    ? Chip(
-                        label: Text(l10n.translate('always_visible'), style: const TextStyle(fontSize: 10)),
-                        backgroundColor: Colors.green.withValues(alpha: 0.2),
-                      )
-                    : Switch(
-                        value: config.visible,
-                        onChanged: (value) => config.setVisible(value),
-                      ),
+                trailing: Switch(
+                  value: config.visible,
+                  onChanged: (value) => config.setVisible(value),
+                ),
               ),
             );
           },
@@ -838,7 +1621,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('sync_settings_subtitle'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
         _buildSwitchTile(
@@ -936,7 +1719,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   Text(
                     l10n.translate('data_retention_subtitle'),
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 ],
               ),
@@ -961,6 +1744,257 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Comma-separated note denominations. Parsed on submit / focus-loss rather
+  /// than per keystroke: "1, 2, 5" passes through the states "1, " and "1, 2,"
+  /// where a live parse would keep rewriting the list under the cursor.
+  /// Money as somebody would type it: 15, not 15.0.
+  static String _trimPreset(double value) =>
+      value == value.roundToDouble() ? value.toStringAsFixed(0) : '$value';
+
+  /// The shop's own one-tap order notes.
+  ///
+  /// Comma-separated because that is how the quick-cash amounts beside it
+  /// already work, and one habit is easier than two. Notes may contain spaces,
+  /// so unlike the amounts this splits on commas alone.
+  Widget _buildNotePresetsField(
+    BuildContext context,
+    SettingsNotifier notifier,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+
+    void save(String raw) {
+      final parsed = raw
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      notifier.setNotePresets(parsed);
+      // Re-render what will actually be stored, so duplicates and stray commas
+      // snap back rather than lingering as text that means nothing. Cleaned
+      // here rather than read back: the save is async, and the state has not
+      // landed yet by the time this line runs.
+      final stored = <String>[];
+      for (final note in parsed) {
+        if (!stored.contains(note)) stored.add(note);
+      }
+      _notePresetsController.text = stored.join(', ');
+    }
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.sticky_note_2_outlined),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(l10n.translate('note_presets')),
+                      Text(
+                        l10n.translate('note_presets_subtitle'),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            AdaptiveKeyboardTextField(
+              controller: _notePresetsController,
+              decoration: InputDecoration(
+                hintText: l10n.translate('note_presets_hint'),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                isDense: true,
+              ),
+              onSubmitted: save,
+              onEditingComplete: () => save(_notePresetsController.text),
+              onTapOutside: (_) => save(_notePresetsController.text),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// One-tap delivery fees.
+  Widget _buildDeliveryFeePresetsField(
+    BuildContext context,
+    SettingsNotifier notifier,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+
+    void save(String raw) {
+      final parsed = raw
+          .split(RegExp(r'[,;\s]+'))
+          .map((e) => double.tryParse(e.trim().replaceAll(',', '.')))
+          .whereType<double>()
+          .where((e) => e >= 0)
+          .toList();
+      notifier.setDeliveryFeePresets(parsed);
+      final stored = parsed.toSet().toList()..sort();
+      _deliveryFeePresetsController.text =
+          stored.map(_trimPreset).join(', ');
+    }
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.delivery_dining),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(l10n.translate('delivery_fee_presets')),
+                      Text(
+                        l10n.translate('delivery_fee_presets_subtitle'),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            AdaptiveKeyboardTextField(
+              controller: _deliveryFeePresetsController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                hintText: '10, 15, 20, 30',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                isDense: true,
+              ),
+              onSubmitted: save,
+              onEditingComplete: () => save(_deliveryFeePresetsController.text),
+              onTapOutside: (_) => save(_deliveryFeePresetsController.text),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickCashAmountsField(
+    BuildContext context,
+    SettingsNotifier notifier,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+
+    void save(String raw) {
+      final parsed = raw
+          .split(RegExp(r'[,;\s]+'))
+          .map((e) => int.tryParse(e.trim()) ?? 0)
+          .where((e) => e > 0)
+          .toList();
+      notifier.setQuickCashAmounts(parsed);
+      // Re-render whatever was actually stored, so an unparseable entry
+      // snaps back instead of lingering as text that means nothing.
+      _quickCashController.text =
+          (parsed.isEmpty ? const [200, 100, 50, 20] : (parsed..sort((a, b) => b.compareTo(a))))
+              .join(', ');
+    }
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.attach_money),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(l10n.translate('quick_cash_amounts')),
+                      Text(
+                        l10n.translate('quick_cash_amounts_subtitle'),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            AdaptiveKeyboardTextField(
+              controller: _quickCashController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                hintText: '200, 100, 50, 20',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                isDense: true,
+              ),
+              onSubmitted: save,
+              onEditingComplete: () => save(_quickCashController.text),
+              onTapOutside: (_) => save(_quickCashController.text),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMaxSplitTicketsField(
+    BuildContext context,
+    AppSettings settings,
+    SettingsNotifier notifier,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: ListTile(
+        leading: const Icon(Icons.confirmation_number_outlined),
+        title: Text(l10n.translate('max_split_tickets')),
+        subtitle: Text(l10n.translate('max_split_tickets_subtitle')),
+        trailing: SizedBox(
+          width: 150,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              IconButton(
+                onPressed: settings.maxSplitTickets > 2
+                    ? () => notifier.setMaxSplitTickets(settings.maxSplitTickets - 1)
+                    : null,
+                icon: const Icon(Icons.remove_circle_outline),
+              ),
+              Text(
+                '${settings.maxSplitTickets}',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              IconButton(
+                onPressed: settings.maxSplitTickets < 50
+                    ? () => notifier.setMaxSplitTickets(settings.maxSplitTickets + 1)
+                    : null,
+                icon: const Icon(Icons.add_circle_outline),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSwitchTile({
     required BuildContext context,
     required IconData icon,
@@ -968,13 +2002,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
+    /// Optional chip beside the title — for marking a setting as unfinished,
+    /// so nobody turns it on expecting it to be as solid as the rest.
+    String? badge,
   }) {
+    final theme = Theme.of(context);
     return Card(
       elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
       child: ListTile(
         leading: Icon(icon),
-        title: Text(title),
+        title: badge == null
+            ? Text(title)
+            : Row(
+                children: [
+                  Flexible(child: Text(title)),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.tertiaryContainer,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      badge,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                        color: theme.colorScheme.onTertiaryContainer,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
         subtitle: Text(subtitle),
         trailing: Switch(
           value: value,
@@ -1014,9 +2076,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       l10n.translate('select_default_order_type'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -1084,7 +2146,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Icon(
               icon,
               size: 32,
-              color: isSelected ? color : Colors.grey,
+              color: isSelected ? color : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 8),
             Text(
@@ -1130,9 +2192,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       l10n.translate('initial_order_status'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -1150,27 +2212,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   label: l10n.translate('on_hold'),
                   value: 'ONHOLD',
                   currentValue: currentStatus,
-                  color: Colors.grey,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                   onTap: () => onChanged('ONHOLD'),
                 ),
-                _buildOrderStatusOption(
-                  context: context,
-                  icon: Icons.pending,
-                  label: l10n.translate('pending'),
-                  value: 'PENDING',
-                  currentValue: currentStatus,
-                  color: Colors.orange,
-                  onTap: () => onChanged('PENDING'),
-                ),
-                _buildOrderStatusOption(
-                  context: context,
-                  icon: Icons.restaurant,
-                  label: l10n.translate('preparing'),
-                  value: 'PREPARING',
-                  currentValue: currentStatus,
-                  color: Colors.blue,
-                  onTap: () => onChanged('PREPARING'),
-                ),
+                // PENDING / PREPARING intentionally NOT offered: they are
+                // non-terminal, and the KDS micro-state machine is LAN-local —
+                // a partially-completed order never fires the all-same-status
+                // cloud sync, so a non-terminal default would leave the backend
+                // stuck showing PENDING/PREPARING. Only terminal (COMPLETED) and
+                // the KDS-exempt ONHOLD are safe defaults. See kds_changes.md.
                 _buildOrderStatusOption(
                   context: context,
                   icon: Icons.check_circle,
@@ -1189,13 +2239,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
 
-  /// Default status applied to orders created via the waiter app
-  /// (POST /waiters/orders). Mirrors [_buildOrderStatusSelector] but exposes
-  /// only PENDING / PREPARING / COMPLETED — ONHOLD is intentionally absent
-  /// since a "needs cashier approval" gate doesn't fit the waiter flow.
-  Widget _buildWaiterOrderStatusSelector({
+  /// The kitchen state each PRODUCT starts in when an order is sent to the
+  /// kitchen. Distinct from [_buildOrderStatusSelector]: the order header is
+  /// born COMPLETED (cloud-terminal), while the live kitchen flow
+  /// (PENDING → PREPARING → COMPLETED) runs on the products and is what the KDS
+  /// drives. Both PENDING and PREPARING are safe here — unlike the order-level
+  /// default — because the KDS drives products to a terminal state locally.
+  Widget _buildKdsStateSelector({
     required BuildContext context,
-    required String currentStatus,
+    required String currentState,
     required ValueChanged<String> onChanged,
   }) {
     final l10n = AppLocalizations.of(context)!;
@@ -1209,24 +2261,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.room_service),
+                const Icon(Icons.kitchen),
                 const SizedBox(width: 12),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      l10n.translate('waiter_order_default_status'),
+                      l10n.translate('default_kds_state'),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     Text(
-                      l10n.translate('waiter_order_default_status_subtitle'),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
+                      l10n.translate('default_kds_state_subtitle'),
+                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -1239,30 +2288,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 _buildOrderStatusOption(
                   context: context,
-                  icon: Icons.pending,
+                  icon: Icons.pending_actions,
                   label: l10n.translate('pending'),
                   value: 'PENDING',
-                  currentValue: currentStatus,
+                  currentValue: currentState,
                   color: Colors.orange,
                   onTap: () => onChanged('PENDING'),
                 ),
                 _buildOrderStatusOption(
                   context: context,
-                  icon: Icons.restaurant,
+                  icon: Icons.soup_kitchen,
                   label: l10n.translate('preparing'),
                   value: 'PREPARING',
-                  currentValue: currentStatus,
+                  currentValue: currentState,
                   color: Colors.blue,
                   onTap: () => onChanged('PREPARING'),
-                ),
-                _buildOrderStatusOption(
-                  context: context,
-                  icon: Icons.check_circle,
-                  label: l10n.translate('completed'),
-                  value: 'COMPLETED',
-                  currentValue: currentStatus,
-                  color: Colors.green,
-                  onTap: () => onChanged('COMPLETED'),
                 ),
               ],
             ),
@@ -1271,6 +2311,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
   }
+
+  // Waiter orders now inherit `defaultOrderStatus` (the normal-flow default),
+  // so the dedicated waiter-status selector was removed — see the Order
+  // Defaults section and server `_waiterCreateOrder`.
 
 
   Widget _buildPaidOrderStatusSelector({
@@ -1303,9 +2347,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       l10n.translate('paid_order_initial_status'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -1323,27 +2367,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   label: l10n.translate('on_hold'),
                   value: 'ONHOLD',
                   currentValue: currentStatus,
-                  color: Colors.grey,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                   onTap: () => onChanged('ONHOLD'),
                 ),
-                _buildOrderStatusOption(
-                  context: context,
-                  icon: Icons.pending,
-                  label: l10n.translate('pending'),
-                  value: 'PENDING',
-                  currentValue: currentStatus,
-                  color: Colors.orange,
-                  onTap: () => onChanged('PENDING'),
-                ),
-                _buildOrderStatusOption(
-                  context: context,
-                  icon: Icons.restaurant,
-                  label: l10n.translate('preparing'),
-                  value: 'PREPARING',
-                  currentValue: currentStatus,
-                  color: Colors.blue,
-                  onTap: () => onChanged('PREPARING'),
-                ),
+                // PENDING / PREPARING intentionally NOT offered: they are
+                // non-terminal, and the KDS micro-state machine is LAN-local —
+                // a partially-completed order never fires the all-same-status
+                // cloud sync, so a non-terminal default would leave the backend
+                // stuck showing PENDING/PREPARING. Only terminal (COMPLETED) and
+                // the KDS-exempt ONHOLD are safe defaults. See kds_changes.md.
                 _buildOrderStatusOption(
                   context: context,
                   icon: Icons.check_circle,
@@ -1391,7 +2423,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Icon(
               icon,
               size: 24,
-              color: isSelected ? color : Colors.grey,
+              color: isSelected ? color : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(width: 8),
             Text(
@@ -1437,9 +2469,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       l10n.translate('default_payment_method_subtitle'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -1484,13 +2516,184 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   label: l10n.translate('other'),
                   value: 'OTHER',
                   currentValue: currentMethod,
-                  color: Colors.grey,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                   onTap: () => onChanged('OTHER'),
                 ),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Where a product card's name and price go: under the image, or on it.
+  ///
+  /// Shown as two little pictures of the result rather than a switch — the
+  /// difference is entirely visual, and "Overlay labels: on" tells nobody what
+  /// their till is about to look like.
+  Widget _buildLabelLayoutSelector({
+    required BuildContext context,
+    required bool overlay,
+    required ValueChanged<bool> onChanged,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.view_agenda_outlined, color: theme.colorScheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(l10n.translate('card_label_layout'),
+                      style: const TextStyle(fontWeight: FontWeight.w500)),
+                  Text(l10n.translate('card_label_layout_subtitle'),
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            _labelLayoutOption(
+              context: context,
+              label: l10n.translate('label_below_image'),
+              selected: !overlay,
+              onTap: () => onChanged(false),
+              preview: _cardPreview(theme, overlay: false),
+            ),
+            const SizedBox(width: 12),
+            _labelLayoutOption(
+              context: context,
+              label: l10n.translate('label_over_image'),
+              selected: overlay,
+              onTap: () => onChanged(true),
+              preview: _cardPreview(theme, overlay: true),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _labelLayoutOption({
+    required BuildContext context,
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    required Widget preview,
+  }) {
+    final theme = Theme.of(context);
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.outlineVariant,
+              width: selected ? 2 : 1,
+            ),
+            color: selected
+                ? theme.colorScheme.primary.withValues(alpha: 0.06)
+                : null,
+          ),
+          child: Column(
+            children: [
+              preview,
+              const SizedBox(height: 8),
+              Text(label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A miniature of the card, to scale: the overlay sample is shorter, because
+  /// that is the point of it.
+  Widget _cardPreview(ThemeData theme, {required bool overlay}) {
+    final image = Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Icon(Icons.image_outlined,
+          size: 18, color: theme.colorScheme.primary.withValues(alpha: 0.7)),
+    );
+
+    Widget bar(double width, {Color? color}) => Container(
+          height: 4,
+          width: width,
+          decoration: BoxDecoration(
+            color: color ?? theme.colorScheme.onSurface.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        );
+
+    if (overlay) {
+      return SizedBox(
+        height: 56,
+        width: 64,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            image,
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(5, 4, 5, 5),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    bar(34, color: Colors.white),
+                    const SizedBox(height: 3),
+                    bar(20, color: Colors.white70),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 74,
+      width: 64,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: SizedBox(width: 64, child: image)),
+          const SizedBox(height: 5),
+          bar(40),
+          const SizedBox(height: 4),
+          bar(24),
+        ],
       ),
     );
   }
@@ -1517,7 +2720,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 const Icon(Icons.grid_3x3),
                 const SizedBox(width: 12),
-                const Column(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -1526,7 +2729,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       'Size of product cards in the grid',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -1620,9 +2823,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       l10n.translate('category_display_subtitle'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -1693,7 +2896,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Icon(
               icon,
               size: 32,
-              color: isSelected ? color : Colors.grey,
+              color: isSelected ? color : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 8),
             Text(
@@ -1708,7 +2911,136 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               subtitle,
               style: TextStyle(
                 fontSize: 11,
-                color: isSelected ? color.withValues(alpha: 0.8) : Colors.grey,
+                color: isSelected ? color.withValues(alpha: 0.8) : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildComponentGroupDisplayModeSelector({
+    required BuildContext context,
+    required ComponentGroupDisplayMode currentMode,
+    required ValueChanged<ComponentGroupDisplayMode> onChanged,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withValues(alpha: 0.3),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.restaurant_menu),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        l10n.translate('component_group_display_mode'),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      Text(
+                        l10n.translate('component_group_display_subtitle'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildComponentGroupModeOption(
+                    context: context,
+                    icon: Icons.view_list,
+                    label: l10n.translate('as_list'),
+                    subtitle: l10n.translate('all_groups_at_once'),
+                    value: ComponentGroupDisplayMode.list,
+                    currentValue: currentMode,
+                    onTap: () => onChanged(ComponentGroupDisplayMode.list),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildComponentGroupModeOption(
+                    context: context,
+                    icon: Icons.linear_scale,
+                    label: l10n.translate('step_by_step'),
+                    subtitle: l10n.translate('one_group_at_a_time'),
+                    value: ComponentGroupDisplayMode.step,
+                    currentValue: currentMode,
+                    onTap: () => onChanged(ComponentGroupDisplayMode.step),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildComponentGroupModeOption({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required String subtitle,
+    required ComponentGroupDisplayMode value,
+    required ComponentGroupDisplayMode currentValue,
+    required VoidCallback onTap,
+  }) {
+    final isSelected = value == currentValue;
+    final color = Theme.of(context).primaryColor;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.2) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? color : Colors.grey.withValues(alpha: 0.3),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 32, color: isSelected ? color : Theme.of(context).colorScheme.onSurfaceVariant),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                color: isSelected ? color : null,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 11,
+                color: isSelected ? color.withValues(alpha: 0.8) : Theme.of(context).colorScheme.onSurfaceVariant,
               ),
               textAlign: TextAlign.center,
             ),
@@ -1759,9 +3091,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       l10n.translate('select_currency_display'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -1809,7 +3141,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             fontSize: 10,
                             color: isSelected
                                 ? Theme.of(context).primaryColor.withValues(alpha: 0.8)
-                                : Colors.grey,
+                                : Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -1837,6 +3169,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       {'code': 'en', 'name': 'English', 'flag': ''},
       {'code': 'ar', 'name': 'العربية', 'flag': ''},
       {'code': 'fr', 'name': 'Français', 'flag': ''},
+      {'code': 'es', 'name': 'Español', 'flag': ''},
     ];
 
     return Card(
@@ -1863,9 +3196,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     Text(
                       l10n.translate(subtitleKey),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -1956,9 +3289,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   Text(
                     subtitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
-                      color: Colors.grey,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
@@ -2084,18 +3417,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Validate + persist the server port. Rejects the privileged range
+  /// (< 1024, which includes port 80): those are reserved/require admin on
+  /// Windows (http.sys) and are the usual cause of "server won't bind" and the
+  /// cross-service 403s a waiter/KDS hits when they land on port 80 instead of
+  /// the POS.
+  void _saveServerPort(SettingsNotifier notifier, String value) {
+    final port = int.tryParse(value.trim());
+    if (port == null || port <= 0 || port >= 65536) return;
+    if (port < 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Port $port is reserved — use a port ≥ 1024 (e.g. 8080).'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    notifier.setServerPort(port);
+  }
+
   Widget _buildServerSettingsContent(
     AppSettings settings,
     SettingsNotifier notifier,
     BuildContext context,
   ) {
     final l10n = AppLocalizations.of(context)!;
-    final TextEditingController portController = TextEditingController(
-      text: (settings.serverPort ?? 8080).toString(),
-    );
-    final TextEditingController passwordController = TextEditingController(
-      text: settings.serverPassword ?? '',
-    );
+    final isAdmin =
+        ref.watch(currentUserProvider)?.type.toLowerCase() == 'admin';
+    final portController = _portController;
+    final passwordController = _serverPasswordController;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2110,7 +3463,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('server_settings_subtitle'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
 
@@ -2124,6 +3477,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           onChanged: (value) => notifier.setAutoStartServer(value),
         ),
         const SizedBox(height: 12),
+
+        // SSE real-time listener — admin only, off by default.
+        if (isAdmin) ...[
+          _buildSwitchTile(
+            context: context,
+            icon: Icons.sensors,
+            title: l10n.translate('sse_listener'),
+            subtitle: l10n.translate('sse_listener_subtitle'),
+            value: settings.sseEnabled,
+            onChanged: (value) => notifier.setSseEnabled(value),
+          ),
+          const SizedBox(height: 12),
+        ],
 
         // Waiter app dashboard: show or hide the owed/collected money
         // fields. Off = backend strips them from the response.
@@ -2162,23 +3528,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 const SizedBox(height: 8),
                 Text(
                   l10n.translate('server_port_subtitle'),
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
-                TextField(
+                AdaptiveKeyboardTextField(
                   controller: portController,
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(
                     hintText: '8080',
+                    helperText: 'Press Enter to save. Avoid port 80 (reserved).',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
-                  onChanged: (value) {
-                    final port = int.tryParse(value);
-                    if (port != null && port > 0 && port < 65536) {
-                      notifier.setServerPort(port);
-                    }
-                  },
+                  // Save on submit / focus-loss, NOT on every keystroke: the
+                  // controller is rebuilt each frame, so saving mid-typing could
+                  // persist a half-typed value (e.g. "80" while typing "8080").
+                  onSubmitted: (value) => _saveServerPort(notifier, value),
+                  onTapOutside: (_) => _saveServerPort(notifier, portController.text),
+                  onEditingComplete: () =>
+                      _saveServerPort(notifier, portController.text),
                 ),
               ],
             ),
@@ -2211,10 +3579,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 const SizedBox(height: 8),
                 Text(
                   l10n.translate('server_password_subtitle'),
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
-                TextField(
+                AdaptiveKeyboardTextField(
                   controller: passwordController,
                   obscureText: true,
                   decoration: InputDecoration(
@@ -2313,6 +3681,125 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                       },
                                     ),
                                 ],
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          // Embedded KDS web app — open this URL in any browser
+                          // or on a TV to get the live kitchen board (no install).
+                          FutureBuilder<String>(
+                            future: DiscoveryService.getLocalIp(),
+                            builder: (context, snapshot) {
+                              final ip = snapshot.data ?? 'loading...';
+                              final kdsUrl =
+                                  'http://$ip:${serverService.port}/kds';
+                              return Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .primary
+                                      .withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.desktop_windows_rounded,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'KDS screen — open in a browser / TV',
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.w600),
+                                          ),
+                                          SelectableText(
+                                            kdsUrl,
+                                            style: const TextStyle(
+                                                fontFamily: 'monospace',
+                                                fontSize: 13),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (snapshot.hasData)
+                                      IconButton(
+                                        icon: const Icon(Icons.copy, size: 18),
+                                        tooltip: 'Copy KDS URL',
+                                        onPressed: () {
+                                          Clipboard.setData(
+                                              ClipboardData(text: kdsUrl));
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(const SnackBar(
+                                            content: Text('KDS URL copied'),
+                                            duration: Duration(seconds: 1),
+                                            behavior:
+                                                SnackBarBehavior.floating,
+                                          ));
+                                        },
+                                      ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                          // Fallback picker: if the machine has more than one
+                          // usable address (extra NIC, VPN, virtual adapter),
+                          // list the others so the user can copy the right one
+                          // when auto-detection guesses wrong.
+                          FutureBuilder<List<String>>(
+                            future: DiscoveryService.getLocalIpCandidates(),
+                            builder: (context, snap) {
+                              final all = snap.data ?? const <String>[];
+                              if (all.length < 2) return const SizedBox.shrink();
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Other addresses (tap to copy):',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      children: all.skip(1).map((ip) {
+                                        final u = 'http://$ip:${serverService.port}';
+                                        return ActionChip(
+                                          label: Text(ip,
+                                              style: const TextStyle(
+                                                  fontFamily: 'monospace',
+                                                  fontSize: 12)),
+                                          onPressed: () {
+                                            Clipboard.setData(
+                                                ClipboardData(text: u));
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                content: Text('Copied $u'),
+                                                duration:
+                                                    const Duration(seconds: 1),
+                                                behavior:
+                                                    SnackBarBehavior.floating,
+                                              ),
+                                            );
+                                          },
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ],
+                                ),
                               );
                             },
                           ),
@@ -2426,7 +3913,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         Text(
           l10n.translate('session_rules_subtitle'),
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
         Card(
@@ -2513,6 +4000,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               value: info?.buildNumber ?? '—',
             ),
             const SizedBox(height: 24),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.autorenew,
+              title: l10n.translate('auto_update'),
+              subtitle: l10n.translate('auto_update_subtitle'),
+              value: ref.watch(settingsProvider).autoUpdate,
+              onChanged: (v) =>
+                  ref.read(settingsProvider.notifier).setAutoUpdate(v),
+            ),
+            const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: () => _runUpdateCheck(context),
               icon: const Icon(Icons.system_update_alt),
@@ -2560,7 +4057,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       duration: const Duration(seconds: 2),
     ));
 
-    if (!kIsWeb && Platform.isAndroid) {
+    // Unified update check for BOTH Android and desktop — hits
+    // `/api/api/pos/updates/latest` via UpdateService. (The legacy
+    // desktop_updater / app-archive.json channel was removed.)
+    if (!kIsWeb &&
+        (Platform.isAndroid ||
+            Platform.isWindows ||
+            Platform.isMacOS ||
+            Platform.isLinux)) {
       final notifier = ref.read(updateProvider.notifier);
       final found = await notifier.checkForUpdates();
       if (!context.mounted) return;
@@ -2577,22 +4081,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           backgroundColor: Colors.green,
         ));
       }
-      return;
-    }
-
-    if (!kIsWeb &&
-        (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
-      final controller = ref.read(desktopUpdaterControllerProvider);
-      if (controller == null) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('update_server_unreachable')),
-          backgroundColor: Colors.orange,
-        ));
-        return;
-      }
-      // Plugin shows its own UpdateDialogListener overlay if an update exists.
-      await controller.checkVersion();
       return;
     }
   }
@@ -2651,7 +4139,11 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
     try {
       final db = ref.read(databaseProvider);
       final all = await db.select(db.products).get();
-      final products = all.where((p) => p.isActive).toList()
+      // Export only products that carry an MBW code — not the whole catalog.
+      final products = all
+          .where((p) =>
+              p.isActive && (p.mbwCode != null && p.mbwCode!.trim().isNotEmpty))
+          .toList()
         ..sort((a, b) => a.name.compareTo(b.name));
 
       final sb = StringBuffer();
@@ -2774,7 +4266,7 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
             ),
             const SizedBox(height: 12),
             // Test barcode input
-            TextField(
+            AdaptiveKeyboardTextField(
               controller: _testBarcodeCtrl,
               decoration: InputDecoration(
                 labelText: l10n.translate('test_barcode'),
@@ -2819,7 +4311,13 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
                           style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: color),
+                              // The segment hues are picked dark so white reads
+                              // on the bar; as loose TEXT on a dark surface the
+                              // same hue disappears, so lift it here only.
+                              color: Theme.of(context).brightness ==
+                                      Brightness.dark
+                                  ? Color.lerp(color, Colors.white, 0.45)
+                                  : color),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
@@ -2876,7 +4374,7 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         Text(l10n.translate('scale_config_subtitle'),
-            style: const TextStyle(color: Colors.grey)),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
         const SizedBox(height: 16),
 
         // Cart-has-items warning
@@ -2907,10 +4405,9 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
         const SizedBox(height: 6),
         SizedBox(
           width: 200,
-          child: TextField(
+          child: AdaptiveKeyboardTextField(
             enabled: !_cartHasItems,
-            controller: TextEditingController(text: _draft.prefix)
-              ..selection = TextSelection.collapsed(offset: _draft.prefix.length),
+            initialValue: _draft.prefix,
             decoration: InputDecoration(
               hintText: '21',
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -3092,7 +4589,7 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
         const SizedBox(height: 4),
         Text(
           'Choose which columns to include, set their order and header names, then save as CSV.',
-          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+          style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
@@ -3182,7 +4679,7 @@ class _ExportCsvDialogState extends State<_ExportCsvDialog> {
           children: [
             Text(
               'Drag  ≡  to reorder. Uncheck to exclude. Edit the header name.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
             Expanded(
@@ -3254,15 +4751,15 @@ class _ColumnRow extends StatelessWidget {
         children: [
           ReorderableDragStartListener(
             index: index,
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.symmetric(horizontal: 4),
-              child: Icon(Icons.drag_handle, color: Colors.grey),
+              child: Icon(Icons.drag_handle, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ),
           Checkbox(value: col.enabled, onChanged: (v) => onToggle(v ?? false)),
           const SizedBox(width: 4),
           Expanded(
-            child: TextField(
+            child: AdaptiveKeyboardTextField(
               controller: controller,
               decoration: InputDecoration(
                 labelText: col.key,
@@ -3273,6 +4770,83 @@ class _ColumnRow extends StatelessWidget {
               onChanged: onHeaderChanged,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Read-only view of the terminal's business day + Z number, with the in-app
+/// "Reopen the day" escape hatch. This is the safety valve: if the day is
+/// closed by mistake, a manager lifts the lock from here instead of waiting
+/// for midnight.
+class _ZDayStatusCard extends ConsumerWidget {
+  const _ZDayStatusCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+    final settings = ref.watch(settingsProvider);
+    final day = ref.watch(zDayStateProvider);
+    final today = zBusinessDayKey(DateTime.now(), settings.zDayStartHour);
+    final locked = day.isLockedFor(today);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: (locked ? cs.errorContainer : cs.surfaceContainerHighest)
+            .withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            l10n.translate('z_day_status'),
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Text('${l10n.translate('business_day')}: $today'),
+          Text('${l10n.translate('z_number')}: '
+              '${day.zNumber == 0 ? 1 : day.zNumber}'),
+          Text(
+            locked
+                ? (day.closedByName == null
+                    ? l10n.translate('day_closed')
+                    : l10n
+                        .translate('day_closed_by')
+                        .replaceAll('{0}', day.closedByName!))
+                : l10n.translate('day_open'),
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              color: locked ? cs.error : cs.tertiary,
+            ),
+          ),
+          if (locked) ...[
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.lock_open),
+              label: Text(l10n.translate('reopen_day')),
+              onPressed: () async {
+                final elev = await showAdminCredentialDialog(
+                  context,
+                  ref,
+                  title: l10n.translate('reopen_day'),
+                  description: l10n.translate('reopen_day_subtitle'),
+                  permission: Permissions.zClose,
+                );
+                if (elev == null) return;
+                await ref
+                    .read(zDayStateProvider.notifier)
+                    .reopenDay(byUserId: elev.adminId);
+                if (context.mounted) {
+                  SnackBarHelper.success(
+                      context, l10n.translate('day_reopened'));
+                }
+              },
+            ),
+          ],
         ],
       ),
     );

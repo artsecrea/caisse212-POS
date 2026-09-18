@@ -25,6 +25,8 @@ class ActivityAction {
   static const String orderCancelled = 'ORDER_CANCELLED';
   static const String orderStatusChanged = 'ORDER_STATUS_CHANGED';
   static const String orderTransferred = 'ORDER_TRANSFERRED';
+  // Cashier overrode the unit price of a line item (anti-fraud audit trail).
+  static const String priceChanged = 'PRICE_CHANGED';
   static const String payment = 'PAYMENT';
   static const String login = 'LOGIN';
   static const String logout = 'LOGOUT';
@@ -32,6 +34,12 @@ class ActivityAction {
   static const String sessionPause = 'SESSION_PAUSE';
   static const String sessionResume = 'SESSION_RESUME';
   static const String sessionEnd = 'SESSION_END';
+  // Z (shift) tracking lifecycle.
+  static const String zOpened = 'Z_OPENED';
+  static const String zClosed = 'Z_CLOSED';
+  // Fiscal day close / manager reopen (Z mode day lock).
+  static const String zDayClosed = 'Z_DAY_CLOSED';
+  static const String zDayReopened = 'Z_DAY_REOPENED';
   // Session-level "admin mode" elevation toggle.
   static const String adminElevationGranted = 'ADMIN_ELEVATION_GRANTED';
   static const String adminElevationRevoked = 'ADMIN_ELEVATION_REVOKED';

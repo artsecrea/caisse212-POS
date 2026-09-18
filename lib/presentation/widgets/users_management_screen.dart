@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import '../../data/database/app_database.dart';
@@ -11,14 +12,15 @@ import 'admin_mode_chip.dart';
 
 /// Permission catalog grouped by resource (used by the table + details dialog).
 const Map<String, List<String>> kPermissionGroups = <String, List<String>>{
-  'Orders':      ['pos:orders:create', 'pos:orders:view', 'pos:orders:update', 'pos:orders:delete', 'pos:orders:cancel', 'pos:orders:item:add', 'pos:orders:item:remove', 'pos:orders:item:modify'],
+  'Orders':      ['pos:orders:create', 'pos:orders:view', 'pos:orders:update', 'pos:orders:delete', 'pos:orders:cancel', 'pos:orders:item:add', 'pos:orders:item:remove', 'pos:orders:item:modify', 'pos:orders:item:price', 'pos:orders:waiter:update'],
+  'Refunds':     ['pos:refunds:view', 'pos:refunds:create', 'pos:refunds:waste', 'pos:refunds:amount:override'],
   'Tickets':     ['pos:tickets:create', 'pos:tickets:view', 'pos:tickets:update', 'pos:tickets:print', 'pos:tickets:delete'],
   'Sessions':    ['pos:sessions:start', 'pos:sessions:end', 'pos:sessions:pause', 'pos:sessions:view', 'pos:sessions:delete'],
   'Customers':   ['pos:customer:set', 'pos:customer:create', 'pos:customer:view', 'pos:customer:delete'],
   'Commercials': ['pos:commercial:set', 'pos:commercial:create', 'pos:commercial:view'],
   'Waiters':     ['pos:waiter:set', 'pos:waiter:view', 'pos:waiter:create', 'pos:waiter:delete'],
   'Tables':      ['pos:tables:set', 'pos:tables:clear'],
-  'Products':    ['pos:products:view', 'pos:products:modify'],
+  'Products':    ['pos:products:view', 'pos:products:modify', 'pos:catalog'],
   'Devices':     ['pos:devices:use', 'pos:devices:view', 'pos:devices:update', 'pos:devices:delete'],
   'Users':       ['pos:users:view', 'pos:users:create', 'pos:users:update', 'pos:users:delete'],
   'Notes':       ['pos:notes:view', 'pos:notes:create', 'pos:notes:update', 'pos:notes:delete'],
@@ -26,6 +28,7 @@ const Map<String, List<String>> kPermissionGroups = <String, List<String>>{
   'Logs':        ['pos:logs:view'],
   'Settings':    ['pos:settings:view', 'pos:settings:update'],
   'Reports':     ['pos:reports:view'],
+  'Z':           ['pos:z:open', 'pos:z:close', 'pos:z:view', 'pos:z:print'],
   'Sync':        ['pos:sync:orders', 'pos:sync:tickets', 'pos:sync:sessions', 'pos:sync:customers', 'pos:sync:all', 'pos:sync:viewPending', 'pos:sync:managePending'],
   'Other':       ['pos:manualDiscount', 'pos:printing'],
 };
@@ -270,7 +273,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         label = 'Waiter';
         break;
       default:
-        color = Colors.grey;
+        color = Theme.of(context).colorScheme.onSurfaceVariant;
         label = type.toUpperCase();
     }
     return _miniChip(label, color);
@@ -293,7 +296,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
     if (hasAll) return _miniChip('All permissions', Colors.purple);
     if (granted.isEmpty) {
       return Text(l10n.translate('no_permissions'),
-          style: const TextStyle(color: Colors.grey, fontSize: 12));
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12));
     }
 
     final chips = <Widget>[];
@@ -311,7 +314,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
     final known = kPermissionGroups.values.expand((e) => e).toSet();
     final extra = granted.where((p) => p != 'pos:*' && !known.contains(p)).length;
     if (extra > 0) {
-      chips.add(_miniChip('+$extra', Colors.grey));
+      chips.add(_miniChip('+$extra', Theme.of(context).colorScheme.onSurfaceVariant));
     }
 
     return SingleChildScrollView(
@@ -324,13 +327,13 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
     final l10n = AppLocalizations.of(context)!;
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: Colors.grey[300]!))),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant))),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
             '${l10n.translate('showing')} ${_currentPage * _rowsPerPage + 1}-${((_currentPage + 1) * _rowsPerPage).clamp(0, totalItems)} ${l10n.translate('of')} $totalItems',
-            style: TextStyle(color: Colors.grey[700]),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           ),
           Row(
             children: [
@@ -352,11 +355,11 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.people_outline, size: 64, color: Colors.grey[400]),
+          Icon(Icons.people_outline, size: 64, color: Theme.of(context).colorScheme.outline),
           const SizedBox(height: 16),
-          Text(l10n.translate('no_users_found'), style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600)),
+          Text(l10n.translate('no_users_found'), style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          Text(l10n.translate('try_adjusting_filters'), style: TextStyle(fontSize: 14, color: Colors.grey[500])),
+          Text(l10n.translate('try_adjusting_filters'), style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ],
       ),
     );
@@ -370,9 +373,9 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         children: [
           Icon(Icons.error_outline, size: 64, color: Colors.red[400]),
           const SizedBox(height: 16),
-          Text(l10n.translate('error_loading_users'), style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w600)),
+          Text(l10n.translate('error_loading_users'), style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          Text(error, style: TextStyle(fontSize: 14, color: Colors.grey[500]), textAlign: TextAlign.center),
+          Text(error, style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant), textAlign: TextAlign.center),
         ],
       ),
     );
@@ -462,7 +465,7 @@ class _UserDetailsDialog extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildAvatar(),
+                    _buildAvatar(context),
                     const SizedBox(height: 20),
                     _sectionTitle('Basic Information'),
                     const SizedBox(height: 10),
@@ -471,11 +474,11 @@ class _UserDetailsDialog extends StatelessWidget {
                       child: Padding(
                         padding: const EdgeInsets.all(14),
                         child: Column(children: [
-                          _infoRow('User ID', '#${user.id}'),
-                          _infoRow('Username', user.username),
-                          _infoRow('First Name', user.firstName),
-                          _infoRow('Last Name', user.lastName),
-                          _infoRow('Type', user.type.toUpperCase()),
+                          _infoRow(context, 'User ID', '#${user.id}'),
+                          _infoRow(context, 'Username', user.username),
+                          _infoRow(context, 'First Name', user.firstName),
+                          _infoRow(context, 'Last Name', user.lastName),
+                          _infoRow(context, 'Type', user.type.toUpperCase()),
                         ]),
                       ),
                     ),
@@ -487,9 +490,9 @@ class _UserDetailsDialog extends StatelessWidget {
                       child: Padding(
                         padding: const EdgeInsets.all(14),
                         child: Column(children: [
-                          _infoRow('Created At', _fmtDt(user.createdAt)),
-                          _infoRow('Updated At', _fmtDt(user.updatedAt)),
-                          _infoRow('Last Login', user.lastLogin != null ? _fmtDt(user.lastLogin!) : 'Never'),
+                          _infoRow(context, 'Created At', _fmtDt(user.createdAt)),
+                          _infoRow(context, 'Updated At', _fmtDt(user.updatedAt)),
+                          _infoRow(context, 'Last Login', user.lastLogin != null ? _fmtDt(user.lastLogin!) : 'Never'),
                         ]),
                       ),
                     ),
@@ -518,7 +521,7 @@ class _UserDetailsDialog extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: _typeColor(user.type),
+        color: _typeColor(context, user.type),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
       ),
       child: Row(
@@ -544,7 +547,7 @@ class _UserDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildAvatar() {
+  Widget _buildAvatar(BuildContext context) {
     if (user.imageUrl != null && user.imageUrl!.isNotEmpty) {
       return Center(
         child: CircleAvatar(radius: 48, backgroundImage: NetworkImage(user.imageUrl!)),
@@ -553,8 +556,8 @@ class _UserDetailsDialog extends StatelessWidget {
     return Center(
       child: CircleAvatar(
         radius: 48,
-        backgroundColor: Colors.grey[200],
-        child: Icon(Icons.person, size: 52, color: Colors.grey[400]),
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+        child: Icon(Icons.person, size: 52, color: Theme.of(context).colorScheme.outline),
       ),
     );
   }
@@ -566,9 +569,9 @@ class _UserDetailsDialog extends StatelessWidget {
     if (granted.isEmpty && !isAdmin) {
       return Card(
         elevation: 1,
-        child: const Padding(
+        child: Padding(
           padding: EdgeInsets.all(14),
-          child: Text('No permissions assigned.', style: TextStyle(fontStyle: FontStyle.italic, color: Colors.grey)),
+          child: Text('No permissions assigned.', style: TextStyle(fontStyle: FontStyle.italic, color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ),
       );
     }
@@ -577,17 +580,17 @@ class _UserDetailsDialog extends StatelessWidget {
     if (isAdmin || granted.contains('pos:*')) {
       return Card(
         elevation: 1,
-        color: Colors.purple[50],
+        color: AppTheme.tintFill(context, Colors.purple),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              Icon(Icons.all_inclusive, color: Colors.purple[700]),
+              Icon(Icons.all_inclusive, color: AppTheme.tintOn(context, Colors.purple)),
               const SizedBox(width: 8),
               Text(isAdmin
                   ? 'Admin — full access to all permissions'
                   : 'Full access — all permissions granted',
-                  style: TextStyle(color: Colors.purple[700], fontWeight: FontWeight.w600)),
+                  style: TextStyle(color: AppTheme.tintOn(context, Colors.purple), fontWeight: FontWeight.w600)),
             ],
           ),
         ),
@@ -614,7 +617,7 @@ class _UserDetailsDialog extends StatelessWidget {
                       style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: Colors.grey[600],
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                           letterSpacing: 0.5)),
                   const SizedBox(height: 6),
                   Wrap(
@@ -624,7 +627,7 @@ class _UserDetailsDialog extends StatelessWidget {
                       final has = granted.contains(perm);
                       final label =
                           describePermission(perm, AppLocalizations.of(context)!).title;
-                      return _permChip(label, has);
+                      return _permChip(context, label, has);
                     }).toList(),
                   ),
                 ],
@@ -636,13 +639,15 @@ class _UserDetailsDialog extends StatelessWidget {
     );
   }
 
-  Widget _permChip(String label, bool granted) {
-    final color = granted ? Colors.green : Colors.grey[300]!;
-    final textColor = granted ? Colors.green[800]! : Colors.grey[500]!;
+  Widget _permChip(BuildContext context, String label, bool granted) {
+    final color = granted ? Colors.green : Theme.of(context).colorScheme.surfaceContainerHighest;
+    final textColor = granted
+        ? AppTheme.tintOn(context, Colors.green)
+        : Theme.of(context).colorScheme.onSurfaceVariant;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: granted ? Colors.green[50] : Colors.grey[100],
+        color: granted ? AppTheme.tintFill(context, Colors.green) : Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: color.withOpacity(0.6)),
       ),
@@ -662,7 +667,7 @@ class _UserDetailsDialog extends StatelessWidget {
     return Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold));
   }
 
-  Widget _infoRow(String label, String value) {
+  Widget _infoRow(BuildContext context, String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -670,7 +675,7 @@ class _UserDetailsDialog extends StatelessWidget {
         children: [
           SizedBox(
             width: 110,
-            child: Text(label, style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w500, fontSize: 13)),
+            child: Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500, fontSize: 13)),
           ),
           Expanded(child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
         ],
@@ -678,12 +683,12 @@ class _UserDetailsDialog extends StatelessWidget {
     );
   }
 
-  Color _typeColor(String type) {
+  Color _typeColor(BuildContext context, String type) {
     switch (type.toLowerCase().replaceAll('pos_', '')) {
       case 'admin': return Colors.red[700]!;
       case 'cashier': return Colors.blue[700]!;
       case 'waiter': return Colors.green[700]!;
-      default: return Colors.grey[700]!;
+      default: return Theme.of(context).colorScheme.onSurface;
     }
   }
 

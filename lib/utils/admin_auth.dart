@@ -1,6 +1,5 @@
 import 'package:bcrypt/bcrypt.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,6 +9,7 @@ import '../providers/database_providers.dart';
 import '../providers/user_provider.dart';
 import 'app_localizations.dart';
 import 'user_display.dart';
+import '../presentation/widgets/adaptive_text_field.dart';
 
 /// Verifies admin credentials against the local user database.
 ///
@@ -68,6 +68,61 @@ Future<AdminElevation?> verifyAdminCredentials(
   }
 }
 
+/// Whether a DB [User] row grants [permission] (admin type, exact token, or a
+/// `:*` wildcard prefix). Mirrors `PermissionService.hasPermission` for a raw
+/// row (no logged-in context).
+bool userHasPermission(User user, String permission) {
+  if (user.type.toLowerCase() == 'admin') return true;
+  final perms = (user.permissions ?? '').split(',').map((p) => p.trim());
+  if (perms.contains(permission)) return true;
+  for (final p in perms) {
+    if (p.endsWith(':*') && permission.startsWith(p.substring(0, p.length - 1))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Like [verifyAdminCredentials], but authorizes an admin **OR** any user who
+/// holds [permission] (used for the login-screen Z gate where a "manager" is a
+/// non-admin permission-holder). Returns an [AdminElevation] on success.
+Future<AdminElevation?> verifyManagerCredentials(
+  AppDatabase db,
+  SharedPreferences prefs, {
+  required String username,
+  required String password,
+  required String permission,
+}) async {
+  try {
+    final trimmedUser = username.trim();
+    if (trimmedUser.isEmpty || password.isEmpty) return null;
+    final user = await (db.select(db.users)
+          ..where((u) => u.username.equals(trimmedUser))
+          ..limit(1))
+        .getSingleOrNull();
+    if (user == null) return null;
+    if (!userHasPermission(user, permission)) return null;
+
+    try {
+      if (BCrypt.checkpw(password, user.password)) {
+        return AdminElevation(adminId: user.id, adminUsername: user.username);
+      }
+    } catch (_) {/* malformed hash */}
+    final customHash = prefs.getString('custom_password_${user.id}');
+    if (customHash != null && customHash.isNotEmpty) {
+      try {
+        if (BCrypt.checkpw(password, customHash)) {
+          return AdminElevation(adminId: user.id, adminUsername: user.username);
+        }
+      } catch (_) {/* malformed hash */}
+    }
+    return null;
+  } catch (e, st) {
+    debugPrint('verifyManagerCredentials failed: $e\n$st');
+    return null;
+  }
+}
+
 /// Show a modal that asks for an admin username + password and verifies them.
 /// Used by the "Admin mode" chip and by sensitive gates that previously asked
 /// for the tenant password (full logout, "show all orders" toggle).
@@ -84,6 +139,9 @@ Future<AdminElevation?> showAdminCredentialDialog(
   String? description,
   String? confirmLabel,
   Color? confirmColor,
+  // When set, authorizes an admin OR any user holding this permission (the pool
+  // broadens accordingly). Null = admin-only (default).
+  String? permission,
 }) async {
   final l10n = AppLocalizations.of(context)!;
   final passwordCtrl = TextEditingController();
@@ -92,13 +150,21 @@ Future<AdminElevation?> showAdminCredentialDialog(
   bool busy = false;
   AdminElevation? result;
 
-  // Load the admin pool once up front. The dropdown auto-selects when there
-  // is exactly one admin, so the cashier only types a password in that case.
+  // Load the authorization pool. Admin-only by default; when a permission is
+  // required, include every user (admin or not) who holds it. The dropdown
+  // auto-selects when there's exactly one candidate.
   List<User> admins = const [];
   try {
-    admins = await ref.read(userRepositoryProvider).getUsersByType('admin');
+    if (permission == null) {
+      admins = await ref.read(userRepositoryProvider).getUsersByType('admin');
+    } else {
+      final all = await ref.read(databaseProvider).select(
+            ref.read(databaseProvider).users,
+          ).get();
+      admins = all.where((u) => userHasPermission(u, permission)).toList();
+    }
   } catch (e, st) {
-    debugPrint('Admin user list load failed: $e\n$st');
+    debugPrint('Auth user list load failed: $e\n$st');
   }
   int? selectedUserId =
       admins.length == 1 ? admins.first.id : null;
@@ -128,12 +194,20 @@ Future<AdminElevation?> showAdminCredentialDialog(
             try {
               final db = ref.read(databaseProvider);
               final prefs = ref.read(sharedPreferencesProvider);
-              r = await verifyAdminCredentials(
-                db,
-                prefs,
-                username: selectedUser.username,
-                password: passwordCtrl.text,
-              );
+              r = permission == null
+                  ? await verifyAdminCredentials(
+                      db,
+                      prefs,
+                      username: selectedUser.username,
+                      password: passwordCtrl.text,
+                    )
+                  : await verifyManagerCredentials(
+                      db,
+                      prefs,
+                      username: selectedUser.username,
+                      password: passwordCtrl.text,
+                      permission: permission,
+                    );
             } catch (e, st) {
               debugPrint('Admin verify error: $e\n$st');
               r = null;
@@ -171,7 +245,7 @@ Future<AdminElevation?> showAdminCredentialDialog(
                 children: [
                   Text(
                     description ?? l10n.translate('enter_admin_credentials'),
-                    style: const TextStyle(fontSize: 13, color: Colors.grey),
+                    style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                   const SizedBox(height: 16),
                   if (noAdmins)
@@ -221,7 +295,7 @@ Future<AdminElevation?> showAdminCredentialDialog(
                           : (v) => setLocal(() => selectedUserId = v),
                     ),
                   const SizedBox(height: 12),
-                  OnscreenKeyboardTextField(
+                  AdaptiveKeyboardTextField(
                     controller: passwordCtrl,
                     obscureText: obscure,
                     decoration: InputDecoration(

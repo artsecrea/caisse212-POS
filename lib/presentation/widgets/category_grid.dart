@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
+import '../../core/theme/app_theme.dart';
+import 'overlay_label_strip.dart';
 
 /// A grid view for displaying categories in full-page mode
 class CategoryGrid extends ConsumerWidget {
@@ -13,21 +15,22 @@ class CategoryGrid extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final categoriesAsync = ref.watch(categoriesProvider);
     final showImages = ref.watch(showProductImagesProvider);
+    final overlayLabels = ref.watch(productLabelOverlayProvider);
 
     return Container(
       color: Theme.of(context).scaffoldBackgroundColor,
       child: categoriesAsync.when(
         data: (categories) {
           if (categories.isEmpty) {
-            return const Center(
+            return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.category_outlined, size: 64, color: Colors.grey),
+                  Icon(Icons.category_outlined, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   SizedBox(height: 16),
                   Text(
                     'No categories available',
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                    style: TextStyle(fontSize: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 ],
               ),
@@ -37,7 +40,9 @@ class CategoryGrid extends ConsumerWidget {
           return GridView.builder(
             padding: const EdgeInsets.all(16),
             gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-              mainAxisExtent: showImages ? 180 : 100,
+              // Overlaid labels give back the band the name used to own —
+              // a quarter of the tile, which is why the grid gets shorter.
+              mainAxisExtent: showImages ? (overlayLabels ? 140 : 180) : 100,
               maxCrossAxisExtent: showImages ? 200 : 180,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
@@ -49,6 +54,7 @@ class CategoryGrid extends ConsumerWidget {
                   name: 'All Products',
                   imageUrl: null,
                   showImage: showImages,
+                  overlayLabel: overlayLabels,
                   isAllCategory: true,
                   onTap: () {
                     // Use -1 to indicate "All Products" (show all products, not categories)
@@ -62,6 +68,7 @@ class CategoryGrid extends ConsumerWidget {
                 name: category.name,
                 imageUrl: category.imageUrl,
                 showImage: showImages,
+                overlayLabel: overlayLabels,
                 isAllCategory: false,
                 colorHex: category.color,
                 onTap: () {
@@ -84,6 +91,11 @@ class _CategoryCard extends StatelessWidget {
   final String name;
   final String? imageUrl;
   final bool showImage;
+
+  /// Name printed on the image rather than in a band below it. Shares the
+  /// product grid's setting: one till, one answer.
+  final bool overlayLabel;
+
   final bool isAllCategory;
   final String? colorHex;
   final VoidCallback onTap;
@@ -92,6 +104,7 @@ class _CategoryCard extends StatelessWidget {
     required this.name,
     this.imageUrl,
     required this.showImage,
+    required this.overlayLabel,
     required this.isAllCategory,
     this.colorHex,
     required this.onTap,
@@ -118,21 +131,29 @@ class _CategoryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cardColor = _parseColor(colorHex);
 
+    final scheme = Theme.of(context).colorScheme;
+
     return Material(
       elevation: 2,
-      borderRadius: BorderRadius.circular(12),
-      color: cardColor ?? Theme.of(context).cardColor,
+      borderRadius: AppTheme.brLg,
+      // An uncoloured tile used to take `cardColor`, which IS the scaffold
+      // background — it only read as a tile thanks to its drop shadow, and a
+      // dark theme swallows shadows. A raised surface plus a hairline gives it
+      // an edge in both themes.
+      color: cardColor ?? scheme.surfaceContainerHigh,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppTheme.brLg,
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AppTheme.brLg,
             border: Border.all(
               color: isAllCategory
-                  ? Theme.of(context).primaryColor.withValues(alpha: 0.5)
-                  : Colors.transparent,
-              width: 2,
+                  ? scheme.primary.withValues(alpha: 0.5)
+                  : cardColor == null
+                      ? scheme.outlineVariant.withValues(alpha: 0.8)
+                      : Colors.transparent,
+              width: isAllCategory ? 2 : 1,
             ),
           ),
           child: showImage ? _buildWithImage(context) : _buildCompact(context),
@@ -166,13 +187,38 @@ class _CategoryCard extends StatelessWidget {
       );
     }
 
+    if (overlayLabel) {
+      // The label rides on the picture, so the picture gets the whole card.
+      return ClipRRect(
+        borderRadius: AppTheme.brLg,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _buildImageOrIcon(context),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: OverlayLabelStrip(
+                title: name,
+                titleSize: 14,
+                textAlign: TextAlign.center,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 7),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
           flex: 3,
           child: ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+            borderRadius: AppTheme.brTopMd,
             child: _buildImageOrIcon(context),
           ),
         ),

@@ -3,10 +3,13 @@ import 'package:drift/drift.dart' hide Column;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
 import 'package:intl/intl.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../utils/currency_formatter.dart';
+import 'kds_stats_dialog.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Data model
@@ -394,6 +397,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ? null
                   : () => _changeDay(1)),
           IconButton(
+              icon: const Icon(Icons.insights_outlined),
+              tooltip: 'Kitchen stats (current shift)',
+              onPressed: () => showKdsStatsDialog(context)),
+          IconButton(
               icon: const Icon(Icons.refresh_outlined),
               tooltip: 'Refresh',
               onPressed: () => ref.invalidate(_dashboardStatsProvider(key))),
@@ -408,7 +415,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             children: [
               Icon(Icons.error_outline, size: 48, color: cs.error),
               const SizedBox(height: 12),
-              Text(e.toString()),
+              Text(errorText(e, AppLocalizations.of(context)!)),
               const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: () => ref.invalidate(_dashboardStatsProvider(key)),
@@ -766,7 +773,7 @@ class _PaidDonutChartState extends State<_PaidDonutChart> {
       ),
       PieChartSectionData(
         value: hasUnpaid ? widget.stats.unpaidRevenue : (total == 0 ? 1 : 0),
-        color: hasUnpaid ? Colors.orange.shade400 : Colors.grey.shade300,
+        color: hasUnpaid ? Colors.orange.shade400 : Theme.of(context).colorScheme.surfaceContainerHighest,
         title: (total == 0 || !hasUnpaid) ? '' : '${(widget.stats.unpaidRevenue / total * 100).toStringAsFixed(0)}%',
         radius: _touched == 1 ? 54 : 44,
         titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),

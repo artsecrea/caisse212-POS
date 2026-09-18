@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:drift/drift.dart' show Value;
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
+import '../widgets/adaptive_text_field.dart';
 
 /// Profile dialog showing user info and allowing password change.
 /// The custom password is stored in SharedPreferences (per user).
@@ -154,7 +156,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
       if (mounted) {
         setState(() {
           _isSaving = false;
-          _passwordError = e.toString();
+          _passwordError = errorText(e, l10n);
         });
       }
     }
@@ -181,7 +183,9 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: theme.primaryColor,
+                // White content on top: needs a dark background in both
+                // themes, which `primaryColor` is not. See [AppTheme.bar].
+                color: AppTheme.bar(theme.colorScheme),
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
@@ -191,13 +195,13 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                 children: [
                   CircleAvatar(
                     radius: 28,
-                    backgroundColor: Colors.white,
+                    backgroundColor: AppTheme.onBar,
                     child: Text(
                       currentUser?.firstName.substring(0, 1).toUpperCase() ?? 'U',
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
-                        color: theme.primaryColor,
+                        color: AppTheme.bar(theme.colorScheme),
                       ),
                     ),
                   ),
@@ -267,7 +271,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                       value: hasCustomPassword
                           ? l10n.translate('set')
                           : l10n.translate('not_set'),
-                      valueColor: hasCustomPassword ? Colors.green : Colors.grey,
+                      valueColor: hasCustomPassword ? Colors.green : Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
 
                     const Divider(height: 32),
@@ -305,7 +309,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
 
                     if (_isEditingDisplayName) ...[
                       const SizedBox(height: 12),
-                      OnscreenKeyboardTextField(
+                      AdaptiveKeyboardTextField(
                         controller: _displayNameController,
                         decoration: InputDecoration(
                           labelText: l10n.translate('display_name'),
@@ -339,8 +343,8 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                                 : const Icon(Icons.save, size: 18),
                             label: Text(l10n.translate('save')),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: theme.primaryColor,
-                              foregroundColor: Colors.white,
+                              backgroundColor: theme.colorScheme.primary,
+                              foregroundColor: theme.colorScheme.onPrimary,
                             ),
                           ),
                         ],
@@ -391,13 +395,13 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                         l10n.translate('change_password_hint'),
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey[600],
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(height: 12),
 
                       // Current Password
-                      OnscreenKeyboardTextField(
+                      AdaptiveKeyboardTextField(
                         controller: _currentPasswordController,
                         obscureText: _obscureCurrent,
                         decoration: InputDecoration(
@@ -417,7 +421,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                       const SizedBox(height: 12),
 
                       // New Password
-                      OnscreenKeyboardTextField(
+                      AdaptiveKeyboardTextField(
                         controller: _newPasswordController,
                         obscureText: _obscureNew,
                         decoration: InputDecoration(
@@ -437,7 +441,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                       const SizedBox(height: 12),
 
                       // Confirm Password
-                      OnscreenKeyboardTextField(
+                      AdaptiveKeyboardTextField(
                         controller: _confirmPasswordController,
                         obscureText: _obscureConfirm,
                         decoration: InputDecoration(
@@ -497,8 +501,8 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                                 : const Icon(Icons.save, size: 18),
                             label: Text(l10n.translate('save')),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: theme.primaryColor,
-                              foregroundColor: Colors.white,
+                              backgroundColor: theme.colorScheme.primary,
+                              foregroundColor: theme.colorScheme.onPrimary,
                             ),
                           ),
                         ],
@@ -574,13 +578,13 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
   }) {
     return Row(
       children: [
-        Icon(icon, size: 20, color: Colors.grey[600]),
+        Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
         const SizedBox(width: 12),
         Text(
           '$label:',
           style: TextStyle(
             fontSize: 14,
-            color: Colors.grey[600],
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(width: 8),

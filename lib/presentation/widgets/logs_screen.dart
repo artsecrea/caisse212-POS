@@ -156,7 +156,7 @@ class _LogsScreenState extends ConsumerState<LogsScreen> {
     if (_logs.isEmpty) {
       return Center(
         child: Text(l10n.translate('no_logs'),
-            style: TextStyle(color: Colors.grey[600], fontSize: 16)),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 16)),
       );
     }
     // One extra slot at the end for the loading/end indicator.
@@ -259,7 +259,7 @@ class _LogsScreenState extends ConsumerState<LogsScreen> {
                 ? Colors.orange
                 : isOrder
                     ? Colors.indigo
-                    : Colors.grey;
+                    : Theme.of(context).colorScheme.onSurfaceVariant;
     final icon = actionType == 'PAYMENT'
         ? Icons.payments
         : actionType == 'LOGIN'

@@ -1,15 +1,26 @@
 # Waiter App ↔ POS — Printing & Order Attribution
 
 This doc describes how printing and order ownership work between the
-waiter app and the POS for the three endpoints the waiter app calls:
+waiter app and the POS:
 
 - `POST /waiters/orders` — create an order
 - `PUT /waiters/orders/{code}/add-product` — add a product to an existing order
-- `POST /waiters/orders/{code}/print` — **NEW**: on-demand reprint
+- `POST /waiters/orders/{code}/print` — on-demand reprint
 
-Plus a guide for the waiter app team to wire the new reprint endpoint
-and a paper-size diagnostic for the "title not centered, lines don't
+Plus a paper-size diagnostic for the "title not centered, lines don't
 span" symptom.
+
+> **Payment is POS-only.** The waiter app never prints a payment receipt —
+> waiters don't take payment. Only the **order ticket** and **KDS ticket**
+> print from waiter actions. The cashier prints receipts when settling on the
+> POS.
+
+> **Master print switch — `printWaiterPaper`.** Settings → Order Defaults →
+> "Print waiter paper" is a single master switch for **all** auto-printing
+> triggered by waiter actions (order ticket + KDS). When off, no waiter action
+> prints anything automatically — regardless of the per-output rules or
+> `printWaiterOrderTicket`. Explicit reprints via `.../print` still work.
+> Default on.
 
 ---
 
@@ -42,22 +53,20 @@ When the waiter app posts a new order:
      (so the order looks like a normal cashier order in all the
      cashier-side screens — Orders Management, Daily Summary, etc.)
    - `session_id` = the POS's active cash session (or `null` if none open)
-   - `status` = cashier-configured default (Settings → Order Defaults →
-     "Waiter Order Status"; default `PENDING`)
+   - `status` = the shared `defaultOrderStatus` (Settings → Order Defaults →
+     "Order Status"; default `PENDING`) — same value cashier orders use.
 2. The waiter app gets back `{ id, code, message }` immediately.
 3. **In the background**, the POS fires the standard auto-prints:
-   - **Order ticket** (customer copy) — `printOrderReceipt` template,
-     same as a cashier order.
+   - **Order ticket** — `printOrderReceipt` template, same as a cashier order.
    - **KDS ticket** — same as a cashier order, honoring
      `splitKdsByStation` and per-station printer assignments.
-   - **Customer receipt + store copy + cash drawer kick** — only if
-     `waiterOrderDefaultPaid = true` in Settings → Order Defaults
-     (Section §3 below).
 
-Each output is gated by the cashier's per-rule `Sources` filter — the
-cashier can uncheck "Waiter" on the Customer Receipt rule and waiter
-orders will print everything except customer receipts. Default: all
-outputs on for source `WAITER`.
+   No customer/payment receipt is ever printed by a waiter action — the order
+   is created unpaid; receipts print when the **cashier** settles on the POS.
+
+Each output is gated by the cashier's per-rule `Sources` filter — the cashier
+can uncheck "Waiter" on the Order Ticket or KDS rule to suppress it for waiter
+orders. Default: both on for source `WAITER`.
 
 ### 2.1 No body change needed in the waiter app
 
@@ -66,22 +75,13 @@ fields. The behavior changes are all server-side, driven by Settings.
 
 ---
 
-## 3. `waiterOrderDefaultPaid` mode (optional)
+## 3. Payment is POS-only
 
-When the cashier enables **Settings → Order Defaults → "Waiter orders
-are pre-paid"**, every order created via `POST /waiters/orders` is
-auto-marked paid on the POS side:
-
-- A **CASH ticket** is inserted for the full order amount.
-- Every line is marked `state=PAID` and linked to that ticket.
-- The order's status is bumped to `paidOrderDefaultStatus` (default
-  `COMPLETED`).
-- The receipt printer prints the **customer receipt + store copy** in
-  addition to the order ticket + KDS.
-
-The waiter app sees no API change — same POST body, same response.
-
-Useful for shops where the waiter collects cash at the table.
+Waiter orders are always created **open/unpaid**. There is no waiter-side
+payment: no pay endpoint, no pay-on-create, no "pre-paid" setting. The
+**cashier** settles waiter orders on the POS (waiter settlement / profile
+dialog), which is where any customer receipt prints. A waiter order becomes
+indistinguishable from a cashier order once rung up.
 
 ---
 
@@ -230,11 +230,7 @@ For the waiter app team:
    comparing to a cashier-created order. If they look different, walk
    through §6 with the cashier — do NOT report it as a waiter-app
    bug, it's a print config mismatch.
-3. (Optional) **Surface `waiterOrderDefaultPaid` mode behavior** in
-   the waiter app's "settings" or onboarding — when the cashier turns
-   this on, the waiter sees the same response shape but doesn't need
-   to settle anything later. The cashier-side accounting handles it.
-4. (Optional) **Respect the dashboard "show owed" toggle.** When the
+3. (Optional) **Respect the dashboard "show owed" toggle.** When the
    cashier disables Settings → Server Settings → "Show owed amounts
    in waiter app", `GET /waiters/dashboard` omits the
    `expectedCash` / `totalCash` / `cancelledAmount` fields. Read with
@@ -246,9 +242,8 @@ For the waiter app team:
 ## 8. Quick reference
 
 ```http
-# Create order — auto-prints order ticket + KDS (+ customer receipt + store
-# copy when waiterOrderDefaultPaid=true). No special template; same as
-# cashier-created.
+# Create order — always open/unpaid. Auto-prints order ticket + KDS. No
+# special template; same as cashier-created. No payment receipt (POS-only).
 POST /waiters/orders
 { "waiterId": 5, "tableId": 12, "type": "DINE_IN", "products": [...] }
 

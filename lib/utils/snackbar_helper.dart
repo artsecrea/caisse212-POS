@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/settings_provider.dart';
+import 'app_localizations.dart';
+import 'error_text.dart';
 
 /// SnackBar helper.
 ///
@@ -105,7 +107,17 @@ class SnackBarHelper {
         kind: isError ? _SnackKind.error : _SnackKind.neutral);
   }
 
-  /// Show an error snack bar if enabled in settings.
+  /// Show an error snack bar.
+  ///
+  /// **Not** gated on `enableSnackBars`, despite taking a [ref] — the toggle
+  /// exists to silence routine chatter (sync started, item queued), and it
+  /// defaults to off. Honouring it here meant that on a default install every
+  /// failure in the app was invisible: a payment that did not save, a sync that
+  /// did not run, a booking the server refused, all silently swallowed while
+  /// the cashier believed the tap had worked. A failure the user is never told
+  /// about is worse than a noisy one.
+  ///
+  /// [ref] is kept so the ~30 existing call sites need no edit.
   static void showErrorSnackBar(
     BuildContext context,
     WidgetRef ref,
@@ -113,9 +125,30 @@ class SnackBarHelper {
     Duration duration = const Duration(seconds: 4),
     SnackBarAction? action,
   }) {
-    if (!ref.read(settingsProvider).enableSnackBars) return;
     _show(context, message,
         duration: duration, action: action, kind: _SnackKind.error);
+  }
+
+  /// Show a thrown [error], translated into something a cashier can act on.
+  ///
+  /// Prefer this to `error(context, '$e')` anywhere an exception is caught:
+  /// it strips the Dart framing, maps transport failures to "check the
+  /// connection" in the app's language, and lets a message the server actually
+  /// wrote through untouched. See [errorText].
+  static void failure(
+    BuildContext context,
+    Object? error, {
+    Duration duration = const Duration(seconds: 4),
+    SnackBarAction? action,
+  }) {
+    final l10n = AppLocalizations.of(context);
+    _show(
+      context,
+      l10n == null ? '$error' : errorText(error, l10n),
+      duration: duration,
+      action: action,
+      kind: _SnackKind.error,
+    );
   }
 
   /// Show a success snack bar if enabled in settings.

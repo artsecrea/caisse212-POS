@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/server_service.dart';
 import 'settings_provider.dart';
+import '../utils/pos_log.dart';
+import 'package:loggecrea/loggecrea.dart';
 
 /// Provider for the HTTP server service
 final serverServiceProvider = Provider<ServerService>((ref) {
@@ -31,7 +33,7 @@ Future<void> startServerWithSettings(WidgetRef ref) async {
     );
     ref.read(serverRunningProvider.notifier).state = true;
   } catch (e) {
-    print('❌ Failed to start server: $e');
+    Logger.instance.error('Failed to start server: $e');
     rethrow;
   }
 }
@@ -48,7 +50,7 @@ Future<void> startServerWithRef(Ref ref) async {
     );
     ref.read(serverRunningProvider.notifier).state = true;
   } catch (e) {
-    print('❌ Failed to start server: $e');
+    Logger.instance.error('Failed to start server: $e');
     rethrow;
   }
 }

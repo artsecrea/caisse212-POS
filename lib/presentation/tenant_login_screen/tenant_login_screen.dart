@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart' show OnscreenKeyboardTextField;
+import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dio/dio.dart';
+import '../../utils/app_localizations.dart';
+import '../../utils/error_text.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/data_sync_service.dart';
@@ -12,6 +15,8 @@ import '../widgets/report_issue_dialog.dart';
 import '../widgets/update_dialog.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
+import '../../utils/pos_log.dart';
+import '../widgets/adaptive_text_field.dart';
 
 class TenantLoginScreen extends ConsumerStatefulWidget {
   const TenantLoginScreen({super.key});
@@ -49,7 +54,13 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
 
   Future<void> _loadServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedUrl = prefs.getString('server_url') ?? 'https://app.caisse212';
+    // Must end in `/api`: ApiService stores this as `api_base_url` and appends
+    // a SECOND `/api` on every request, because the backend runs with servlet
+    // context-path `/api` and its controllers are mapped at `/api/pos/...`.
+    // A default without it produces `/api/pos/...`, which 404s as a static
+    // resource. (It was also missing the `.com`, so it never resolved at all.)
+    final savedUrl =
+        prefs.getString('server_url') ?? 'https://app.caisse212.com/api';
     _serverUrlController.text = savedUrl;
     _posNameController.text = 'example';
   }
@@ -85,7 +96,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       }
     } catch (e) {
 
-      print('Error checking for updates: $e');
+      posLog('Error checking for updates: $e');
       // Don't block login flow if update check fails
     }
   }
@@ -105,7 +116,10 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       final apiService = ApiService(prefs);
 
       // Save and set the base URL
-      final serverUrl = _serverUrlController.text.trim();
+      // Trailing slashes stripped: the request path is appended directly, so a
+      // pasted "…/api/" would produce "…/api//pos/orders".
+      final serverUrl =
+          _serverUrlController.text.trim().replaceAll(RegExp(r'/+$'), '');
       await prefs.setString('server_url', serverUrl);
       await prefs.setString('pos_name', _posNameController.text);
       await apiService.setBaseUrl(serverUrl);
@@ -171,20 +185,18 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         Navigator.of(context).pushReplacementNamed('/login');
       }
     } catch (e) {
-      print(e);
-      String errorMsg = e.toString().replaceFirst('Exception: ', '');
-
-      // Better error messages
-      if (errorMsg.contains('Connection failed') || errorMsg.contains('Failed host lookup')) {
+      posLog(e);
+      // `errorText` reads the status code and the server's own body off the
+      // real exception. That beats matching substrings of a message that was
+      // stringified two layers down — which is what this used to do, and why
+      // it went blind the moment api_service stopped flattening DioException.
+      var errorMsg = errorText(e, AppLocalizations.of(context)!);
+      if (e is DioException &&
+          (e.type == DioExceptionType.connectionError ||
+              e.type == DioExceptionType.unknown)) {
+        // Server-setup screen: the URL itself is the usual suspect here, so
+        // keep the checklist that names it.
         errorMsg = 'Cannot connect to server. Please check:\n• Server URL is correct\n• Server is running\n• Network connection is active';
-      } else if (errorMsg.contains('Network error')) {
-        errorMsg = errorMsg.replaceFirst('Network error: ', '');
-      } else if (errorMsg.contains('401') || errorMsg.contains('Unauthorized')) {
-        errorMsg = 'Invalid credentials. Please check your username and password.';
-      } else if (errorMsg.contains('404')) {
-        errorMsg = 'Server endpoint not found. Please check the server URL.';
-      } else if (errorMsg.contains('500')) {
-        errorMsg = 'Server error. Please contact your administrator.';
       }
 
       setState(() {
@@ -248,7 +260,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Demo setup failed: ${e.toString()}';
+        _errorMessage = errorText(e, AppLocalizations.of(context)!);
         _isLoadingData = false;
       });
     }
@@ -279,7 +291,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                     style: TextStyle(fontSize: 14),
                   ),
                   const SizedBox(height: 24),
-                  OnscreenKeyboardTextField(
+                  AdaptiveKeyboardTextField(
                     controller: passwordController,
                     obscureText: obscurePassword,
                     decoration: InputDecoration(
@@ -300,7 +312,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                     autofocus: true,
                   ),
                   const SizedBox(height: 16),
-                  OnscreenKeyboardTextField(
+                  AdaptiveKeyboardTextField(
                     controller: confirmPasswordController,
                     obscureText: obscureConfirmPassword,
                     decoration: InputDecoration(
@@ -324,18 +336,18 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.red[50],
+                        color: AppTheme.tintFill(context, Colors.red),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red[300]!),
+                        border: Border.all(color: AppTheme.tintBorder(context, Colors.red)),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.error_outline, color: Colors.red[700], size: 20),
+                          Icon(Icons.error_outline, color: AppTheme.tintOn(context, Colors.red), size: 20),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               errorMessage!,
-                              style: TextStyle(color: Colors.red[700], fontSize: 12),
+                              style: TextStyle(color: AppTheme.tintOn(context, Colors.red), fontSize: 12),
                             ),
                           ),
                         ],
@@ -374,8 +386,8 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                     Navigator.of(context).pop(password);
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
                     padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                   ),
                   child: const Text('Set Password', style: TextStyle(fontSize: 16)),
@@ -410,7 +422,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                 children: [
                   const Text('Enter password:'),
                   const SizedBox(height: 16),
-                  OnscreenKeyboardTextField(
+                  AdaptiveKeyboardTextField(
                     controller: passwordController,
                     obscureText: obscurePassword,
                     keyboardType: TextInputType.number,
@@ -444,8 +456,8 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                     Navigator.of(context).pop(password == _serverSettingsPassword);
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
                   ),
                   child: const Text('Verify'),
                 ),
@@ -518,9 +530,11 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
+            // White sits on this, so it must stay dark in BOTH themes — a dark
+            // scheme's `primary` is a pale blue. See [AppTheme.bar].
             colors: [
-              Theme.of(context).primaryColor,
-              Theme.of(context).primaryColor.withValues(alpha: 0.7),
+              AppTheme.bar(Theme.of(context).colorScheme),
+              AppTheme.barAlt(Theme.of(context).colorScheme),
             ],
           ),
         ),
@@ -548,7 +562,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                   const SizedBox(height: 16),
                   LinearProgressIndicator(
                     value: _loadingProgress,
-                    backgroundColor: Colors.grey[300],
+                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -616,9 +630,11 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
+          // See [AppTheme.bar] — white content needs a dark ground in both
+          // themes, and a dark scheme's `primary` is a pale blue.
           colors: [
-            Theme.of(context).primaryColor,
-            Theme.of(context).primaryColor.withValues(alpha: 0.7),
+            AppTheme.bar(Theme.of(context).colorScheme),
+            AppTheme.barAlt(Theme.of(context).colorScheme),
           ],
         ),
       ),
@@ -666,7 +682,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
           Text(
             'Connect to your server or use demo mode',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Colors.grey[600],
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             textAlign: TextAlign.center,
           ),
@@ -705,7 +721,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                   icon: const Icon(Icons.visibility_off),
                   tooltip: 'Hide Server URL',
                   style: IconButton.styleFrom(
-                    backgroundColor: Colors.grey[200],
+                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                     padding: const EdgeInsets.all(14),
                   ),
                 ),
@@ -718,9 +734,9 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
               children: [
                 Container(
                   decoration: BoxDecoration(
-                    color: Colors.grey[100],
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey[300]!),
+                    border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
                   ),
                   child: IconButton(
                     onPressed: _showServerSettingsDialog,
@@ -737,7 +753,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
             const SizedBox(height: 20),
           ],
 
-          OnscreenKeyboardTextField(
+          AdaptiveKeyboardTextField(
             controller: _posNameController,
             decoration: InputDecoration(
               labelText: 'POS Name *',
@@ -749,7 +765,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
             style: const TextStyle(fontSize: 16),
           ),
           const SizedBox(height: 20),
-          OnscreenKeyboardTextField(
+          AdaptiveKeyboardTextField(
             controller: _usernameController,
             decoration: InputDecoration(
               labelText: 'Username *',
@@ -761,7 +777,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
             style: const TextStyle(fontSize: 16),
           ),
           const SizedBox(height: 20),
-          OnscreenKeyboardTextField(
+          AdaptiveKeyboardTextField(
             controller: _passwordController,
             obscureText: _obscurePassword,
             decoration: InputDecoration(
@@ -786,18 +802,18 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Colors.red[50],
+                color: AppTheme.tintFill(context, Colors.red),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.red[300]!, width: 1.5),
+                border: Border.all(color: AppTheme.tintBorder(context, Colors.red), width: 1.5),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.error_outline, color: Colors.red[700], size: 22),
+                  Icon(Icons.error_outline, color: AppTheme.tintOn(context, Colors.red), size: 22),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       _errorMessage!,
-                      style: TextStyle(color: Colors.red[700], fontSize: 13),
+                      style: TextStyle(color: AppTheme.tintOn(context, Colors.red), fontSize: 13),
                     ),
                   ),
                 ],
@@ -850,10 +866,10 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
                 builder: (_) => const ReportIssueDialog(),
               ),
               icon: Icon(Icons.report_problem_outlined,
-                  size: 18, color: Colors.grey[600]),
+                  size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
               label: Text(
                 'Report Issue',
-                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ),
           ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
@@ -317,14 +318,14 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
           Container(
             width: 280,
             decoration: BoxDecoration(
-              color: Colors.grey[100],
-              border: Border(right: BorderSide(color: Colors.grey[300]!)),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              border: Border(right: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
             ),
             child: Column(
               children: [
                 Container(
                   padding: const EdgeInsets.all(16),
-                  color: Theme.of(context).primaryColor,
+                  color: AppTheme.bar(Theme.of(context).colorScheme),
                   child: const Row(
                     children: [
                       Icon(Icons.api, color: Colors.white),
@@ -359,10 +360,10 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                         ),
                         subtitle: Text(
                           endpoint.path,
-                          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                          style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
                         ),
                         trailing: endpoint.requiresAuth
-                            ? Icon(Icons.lock, size: 16, color: Colors.grey[600])
+                            ? Icon(Icons.lock, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant)
                             : null,
                         onTap: () => _selectEndpoint(endpoint),
                       );
@@ -380,11 +381,11 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.api, size: 80, color: Colors.grey[400]),
+                        Icon(Icons.api, size: 80, color: Theme.of(context).colorScheme.outline),
                         const SizedBox(height: 16),
                         Text(
                           'Select an endpoint to test',
-                          style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                          style: TextStyle(fontSize: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
                         ),
                       ],
                     ),
@@ -400,7 +401,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                               // Request header
                               Container(
                                 padding: const EdgeInsets.all(16),
-                                color: Colors.blue[50],
+                                color: AppTheme.tintFill(context, Colors.blue),
                                 child: Row(
                                   children: [
                                     _buildMethodBadge(_selectedEndpoint!.method),
@@ -453,7 +454,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                                         hintText: '/api/endpoint',
                                         isDense: true,
                                         prefixText: '$baseUrl/api',
-                                        prefixStyle: TextStyle(color: Colors.grey[600]),
+                                        prefixStyle: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                                       ),
                                     ),
                                   ],
@@ -541,7 +542,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                       // Response section
                       Expanded(
                         child: Container(
-                          color: Colors.grey[50],
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
@@ -550,7 +551,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                                 padding: const EdgeInsets.all(16),
                                 decoration: BoxDecoration(
                                   color: _getStatusColor(),
-                                  border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                                  border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
                                 ),
                                 child: Row(
                                   children: [
@@ -619,14 +620,14 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                                       ? Container(
                                           padding: const EdgeInsets.all(16),
                                           decoration: BoxDecoration(
-                                            color: Colors.red[50],
+                                            color: AppTheme.tintFill(context, Colors.red),
                                             borderRadius: BorderRadius.circular(8),
-                                            border: Border.all(color: Colors.red[300]!),
+                                            border: Border.all(color: AppTheme.tintBorder(context, Colors.red)),
                                           ),
                                           child: Row(
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
-                                              Icon(Icons.error_outline, color: Colors.red[700]),
+                                              Icon(Icons.error_outline, color: AppTheme.tintOn(context, Colors.red)),
                                               const SizedBox(width: 12),
                                               Expanded(
                                                 child: Text(
@@ -651,7 +652,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                                           : Center(
                                               child: Text(
                                                 'No response yet. Click "Send Request" to test the endpoint.',
-                                                style: TextStyle(color: Colors.grey[600]),
+                                                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                                               ),
                                             ),
                                 ),
@@ -684,7 +685,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
         color = Colors.red;
         break;
       default:
-        color = Colors.grey;
+        color = Theme.of(context).colorScheme.onSurfaceVariant;
     }
 
     return Container(
@@ -726,11 +727,11 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
   }
 
   Color _getStatusColor() {
-    if (_statusCode == null) return Colors.grey;
+    if (_statusCode == null) return Theme.of(context).colorScheme.onSurfaceVariant;
     if (_statusCode! >= 200 && _statusCode! < 300) return Colors.green;
     if (_statusCode! >= 400 && _statusCode! < 500) return Colors.orange;
     if (_statusCode! >= 500) return Colors.red;
-    return Colors.grey;
+    return Theme.of(context).colorScheme.onSurfaceVariant;
   }
 }
 

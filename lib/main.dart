@@ -1,15 +1,15 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:caisse212/presentation/widgets/printers_management_screen.dart';
-import 'package:caisse212/providers/desktop_update_provider.dart';
+import 'package:caisse212/presentation/widgets/update_ready_banner.dart';
+import 'package:caisse212/presentation/widgets/reauth_overlay.dart';
+import 'package:caisse212/providers/reauth_provider.dart';
 import 'package:caisse212/services/update_service.dart';
 import 'package:caisse212/providers/localization_provider.dart';
 import 'package:caisse212/services/discovery_service.dart';
 import 'package:caisse212/services/sound_service.dart';
-import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,6 +22,7 @@ import 'package:caisse212/presentation/widgets/sessions_management_screen.dart';
 import 'package:caisse212/presentation/widgets/users_management_screen.dart';
 import 'package:caisse212/presentation/widgets/tickets_management_screen.dart';
 import 'package:caisse212/presentation/widgets/agenda_screen.dart';
+import 'presentation/booking/booking_screen.dart';
 import 'package:caisse212/presentation/widgets/dashboard_screen.dart';
 import 'package:caisse212/presentation/widgets/notes_screen.dart';
 import 'package:caisse212/presentation/widgets/logs_screen.dart';
@@ -29,6 +30,7 @@ import 'package:caisse212/services/session_service.dart';
 import 'package:caisse212/services/server_startup_service.dart';
 import 'package:caisse212/services/activity_log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/autostart_service.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/theme/app_theme.dart';
 import 'presentation/login_screen/login_screen.dart';
@@ -36,6 +38,7 @@ import 'presentation/main_screen/main_screen.dart';
 import 'providers/database_providers.dart';
 import 'providers/settings_provider.dart';import 'utils/app_localizations.dart';
 import 'services/app_exit_service.dart';
+import 'providers/sse_provider.dart';
 
 /// Global navigator key — lets the desktop window-close handler (which runs
 /// outside any widget's build context) obtain a dialog-capable context to drive
@@ -85,7 +88,7 @@ class _BootScreen extends StatelessWidget {
                 'Loading...',
                 style: TextStyle(
                   fontSize: 16,
-                  color: Colors.grey[600],
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
@@ -152,6 +155,18 @@ Future<void> _initializeApp() async {
         },
       );
       logger.info("SharedPreferences initialized");
+
+      // Keep the OS autostart entry honest. The registered path is
+      // absolute, so an update that moved the executable leaves an entry
+      // pointing at a file that is gone; rewriting it on every launch is
+      // the only thing that repairs that. Fire-and-forget - a till that
+      // cannot write its own autostart entry must still open.
+      if (isDesktop) {
+        final wantsAutostart =
+            sharedPreferences.getBool('open_on_startup') ??
+                (sharedPreferences.getString('api_base_url') == null);
+        unawaited(AutostartService.reconcile(wantsAutostart));
+      }
     } catch (e, stack) {
       logger.error("Failed to initialize SharedPreferences: $e");
       _logError('SharedPreferences', e, stack);
@@ -169,9 +184,9 @@ Future<void> _initializeApp() async {
                   style: const TextStyle(fontSize: 16),
                 ),
                 const SizedBox(height: 16),
-                const Text('Please restart the application.',
-                  style: TextStyle(color: Colors.grey),
-                ),
+                // No context to read a theme from here — this screen is built
+                // outside the widget tree. Inherit the default text colour.
+                const Text('Please restart the application.'),
               ],
             ),
           ),
@@ -436,14 +451,12 @@ class _MyAppState extends ConsumerState<MyApp>
       // No context yet (still booting) → just let it close.
       final shouldExit = ctx == null ? true : await runAppExitFlow(ctx, ref);
       if (shouldExit) {
-        await windowManager.setPreventClose(false);
-        await windowManager.destroy();
+        await hardExitApp();
       }
     } catch (e) {
       logger.error('Window-close exit flow failed: $e');
-      // Don't trap the user — allow the close.
-      await windowManager.setPreventClose(false);
-      await windowManager.destroy();
+      // Don't trap the user — force the close.
+      await hardExitApp();
     } finally {
       _handlingExit = false;
     }
@@ -502,7 +515,7 @@ class _MyAppState extends ConsumerState<MyApp>
                   const SizedBox(height: 8),
                   Text('$e',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 14, color: Colors.grey),
+                    style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                   const SizedBox(height: 24),
                   ElevatedButton(
@@ -535,9 +548,14 @@ class _MyAppState extends ConsumerState<MyApp>
     // Get locale from settings
     final locale = Locale(settings.language);
 
-    // Desktop updater controller (null on non-desktop or before login)
-    final desktopUpdaterController =
-        ref.watch(desktopUpdaterControllerProvider);
+    // Keep the order-queue subscription alive for as long as the app runs, not
+    // just while the till screen is open. Two reasons: an order arriving while
+    // the cashier sits in Settings or Orders would otherwise be missed
+    // entirely, and the server alerts the admin with "0 terminals reached"
+    // whenever nobody is subscribed — which was true every time someone
+    // navigated away. The provider is a no-op when SSE is disabled or no user
+    // is logged in, so this costs nothing on a terminal that does not use it.
+    ref.watch(sseLifecycleProvider);
 
     final app = MaterialApp(
       title: 'caisse212',
@@ -569,18 +587,18 @@ class _MyAppState extends ConsumerState<MyApp>
           result = child ?? const SizedBox.shrink();
         }
 
-        // Overlay the update dialog listener on desktop when controller is available.
-        // UpdateDialogListener has no child parameter – it renders as a floating overlay.
-        if (!kIsWeb &&
-            (Platform.isWindows || Platform.isMacOS || Platform.isLinux) &&
-            desktopUpdaterController != null) {
-          result = Stack(
-            children: [
-              result,
-              UpdateDialogListener(controller: desktopUpdaterController),
-            ],
-          );
-        }
+        // Global "update ready" banner (auto-update flow): a slim bar pinned
+        // above the app content that appears once a non-mandatory update has
+        // been silently downloaded, offering Restart-now / Later. Renders an
+        // empty box when there's nothing to show, so this is a no-op most of
+        // the time. (The legacy `desktop_updater` overlay was removed — the app
+        // uses the unified UpdateService flow, `/api/api/pos/updates/latest`.)
+        result = Column(
+          children: [
+            const UpdateReadyBanner(),
+            Expanded(child: result),
+          ],
+        );
 
         // Mobile back-to-exit: this PopScope sits ABOVE the Navigator, so
         // in-app back is handled by the Navigator first and only a root-level
@@ -593,12 +611,33 @@ class _MyAppState extends ConsumerState<MyApp>
               final ctx = appNavigatorKey.currentContext ?? context;
               final shouldExit = await runAppExitFlow(ctx, ref);
               if (shouldExit) {
-                await SystemNavigator.pop();
+                await hardExitApp();
               }
             },
             child: result,
           );
         }
+
+        // Obligatory re-auth gate — the topmost overlay, so it blocks the whole
+        // app when the terminal's session (refresh token) is expiring/expired.
+        // Re-authenticates in place (no navigation, state preserved); "Sign out"
+        // is the escape hatch to the tenant login.
+        result = Stack(
+          children: [
+            result,
+            ReauthOverlay(
+              onSignOut: () async {
+                final api = ref.read(apiServiceProvider);
+                await api.clearAllAuthData();
+                ref.read(currentUserProvider.notifier).state = null;
+                ref.read(currentSessionProvider.notifier).state = null;
+                ref.read(reauthRequiredProvider.notifier).reevaluate();
+                appNavigatorKey.currentState
+                    ?.pushNamedAndRemoveUntil('/tenant', (r) => false);
+              },
+            ),
+          ],
+        );
 
         return result;
       },
@@ -617,6 +656,7 @@ class _MyAppState extends ConsumerState<MyApp>
         Locale('en', ''), // English
         Locale('ar', ''), // Arabic
         Locale('fr', ''), // French
+        Locale('es', ''), // Spanish
       ],
 
       theme: AppTheme.lightTheme(),
@@ -636,6 +676,7 @@ class _MyAppState extends ConsumerState<MyApp>
         '/printers': (context) => const PrintersManagementScreen(),
         '/api-tester': (context) => const ApiTesterScreen(),
         '/agenda': (context) => const AgendaScreen(),
+        '/booking': (context) => const BookingScreen(),
         '/dashboard': (context) => const DashboardScreen(),
         '/notes': (context) => const NotesScreen(),
         '/logs': (context) => const LogsScreen(),
