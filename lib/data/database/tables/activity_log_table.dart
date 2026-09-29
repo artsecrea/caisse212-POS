@@ -45,4 +45,6 @@ class ActivityAction {
   static const String adminElevationRevoked = 'ADMIN_ELEVATION_REVOKED';
   // Remote command received via SSE from the server.
   static const String posCommand = 'POS_COMMAND';
+  // Cashier rang a waiter's phone over the LAN push channel.
+  static const String waiterCalled = 'WAITER_CALLED';
 }

@@ -17,7 +17,7 @@ void main() {
       const config = PrinterConfig();
       expect(
         config.orderedFields('customer', 'info'),
-        ['orderCode', 'date', 'cashier', 'waiter', 'orderType', 'table',
+        ['orderCode', 'orderNumber', 'date', 'cashier', 'waiter', 'orderType', 'table',
          'persons', 'customerName', 'customerPhone', 'deliveryAddress',
          'paymentMethod'],
       );

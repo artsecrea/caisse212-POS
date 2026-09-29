@@ -24,6 +24,27 @@ bool printerSetupAllowed(PermissionService permissions) =>
     permissions.hasPermission(Permissions.settingsView) ||
     permissions.hasPermission(Permissions.printersManage);
 
+/// Shortest and longest settings pin.
+///
+/// Four was the only allowed length; shops asked for longer because a 4-digit
+/// code on a till the whole floor can see is shoulder-surfed in a shift. Eight
+/// is the ceiling because the unlock field is shared with the master code,
+/// which is `yyyymmdd`.
+const int kSettingsPinMinLength = 4;
+const int kSettingsPinMaxLength = 8;
+
+/// Whether [pin] is an acceptable settings pin: digits only, 4 to 8 of them.
+///
+/// Pure, so the rule is testable and so the set-pin dialog and anything that
+/// later writes a pin cannot disagree about what is valid.
+bool isValidSettingsPin(String pin) {
+  final p = pin.trim();
+  if (p.length < kSettingsPinMinLength || p.length > kSettingsPinMaxLength) {
+    return false;
+  }
+  return RegExp(r'^\d+$').hasMatch(p);
+}
+
 /// The code that opens Settings on any terminal, whatever pin is configured.
 ///
 /// It is today's date as `yyyymmdd` — a value the owner can always work out
@@ -156,9 +177,9 @@ class _SettingsLockDialogState extends ConsumerState<SettingsLockDialog> {
               obscureText: true,
               textAlign: TextAlign.center,
               keyboardType: TextInputType.number,
-              // The master code is 8 digits, so the field has to accept more
-              // than the pin's 4.
-              maxLength: 8,
+              // The master code is 8 digits and a pin may now be up to 8 too,
+              // so the field caps at 8 either way.
+              maxLength: kSettingsPinMaxLength,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               style: const TextStyle(fontSize: 28, letterSpacing: 12),
               decoration: InputDecoration(
@@ -168,10 +189,17 @@ class _SettingsLockDialogState extends ConsumerState<SettingsLockDialog> {
               ),
               onChanged: (value) {
                 if (_wrong) setState(() => _wrong = false);
-                // A 4-digit pin submits itself — the usual till behaviour.
-                // Longer entries (the master code) wait for Enter/OK.
-                if (value.length == 4 &&
-                    value == ref.read(settingsProvider).settingsPin) {
+                // A pin submits itself the moment it matches — the usual till
+                // behaviour, and now length-agnostic: hard-coding 4 meant a
+                // 6-digit pin typed correctly just sat there waiting for a
+                // keypress the cashier had no reason to make.
+                //
+                // Matched on equality, not on length alone, so a WRONG entry
+                // of the right length still waits for Enter/OK rather than
+                // flashing "wrong code" mid-type. The master code (8 digits,
+                // and not the pin) falls through to the same wait.
+                final pin = ref.read(settingsProvider).settingsPin;
+                if (pin.isNotEmpty && value == pin) {
                   _submit();
                 }
               },

@@ -1,8 +1,13 @@
-# Z (Shift) Tracking — Backend API Contract
+# Z (Shift) Tracking — Backend API Contract (OBSOLETE)
 
-Status: **client implemented, backend NOT yet implemented.** This document is the
-spec the POS backend must implement so the Flutter POS can sync the new `Z`
-entity. The client already builds/sends everything below.
+> **Superseded by Z contract v3** — `docs/POS_Z_CONTRACT.md` in the `bms`
+> repo. There is no Z entity on the server any more: a Z is a
+> `(terminal, zDay, zSeq)` label carried on cash sessions, the POS owns the
+> counter, and `/pos/z/{code}`, `/pos/z/bulk`, `/pos/z/open` and `GET /pos/z`
+> are no longer called (the server never returns 409). What follows is the
+> v2 design, kept for history only.
+
+Status: v2, never shipped.
 
 ## Concept
 

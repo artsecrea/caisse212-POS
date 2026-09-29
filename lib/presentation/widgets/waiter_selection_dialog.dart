@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../../data/database/app_database.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
+import 'call_waiter_dialog.dart';
 import 'waiter_profile_dialog.dart';
 
 class WaiterSelectionDialog extends ConsumerStatefulWidget {
@@ -275,6 +277,76 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
     );
   }
 
+  Future<void> _handleWaiterLongPress(Waiter waiter) async {
+    final l10n = AppLocalizations.of(context)!;
+    final waiterName = '${waiter.firstName} ${waiter.lastName ?? ''}'.trim();
+
+    if (!ref.read(settingsProvider).waiterCallEnabled) {
+      await _openWaiterProfile(waiter, waiterName);
+      return;
+    }
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text(waiterName),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('call'),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.campaign),
+              title: Text(l10n.translate('call_waiter')),
+              subtitle: Text(l10n.translate('call_waiter_subtitle')),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('profile'),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.badge_outlined),
+              title: Text(l10n.translate('waiter_profile')),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+    if (choice == 'call') {
+      await showCallWaiterDialog(
+        context,
+        waiterId: waiter.id,
+        waiterName: waiterName,
+      );
+      return;
+    }
+    await _openWaiterProfile(waiter, waiterName);
+  }
+
+  /// Resolves area names off the cached areas + waiterAreas providers so the
+  /// profile header reads "Bar · Lounge" without a fresh fetch.
+  Future<void> _openWaiterProfile(Waiter waiter, String waiterName) async {
+    final areaIds = await ref.read(waiterAreasProvider(waiter.id).future);
+    final allAreas = await ref.read(areasProvider.future);
+    final areaNames = areaIds.isEmpty
+        ? <String>[]
+        : allAreas
+            .where((a) => areaIds.contains(a.id))
+            .map((a) => a.name)
+            .toList();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => WaiterProfileDialog(
+        waiterId: waiter.id,
+        waiterName: waiterName,
+        waiterImageUrl: waiter.imageUrl,
+        areaNames: areaNames,
+      ),
+    );
+  }
+
   Widget _buildWaiterCard(BuildContext context, WidgetRef ref, Waiter waiter, bool isDark, AppLocalizations l10n) {
     final cs = Theme.of(context).colorScheme;
     final currentOrder = ref.watch(orderProvider);
@@ -304,32 +376,12 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
             'waiterName': waiterName,
           });
         },
-        // Long-press = open the waiter profile (balance / history / settle)
-        // instead of selecting them for the current order. Resolves area
-        // names off the cached areas + waiterAreas providers so the dialog
-        // header reads "Bar · Lounge" without a fresh fetch.
-        onLongPress: () async {
-          final waiterName =
-              '${waiter.firstName} ${waiter.lastName ?? ''}'.trim();
-          final areaIds = await ref.read(waiterAreasProvider(waiter.id).future);
-          final allAreas = await ref.read(areasProvider.future);
-          final areaNames = areaIds.isEmpty
-              ? <String>[]
-              : allAreas
-                  .where((a) => areaIds.contains(a.id))
-                  .map((a) => a.name)
-                  .toList();
-          if (!context.mounted) return;
-          await showDialog<void>(
-            context: context,
-            builder: (_) => WaiterProfileDialog(
-              waiterId: waiter.id,
-              waiterName: waiterName,
-              waiterImageUrl: waiter.imageUrl,
-              areaNames: areaNames,
-            ),
-          );
-        },
+        // Long-press = the actions that are *about* this waiter rather than
+        // ways to put them on the order. Profile has always lived here; with
+        // calls enabled it gains a sibling, so the gesture opens a chooser
+        // instead. With calls off the gesture is exactly what it was — the
+        // setting must not cost an extra tap to people who never turn it on.
+        onLongPress: () => _handleWaiterLongPress(waiter),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           decoration: BoxDecoration(

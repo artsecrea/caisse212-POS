@@ -3,6 +3,7 @@ import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import '../services/pending_operations_service.dart';
 import 'database_providers.dart';
+import 'settings_provider.dart';
 import '../utils/pos_log.dart';
 
 class TicketRepository {
@@ -170,6 +171,14 @@ class TicketRepository {
         // Exact match on ticket id or orderId when query is numeric
         textMatch = textMatch | t.id.equals(parsedId) | t.orderId.equals(parsedId);
       }
+      final q2 = searchQuery.trim();
+      final orderNo = int.tryParse(q2.startsWith('#') ? q2.substring(1) : q2);
+      if (orderNo != null &&
+          _ref?.read(settingsProvider).showOrderNumberInLists == true) {
+        textMatch = textMatch |
+            CustomExpression<bool>('order_id IN (SELECT id FROM orders '
+                'WHERE session_order_no = $orderNo)');
+      }
       parts.add(textMatch);
     }
 
@@ -309,11 +318,41 @@ class TicketRepository {
       }
     }
 
+    // Batch per-order extras: session order number and delivery fee
+    final orderNos = <int, int>{};
+    final orderIds = tickets.map((t) => t.orderId).toSet().toList();
+    final orderRows = await (_database.select(_database.orders)
+          ..where((o) => o.id.isIn(orderIds)))
+        .get();
+    final feeByOrder = <int, double>{};
+    for (final o in orderRows) {
+      if (o.sessionOrderNo != null) orderNos[o.id] = o.sessionOrderNo!;
+      if ((o.deliveryFee ?? 0) > 0) feeByOrder[o.id] = o.deliveryFee!;
+    }
+    // An order's one delivery fee belongs to its first ticket (lowest id —
+    // tickets are inserted in payment order), as on the printed receipt.
+    // Looked up across ALL the order's tickets, not just this page.
+    final feeTicketIds = <int>{};
+    if (feeByOrder.isNotEmpty) {
+      final siblings = await (_database.select(_database.tickets)
+            ..where((t) => t.orderId.isIn(feeByOrder.keys.toList())))
+          .get();
+      final firstByOrder = <int, int>{};
+      for (final s in siblings) {
+        final held = firstByOrder[s.orderId];
+        if (held == null || s.id < held) firstByOrder[s.orderId] = s.id;
+      }
+      feeTicketIds.addAll(firstByOrder.values);
+    }
+
     return tickets
         .map((t) => TicketWithDetails(
               ticket: t,
               itemCount: itemCounts[t.id] ?? 0,
               isZLocked: t.sessionId != null && endedSessionIds.contains(t.sessionId),
+              orderNumber: orderNos[t.orderId],
+              deliveryFee:
+                  feeTicketIds.contains(t.id) ? feeByOrder[t.orderId]! : 0.0,
             ))
         .toList();
   }
@@ -362,12 +401,22 @@ class TicketWithDetails {
   final Ticket ticket;
   final int itemCount;
   final bool isZLocked; // True when linked session is ended (Z-report closed)
+  final int? orderNumber; // Per-session number of the ticket's order
+  /// The order's delivery fee when this is the ticket that collected it,
+  /// else 0. Not part of [Ticket.amount], which stays products-only.
+  final double deliveryFee;
 
   TicketWithDetails({
     required this.ticket,
     required this.itemCount,
     this.isZLocked = false,
+    this.orderNumber,
+    this.deliveryFee = 0.0,
   });
+
+  /// What to show as the ticket's amount, with or without the fee.
+  double displayAmount({required bool includeDeliveryFee}) =>
+      ticket.amount + (includeDeliveryFee ? deliveryFee : 0.0);
 }
 
 final ticketRepositoryProvider = Provider<TicketRepository>((ref) {

@@ -30,7 +30,9 @@ it's device-to-device over Wi-Fi.
   straight into the POS's local database.
 - Orders created/paid by the waiter then ride the POS's normal sync pipeline
   up to the central backend — the waiter app never talks to the backend.
-- No realtime push to the waiter app. It **polls** (`GET`) for tables/orders.
+- Data is **polled** (`GET`) for tables/orders. Push over SSE
+  (`GET /waiters/events`) carries waiter calls and kitchen events (ready /
+  canceled / rupture) — see `waiter_app_sse_notifications.md`.
 
 ---
 
@@ -151,6 +153,7 @@ returns `200`. A browser-based waiter client works.
 | GET | `/waiters/orders/{code}` | One order, full detail |
 | POST | `/waiters/orders` | Create an order (always open/unpaid) |
 | PUT | `/waiters/orders/{code}/add-product` | Append a line |
+| PUT | `/waiters/orders/{code}/add-products` | Append a whole round (preferred) |
 | DELETE | `/waiters/orders/{code}/products/{opId}` | Remove a line |
 | POST | `/waiters/orders/{code}/cancel` | Cancel the order |
 | POST | `/waiters/orders/{code}/transfer-table` | Move to another table |
@@ -178,8 +181,31 @@ Liveness check. **No auth** (skips the password gate).
 
 **200**
 ```json
-{ "status": "ok", "timestamp": "2026-07-23T10:00:00.000", "port": 8080 }
+{ "status": "ok", "timestamp": "2026-07-23T10:00:00.000", "port": 8080,
+  "coursesEnabled": false, "waiterCallsEnabled": false, "catalogVersion": "…",
+  "waiterShowKitchenStatus": false, "waiterNotifyReady": false,
+  "waiterNotifyCanceled": false, "waiterNotifyRupture": false }
 ```
+
+Switch fields are always present. When `waiterShowKitchenStatus` is `true`,
+each order line in `GET /waiters/orders` and `GET /waiters/orders/{code}` also
+carries `kitchenState` (`PENDING` | `PREPARING` | `READY` | `CANCELED`) and
+`readyAt` (ISO-8601 or `null`). When it is `false` those two keys are
+**absent** — never read a missing key as `PENDING`.
+
+**Money on orders** (`GET /waiters/orders`, `GET /waiters/orders/{code}`), since 2026-09-24:
+
+| Order field | Meaning |
+|---|---|
+| `subtotalAmount` | Before any discount |
+| `discountAmount` | Line discounts (promo + manual) + order-level discount |
+| `totalAmount` | After every discount (the order-level % is now applied — it was ignored before) |
+| `paidAmount` | `totalAmount − balanceAmount` (payment is per line: a line is paid once a ticket carries it) |
+| `balanceAmount` | Unpaid lines, with the order-level % off |
+| `discountLabel` | `"-10%"` when an order-level discount exists, else `null` |
+| `discountReason` | The cashier's reason for it, or `null` |
+
+Per line: `grossTotal` (before discount), `discountAmount` (positive), and the existing `lineTotal` (after the line's own discounts; the order-level % is not spread over lines).
 
 ---
 
@@ -452,7 +478,8 @@ Tables the waiter can serve, with live occupancy + outstanding balance.
 ```json
 { "tables": [
   { "id": 12, "name": "T12", "capacity": 4, "areaId": 3, "areaName": "Terrace",
-    "orderId": 88, "orderCode": "RGH7IE3H3LR", "totalAmount": 120.0 }
+    "orderId": 88, "orderCode": "RGH7IE3H3LR", "totalAmount": 120.0,
+    "orderWaiterId": 3, "orderWaiterName": "Salma" }
 ] }
 ```
 
@@ -460,6 +487,22 @@ Tables the waiter can serve, with live occupancy + outstanding balance.
 |---|---|
 | `orderId`/`orderCode` | The open order occupying the table, or `null` = **free**. |
 | `totalAmount` | **Outstanding balance = unpaid lines only.** A fully-paid-but-not-cleared table shows the order with `totalAmount: 0`. |
+| `orderWaiterId` | Who is serving the table. `null` = **nobody's**. |
+| `orderWaiterName` | Their display name, or `null`. Presentation only — match on the id. |
+
+> **`orderWaiterId` is not `waiterId`.** The query param on this endpoint is
+> already `waiterId` and means the *caller*; this is the waiter on the table's
+> ORDER, which is why it is named for the order like `orderId`/`orderCode`.
+>
+> **Null means "nobody's", never "everybody's".** It is null for a free table,
+> for an order the cashier rang up at the till (`Orders.waiterId` is nullable),
+> and it is absent entirely on builds before this field existed. Treat absent
+> and null identically, and never as a wildcard — a null must not make a table
+> match every waiter.
+>
+> This is for a **view** ("which of these am I holding"), not for scoping.
+> Which tables a waiter RECEIVES is already decided server-side by their area
+> assignments; this field only lets the app sort the ones it was given.
 
 > **Occupancy mirrors the POS**: a table is occupied whenever it has an order
 > linked, including a paid `COMPLETED` order that hasn't been cleared. Only
@@ -570,7 +613,7 @@ Create a new order.
 | `waiterId` | yes | — | Must exist & be active. |
 | `type` | no | `DINE_IN` | `DINE_IN` \| `TAKE_AWAY` \| `DELIVERY`. |
 | `tableId` | for `DINE_IN` | — | Required when `DINE_IN`. |
-| `persons` | no | `1` | |
+| `persons` | no | `1` | Covers. Set **only at creation** — neither `add-product` nor `add-products` accepts it, and there is no waiter endpoint to amend it afterwards. The cashier can still change it on the POS, so it is a starting number, not a lock. Reopening an order returns whatever it currently holds. |
 | `products[]` | no | `[]` | Unknown `productId`s are skipped. |
 | `products[].variantId` | no | — | Server re-reads variant price/TVA. |
 | `products[].quantity` | no | `1` | Fractional allowed. |
@@ -641,6 +684,99 @@ Append one product line to an existing order.
 
 **Errors:** `400` missing `waiterId`/`productId`, or product not found;
 `403` not owner; `404` order not found; `500`.
+
+---
+
+### 14b) `PUT /waiters/orders/{code}/add-products`  ← prefer this
+
+Append **several** product lines in one call. Same job as `add-product`, but
+for a whole round of ordering at once.
+
+**Use this instead of looping `add-product`.** It is not a micro-optimisation:
+it is the difference between one kitchen ticket and N of them. Sent as N single
+calls there is nothing on the wire telling the POS where the round ended, so it
+has to group them with a timer (`waiterKdsBatchSeconds`, default 12s) and the
+kitchen ticket is delayed by that much. One call *is* the round, so the ticket
+is exact and immediate.
+
+`add-product` (singular) is **not deprecated** and is not going away — older
+tablets keep using it, and the two can be mixed freely on the same order.
+
+**Body**
+```json
+{
+  "waiterId": 42,
+  "products": [
+    { "productId": 10, "quantity": 2, "note": "extra spicy" },
+    { "productId": 11, "variantId": 3, "quantity": 1, "courseNo": 2,
+      "components": [ { "componentId": 5, "quantity": 1, "price": 5.0 } ] }
+  ]
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `waiterId` | yes | Must own the order. |
+| `products` | yes | Non-empty array. Each entry is **exactly** the shape used in the `products` array of `POST /waiters/orders` — same keys, same optionality. |
+
+**200**
+```json
+{ "message": "Products added to order successfully", "added": 2, "skipped": [] }
+```
+
+| Field | Meaning |
+|---|---|
+| `added` | How many lines were actually written. |
+| `skipped` | Lines the catalogue did not recognise, as `{ "index": 1, "productId": 9999 }`. `index` is the position in the `products` array you sent. The rest still went in — show the user what was dropped rather than claiming the round failed. |
+
+`skipped` carries the **index**, not just the id, because the id alone cannot
+identify a line: a cart legitimately holds two entries of the same product that
+differ by variant, options or `courseNo`, and they ring up differently. Told
+only the id, you cannot tell which of your two lines to keep for retry.
+
+**Batching makes course sections deterministic. A loop makes them a coin
+flip.** The POS decides sections from *the lines being printed* —
+`shouldSplitByCourse` needs at least two lines carrying more than one distinct
+`courseNo`.
+
+* **One `add-products` call** → one ticket holding the whole round, printed
+  **immediately** → sections always correct, regardless of timing. The grouping
+  wait (`waiterKdsBatchSeconds`) is skipped entirely: this call is itself the
+  statement that the round is finished, so there is nothing to wait for.
+* **N `add-product` calls** → it depends on `waiterKdsBatchSeconds`:
+  * window **> 0** and every tap lands inside the rolling window → the calls
+    collapse into one print job whose delta is all the new lines → it **does**
+    section;
+  * window **= 0**, or a waiter pauses long enough for the window to expire
+    mid-round → one ticket per line → one line can never split → **no
+    sections**.
+
+So a looping build gives a waiter who orders briskly a sectioned ticket and a
+waiter who stops to talk to the table an unsectioned one, with nothing on
+either end explaining the difference. That non-determinism is the real argument
+for batching — more than the ticket count, and more than "a loop cannot
+section", which is not true.
+
+> **Do not set `waiterKdsBatchSeconds: 0` while any tablet still loops
+> `add-product`.** You do not need to change it for batching tablets either —
+> `add-products` already bypasses the wait. The setting only governs the looped
+> route. Set it early and a shop that uses courses loses sections on
+> every round after the order's first, because the create ticket (`full` mode)
+> is the only one that ever sees more than one line.
+
+**Behavior:** every line (`state = PENDING`) and its components commit in **one
+transaction** — a half-added round is never visible. Then `updated_at` is
+touched, `is_synced` cleared, one log entry written, and **one** KDS ticket
+fired for the whole round (`modificationsOnly`), gated by `printWaiterPaper` +
+`kdsEnabled` + rules.
+
+Prices, TVA and pre-discounts are always read from the POS catalogue. Anything
+price-shaped in the request body is ignored — a tablet cannot name its own
+price.
+
+**Errors:** `400` missing `waiterId`, empty `products`, or *every* product
+unknown (`error: "no_known_products"`, nothing written); `403` not owner;
+`404` order not found; `500`.
 
 ---
 
@@ -758,7 +894,8 @@ POST /waiters/login {pin, waiterId}     → validate PIN for the picked profile
 GET  /waiters/tables?waiterId=…         → pick a free table
 GET  /waiters/products|categories|…     → build the menu (cache it)
 POST /waiters/orders                    → create order on the table (code)
-PUT  /waiters/orders/{code}/add-product → add more rounds as they come
+PUT  /waiters/orders/{code}/add-products → add a round (one call, one ticket)
+PUT  /waiters/orders/{code}/add-product  → single line; still supported
 DELETE /waiters/orders/{code}/products/{opId}?waiterId=…  → remove a wrong line
 GET  /waiters/orders/{code}?waiterId=…  → review the itemised bill
                                           → cashier settles it on the POS

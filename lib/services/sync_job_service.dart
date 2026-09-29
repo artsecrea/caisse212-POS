@@ -96,17 +96,20 @@ class SyncJobService {
 
       final bulkSize = _prefs.getInt(_bulkSyncSizeKey) ?? 50;
 
-      // 2b. Sync Z (shift) rows BEFORE sessions — sessions reference the Z code,
-      //     so the server must know the Z first.
-      final zsSynced = await _syncService.syncZsBulk(batchSize: bulkSize);
-      if (zsSynced > 0) {
-        _logger.info('Synced $zsSynced Z shifts');
-      }
-
-      // 3. Sync ended sessions FIRST (tickets may reference sessions)
+      // 3. Sync ended sessions FIRST (tickets may reference sessions). A Z
+      //    reaches the server on its sessions — there is no Z push.
       final sessionsSynced = await _syncService.syncSessionsBulk(batchSize: bulkSize);
       if (sessionsSynced > 0) {
         _logger.info('Synced $sessionsSynced sessions');
+      }
+      final movementsSynced =
+          await _syncService.syncCashMovementsBulk(batchSize: bulkSize);
+      if (movementsSynced > 0) {
+        _logger.info('Synced $movementsSynced cash movements');
+      }
+      final notified = await _syncService.syncPendingNotifications();
+      if (notified > 0) {
+        _logger.info('Delivered $notified queued notifications');
       }
 
       // 4. Sync unsynced orders
@@ -226,9 +229,10 @@ class SyncJobService {
       await _syncService.syncPendingOperations();
 
       final bulkSize = _prefs.getInt(_bulkSyncSizeKey) ?? 50;
-      // Z before sessions before orders before tickets (referential order).
-      await _syncService.syncZsBulk(batchSize: bulkSize);
+      // Sessions before orders before tickets (referential order).
       await _syncService.syncSessionsBulk(batchSize: bulkSize);
+      await _syncService.syncCashMovementsBulk(batchSize: bulkSize);
+      await _syncService.syncPendingNotifications();
       await _syncService.syncOrdersBulk(batchSize: bulkSize);
       await _syncService.syncTicketsBulk(batchSize: bulkSize);
       await _syncService.syncCustomersBulk(batchSize: bulkSize);

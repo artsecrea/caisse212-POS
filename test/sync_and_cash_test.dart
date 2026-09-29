@@ -260,7 +260,12 @@ void main() {
       // Courses on an order line.
       await db.customStatement(
           'SELECT course_no FROM order_products LIMIT 0');
-      expect(db.schemaVersion, 51);
+      // Annulment tombstones, so the Z can total lines pulled off saved
+      // orders after their order_products rows are gone.
+      await db.customStatement(
+          'SELECT order_id, product_name, quantity, amount, '
+          'was_sent_to_kitchen, session_id FROM removed_order_items LIMIT 0');
+      expect(db.schemaVersion, 57);
     });
   });
 }

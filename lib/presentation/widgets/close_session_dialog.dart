@@ -7,7 +7,6 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/unpaid_orders_service.dart';
-import '../../providers/z_day_provider.dart';
 import '../../domain/models/order_models.dart';
 import '../../services/daily_summary_service.dart';
 import '../../utils/button_styles.dart';
@@ -16,10 +15,14 @@ import '../../services/printing_service.dart';
 import '../../services/notification_params.dart';
 import '../../services/session_service.dart';
 import '../../services/z_actions.dart';
+import '../../services/z_rules.dart' show ZRuleBlock;
+import '../../services/z_service.dart';
+import '../../data/database/app_database.dart' as db;
 import '../../data/database/tables/activity_log_table.dart';
 import '../../services/activity_log_service.dart';
 import '../../services/permission_service.dart';
-import '../../utils/admin_auth.dart' show showAdminCredentialDialog;
+import '../../utils/admin_auth.dart'
+    show showAdminCredentialDialog, userHasPermission;
 import 'report_documents.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
@@ -35,7 +38,14 @@ class CloseSessionResult {
   /// no printer configured, etc.). Only meaningful when [closed] is true.
   final bool zPrinted;
 
-  const CloseSessionResult({required this.closed, required this.zPrinted});
+  /// `true` if the session's Z was closed along with it.
+  final bool zClosed;
+
+  const CloseSessionResult({
+    required this.closed,
+    required this.zPrinted,
+    this.zClosed = false,
+  });
 
   static const cancelled = CloseSessionResult(closed: false, zPrinted: false);
 }
@@ -302,6 +312,9 @@ Future<CloseSessionResult> showCloseSessionDialog({
   required BuildContext context,
   required WidgetRef ref,
   required int sessionId,
+  /// Start with "close the Z" ticked — the top bar's "Close Z" entry, which
+  /// is this same close with the day's Z on top.
+  bool closeZ = false,
 }) async {
   final l10n = AppLocalizations.of(context)!;
   final sessionService = SessionService(ref.read(databaseProvider));
@@ -351,14 +364,9 @@ Future<CloseSessionResult> showCloseSessionDialog({
       TextEditingController(text: expected.toStringAsFixed(2));
   final notesCtrl = TextEditingController();
   bool busy = false;
-  // With Z tracking on, the shift stays open after this session closes, so the
-  // only valid print is an X (snapshot). Offer it as a checkbox (remembered in
-  // prefs) right inside this dialog instead of a second follow-up dialog.
-  final zTracking = ref.read(settingsProvider).zTrackingEnabled;
+  // The Z stays open after a session closes (unless it is closed with it), so
+  // the only session-level print is an X. Offered as a checkbox, remembered.
   bool printX = ref.read(settingsProvider).printXOnSessionClose;
-  // Z-tracking OFF only: append a compact whole-day rollup after the
-  // per-session Z, covering every session of the closing session's z-day.
-  bool printZDay = ref.read(settingsProvider).printZDayTotalOnClose;
   // Extra tickets, each printed separately with its own cut. The same set the
   // Z dialog offers — a manager closing a till wants the same papers whether
   // they reach them from here or from there — so the choice, the UI and the
@@ -367,10 +375,19 @@ Future<CloseSessionResult> showCloseSessionDialog({
   final staffChoices =
       await StaffChoices.load(ref.read(databaseProvider), l10n);
   if (!context.mounted) return CloseSessionResult.cancelled;
-  // Close the whole business day along with this session. Deliberately NOT
-  // persisted — ending the trading day must be a fresh decision every time.
-  bool closeDay = false;
-  final dayLock = zTracking && ref.read(settingsProvider).zDayLockEnabled;
+
+  // The Z this session belongs to. Null only on a legacy session opened
+  // before Z tracking, which keeps the old per-session Z print.
+  final session = await sessionService.getSessionById(sessionId);
+  final zService = ref.read(zServiceProvider);
+  final sessionZ = session?.zId == null
+      ? null
+      : await zService.getById(session!.zId!);
+  final openZ = sessionZ != null && sessionZ.status == 'open' ? sessionZ : null;
+  // Closing the Z is never remembered: ending the trading day must be a
+  // deliberate choice every time.
+  bool closeTheZ = closeZ && openZ != null;
+  if (!context.mounted) return CloseSessionResult.cancelled;
 
   final result = await showDialog<CloseSessionResult>(
     context: context,
@@ -386,6 +403,15 @@ Future<CloseSessionResult> showCloseSessionDialog({
         Future<void> doConfirm() async {
           if (busy) return;
           final c = counted();
+
+          // Closing the Z with the session is checked first, so a refusal
+          // leaves the dialog exactly as it was.
+          int? zClosedBy = ref.read(currentUserProvider)?.id;
+          if (closeTheZ && openZ != null) {
+            final by = await _authorizeZClose(ctx, ref, openZ);
+            if (by == null) return;
+            zClosedBy = by;
+          }
 
           // A session that does not balance — a short or over drawer, or
           // orders still unpaid on the floor — can be made a supervised
@@ -456,13 +482,12 @@ Future<CloseSessionResult> showCloseSessionDialog({
               } catch (_) {}
             }
 
-            // 2. Print the per-session Z-report — but only when Z (shift)
-            //    tracking is OFF. With Z tracking, the shift owns reporting: the
-            //    caller offers an X (snapshot) print on session close and the Z
-            //    report prints at shift close, so we skip the per-session print.
+            // 2. Print. A session close prints at most an X — the Z report is
+            //    the Z's, and prints only when the Z closes. A legacy session
+            //    with no Z gets its X too (a Z would be printed before its
+            //    day is closed).
             bool printed = false;
             DailySummaryReport? zReport;
-            final zTracking = ref.read(settingsProvider).zTrackingEnabled;
             // What the floor still owes as this shift ends — the figure the
             // outgoing cashier is handing over, which is by definition not in
             // the takings. Read once, before any printing, so both tickets
@@ -475,70 +500,54 @@ Future<CloseSessionResult> showCloseSessionDialog({
             } catch (_) {}
             try {
               zReport = await dailySummary.generateSessionReport(sessionId);
-              if (!zTracking) {
-                printed = await ref
-                    .read(printingServiceProvider)
-                    .printDailySummaryReport(
-                        report: zReport, outstanding: outstanding);
-              }
-
-              // Optional day-summary (z-day) total — the whole-day rollup of
-              // every session sharing this session's opening day. Offered on
-              // close regardless of Z tracking; prints right after the per-
-              // session Z (or on its own when Z tracking owns the reporting).
-              if (printZDay) {
-                final s = zReport.sessions.firstOrNull;
-                if (s != null) {
-                  final zDay = DateTime(
-                      s.startedAt.year, s.startedAt.month, s.startedAt.day);
-                  final dayReport =
-                      await dailySummary.generateZDayReport(zDay);
-                  final ok = await ref
-                      .read(printingServiceProvider)
-                      .printZDayTotal(report: dayReport);
-                  printed = printed || ok;
-                }
-              }
-            } catch (_) {}
-
-            // 2b. With Z tracking, print an X for THIS session only if the
-            //     cashier ticked the box. The X here is a per-session snapshot;
-            //     the whole-shift totals print as the Z report at shift close.
-            if (zTracking && printX && zReport != null) {
-              try {
+              if (sessionZ == null) {
                 printed = await ref
                     .read(printingServiceProvider)
                     .printDailySummaryReport(
                         report: zReport,
                         reportType: 'X',
                         outstanding: outstanding);
-              } catch (_) {}
+              } else if (printX) {
+                printed = await ref
+                    .read(printingServiceProvider)
+                    .printDailySummaryReport(
+                        report: zReport,
+                        reportType: 'X',
+                        outstanding: outstanding);
+              }
+            } catch (_) {}
+
+            // 2b. AUTO_AFTER_HOUR: past the terminal's auto-close time, ASK
+            //     whether to close the Z — never silently. A "No" is not
+            //     remembered; the next session close asks again.
+            var closeMode = ZService.closeManual;
+            if (!closeTheZ && openZ != null && zAutoCloseDueFor(ref, openZ)) {
+              final yes = await _askCloseDay(ctx, l10n);
+              if (yes && ctx.mounted) {
+                final by = await _authorizeZClose(ctx, ref, openZ);
+                if (by != null) {
+                  closeTheZ = true;
+                  closeMode = ZService.closeAuto;
+                  zClosedBy = by;
+                }
+              }
             }
 
-            // 2c. Close the whole business day. Runs AFTER endSession above:
-            //     ZService.closeZ auto-ends any still-open session WITHOUT a
-            //     cash count, so closing the Z first would silently discard
-            //     the count and variance the cashier just typed.
+            // 2c. Close the Z. After endSession above, so the Z's last
+            //     session is this one, closed with its count — the session
+            //     the server marks as closing the Z.
             int? closedZId;
-            if (zTracking && closeDay) {
+            if (closeTheZ && openZ != null) {
               try {
-                final z = ref.read(currentZProvider) ??
-                    await ref.read(zServiceProvider).getOpenZ();
-                closedZId = z?.id;
-                final user = ref.read(currentUserProvider);
-                await closeBusinessDay(
-                  ref,
-                  endedBy: user?.id,
-                  endedByName: user == null
-                      ? null
-                      : '${user.firstName} ${user.lastName}'.trim(),
-                );
+                await closeZNow(ref, openZ,
+                    closeMode: closeMode, endedBy: zClosedBy);
+                closedZId = openZ.id;
                 // The Z report is the day's legal document — always printed.
-                if (closedZId != null) {
-                  final ok = await printZReport(ref, closedZId, isX: false);
-                  printed = printed || ok;
-                }
-              } catch (_) {/* the day close itself already committed */}
+                final ok = await printZReport(ref, openZ.id, isX: false);
+                printed = printed || ok;
+              } catch (e) {
+                Logger.instance.error('Z close failed: $e');
+              }
             }
 
             // 2d. Extra tickets. Scope follows the action: closing the day
@@ -548,12 +557,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
             // Scope follows the action: closing the day covers the whole Z,
             // otherwise just this session.
             final scopeSessionIds = closedZId != null
-                ? [
-                    for (final s in await ref
-                        .read(zServiceProvider)
-                        .sessionsForZ(closedZId))
-                      s.id
-                  ]
+                ? [for (final s in await zService.sessionsForZ(closedZId)) s.id]
                 : <int>[sessionId];
             final scopeLabel =
                 zReport?.sessions.firstOrNull?.sessionCode ?? '#$sessionId';
@@ -576,10 +580,10 @@ Future<CloseSessionResult> showCloseSessionDialog({
                 ref.read(databaseProvider),
                 ref.read(apiServiceProvider),
               );
-              // Zs go FIRST: sessions reference their Z by code, so a session
-              // pushed before its Z lands on the server orphaned.
-              await syncService.syncZsBulk();
-              await syncService.syncSingleSession(sessionId);
+              // The session carries its Z label, and — if it closed the Z —
+              // the close fields. There is no separate Z push.
+              await syncService.syncSessionsBulk();
+              await syncService.syncCashMovementsBulk();
               await syncService.syncOrdersBulk();
               await syncService.syncTicketsBulk();
               // After orders + tickets, so each refund's order (and its server
@@ -593,14 +597,17 @@ Future<CloseSessionResult> showCloseSessionDialog({
             await _sendEmailReport(ref, dailySummary, sessionId);
 
             // 5. Fire-and-forget notification so admin devices get the Z summary.
-            final sessionReport = zReport?.sessions.firstOrNull;
-            if (sessionReport != null) {
-              unawaited(_sendClosedNotification(ref, sessionReport, sessionId));
+            final closedReport = zReport;
+            if (closedReport != null && closedReport.sessions.isNotEmpty) {
+              unawaited(_sendClosedNotification(ref, closedReport, sessionId));
             }
 
             if (ctx.mounted) {
               Navigator.of(ctx).pop(
-                CloseSessionResult(closed: true, zPrinted: printed),
+                CloseSessionResult(
+                    closed: true,
+                    zPrinted: printed,
+                    zClosed: closedZId != null),
               );
             }
           } catch (e) {
@@ -640,7 +647,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (zTracking) ...[
+                  if (sessionZ != null) ...[
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       dense: true,
@@ -658,25 +665,6 @@ Future<CloseSessionResult> showCloseSessionDialog({
                     ),
                     const SizedBox(height: 8),
                   ],
-                  // Day-summary (z-day) total — always offered on close, whether
-                  // or not Z tracking is on. Prints the whole-day rollup of every
-                  // session sharing this session's opening day.
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    value: printZDay,
-                    onChanged: busy
-                        ? null
-                        : (v) {
-                            setLocal(() => printZDay = v ?? false);
-                            ref
-                                .read(settingsProvider.notifier)
-                                .setPrintZDayTotalOnClose(v ?? false);
-                          },
-                    title: Text(l10n.translate('print_z_day_total')),
-                    subtitle: Text(l10n.translate('print_z_day_total_subtitle')),
-                  ),
                   // Extra tickets — each prints separately, and the choice is
                   // remembered so a shop that always wants them ticks once.
                   ReportDocumentsPicker(
@@ -686,25 +674,23 @@ Future<CloseSessionResult> showCloseSessionDialog({
                     onChanged: (persist) => setLocal(
                         () => persist(ref.read(settingsProvider.notifier))),
                   ),
-                  // Day close — the fiscal gesture. Never remembered: ending
-                  // the trading day must be a deliberate choice every time.
-                  if (zTracking) ...[
+                  // Close the Z with this session — the day-close gesture.
+                  if (openZ != null) ...[
                     const Divider(height: 16),
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       dense: true,
                       controlAffinity: ListTileControlAffinity.leading,
-                      value: closeDay,
-                      onChanged:
-                          busy ? null : (v) => setLocal(() => closeDay = v ?? false),
+                      value: closeTheZ,
+                      onChanged: busy
+                          ? null
+                          : (v) => setLocal(() => closeTheZ = v ?? false),
                       title: Text(
-                        l10n.translate('close_the_day'),
+                        '${l10n.translate('close_z')} · ${ZService.displayName(openZ)}',
                         style: TextStyle(
                             color: cs.error, fontWeight: FontWeight.w600),
                       ),
-                      subtitle: Text(dayLock
-                          ? l10n.translate('day_close_warning')
-                          : l10n.translate('close_the_day_subtitle')),
+                      subtitle: Text(l10n.translate('close_the_day_subtitle')),
                     ),
                   ],
                   const SizedBox(height: 8),
@@ -838,11 +824,9 @@ Future<CloseSessionResult> showCloseSessionDialog({
                           strokeWidth: 2, color: cs.onError),
                     )
                   : const Icon(Icons.stop_circle_outlined),
-              label: Text(closeDay
+              label: Text(closeTheZ
                   ? l10n.translate('close_session_and_day')
-                  : zTracking
-                      ? l10n.translate('close_session')
-                      : l10n.translate('end_session_and_print_z')),
+                  : l10n.translate('close_session')),
               style: ElevatedButton.styleFrom(
                 backgroundColor: cs.error,
                 foregroundColor: cs.onError,
@@ -859,17 +843,103 @@ Future<CloseSessionResult> showCloseSessionDialog({
   return result ?? CloseSessionResult.cancelled;
 }
 
+/// Who may close [z] now: the current user, or an administrator who signs in
+/// when the rules need someone else (`pos:z:close`, or `pos:z:override` before
+/// the earliest-close time). Returns the closing user id, or null (refused —
+/// the reason has been shown).
+Future<int?> _authorizeZClose(
+  BuildContext context,
+  WidgetRef ref,
+  db.Z z,
+) async {
+  final l10n = AppLocalizations.of(context)!;
+  final perms = ref.read(permissionServiceProvider);
+  final me = ref.read(currentUserProvider)?.id;
+  final block = await zCloseBlock(
+    ref,
+    z,
+    hasClosePermission: perms.hasPermission(Permissions.zClose),
+    hasOverride: perms.hasPermission(Permissions.zOverride),
+  );
+  if (block == null) return me;
+  if (!context.mounted) return null;
+  final needs = switch (block.block) {
+    ZRuleBlock.noClosePermission => Permissions.zClose,
+    ZRuleBlock.tooEarlyToClose => Permissions.zOverride,
+    _ => null,
+  };
+  if (needs == null) {
+    SnackBarHelper.error(context, block.message(l10n));
+    return null;
+  }
+  final elevation = await showAdminCredentialDialog(
+    context,
+    ref,
+    title: l10n.translate('close_z'),
+    description: block.message(l10n),
+    permission: needs,
+  );
+  if (elevation == null) return null;
+  // The signer must clear every rule, not just the one that stopped us.
+  final database = ref.read(databaseProvider);
+  final signer = await (database.select(database.users)
+        ..where((u) => u.id.equals(elevation.adminId)))
+      .getSingleOrNull();
+  if (signer == null) return null;
+  final again = await zCloseBlock(
+    ref,
+    z,
+    hasClosePermission: userHasPermission(signer, Permissions.zClose),
+    hasOverride: userHasPermission(signer, Permissions.zOverride),
+  );
+  if (again != null) {
+    if (context.mounted) SnackBarHelper.error(context, again.message(l10n));
+    return null;
+  }
+  return elevation.adminId;
+}
+
+/// "Clôturer la journée (Z) ?" — asked when a session closes past the
+/// terminal's auto-close time.
+Future<bool> _askCloseDay(BuildContext context, AppLocalizations l10n) async {
+  final yes = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      title: Text(l10n.translate('z_close_day_prompt')),
+      content: Text(l10n.translate('z_close_day_prompt_body')),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: Text(l10n.translate('no')),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text(l10n.translate('close_z')),
+        ),
+      ],
+    ),
+  );
+  return yes == true;
+}
+
 /// POSTs a POS_SESSION_CLOSED notification from the Z-report data.
 /// Never throws — best-effort only.
 Future<void> _sendClosedNotification(
   WidgetRef ref,
-  SessionSummaryReport s,
+  DailySummaryReport report,
   int sessionId,
 ) async {
+  final s = report.sessions.first;
   try {
     final currency = ref.read(settingsProvider).currency;
     final posName = ref.read(apiServiceProvider).getPosName() ?? '';
     final closedAt = s.endedAt ?? DateTime.now();
+    final session = await SessionService(ref.read(databaseProvider))
+        .getSessionById(sessionId);
+    final z = session?.zId == null
+        ? null
+        : await ref.read(zServiceProvider).getById(session!.zId!);
 
     final params = NotificationParams.sessionClosed(
       terminalName: posName,
@@ -879,13 +949,16 @@ Future<void> _sendClosedNotification(
       // use, so Expected / Counted / Variance agree on the mobile card.
       expectedCash: s.expectedCash,
       currency: currency,
+      sections: report.sections,
+      zDay: z == null ? null : ZService.labelOf(z).zDay,
+      zSeq: z?.zSeq,
+      autoClosed: session?.autoClosed ?? false,
     );
 
-    await ref.read(apiServiceProvider).postNotification(
-      type: 'POS_SESSION_CLOSED',
-      params: params,
+    await ref.read(notificationOutboxProvider).send(
+      'POS_SESSION_CLOSED',
+      params,
       refId: sessionId.toString(),
-      clientRequestId: const Uuid().v4(),
     );
   } catch (e) {
     Logger.instance.warning('session-closed notification failed: $e');
@@ -901,7 +974,11 @@ Future<void> _sendEmailReport(
 ) async {
   try {
     final currency = ref.read(settingsProvider).currency;
-    final zNumber = ref.read(zDayStateProvider).zNumber;
+    final session = await SessionService(ref.read(databaseProvider))
+        .getSessionById(sessionId);
+    final z = session?.zId == null
+        ? null
+        : await ref.read(zServiceProvider).getById(session!.zId!);
 
     // The server's idempotency key is (tenant, sessionCode, clientRequestId).
     // Minting a fresh uuid per attempt would make a retry — or a second close
@@ -919,7 +996,7 @@ Future<void> _sendEmailReport(
     final payload = await dailySummary.buildEmailReportPayload(
       sessionId,
       currency: currency,
-      zNumber: zNumber == 0 ? null : zNumber,
+      zNumber: z?.zSeq,
       clientRequestId: rid,
     );
     final sessionCode = (payload['session'] as Map)['code'] as String;

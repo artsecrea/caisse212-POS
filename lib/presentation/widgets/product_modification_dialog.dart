@@ -241,6 +241,18 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     });
   }
 
+  /// Whether this product arrives with no price of its own, so the cashier
+  /// has to supply one.
+  ///
+  /// Reads the CATALOGUE price, not the effective one: a variant or an
+  /// override may well have filled it in by the time the dialog builds, and
+  /// the question being asked is "did the catalogue leave this blank".
+  bool get _needsPriceEntry {
+    final product = widget.product;
+    final base = product is OrderItem ? product.finalPrice : product.finalPrice;
+    return base <= 0;
+  }
+
   @override
   void dispose() {
     _manualDiscountController.dispose();
@@ -801,7 +813,13 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         ? (widget.product as OrderItem).productName
         : widget.product.name;
     final baseProductPrice = widget.product is OrderItem
-        ? (widget.product as OrderItem).subtotalPerItem
+        // finalPrice, matching what the save path reads a few hundred lines
+        // up. NOT subtotalPerItem: that strips the TVA, adds the pre-discount
+        // back and folds in the components. Seeding the price box from it meant
+        // reopening a 500 line showed 490, and accepting the dialog wrote 490
+        // back — the tax falling out of the price a little more on every
+        // reopen.
+        ? (widget.product as OrderItem).finalPrice
         : widget.product.finalPrice;
     final baseProductImageUrl = widget.product is OrderItem
         ? (widget.product as OrderItem).imageUrl
@@ -997,6 +1015,13 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                     const SizedBox(height: 8),
                     AdaptiveKeyboardTextField(
                       controller: _priceController,
+                      // Retyped, not edited — see [selectAllOnFocus].
+                      selectAllOnFocus: true,
+                      // A product the catalogue prices at zero is one whose
+                      // price is decided at the counter, so the cashier is
+                      // here to type it: put the caret in the box rather than
+                      // making them find it.
+                      autofocus: _needsPriceEntry,
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
                       inputFormatters: [
@@ -1994,6 +2019,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             width: 80,
             child: AdaptiveKeyboardTextField(
               controller: _quantityController,
+              selectAllOnFocus: true,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               textAlign: TextAlign.center,
               style: TextStyle(

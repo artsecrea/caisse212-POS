@@ -39,11 +39,14 @@ import 'tables/z_table.dart';
 import 'tables/refund_table.dart';
 import 'tables/product_unit_table.dart';
 import 'tables/cash_movement_table.dart';
+import 'tables/removed_order_item_table.dart';
 import 'tables/serial_table.dart';
 import 'tables/integration_mapping_table.dart';
 import 'tables/provider_table.dart';
 import 'tables/agenda_booking_table.dart';
 import 'tables/ticket_draft_split_table.dart';
+import 'tables/pending_notification_table.dart';
+import 'tables/order_number_counter_table.dart';
 import '../../utils/pos_log.dart';
 
 part 'app_database.g.dart';
@@ -87,11 +90,14 @@ part 'app_database.g.dart';
   RefundLines,
   ProductUnits,
   CashMovements,
+  RemovedOrderItems,
   Serials,
   IntegrationMappings,
   Providers,
   AgendaBookings,
   TicketDraftSplits,
+  PendingNotifications,
+  OrderNumberCounters,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
@@ -104,7 +110,7 @@ class AppDatabase extends _$AppDatabase {
   static String dbName = 'sqd.db';
 
   @override
-  int get schemaVersion => 51;
+  int get schemaVersion => 57;
 
   @override
   MigrationStrategy get migration {
@@ -613,6 +619,74 @@ class AppDatabase extends _$AppDatabase {
             } catch (e) {/* may already exist */}
           }
         }
+        if (from < 57) {
+          // Counters behind the per-session order number, one per scope.
+          try {
+            await m.createTable(orderNumberCounters);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 56) {
+          // Per-session order number.
+          try {
+            await customStatement(
+                'ALTER TABLE orders ADD COLUMN session_order_no INTEGER NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 55) {
+          // Notification outbox: kept until the server accepts each one.
+          try {
+            await m.createTable(pendingNotifications);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 54) {
+          // Z v3 audit flags: system-closed sessions and time-limit overrides.
+          for (final stmt in const [
+            'ALTER TABLE cash_sessions ADD COLUMN auto_closed '
+                'INTEGER NOT NULL DEFAULT 0 CHECK (auto_closed IN (0, 1));',
+            'ALTER TABLE cash_sessions ADD COLUMN z_override '
+                'INTEGER NOT NULL DEFAULT 0 CHECK (z_override IN (0, 1));',
+            'ALTER TABLE zs ADD COLUMN open_override '
+                'INTEGER NOT NULL DEFAULT 0 CHECK (open_override IN (0, 1));',
+          ]) {
+            try {
+              await customStatement(stmt);
+            } catch (e) {/* may already exist */}
+          }
+        }
+        if (from < 53) {
+          // Z contract v3: a Z is a (zDay, zSeq) label carried on sessions.
+          for (final stmt in const [
+            'ALTER TABLE zs ADD COLUMN z_day TEXT NULL;',
+            'ALTER TABLE zs ADD COLUMN z_seq INTEGER NOT NULL DEFAULT 1;',
+            'ALTER TABLE zs ADD COLUMN open_mode TEXT NULL;',
+            'ALTER TABLE zs ADD COLUMN close_mode TEXT NULL;',
+            'ALTER TABLE cash_sessions ADD COLUMN money_entered REAL NULL;',
+            'ALTER TABLE cash_sessions ADD COLUMN money_carried_over REAL NULL;',
+            'ALTER TABLE cash_sessions ADD COLUMN z_open_mode TEXT NULL;',
+            'ALTER TABLE cash_sessions ADD COLUMN is_closing_session '
+                'INTEGER NOT NULL DEFAULT 0 CHECK (is_closing_session IN (0, 1));',
+            'ALTER TABLE cash_movements ADD COLUMN code TEXT NULL;',
+            'ALTER TABLE cash_movements ADD COLUMN is_synced '
+                'INTEGER NOT NULL DEFAULT 0 CHECK (is_synced IN (0, 1));',
+          ]) {
+            try {
+              await customStatement(stmt);
+            } catch (e) {/* may already exist */}
+          }
+          // Existing Zs take their opening calendar day — the only day they
+          // were ever stamped with. Text datetimes start with yyyy-MM-dd.
+          await customStatement(
+              "UPDATE zs SET z_day = substr(started_at, 1, 10) WHERE z_day IS NULL;");
+          await customStatement(
+              "UPDATE cash_movements SET code = 'CM-L' || id WHERE code IS NULL;");
+        }
+        if (from < 52) {
+          // Annulment tombstones: removing a line deletes its order_products
+          // row, so without this the Z had nothing left to count.
+          try {
+            await m.createTable(removedOrderItems);
+          } catch (e) {/* may already exist */}
+        }
         if (from < 51) {
           // Courses (entrée / plat / dessert). Null on every existing row,
           // which is exactly right: nobody chose one, so nothing about how
@@ -904,6 +978,68 @@ class AppDatabase extends _$AppDatabase {
         }
       },
     );
+  }
+
+  /// The counter row an order in [session] draws from under [mode]
+  /// (`session` | `z` | `manual`). A session with no Z falls back to its own
+  /// scope rather than sharing one with every other Z-less session.
+  static String orderNumberScope(String mode, CashSession session) {
+    switch (mode) {
+      case 'manual':
+        return 'manual';
+      case 'z':
+        if (session.zId != null) return 'z:${session.zId}';
+        return 'session:${session.id}';
+      default:
+        return 'session:${session.id}';
+    }
+  }
+
+  /// Hands out the next order number for an order in [sessionId], or null
+  /// when there is no such session (the order simply goes unnumbered).
+  ///
+  /// [mode] decides when the numbers restart: every cash session, every Z,
+  /// or only when an admin resets them ([resetOrderNumber]). Increment and
+  /// read run in one transaction so two orders arriving at once (cashier +
+  /// waiter app) can never share a number.
+  Future<int?> nextSessionOrderNo(int? sessionId,
+      {String mode = 'session'}) async {
+    if (sessionId == null) return null;
+    return transaction(() async {
+      final session = await (select(cashSessions)
+            ..where((s) => s.id.equals(sessionId)))
+          .getSingleOrNull();
+      if (session == null) return null;
+      final scope = orderNumberScope(mode, session);
+      await customStatement(
+        'INSERT INTO order_number_counters (scope, seq) VALUES (?, 1) '
+        'ON CONFLICT(scope) DO UPDATE SET seq = seq + 1',
+        [scope],
+      );
+      final row = await (select(orderNumberCounters)
+            ..where((c) => c.scope.equals(scope)))
+          .getSingle();
+      return row.seq;
+    });
+  }
+
+  /// Restarts the numbering the next order in [sessionId] would draw from,
+  /// so it gets #1. Numbers already printed are left as they are. In
+  /// `manual` mode [sessionId] is not needed.
+  Future<void> resetOrderNumber(int? sessionId,
+      {String mode = 'session'}) async {
+    String? scope;
+    if (mode == 'manual') {
+      scope = 'manual';
+    } else if (sessionId != null) {
+      final session = await (select(cashSessions)
+            ..where((s) => s.id.equals(sessionId)))
+          .getSingleOrNull();
+      if (session != null) scope = orderNumberScope(mode, session);
+    }
+    if (scope == null) return;
+    await into(orderNumberCounters).insertOnConflictUpdate(
+        OrderNumberCountersCompanion.insert(scope: scope, seq: const Value(0)));
   }
 
   static LazyDatabase _openConnection() {

@@ -592,7 +592,7 @@ class _MyAppState extends ConsumerState<MyApp>
         // been silently downloaded, offering Restart-now / Later. Renders an
         // empty box when there's nothing to show, so this is a no-op most of
         // the time. (The legacy `desktop_updater` overlay was removed — the app
-        // uses the unified UpdateService flow, `/api/api/pos/updates/latest`.)
+        // uses the signed UpdateService flow against caisse212-updates.)
         result = Column(
           children: [
             const UpdateReadyBanner(),

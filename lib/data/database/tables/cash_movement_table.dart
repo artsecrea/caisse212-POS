@@ -8,11 +8,15 @@ import 'package:drift/drift.dart';
 /// contract already assumes these exist: it defines `moneyAtEnd` as
 /// "open + cash sales − refunds − **payouts**".
 ///
-/// Local-only for now: there is no POS endpoint for cash movements, so these
-/// feed the expected-cash figure and the X/Z reports without a sync flag. When
-/// an endpoint appears, add `isSynced` and a bulk push in the usual pattern.
+/// Pushed to `/pos/cash-movements` (schema v53) as PAY_IN / PAY_OUT, attached
+/// to its session by `sessionCode`.
 class CashMovements extends Table {
   IntColumn get id => integer().autoIncrement()();
+
+  /// Sync key, `CM-…`. Nullable only so the v53 migration can add it; every
+  /// row is backfilled and every new row gets one.
+  TextColumn get code => text().nullable()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
 
   /// `IN` = money added to the drawer (float top-up, change delivery).
   /// `OUT` = money removed (petty cash, supplier payment, bank drop).

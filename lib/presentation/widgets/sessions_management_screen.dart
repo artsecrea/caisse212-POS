@@ -435,6 +435,9 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
                   tooltip: l10n.translate('end_session_action'),
                   onPressed: () => _endSession(session),
                 ),
+              // A closed session belongs to its Z's totals; only an open
+              // one may be deleted (the server refuses the rest).
+              if (session.status != 'ended')
               PermissionIconButton(
                 permission: Permissions.sessionsDelete,
                 icon: const Icon(Icons.delete, size: 20),

@@ -18,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/enums.dart';
 import 'serial_job_queue.dart';
 import '../data/database/app_database.dart';
+import '../domain/models/component_rules.dart';
 import '../domain/models/order_course.dart';
 import '../domain/models/order_models.dart';
 import '../utils/app_localizations.dart';
@@ -300,24 +301,28 @@ class PrinterConfig {
   /// print gating and the settings UI. List order is the display order.
   static const Map<String, List<String>> fieldCatalog = {
     'order': [
-      'storeAddress', 'storePhone', 'orderCode', 'date', 'cashier', 'waiter',
+      'storeAddress', 'storePhone', 'orderCode', 'orderNumber', 'date',
+      'cashier', 'waiter',
       'orderType', 'table', 'persons', 'customerName', 'customerPhone',
       'deliveryAddress', 'subtotal', 'discount', 'tva', 'barcode',
     ],
     'customer': [
-      'storeAddress', 'storePhone', 'orderCode', 'date', 'cashier', 'waiter',
+      'storeAddress', 'storePhone', 'orderCode', 'orderNumber', 'date',
+      'cashier', 'waiter',
       'orderType', 'table', 'persons', 'customerName', 'customerPhone',
-      'deliveryAddress', 'paymentMethod', 'tva', 'amountGiven', 'change',
-      'barcode',
+      'deliveryAddress', 'paymentMethod', 'discount', 'tva', 'amountGiven',
+      'change', 'barcode',
     ],
     'store': [
-      'storeAddress', 'storePhone', 'orderCode', 'date', 'cashier', 'waiter',
+      'storeAddress', 'storePhone', 'orderCode', 'orderNumber', 'date',
+      'cashier', 'waiter',
       'orderType', 'table', 'persons', 'customerName', 'customerPhone',
-      'deliveryAddress', 'paymentMethod', 'tva', 'amountGiven', 'change',
-      'barcode',
+      'deliveryAddress', 'paymentMethod', 'discount', 'tva', 'amountGiven',
+      'change', 'barcode',
     ],
     'kds': [
-      'orderCode', 'time', 'waiter', 'orderType', 'table', 'persons',
+      'orderCode', 'orderNumber', 'time', 'waiter', 'orderType', 'table',
+      'persons',
       'customerName', 'customerPhone', 'orderNote', 'barcode',
     ],
   };
@@ -348,6 +353,7 @@ class PrinterConfig {
     'storeAddress': 'header',
     'storePhone': 'header',
     'orderCode': 'info',
+    'orderNumber': 'info',
     'date': 'info',
     'time': 'info',
     'cashier': 'info',
@@ -419,13 +425,24 @@ class PrinterConfig {
   /// all of this unconditionally, so every one of its new switches starts ON
   /// and an updated till prints exactly what it printed yesterday until
   /// somebody changes something.
+  ///
+  /// `tva` was here too, and shops expected the tax line on a receipt they
+  /// hand over — it read as broken rather than as opt-in. Cash given and
+  /// change stay opt-in: those are a counter-shop habit, not a legal line.
+  ///
+  /// `orderNumber` (the per-session #1, #2…) is opt-in on every ticket: a new
+  /// line nobody asked for until they switch it on.
   static const Map<String, Set<String>> defaultOffByTicket = {
-    'customer': {'tva', 'amountGiven', 'change'},
-    'store': {'tva', 'amountGiven', 'change'},
+    'order': {'orderNumber'},
+    'customer': {'amountGiven', 'change', 'orderNumber'},
+    'store': {'amountGiven', 'change', 'orderNumber'},
+    'kds': {'orderNumber'},
   };
 
   /// Legacy alias, kept for callers that ask without naming a ticket type.
-  static const Set<String> defaultOffFields = {'tva', 'amountGiven', 'change'};
+  static const Set<String> defaultOffFields = {
+    'tva', 'amountGiven', 'change', 'orderNumber',
+  };
 
   /// Visibility a field falls back to when the operator has never touched it.
   static bool fieldDefaultOn(String field, [String? ticket]) => ticket == null
@@ -983,6 +1000,15 @@ class PrintAlert {
   final int count;
 }
 
+/// An option line's text on the kitchen ticket and the order receipt. A
+/// SINGLE or MULTIPLE pick is always one, so a count there is noise; a
+/// QUANTITY stepper shows its count only when there is more than one.
+String optionLineLabel(
+        String name, int quantity, ComponentSelectionType selectionType) =>
+    selectionType == ComponentSelectionType.quantity && quantity > 1
+        ? '$name x$quantity'
+        : name;
+
 /// Printing service for thermal printers
 class PrintingService {
   static final PrintingService _instance = PrintingService._internal();
@@ -1116,9 +1142,20 @@ class PrintingService {
     debugPrint('Print failure recorded: $reason');
   }
 
+  /// Test seams: when set, tickets go here instead of to a printer, and the
+  /// catalogue is read from [databaseForTesting] when there is no ref.
+  @visibleForTesting
+  void Function(PrinterPurpose purpose, List<int> bytes)? dispatchForTesting;
+  @visibleForTesting
+  AppDatabase? databaseForTesting;
+
+  AppDatabase? get _catalogueDatabase =>
+      _ref?.read(databaseProvider) ?? databaseForTesting;
+
   /// [_ensurePrinterConnectedRaw] plus failure reporting.
   Future<bool> _ensurePrinterConnected(PrinterPurpose purpose,
       {_KdsTarget? kdsOverride}) async {
+    if (dispatchForTesting != null) return true;
     final ok = await _ensurePrinterConnectedRaw(purpose, kdsOverride: kdsOverride);
     if (!ok) {
       final name = kdsOverride?.name ??
@@ -1137,6 +1174,10 @@ class PrintingService {
   /// [_dispatchBytesRaw] plus failure reporting.
   Future<bool> _dispatchBytes(PrinterPurpose purpose, List<int> bytes,
       {_KdsTarget? kdsOverride}) async {
+    if (dispatchForTesting != null) {
+      dispatchForTesting!(purpose, bytes);
+      return true;
+    }
     final ok =
         await _dispatchBytesRaw(purpose, bytes, kdsOverride: kdsOverride);
     // Empty-byte sends are reachability probes (connectPrinter /
@@ -2191,6 +2232,12 @@ class PrintingService {
     /// because it changes what the customer owes.
     double? deliveryFee,
     double? tvaAmount,
+    /// The reduction taken off [amount], and why. Forwarded to
+    /// [printTicketReceipt] — this wrapper is the path the payment dialog
+    /// takes, so a discount missing here is a discount missing from every
+    /// receipt actually handed to a customer.
+    double? discountAmount,
+    String? discountReason,
     double? amountGiven,
     double? changeDue,
     required String paymentMethod,
@@ -2225,6 +2272,8 @@ class PrintingService {
         amount: amount,
         deliveryFee: deliveryFee,
         tvaAmount: tvaAmount,
+        discountAmount: discountAmount,
+        discountReason: discountReason,
         amountGiven: amountGiven,
         changeDue: changeDue,
         paymentMethod: paymentMethod,
@@ -2642,13 +2691,23 @@ class PrintingService {
   /// that built it, so [_ref] can be stale, and `read` on a stale ref throws.
   /// The old code caught that exception, said nothing, and printed a ticket
   /// with no header — which is exactly the report that sent us looking.
-  String _customTicketText(String prefsKey) {
+  ///
+  /// [ticket] selects the per-type override ('order', 'customer', 'store').
+  /// A type with nothing of its own falls back to the shared text, so a till
+  /// that only ever configured one header keeps printing it everywhere.
+  String _customTicketText(String prefsKey, {String? ticket}) {
     if (_ref != null) {
       try {
         final settings = _ref!.read(settingsProvider);
-        final value = prefsKey == SettingsKeys.ticketHeader
-            ? settings.ticketHeader
-            : settings.ticketFooter;
+        final isHeader = prefsKey == SettingsKeys.ticketHeader;
+        if (ticket != null) {
+          final perType = (isHeader
+              ? settings.ticketHeaders
+              : settings.ticketFooters)[ticket];
+          if (perType != null && perType.isNotEmpty) return perType;
+        }
+        final value =
+            isHeader ? settings.ticketHeader : settings.ticketFooter;
         if (value.isNotEmpty) return value;
       } catch (e) {
         debugPrint('Ticket $prefsKey unreadable from settings ($e) — '
@@ -2658,9 +2717,34 @@ class PrintingService {
     return _prefs?.getString(prefsKey) ?? '';
   }
 
+  /// The "why" under a reduction line, or nothing at all.
+  ///
+  /// Its own indented line rather than part of the label: a reason is free
+  /// text and the label column is eight characters wide on a 58mm roll, so
+  /// appending it would truncate the amount instead. Empty when no reason was
+  /// given, or when the operator turned the setting off — an undiscounted, or
+  /// simply unexplained, ticket is unchanged.
+  List<int> _discountReasonLines(Generator generator, String? reason) {
+    final text = reason?.trim() ?? '';
+    if (text.isEmpty) return const <int>[];
+    if (_ref != null) {
+      try {
+        if (!_ref!.read(settingsProvider).printDiscountReason) {
+          return const <int>[];
+        }
+      } catch (_) {
+        // Stale ref: print it. A reduction the ticket cannot explain is the
+        // worse of the two failures.
+      }
+    }
+    return generator.text('  ${_sanitizeForThermal(text)}',
+        styles: const PosStyles(align: PosAlign.left));
+  }
+
   /// Exposed for tests: what the header/footer resolves to right now.
   @visibleForTesting
-  String debugCustomTicketText(String prefsKey) => _customTicketText(prefsKey);
+  String debugCustomTicketText(String prefsKey, {String? ticket}) =>
+      _customTicketText(prefsKey, ticket: ticket);
 
   /// What actually goes in the KDS banner for a station.
   ///
@@ -2713,6 +2797,38 @@ class PrintingService {
   /// also the reprint path, which must still produce the courier's code months
   /// later. Callers may pass these explicitly (the LAN server does, for an
   /// order it holds in memory); everyone else gets them resolved from the id.
+  /// The per-session order number to print, or null to print nothing.
+  ///
+  /// Only hits the database when [ticket] has the field switched on and the
+  /// caller did not already know the number — the receipt builders get a
+  /// ticket id, and a cart held in memory may predate its save.
+  Future<int?> _orderNumberFor(String ticket,
+      {int? known, int? orderId, int? ticketId}) async {
+    if (!_fieldOn(ticket, 'orderNumber')) return null;
+    if (known != null) return known;
+    if (_ref == null || (orderId == null && ticketId == null)) return null;
+    try {
+      final db = _ref!.read(databaseProvider);
+      var id = orderId;
+      if (id == null) {
+        final t = await (db.select(db.tickets)
+              ..where((t) => t.id.equals(ticketId!))
+              ..limit(1))
+            .getSingleOrNull();
+        id = t?.orderId;
+      }
+      if (id == null) return null;
+      final row = await (db.select(db.orders)
+            ..where((o) => o.id.equals(id!))
+            ..limit(1))
+          .getSingleOrNull();
+      return row?.sessionOrderNo;
+    } catch (e) {
+      debugPrint('Order number lookup failed: $e');
+      return null;
+    }
+  }
+
   Future<({String? source, String? code, String? customer})> _platformIdentity(
     CurrentOrder order, {
     String? source,
@@ -3381,6 +3497,8 @@ class PrintingService {
 
     try {
       final currencySymbol = _getCurrency(currency);
+      final selectionTypes =
+          await _optionSelectionTypes(order.items, _catalogueDatabase);
       final profile = await CapabilityProfile.load();
       final generator = Generator(_config.paperSize, profile);
       List<int> bytes = [];
@@ -3444,8 +3562,8 @@ class PrintingService {
       });
 
       // Custom ticket header
-      bytes += await _customTextLines(
-          generator, _customTicketText(SettingsKeys.ticketHeader));
+      bytes += await _customTextLines(generator,
+          _customTicketText(SettingsKeys.ticketHeader, ticket: 'order'));
 
       bytes += _sepMajor(generator);
 
@@ -3453,6 +3571,8 @@ class PrintingService {
       // Info rows, in the order the operator arranged them (Printers >
       // Ticket content). Each entry keeps the guard it always had, so a row
       // with nothing to say still prints nothing wherever it now sits.
+      final orderNumber = await _orderNumberFor('order',
+          known: order.sessionOrderNo, orderId: order.orderId);
       bytes += _emitZone('order', 'info', {
         'orderCode': () => generator.text(
               '${_translate("order")} #${order.orderCode ?? "N/A"}',
@@ -3463,6 +3583,17 @@ class PrintingService {
                 width: _resolveFieldSize('order', 'orderCode'),
               ),
             ),
+        'orderNumber': () => orderNumber == null
+            ? const <int>[]
+            : generator.text(
+                '${_text('order_number', fallback: 'No')} #$orderNumber',
+                styles: PosStyles(
+                  align: PosAlign.left,
+                  bold: true,
+                  height: _resolveFieldHeight('order', 'orderNumber'),
+                  width: _resolveFieldSize('order', 'orderNumber'),
+                ),
+              ),
         'date': () => generator.text(
               '${_text('date', fallback: 'Date')}: ${_formatDateTime(DateTime.now())}',
               styles: PosStyles(
@@ -3624,13 +3755,17 @@ class PrintingService {
             );
             continue;
           }
+          final label = optionLineLabel(
+              comp.name,
+              comp.quantity,
+              selectionTypes[(item.productId, comp.componentId)] ??
+                  ComponentSelectionType.quantity);
           if (_containsArabic(comp.name)) {
-            bytes += await _arabicImageLine(
-                generator, '+ ${comp.name} x${comp.quantity}',
+            bytes += await _arabicImageLine(generator, '+ $label',
                 align: PosAlign.right);
           } else {
             bytes += generator.text(
-              '  + ${_safe(comp.name)} x${comp.quantity}',
+              '  + ${_safe(label)}',
               styles: PosStyles(
                 align: PosAlign.left,
                 height: _resolveFieldHeight('order', 'items'),
@@ -3711,7 +3846,8 @@ class PrintingService {
                     width: _resolveFieldSize('order', 'discount'),
                   ),
                 ),
-              ]),
+              ]) +
+                _discountReasonLines(generator, order.discountReason),
         'tva': () => order.tax <= 0
             ? const <int>[]
             : generator.row([
@@ -3841,8 +3977,8 @@ class PrintingService {
       }
 
       // Print custom footer text if configured
-      final footer = await _customTextLines(
-          generator, _customTicketText(SettingsKeys.ticketFooter));
+      final footer = await _customTextLines(generator,
+          _customTicketText(SettingsKeys.ticketFooter, ticket: 'order'));
       if (footer.isNotEmpty) {
         bytes += generator.emptyLines(1);
         bytes += footer;
@@ -3956,7 +4092,14 @@ class PrintingService {
       // KDS printer. Checked before the database is even consulted, because
       // none of that information is relevant here.
       if (_config.kdsFullOrderMode) {
-        final itemsToPrint = _filterItemsByMode(order.items, resolvedMode);
+        // Committed cursors, not the caller's snapshot — see
+        // [_withDbPrintedQuantities]. A void has already been narrowed to the
+        // exact units being pulled and must not be re-filtered at all.
+        final sourceItems = isVoid || _ref == null
+            ? order.items
+            : await _withDbPrintedQuantities(
+                _ref!.read(databaseProvider), order.items);
+        final itemsToPrint = _filterItemsByMode(sourceItems, resolvedMode);
         if (itemsToPrint.isEmpty) {
           debugPrint('No items to print for mode: $resolvedMode');
           _isPrintingInProgress = false;
@@ -4021,8 +4164,14 @@ class PrintingService {
 
       final database = _ref!.read(databaseProvider);
 
-      // Filter items based on print mode
-      final itemsToPrint = _filterItemsByMode(order.items, resolvedMode);
+      // Filter items based on print mode, against committed cursors rather
+      // than the caller's snapshot — see [_withDbPrintedQuantities].
+      final itemsToPrint = _filterItemsByMode(
+        isVoid
+            ? order.items
+            : await _withDbPrintedQuantities(database, order.items),
+        resolvedMode,
+      );
 
       if (itemsToPrint.isEmpty) {
         debugPrint('No items to print for mode: $resolvedMode');
@@ -4632,6 +4781,60 @@ class PrintingService {
     }
   }
 
+  /// Re-read each line's "already sent to the kitchen" cursor from the
+  /// database, so the delta filter decides on committed state instead of on
+  /// whatever the caller happened to read before it queued.
+  ///
+  /// Print JOBS are serialized ([_enqueue]); their CALLERS are not. Two waiter
+  /// `add-product` calls in quick succession each load the whole order first,
+  /// and the second load lands before the first job has stamped
+  /// `kdsPrintedQuantity`. Both snapshots then swear the first line was never
+  /// sent, and the kitchen makes it twice — three adds, three tickets of the
+  /// item that went in first. Refreshing HERE, inside the queued job, shuts
+  /// that window for every caller at once rather than per entry point.
+  ///
+  /// A line whose row cannot be found is passed through on its snapshot
+  /// rather than dropped: [OrderRepository.updateOrder] re-inserts unpaid rows
+  /// under fresh ids, so "no such row" is a stale id at least as often as it
+  /// is a deletion, and printing nothing at all is the worse failure.
+  Future<List<OrderItem>> _withDbPrintedQuantities(
+      AppDatabase database, List<OrderItem> items) async {
+    final ids = [for (final item in items) if (item.id != null) item.id!];
+    if (ids.isEmpty) return items;
+
+    Map<int, OrderProduct> rows;
+    try {
+      final fetched = await (database.select(database.orderProducts)
+            ..where((tbl) => tbl.id.isIn(ids)))
+          .get();
+      rows = {for (final row in fetched) row.id: row};
+    } catch (e) {
+      debugPrint('Could not refresh KDS print cursors, using snapshot: $e');
+      return items;
+    }
+
+    return [
+      for (final item in items)
+        if (item.id == null || rows[item.id] == null)
+          item
+        else
+          item.copyWith(
+            kdsPrintedQuantity: rows[item.id]!.kdsPrintedQuantity,
+            // A line settled since the caller read it is no longer a
+            // modification; _filterItemsByMode drops it on ticketId alone.
+            ticketId: rows[item.id]!.ticketId,
+          ),
+    ];
+  }
+
+  /// Test seam for the refresh-then-filter pair the KDS path now runs — the
+  /// half worth pinning, since the ESC/POS layout around it needs a printer.
+  @visibleForTesting
+  Future<List<OrderItem>> kdsLinesForTesting(
+          AppDatabase database, CurrentOrder order, KdsPrintMode mode) async =>
+      _filterItemsByMode(
+          await _withDbPrintedQuantities(database, order.items), mode);
+
   Future<void> _markItemsAsPrinted(AppDatabase database, List<OrderItem> items) async {
     final now = DateTime.now();
     for (final item in items) {
@@ -4659,6 +4862,64 @@ class PrintingService {
   /// access. Extracted from [_printKdsTicketForStation] so the
   /// consolidated-job path can concatenate per-station buffers into one
   /// dispatch.
+  @visibleForTesting
+  Future<List<int>> kdsTicketBytesForTesting({
+    required CurrentOrder order,
+    required List<OrderItem> items,
+    required Generator generator,
+    required AppDatabase database,
+    KdsPrintPurpose purpose = KdsPrintPurpose.send,
+  }) =>
+      _buildKdsTicketBytesForStation(
+        order: order,
+        stationName: 'Test',
+        items: items,
+        mode: KdsPrintMode.full,
+        generator: generator,
+        purpose: purpose,
+        database: database,
+      );
+
+  /// Each option's effective group mode, keyed by (productId, componentId)
+  /// because a product can override its group's default. Resolved through
+  /// [loadComponentGroupRules], the same path the modifier picker takes.
+  /// Empty without a database, and a missing entry prints as QUANTITY.
+  Future<Map<(int, int), ComponentSelectionType>> _optionSelectionTypes(
+      List<OrderItem> items, AppDatabase? database) async {
+    final result = <(int, int), ComponentSelectionType>{};
+    if (database == null) return result;
+    final componentIds = {
+      for (final item in items)
+        for (final comp in item.components) comp.componentId,
+    };
+    if (componentIds.isEmpty) return result;
+    try {
+      final rows = await (database.select(database.components)
+            ..where((tbl) => tbl.id.isIn(componentIds)))
+          .get();
+      final groupByComponent = {
+        for (final row in rows) row.id: row.componentGroupId,
+      };
+      final rulesByProduct = <int, Map<int?, ComponentGroupRule>>{};
+      for (final item in items) {
+        if (item.components.isEmpty) continue;
+        final rules = rulesByProduct[item.productId] ??=
+            await loadComponentGroupRules(database, item.productId);
+        for (final comp in item.components) {
+          final rule = rules[groupByComponent[comp.componentId]];
+          if (rule != null) {
+            result[(item.productId, comp.componentId)] = rule.selectionType;
+          }
+        }
+      }
+    } catch (e) {
+      // A lookup failure must not cost the kitchen its ticket; the lines
+      // just keep their quantities.
+      debugPrint('Option selection types unavailable: $e');
+    }
+    return result;
+  }
+
   Future<List<int>> _buildKdsTicketBytesForStation({
     required CurrentOrder order,
     required String stationName,
@@ -4666,8 +4927,11 @@ class PrintingService {
     required KdsPrintMode mode,
     required Generator generator,
     KdsPrintPurpose purpose = KdsPrintPurpose.send,
+    AppDatabase? database,
   }) async {
     final isVoid = purpose == KdsPrintPurpose.cancel;
+    final selectionTypes = await _optionSelectionTypes(
+        items, database ?? _catalogueDatabase);
     List<int> bytes = [];
 
     // Set code table based on current language (supports Arabic, French, English)
@@ -4746,6 +5010,8 @@ class PrintingService {
       // operator arranged them. Order code is left-aligned & bold like the
       // receipt header; table stays bold because it is the second thing the
       // runner looks for.
+      final orderNumber = await _orderNumberFor('kds',
+          known: order.sessionOrderNo, orderId: order.orderId);
       bytes += _emitZone('kds', 'info', {
         'orderCode': () => generator.text(
               '${_text('order', fallback: 'ORDER')} #${_safe(order.orderCode ?? "N/A")}',
@@ -4756,8 +5022,19 @@ class PrintingService {
                 width: _resolveFieldSize('kds', 'orderCode'),
               ),
             ),
+        'orderNumber': () => orderNumber == null
+            ? const <int>[]
+            : generator.text(
+                '${_text('order_number', fallback: 'No')} #$orderNumber',
+                styles: PosStyles(
+                  align: PosAlign.left,
+                  bold: true,
+                  height: _resolveFieldHeight('kds', 'orderNumber'),
+                  width: _resolveFieldSize('kds', 'orderNumber'),
+                ),
+              ),
         'time': () => generator.text(
-              '${_text('time', fallback: 'Time')}: ${_formatTime(DateTime.now())}',
+              '${_text('time', fallback: 'Time')}: ${_formatKdsStamp(DateTime.now())}',
               styles: PosStyles(
                 align: PosAlign.left,
                 height: _resolveFieldHeight('kds', 'time'),
@@ -4969,13 +5246,17 @@ class PrintingService {
             continue;
           }
 
+          final label = optionLineLabel(
+              comp.name,
+              comp.quantity,
+              selectionTypes[(item.productId, comp.componentId)] ??
+                  ComponentSelectionType.quantity);
           if (_containsArabic(comp.name)) {
-            bytes += await _arabicImageLine(
-                generator, '+ ${comp.name} x${comp.quantity}',
+            bytes += await _arabicImageLine(generator, '+ $label',
                 align: PosAlign.right);
           } else {
             bytes += generator.text(
-              '   + ${_safe(comp.name)} x${comp.quantity}',
+              '   + ${_safe(label)}',
               styles: PosStyles(
                 align: PosAlign.left,
                 height: _resolveFieldHeight('kds', 'items'),
@@ -5152,6 +5433,17 @@ class PrintingService {
     /// ("dont TVA") when the `tva` ticket field is on. Null or 0 prints
     /// nothing — a zero-rated ticket shouldn't claim a tax line.
     double? tvaAmount,
+    /// Why the reduction was given, printed under it when the operator has
+    /// that setting on. Null or blank prints nothing.
+    String? discountReason,
+    /// Every reduction already taken off [amount]: per-line discounts plus the
+    /// order-level remise, as one figure.
+    ///
+    /// The paid receipt had no discount row at all, so a discounted sale
+    /// printed only its reduced total and the customer had no way to see what
+    /// came off — and neither did anyone auditing the till. Null or 0 prints
+    /// nothing, so an undiscounted sale looks exactly as it did.
+    double? discountAmount,
     /// Cash the customer handed over and what goes back to them. Only known
     /// for a tender the cashier actually keyed, so both are nullable and
     /// each prints independently of the other.
@@ -5283,8 +5575,8 @@ class PrintingService {
       }
 
       // Custom ticket header
-      bytes += await _customTextLines(
-          generator, _customTicketText(SettingsKeys.ticketHeader));
+      bytes += await _customTextLines(generator,
+          _customTicketText(SettingsKeys.ticketHeader, ticket: tkt));
 
       bytes += _sepMinor(generator);
 
@@ -5300,6 +5592,7 @@ class PrintingService {
       );
 
       // Info rows, in the operator's configured order.
+      final orderNumber = await _orderNumberFor(tkt, ticketId: ticketId);
       bytes += _emitZone(tkt, 'info', {
         'orderCode': () => (orderCode == null || orderCode.isEmpty)
             ? const <int>[]
@@ -5310,6 +5603,17 @@ class PrintingService {
                   bold: true,
                   height: _resolveFieldHeight(tkt, 'orderCode'),
                   width: _resolveFieldSize(tkt, 'orderCode'),
+                ),
+              ),
+        'orderNumber': () => orderNumber == null
+            ? const <int>[]
+            : generator.text(
+                '${_text('order_number', fallback: 'No')} #$orderNumber',
+                styles: PosStyles(
+                  align: PosAlign.center,
+                  bold: true,
+                  height: _resolveFieldHeight(tkt, 'orderNumber'),
+                  width: _resolveFieldSize(tkt, 'orderNumber'),
                 ),
               ),
         'date': () => generator.text(
@@ -5523,6 +5827,52 @@ class PrintingService {
         }
       }
 
+      // Shared two-column line for the money block. Body-sized so the PAID
+      // line stays the thing the customer's eye lands on.
+      List<int> totalsRow(String label, double value, [String field = '']) =>
+          generator.row([
+            PosColumn(
+              text: label,
+              width: 6,
+              styles: PosStyles(
+                height: _resolveFieldHeight(tkt, field),
+                width: _resolveFieldSize(tkt, field),
+              ),
+            ),
+            PosColumn(
+              text: CurrencyFormatter.formatWithCurrency(value, currencySymbol),
+              width: 6,
+              styles: PosStyles(
+                align: PosAlign.right,
+                height: _resolveFieldHeight(tkt, field),
+                width: _resolveFieldSize(tkt, field),
+              ),
+            ),
+          ]);
+
+      // What came off, and the tax inside the price — ABOVE the total, the
+      // way the order ticket reads and the way a customer reads down a
+      // receipt: the adjustments, then the figure they actually paid. They
+      // used to sit underneath it, where a reduction looks like an
+      // afterthought rather than part of how the total was reached.
+      final adjustments = _emitZone(tkt, 'totals', {
+        // Guarded on > 0.005 rather than > 0: a rounding crumb is not a
+        // reduction and must not put a "-0.00" line on the receipt.
+        'discount': () => (discountAmount == null || discountAmount <= 0.005)
+            ? const <int>[]
+            : totalsRow('${_text('discount', fallback: 'Discount')}:',
+                    -discountAmount, 'discount') +
+                _discountReasonLines(generator, discountReason),
+        'tva': () => (tvaAmount == null || tvaAmount <= 0)
+            ? const <int>[]
+            : totalsRow('${_text('vat_included', fallback: 'Incl. VAT')}:',
+                tvaAmount, 'tva'),
+      });
+      if (adjustments.isNotEmpty) {
+        bytes += generator.emptyLines(1);
+        bytes += adjustments;
+      }
+
       bytes += _sepMinor(generator);
 
       // Total
@@ -5547,29 +5897,6 @@ class PrintingService {
           ),
         ),
       ]);
-
-      // Shared two-column line for the money block below. Body-sized so the
-      // PAID line above stays the thing the customer's eye lands on.
-      List<int> totalsRow(String label, double value, [String field = '']) =>
-          generator.row([
-            PosColumn(
-              text: label,
-              width: 6,
-              styles: PosStyles(
-                height: _resolveFieldHeight(tkt, field),
-                width: _resolveFieldSize(tkt, field),
-              ),
-            ),
-            PosColumn(
-              text: CurrencyFormatter.formatWithCurrency(value, currencySymbol),
-              width: 6,
-              styles: PosStyles(
-                align: PosAlign.right,
-                height: _resolveFieldHeight(tkt, field),
-                width: _resolveFieldSize(tkt, field),
-              ),
-            ),
-          ]);
 
       // Delivery fee, then the real total collected. Printed whenever a fee
       // rides on this ticket: the PAID line above is products only, so without
@@ -5601,11 +5928,9 @@ class PrintingService {
         ]);
       }
 
-      bytes += _emitZone(tkt, 'totals', {
-        'tva': () => (tvaAmount == null || tvaAmount <= 0)
-            ? const <int>[]
-            : totalsRow('${_text('vat_included', fallback: 'Incl. VAT')}:',
-                tvaAmount, 'tva'),
+      // The tender: what was handed over and what went back. Below the
+      // total, because that is the order the exchange happens in.
+      final tender = _emitZone(tkt, 'totals', {
         'amountGiven': () => (amountGiven == null || amountGiven <= 0)
             ? const <int>[]
             : totalsRow('${_text('cash_given', fallback: 'Cash given')}:',
@@ -5618,6 +5943,10 @@ class PrintingService {
                 : totalsRow('${_text('change_due', fallback: 'Change')}:',
                     changeDue, 'change'),
       });
+      if (tender.isNotEmpty) {
+        bytes += generator.emptyLines(1);
+        bytes += tender;
+      }
 
       // No hardcoded thank-you line — only the configured ticket footer
       // (below) prints, so the store controls all footer wording.
@@ -5642,8 +5971,8 @@ class PrintingService {
       }
 
       // Print custom footer text if configured
-      final footer = await _customTextLines(
-          generator, _customTicketText(SettingsKeys.ticketFooter));
+      final footer = await _customTextLines(generator,
+          _customTicketText(SettingsKeys.ticketFooter, ticket: tkt));
       if (footer.isNotEmpty) {
         bytes += generator.emptyLines(1);
         bytes += footer;
@@ -5730,6 +6059,26 @@ class PrintingService {
     return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
   }
 
+  /// Day and time for a kitchen ticket: `19/09 14:32`.
+  ///
+  /// The year is left off deliberately — a ticket on the pass is hours old at
+  /// most, so the year is a column of noise on a 58mm roll. The day is there
+  /// because a ticket that sat overnight, or came off a device whose clock is
+  /// wrong, is otherwise indistinguishable from one printed a minute ago.
+  /// Seconds go too: nothing in a kitchen is decided on them.
+  String _formatKdsStamp(DateTime dt) {
+    final d = dt.day.toString().padLeft(2, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$d/$m $hh:$mm';
+  }
+
+  /// Test seam for [_formatKdsStamp] — the shape of the stamp is the part
+  /// worth pinning; the ESC/POS row around it needs a printer.
+  @visibleForTesting
+  String kdsStampForTesting(DateTime dt) => _formatKdsStamp(dt);
+
   /// Format date only
   String _formatDate(DateTime dt) {
     return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
@@ -5741,8 +6090,10 @@ class PrintingService {
     AppLocalizations? l10n,
     CurrencyFormatter? currencyFormatter,
     String? businessName,
-    // Optional heading override for Z tracking: 'X' (mid-shift snapshot) or 'Z'
-    // (shift close). Null = the default daily-summary heading.
+    // 'Z' prints the day-close report; anything else — 'X' or null — prints
+    // an X. A Z is a legal document that exists only once its Z is closed, so
+    // it must be asked for explicitly: only printZReport (after the close) and
+    // the reprint of a fully closed day do.
     String? reportType,
     /// What the floor still owes AT THE MOMENT OF PRINTING — open tables and
     /// parked orders. Deliberately not part of [report]: the summary is a
@@ -5753,6 +6104,11 @@ class PrintingService {
     /// hand something over, and the figure they are handing over is not in
     /// the takings — it is what is still sitting on the floor.
     UnpaidOrdersSummary? outstanding,
+    /// The Z's printed identity, e.g. "2026-09-25 · Z1". Null omits the line.
+    String? zLabel,
+    /// A Z printed again after its close: stamped DUPLICATA, so a second copy
+    /// can never pass for the original.
+    bool isReprint = false,
   }) => _enqueue(() async {
     // Actively (re)establish the receipt printer connection — mirroring every
     // other print method. The previous null-check alone reported "not printed"
@@ -5784,7 +6140,7 @@ class PrintingService {
       // sections below never ask which one they are on.
       // ─────────────────────────────────────────────────────────────────
       final s = report.sections;
-      final isX = reportType == 'X';
+      final isX = reportType != 'Z';
       final money = currencyFormatter ?? CurrencyFormatter(_getCurrency(null));
       String cash(double v) => money.format(v);
 
@@ -5914,11 +6270,20 @@ class PrintingService {
         styles: const PosStyles(align: PosAlign.center),
       );
       bytes += rule();
+      if (isReprint) {
+        bytes += generator.text(
+          '*** ${_text('duplicate_ticket', fallback: 'DUPLICATA')} ***',
+          styles: const PosStyles(align: PosAlign.center, bold: true),
+        );
+      }
 
       // ── Identity block ────────────────────────────────────────────────
       final posName = _prefs?.getString('pos_name');
       if (posName != null) {
         bytes += kv(_translate('till'), posName);
+      }
+      if (zLabel != null) {
+        bytes += kv('Z', zLabel, bold: true);
       }
       final sessionCodes = report.sessions.map((x) => x.sessionCode).toList();
       if (sessionCodes.isNotEmpty) {
@@ -5945,9 +6310,14 @@ class PrintingService {
         '${_formatTime(report.startDate)} -> ${_formatTime(report.endDate)}',
       );
 
-      // ── 1) RESUME GENERAL ─────────────────────────────────────────────
+      // Sections are numbered by a running counter, not literals: a
+      // conditional section (annulments, outstanding) must not leave a gap
+      // in the sequence, and renumbering by hand is how §4 got out of step
+      // with its own banner when the VAT block was pulled.
+      var sec = 0;
+      // ── RESUME GENERAL ─────────────────────────────────────────────
       final g = s.general;
-      bytes += section(1, _translate('general_summary'));
+      bytes += section(++sec, _translate('general_summary'));
       bytes += kv(_translate('gross_sales'), cash(g.grossSales));
       bytes += kv(_translate('discounts_reductions'), '-${cash(g.discounts)}');
       bytes += kv(_translate('cancelled_tickets'), '-${cash(g.cancelledTickets)}');
@@ -5956,8 +6326,8 @@ class PrintingService {
       bytes += thinRule();
       bytes += kv(_translate('total_net_ttc'), cash(g.netTotal), bold: true);
 
-      // ── 2) VENTES PAR TYPE ────────────────────────────────────────────
-      bytes += section(2, _translate('sales_by_type'));
+      // ── VENTES PAR TYPE ────────────────────────────────────────────
+      bytes += section(++sec, _translate('sales_by_type'));
       var typeTotal = 0.0;
       for (final entry in s.salesByType.entries) {
         typeTotal += entry.value;
@@ -5969,11 +6339,11 @@ class PrintingService {
       bytes += thinRule();
       bytes += kv(_translate('total'), cash(typeTotal), bold: true);
 
-      // ── 3) PAIEMENTS ──────────────────────────────────────────────────
+      // ── PAIEMENTS ──────────────────────────────────────────────────
       // Cheque / Bon / Credit client are not printed: TransactionType has no
       // such members, so they would be indistinguishable from any other
       // "Other" and a line that can only ever be 0,00 is worse than no line.
-      bytes += section(3, _translate('payments'));
+      bytes += section(++sec, _translate('payments'));
       bytes += kv(_translate('cash'), cash(report.totalPaidByCash));
       bytes += kv(_translate('card'), cash(report.totalPaidByCard));
       bytes += kv(_translate('mobile_payment'), cash(report.totalPaidByPhone));
@@ -5982,29 +6352,23 @@ class PrintingService {
       bytes += kv(_translate('total_payments'), cash(report.totalPaid),
           bold: true);
 
-      // ── 4) TVA ────────────────────────────────────────────────────────
-      bytes += section(4, _translate('vat'));
-      bytes += triple(_translate('rate'), _translate('base_ht'),
-          _translate('vat_amount'),
-          underline: true);
-      for (final band in s.vatBands) {
-        bytes += triple(
-          '${_translate('vat')} ${qty(band.rate)}%',
-          cash(band.baseHt),
-          cash(band.vat),
-        );
-      }
-      bytes += thinRule();
-      bytes += kv(_translate('total_ht'), cash(s.vatTotalHt));
-      bytes += kv(_translate('total_vat'), cash(s.vatTotalVat));
-      bytes += kv(_translate('total_ttc'), cash(s.vatTotalTtc), bold: true);
+      // The VAT breakdown that used to print here as section 4 was removed
+      // from both the X and the Z on request. CashReportSections still
+      // computes vatBands / vatTotalHt / vatTotalVat / vatTotalTtc, so the
+      // block can be restored by printing them again - nothing upstream was
+      // torn out.
 
-      // ── 5) MOUVEMENTS DE CAISSE ───────────────────────────────────────
+      // ── MOUVEMENTS DE CAISSE ───────────────────────────────────────
       final c = s.cash;
-      bytes += section(5, _translate('cash_movements'));
+      bytes += section(++sec, _translate('cash_movements'));
       bytes += kv(_translate('opening_float'), cash(c.openingFloat));
       bytes += kv(_translate('cash_in'), cash(c.cashIn));
       bytes += kv(_translate('cash_out'), cash(c.cashOut));
+      // Why the drawer exceeds the ticket rows. Only when there were any: on
+      // a shift with no deliveries this is a line of noise.
+      if (c.cashDeliveryFees > 0.005) {
+        bytes += kv(_translate('delivery_fee'), cash(c.cashDeliveryFees));
+      }
       bytes += kv(_translate('expected_cash'), cash(c.expectedCash));
       // An open shift has counted nothing yet, so these read "--" rather than
       // claiming a zero count and a variance equal to the whole drawer.
@@ -6013,9 +6377,9 @@ class PrintingService {
       bytes += kv(_translate('cash_variance'),
           c.variance == null ? '--' : cash(c.variance!));
 
-      // ── 6) INDICATEURS ────────────────────────────────────────────────
+      // ── INDICATEURS ────────────────────────────────────────────────
       final ind = s.indicators;
-      bytes += section(6, _translate('restaurant_indicators'));
+      bytes += section(++sec, _translate('restaurant_indicators'));
       bytes += kv(_translate('ticket_count'), '${ind.ticketCount}');
       bytes += kv(_translate('average_ticket'), cash(ind.averageTicket));
       bytes += kv(_translate('cancelled_tickets'), '${ind.cancelledTicketCount}');
@@ -6032,8 +6396,8 @@ class PrintingService {
             '${_translate('orders_to')} ${_safe(entry.key)}', '${entry.value}');
       }
 
-      // ── 7) RESUME PAR FAMILLE ─────────────────────────────────────────
-      bytes += section(7, _translate('summary_by_family'));
+      // ── RESUME PAR FAMILLE ─────────────────────────────────────────
+      bytes += section(++sec, _translate('summary_by_family'));
       bytes += triple(_translate('family'), _translate('qty'),
           _translate('revenue_ttc'),
           underline: true);
@@ -6041,8 +6405,8 @@ class PrintingService {
         bytes += triple(row.name, qty(row.quantity), cash(row.amount));
       }
 
-      // ── 8) TOP ARTICLES ───────────────────────────────────────────────
-      bytes += section(8, _translate('top_articles'));
+      // ── TOP ARTICLES ───────────────────────────────────────────────
+      bytes += section(++sec, _translate('top_articles'));
       bytes += triple(_translate('article'), _translate('qty'),
           _translate('revenue_ttc'),
           underline: true);
@@ -6050,19 +6414,51 @@ class PrintingService {
         bytes += triple(row.name, qty(row.quantity), cash(row.amount));
       }
 
-      // ── 9) STATUTS EN COURS ───────────────────────────────────────────
+      // ── STATUTS EN COURS ───────────────────────────────────────────
       final live = s.live;
-      bytes += section(9, _translate('live_statuses'));
+      bytes += section(++sec, _translate('live_statuses'));
       bytes += kv(_translate('parked_orders'), '${live.parkedOrders}');
       bytes += kv(_translate('tables_in_progress'), '${live.openTables}');
       bytes += kv(_translate('sent_to_kitchen'), '${live.sentToKitchen}');
       bytes += kv(_translate('ready_not_served'), '${live.readyNotServed}');
 
+      // ── ANNULATIONS ─────────────────────────────────────────────────
+      // Lines pulled OFF a saved order during the shift, read from the
+      // annulment tombstones — the `order_products` rows themselves are long
+      // gone. Z only: the Z is the shift's closing statement and the figure
+      // somebody is accountable for, while an X is a mid-service read where a
+      // half-finished annulment picture invites the wrong conclusion.
+      //
+      // Printed only when there is something to print, like OUTSTANDING below:
+      // a permanent "ANNULATIONS: 0,00" teaches the reader to skip the band on
+      // the day it finally says something.
+      final removed = s.removedItems;
+      if (!isX && !removed.isEmpty) {
+        bytes += section(++sec, _translate('cancellations'));
+        bytes += triple(_translate('article'), _translate('qty'),
+            _translate('amount'),
+            underline: true);
+        for (final row in removed.rows) {
+          bytes += triple(row.name, qty(row.quantity), cash(row.amount));
+        }
+        bytes += thinRule();
+        bytes += kv(_translate('removed_lines'), '${removed.lineCount}');
+        bytes += kv(_translate('removed_quantity'), qty(removed.quantity));
+        // The half that actually cost something: the kitchen had already been
+        // told to make it.
+        bytes += kv(_translate('removed_after_kitchen'),
+            qty(removed.afterKitchenQuantity));
+        bytes += kv(_translate('removed_after_kitchen_amount'),
+            cash(removed.afterKitchenAmount));
+        bytes += kv(_translate('removed_total'), cash(removed.amount),
+            bold: true);
+      }
+
       // What the floor still owes, when the caller supplied it. Not part of
       // the sections: the report is a statement of what was taken, this is a
       // live snapshot of what has not been.
       if (outstanding != null && outstanding.count > 0) {
-        bytes += section(10, _translate('outstanding_on_floor'));
+        bytes += section(++sec, _translate('outstanding_on_floor'));
         bytes += kv(_translate('unpaid_orders'), '${outstanding.count}');
         bytes += kv(_translate('amount_due'), cash(outstanding.totalDue));
       }
@@ -6871,6 +7267,12 @@ class PrintingService {
     /// day's trading wants; the flat list stays the default because that is
     /// what session close has always printed.
     bool groupByCategory = false,
+    /// Row order, and section order when grouped. Quantity is what every
+    /// existing caller printed.
+    ProductsSort sort = ProductsSort.quantity,
+    /// False prints quantities only — the kitchen's copy, where prices are
+    /// noise and not the kitchen's business.
+    bool showAmounts = true,
   }) => _enqueue(() async {
     final printerReady = await _ensurePrinterConnected(PrinterPurpose.receipt);
     if (!printerReady) {
@@ -6971,6 +7373,11 @@ class PrintingService {
             ? r.name.substring(0, nameLimit)
             : r.name;
         final label = '${qty(r.quantity)}x $name';
+        if (!showAmounts) {
+          return _containsArabic(name)
+              ? await _reportTextLine(generator, label)
+              : twoCol(_safe(label), '');
+        }
         final amount = CurrencyFormatter.formatWithCurrency(r.net, cur);
         // Arabic product names can't go through `row()` (raster images are
         // whole lines), so they print as their own shaped line + amount.
@@ -6990,17 +7397,32 @@ class PrintingService {
         return out;
       }
 
+      final rows = sortProductRows(report.rows, sort);
+
       if (groupByCategory) {
-        // Insertion-ordered so the sections follow the report's own
-        // quantity ranking: the busiest category leads.
         final sections = <String, List<ProductSummaryEntry>>{};
-        for (final r in report.rows) {
+        for (final r in rows) {
           final key = (r.categoryName ?? '').trim().isEmpty
               ? printL10n.translate('uncategorized')
               : r.categoryName!.trim();
           sections.putIfAbsent(key, () => []).add(r);
         }
-        for (final entry in sections.entries) {
+        double sum(List<ProductSummaryEntry> l, double Function(ProductSummaryEntry) f) =>
+            l.fold(0.0, (s, r) => s + f(r));
+        final ordered = sections.entries.toList()
+          ..sort((a, b) {
+            switch (sort) {
+              case ProductsSort.quantity:
+                return sum(b.value, (r) => r.quantity)
+                    .compareTo(sum(a.value, (r) => r.quantity));
+              case ProductsSort.amount:
+                return sum(b.value, (r) => r.net)
+                    .compareTo(sum(a.value, (r) => r.net));
+              case ProductsSort.name:
+                return a.key.toLowerCase().compareTo(b.key.toLowerCase());
+            }
+          });
+        for (final entry in ordered) {
           bytes += generator.text(sep,
               styles: const PosStyles(align: PosAlign.center));
           bytes += await _reportTextLine(generator, entry.key.toUpperCase(),
@@ -7012,12 +7434,12 @@ class PrintingService {
           final catNet = entry.value.fold(0.0, (s, r) => s + r.net);
           bytes += twoCol(
             '  ${printL10n.translate('subtotal')} (${qty(catQty)})',
-            CurrencyFormatter.formatWithCurrency(catNet, cur),
+            showAmounts ? CurrencyFormatter.formatWithCurrency(catNet, cur) : '',
             bold: true,
           );
         }
       } else {
-        for (final r in report.rows) {
+        for (final r in rows) {
           bytes += await productRow(r);
         }
       }
@@ -7028,18 +7450,20 @@ class PrintingService {
           qty(report.totalQuantity));
       bytes += twoCol(
           '${printL10n.translate('quantity')}:', '${report.distinctProducts}');
-      if (report.totalDiscount > 0.005) {
-        bytes += twoCol('${printL10n.translate('discount')}:',
-            CurrencyFormatter.formatWithCurrency(report.totalDiscount, cur));
-      }
+      if (showAmounts) {
+        if (report.totalDiscount > 0.005) {
+          bytes += twoCol('${printL10n.translate('discount')}:',
+              CurrencyFormatter.formatWithCurrency(report.totalDiscount, cur));
+        }
 
-      bytes += generator.text(doubleSep,
-          styles: const PosStyles(align: PosAlign.center));
-      bytes += twoCol(
-        '${printL10n.translate('products_total_net')}:',
-        CurrencyFormatter.formatWithCurrency(report.totalNet, cur),
-        bold: true,
-      );
+        bytes += generator.text(doubleSep,
+            styles: const PosStyles(align: PosAlign.center));
+        bytes += twoCol(
+          '${printL10n.translate('products_total_net')}:',
+          CurrencyFormatter.formatWithCurrency(report.totalNet, cur),
+          bold: true,
+        );
+      }
       bytes += generator.text(doubleSep,
           styles: const PosStyles(align: PosAlign.center));
 

@@ -12,6 +12,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
 import './adaptive_text_field.dart';
+import '../../services/pos_notifications.dart';
 
 /// A refundable order line: the DB row plus the bits the dialog needs to show.
 /// Trims the trailing `.0` so a whole quantity reads "2", not "2.0", while a
@@ -224,6 +225,14 @@ Future<bool> showRefundDialog({
             // would otherwise drop that segment from the code entirely and
             // collide with every other unnamed till.
             posName: ref.read(apiServiceProvider).terminalTag(),
+          );
+
+          notifyRefund(
+            ref.read,
+            orderCode: created.orderCode,
+            amount: created.totalAmount,
+            method: created.method,
+            reason: created.reason,
           );
 
           // Slip first, sync second. The customer is standing there and the

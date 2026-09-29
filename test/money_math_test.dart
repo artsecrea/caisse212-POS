@@ -2,8 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/core/enums.dart';
 import 'package:caisse212/data/database/app_database.dart';
-import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/services/session_service.dart';
+import 'package:caisse212/services/z_rules.dart';
 
 /// Pure-arithmetic tests. No database, no widgets — these cover the functions
 /// that decide how much money the POS thinks it has, which is the part where a
@@ -110,45 +110,45 @@ void main() {
     });
   });
 
-  group('zBusinessDay / zBusinessDayKey', () {
+  group('zDayKeyOf', () {
     test('with startHour 0 the business day is the calendar day', () {
-      expect(zBusinessDayKey(DateTime(2026, 8, 17, 0, 1), 0), '2026-08-17');
-      expect(zBusinessDayKey(DateTime(2026, 8, 17, 23, 59), 0), '2026-08-17');
+      expect(zDayKeyOf(DateTime(2026, 8, 17, 0, 1), 0), '2026-08-17');
+      expect(zDayKeyOf(DateTime(2026, 8, 17, 23, 59), 0), '2026-08-17');
     });
 
     test('before the start hour still belongs to the PREVIOUS business day', () {
       // The whole point of the setting: a bar closing at 03:00 with a 05:00 day
       // start is still working yesterday's shift, so its Z must not roll over.
-      expect(zBusinessDayKey(DateTime(2026, 8, 18, 3, 0), 5), '2026-08-17');
+      expect(zDayKeyOf(DateTime(2026, 8, 18, 3, 0), 5), '2026-08-17');
     });
 
     test('at exactly the start hour the new business day begins', () {
-      expect(zBusinessDayKey(DateTime(2026, 8, 18, 5, 0), 5), '2026-08-18');
+      expect(zDayKeyOf(DateTime(2026, 8, 18, 5, 0), 5), '2026-08-18');
     });
 
     test('one minute before the start hour is still the old day', () {
-      expect(zBusinessDayKey(DateTime(2026, 8, 18, 4, 59), 5), '2026-08-17');
+      expect(zDayKeyOf(DateTime(2026, 8, 18, 4, 59), 5), '2026-08-17');
     });
 
     test('midnight with a non-zero start hour belongs to the previous day', () {
-      expect(zBusinessDayKey(DateTime(2026, 8, 18, 0, 0), 5), '2026-08-17');
+      expect(zDayKeyOf(DateTime(2026, 8, 18, 0, 0), 5), '2026-08-17');
     });
 
     test('month and year boundaries roll correctly', () {
-      expect(zBusinessDayKey(DateTime(2026, 9, 1, 2, 0), 5), '2026-08-31');
-      expect(zBusinessDayKey(DateTime(2027, 1, 1, 2, 0), 5), '2026-12-31');
+      expect(zDayKeyOf(DateTime(2026, 9, 1, 2, 0), 5), '2026-08-31');
+      expect(zDayKeyOf(DateTime(2027, 1, 1, 2, 0), 5), '2026-12-31');
     });
 
     test('the key is always zero-padded so string comparison works', () {
-      // ZDayState compares these as strings (isLockedFor / future-day guard), so
+      // Z labels order by these strings (planZ, ZLabel.compareTo), so
       // '2026-1-5' instead of '2026-01-05' would break the ordering.
-      final key = zBusinessDayKey(DateTime(2026, 1, 5, 12), 0);
+      final key = zDayKeyOf(DateTime(2026, 1, 5, 12), 0);
       expect(key, '2026-01-05');
       expect(key.length, 10);
     });
 
-    test('zBusinessDay returns midnight, not the original time', () {
-      final d = zBusinessDay(DateTime(2026, 8, 17, 14, 33, 12), 0);
+    test('parseZDay returns midnight of the key', () {
+      final d = parseZDay(zDayKeyOf(DateTime(2026, 8, 17, 14, 33, 12), 0));
       expect(d, DateTime(2026, 8, 17));
     });
   });
@@ -163,6 +163,9 @@ void main() {
           status: 'active',
           isSynced: false,
           updatedAt: DateTime(2026, 8, 17, 8),
+          isClosingSession: false,
+          autoClosed: false,
+          zOverride: false,
         );
 
     test('is float + cash takings when there are no movements', () {

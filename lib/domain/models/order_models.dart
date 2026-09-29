@@ -66,6 +66,15 @@ class OrderItem {
   final int? serialId;
   final String? serialNumber;
 
+  /// Backend `order_products.id` for this line, when the server has seen it.
+  ///
+  /// Carried on the model only so [OrderRepository.updateOrder] can put it
+  /// back: that save deletes and re-inserts every unpaid row, and a line that
+  /// came back without its server id looks to the next push like a brand new
+  /// one — the backend grows a duplicate, and refunds (which reference the
+  /// server's line id, not ours) point at a row nobody sold.
+  final int? serverId;
+
   OrderItem({
     this.id,
     required this.productId,
@@ -99,6 +108,7 @@ class OrderItem {
     this.unitName,
     this.serialId,
     this.serialNumber,
+    this.serverId,
   });
 
   /// Returns the display name - variant name if available, otherwise product name
@@ -167,6 +177,7 @@ class OrderItem {
     String? unitName,
     int? serialId,
     String? serialNumber,
+    int? serverId,
   }) {
     return OrderItem(
       id: id ?? this.id,
@@ -206,6 +217,7 @@ class OrderItem {
       unitName: unitName ?? this.unitName,
       serialId: serialId ?? this.serialId,
       serialNumber: serialNumber ?? this.serialNumber,
+      serverId: serverId ?? this.serverId,
     );
   }
 
@@ -319,6 +331,9 @@ double cancelledQuantity({required double sent, required double remaining}) {
 class CurrentOrder {
   final int? orderId;
   final String? orderCode;
+
+  /// Per-session order number (`Orders.sessionOrderNo`). Null until saved.
+  final int? sessionOrderNo;
   final List<OrderItem> items;
   final int? tableId;
   final String? tableName;
@@ -373,9 +388,21 @@ class CurrentOrder {
   /// `utils/order_permissions.dart`.
   final String? source;
 
+  /// When this cart was read out of the database, or null for a cart that was
+  /// never loaded from one (a fresh sale).
+  ///
+  /// The watermark that lets [OrderRepository.updateOrder] tell a line the
+  /// cashier DELETED from one that somebody else ADDED while this screen sat
+  /// open — both look identical by id alone (absent from [items]), and the
+  /// save used to treat them the same and wipe the second kind. The waiter
+  /// app writes straight into `order_products` over the LAN, so "somebody
+  /// else" is an every-shift occurrence on a table the cashier has open.
+  final DateTime? loadedAt;
+
   CurrentOrder({
     this.orderId,
     this.orderCode,
+    this.sessionOrderNo,
     this.items = const [],
     this.tableId,
     this.tableName,
@@ -396,6 +423,7 @@ class CurrentOrder {
     this.tip = 0.0,
     this.deliveryFee,
     this.source,
+    this.loadedAt,
   });
 
   /// True when there is an order note worth surfacing to the cashier.
@@ -483,6 +511,8 @@ class CurrentOrder {
     double? tip,
     double? deliveryFee,
     String? source,
+    DateTime? loadedAt,
+    int? sessionOrderNo,
     /// `copyWith` can't express "set this back to null" through a nullable
     /// parameter — `deliveryFee: null` is indistinguishable from "not passed".
     /// This flag is how the cashier's "remove the fee" action round-trips, and
@@ -492,6 +522,7 @@ class CurrentOrder {
     return CurrentOrder(
       orderId: orderId ?? this.orderId,
       orderCode: orderCode ?? this.orderCode,
+      sessionOrderNo: sessionOrderNo ?? this.sessionOrderNo,
       items: items ?? this.items,
       tableId: tableId ?? this.tableId,
       tableName: tableName ?? this.tableName,
@@ -513,11 +544,28 @@ class CurrentOrder {
       deliveryFee:
           clearDeliveryFee ? null : (deliveryFee ?? this.deliveryFee),
       source: source ?? this.source,
+      loadedAt: loadedAt ?? this.loadedAt,
     );
   }
 
   bool isSaved() {
     return orderId != null || orderCode != null;
+  }
+
+  /// Whether walking away from this cart would lose work.
+  ///
+  /// An order already in the database is NOT unsaved just because it has lines
+  /// on it — leaving it for another table leaves it exactly where it is, which
+  /// is why picking a second table used to nag about discarding an order that
+  /// was never at risk. What would actually be lost is a line that was never
+  /// persisted, or a quantity moved since the cart was loaded. A cart with no
+  /// order behind it is unsaved the moment anything is on it.
+  bool get hasUnsavedChanges {
+    if (orderId == null) return items.isNotEmpty;
+    return items.any((i) =>
+        i.id == null ||
+        (i.savedQuantity != null &&
+            (i.quantity - i.savedQuantity!).abs() > 0.0001));
   }
 
 
@@ -611,8 +659,21 @@ class OrderFullDetails {
   final double totalTva;
   final double total;
   final double totalPaid;
+
+  /// Delivery charge on this order, or 0.
+  ///
+  /// Kept OUT of [total] deliberately: `totalPaid` sums ticket amounts, which
+  /// are products-only, so folding the fee into the total would make every
+  /// settled delivery read as still owing. Use [grandTotal] to show a human
+  /// what the customer actually pays, and [total] to decide whether the order
+  /// is paid.
+  final double deliveryFee;
+
   final List<OrderItemDetails> items;
   final bool isZLocked; // True when linked session is ended (Z-report closed)
+
+  /// What the customer hands over: products plus delivery.
+  double get grandTotal => total + deliveryFee;
 
   OrderFullDetails({
     required this.order,
@@ -630,6 +691,7 @@ class OrderFullDetails {
     required this.totalTva,
     required this.total,
     required this.totalPaid,
+    this.deliveryFee = 0.0,
     this.items = const [],
     this.isZLocked = false,
   });

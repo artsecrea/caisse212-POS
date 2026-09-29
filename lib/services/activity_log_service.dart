@@ -255,6 +255,25 @@ class ActivityLogService {
     return log(ActivityAction.posCommand, 'audit_pos_command', [label]);
   }
 
+  /// Records that a cashier rang [waiterName]. Table and message are folded
+  /// into one trailing detail so the audit screen reads as a sentence whether
+  /// the cashier sent both, one, or neither.
+  Future<void> logWaiterCalled({
+    required String waiterName,
+    String? tableName,
+    String? message,
+    int? userId,
+    String? username,
+  }) {
+    final details = [
+      if (tableName != null && tableName.isNotEmpty) tableName,
+      if (message != null && message.isNotEmpty) message,
+    ].join(' — ');
+    return log(ActivityAction.waiterCalled, 'audit_waiter_called',
+        [waiterName, details],
+        userId: userId, username: username);
+  }
+
   // ── Queries ────────────────────────────────────────────────────────────
 
   /// Paginated, server-filtered query for the logs screen. Newest first.

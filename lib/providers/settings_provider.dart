@@ -1,10 +1,10 @@
+import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../domain/models/app_settings.dart';
 import '../services/autostart_service.dart';
 import 'database_providers.dart'
     show sharedPreferencesProvider, selectedCategoryProvider;
-import 'z_day_provider.dart' show kZDayStateKey;
 
 // Keys for SharedPreferences
 class SettingsKeys {
@@ -22,6 +22,7 @@ class SettingsKeys {
   static const String defaultKdsState = 'default_kds_state';
   static const String printWaiterOrderTicket = 'print_waiter_order_ticket';
   static const String printWaiterPaper = 'print_waiter_paper';
+  static const String waiterKdsBatchSeconds = 'waiter_kds_batch_seconds';
   static const String paidOrderDefaultStatus = 'paid_order_default_status';
   static const String categoryDisplayMode = 'category_display_mode';
   static const String componentGroupDisplayMode =
@@ -75,6 +76,13 @@ class SettingsKeys {
   static const String autoStartServer = 'auto_start_server';
   static const String openOnStartup = 'open_on_startup';
   static const String waiterDashboardShowOwed = 'waiter_dashboard_show_owed';
+  static const String waiterCallEnabled = 'waiter_call_enabled';
+  static const String waiterCallRingUntilDismissed =
+      'waiter_call_ring_until_dismissed';
+  static const String waiterShowKitchenStatus = 'waiter_show_kitchen_status';
+  static const String waiterNotifyReady = 'waiter_notify_ready';
+  static const String waiterNotifyCanceled = 'waiter_notify_canceled';
+  static const String waiterNotifyRupture = 'waiter_notify_rupture';
   static const String sseEnabled = 'sse_enabled';
 
   // UI settings
@@ -93,11 +101,6 @@ class SettingsKeys {
   static const String requireDeliveryAddress = 'require_delivery_address';
   static const String autoClearTableAfterPaying =
       'auto_clear_table_after_paying';
-  static const String zTrackingEnabled = 'z_tracking_enabled';
-  static const String zOpenMode = 'z_open_mode';
-  static const String zCloseRequireManager = 'z_close_require_manager';
-  static const String zCodePrefix = 'z_code_prefix';
-  static const String zMaxHours = 'z_max_hours';
   static const String coursesEnabled = 'courses_enabled';
   static const String printKitchenCancellations =
       'print_kitchen_cancellations';
@@ -111,10 +114,7 @@ class SettingsKeys {
   static const String requireAdminToCloseUnbalanced =
       'require_admin_close_unbalanced';
   static const String printXOnSessionClose = 'print_x_on_session_close';
-  static const String printZDayTotalOnClose = 'print_z_day_total_on_close';
   static const String printDiscountsOnClose = 'print_discounts_on_close';
-  static const String zDayLockEnabled = 'z_day_lock_enabled';
-  static const String zDayStartHour = 'z_day_start_hour';
   static const String printOrdersListOnClose = 'print_orders_list_on_close';
   static const String printProductSummaryOnClose =
       'print_product_summary_on_close';
@@ -133,6 +133,15 @@ class SettingsKeys {
   // Ticket printing settings
   static const String ticketHeader = 'ticket_header';
   static const String ticketFooter = 'ticket_footer';
+  static const String ticketHeadersByType = 'ticket_headers_by_type';
+  static const String ticketFootersByType = 'ticket_footers_by_type';
+  static const String printDiscountReason = 'print_discount_reason';
+  static const String showOrderNumberInLists = 'show_order_number_in_lists';
+  static const String showOrderNumberOnKds = 'show_order_number_on_kds';
+  static const String showOrderNumberOnWaiter = 'show_order_number_on_waiter';
+  static const String orderNumberResetMode = 'order_number_reset_mode';
+  static const String totalsIncludeDeliveryFee =
+      'totals_include_delivery_fee';
 
   // Favorites & sort
   static const String showFavoritesCategory = 'show_favorites_category';
@@ -272,6 +281,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(SettingsKeys.printWaiterOrderTicket) ?? true,
       printWaiterPaper:
           _prefs.getBool(SettingsKeys.printWaiterPaper) ?? true,
+      waiterKdsBatchSeconds:
+          _prefs.getInt(SettingsKeys.waiterKdsBatchSeconds) ?? 12,
       paidOrderDefaultStatus: _safeDefaultStatus(
           _prefs.getString(SettingsKeys.paidOrderDefaultStatus)),
       categoryDisplayMode: categoryMode,
@@ -310,6 +321,14 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _openOnStartupDefault(),
       waiterDashboardShowOwed:
           _prefs.getBool(SettingsKeys.waiterDashboardShowOwed) ?? true,
+      waiterCallEnabled:
+          _prefs.getBool(SettingsKeys.waiterCallEnabled) ?? false,
+      waiterCallRingUntilDismissed:
+          _prefs.getBool(SettingsKeys.waiterCallRingUntilDismissed) ?? true,
+      waiterShowKitchenStatus: _prefs.getBool(SettingsKeys.waiterShowKitchenStatus) ?? false,
+      waiterNotifyReady: _prefs.getBool(SettingsKeys.waiterNotifyReady) ?? false,
+      waiterNotifyCanceled: _prefs.getBool(SettingsKeys.waiterNotifyCanceled) ?? false,
+      waiterNotifyRupture: _prefs.getBool(SettingsKeys.waiterNotifyRupture) ?? false,
       sseEnabled: _prefs.getBool(SettingsKeys.sseEnabled) ?? false,
       enableSnackBars: _prefs.getBool(SettingsKeys.enableSnackBars) ?? false,
       enableCustomerDisplay: _prefs.getBool(SettingsKeys.enableCustomerDisplay) ?? false,
@@ -324,12 +343,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(SettingsKeys.requireDeliveryAddress) ?? false,
       autoClearTableAfterPaying:
           _prefs.getBool(SettingsKeys.autoClearTableAfterPaying) ?? false,
-      zTrackingEnabled: _prefs.getBool(SettingsKeys.zTrackingEnabled) ?? false,
-      zOpenMode: _prefs.getString(SettingsKeys.zOpenMode) ?? 'auto',
-      zCloseRequireManager:
-          _prefs.getBool(SettingsKeys.zCloseRequireManager) ?? false,
-      zCodePrefix: _prefs.getString(SettingsKeys.zCodePrefix) ?? 'Z',
-      zMaxHours: _prefs.getInt(SettingsKeys.zMaxHours) ?? 0,
       coursesEnabled: _prefs.getBool(SettingsKeys.coursesEnabled) ?? false,
       printKitchenCancellations:
           _prefs.getBool(SettingsKeys.printKitchenCancellations) ?? true,
@@ -345,13 +358,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(SettingsKeys.requireAdminToCloseUnbalanced) ?? false,
       printXOnSessionClose:
           _prefs.getBool(SettingsKeys.printXOnSessionClose) ?? true,
-      printZDayTotalOnClose:
-          _prefs.getBool(SettingsKeys.printZDayTotalOnClose) ?? false,
       printDiscountsOnClose:
           _prefs.getBool(SettingsKeys.printDiscountsOnClose) ?? false,
-      zDayLockEnabled: _prefs.getBool(SettingsKeys.zDayLockEnabled) ?? false,
-      zDayStartHour:
-          (_prefs.getInt(SettingsKeys.zDayStartHour) ?? 0).clamp(0, 23),
       printOrdersListOnClose:
           _prefs.getBool(SettingsKeys.printOrdersListOnClose) ?? false,
       printProductSummaryOnClose:
@@ -389,6 +397,20 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(SettingsKeys.showBackTileInProductGrid) ?? false,
       ticketHeader: _prefs.getString(SettingsKeys.ticketHeader) ?? '',
       ticketFooter: _prefs.getString(SettingsKeys.ticketFooter) ?? '',
+      ticketHeaders: _readTicketTexts(SettingsKeys.ticketHeadersByType),
+      ticketFooters: _readTicketTexts(SettingsKeys.ticketFootersByType),
+      printDiscountReason:
+          _prefs.getBool(SettingsKeys.printDiscountReason) ?? true,
+      showOrderNumberInLists:
+          _prefs.getBool(SettingsKeys.showOrderNumberInLists) ?? false,
+      showOrderNumberOnKds:
+          _prefs.getBool(SettingsKeys.showOrderNumberOnKds) ?? false,
+      showOrderNumberOnWaiter:
+          _prefs.getBool(SettingsKeys.showOrderNumberOnWaiter) ?? false,
+      orderNumberResetMode:
+          _prefs.getString(SettingsKeys.orderNumberResetMode) ?? 'session',
+      totalsIncludeDeliveryFee:
+          _prefs.getBool(SettingsKeys.totalsIncludeDeliveryFee) ?? true,
       showFavoritesCategory: _prefs.getBool(SettingsKeys.showFavoritesCategory) ?? false,
       sortByLastUsed: _prefs.getBool(SettingsKeys.sortByLastUsed) ?? false,
     );
@@ -489,6 +511,14 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setPrintWaiterPaper(bool value) async {
     await _prefs.setBool(SettingsKeys.printWaiterPaper, value);
     state = state.copyWith(printWaiterPaper: value);
+  }
+
+  /// Clamped rather than trusted: a negative wait is meaningless and a very
+  /// long one strands food in a timer instead of a kitchen. 0 = print at once.
+  Future<void> setWaiterKdsBatchSeconds(int value) async {
+    final clamped = value.clamp(0, 120);
+    await _prefs.setInt(SettingsKeys.waiterKdsBatchSeconds, clamped);
+    state = state.copyWith(waiterKdsBatchSeconds: clamped);
   }
 
   Future<void> setPaidOrderDefaultStatus(String status) async {
@@ -660,6 +690,36 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(waiterDashboardShowOwed: value);
   }
 
+  Future<void> setWaiterCallEnabled(bool value) async {
+    await _prefs.setBool(SettingsKeys.waiterCallEnabled, value);
+    state = state.copyWith(waiterCallEnabled: value);
+  }
+
+  Future<void> setWaiterCallRingUntilDismissed(bool value) async {
+    await _prefs.setBool(SettingsKeys.waiterCallRingUntilDismissed, value);
+    state = state.copyWith(waiterCallRingUntilDismissed: value);
+  }
+
+  Future<void> setWaiterShowKitchenStatus(bool value) async {
+    await _prefs.setBool(SettingsKeys.waiterShowKitchenStatus, value);
+    state = state.copyWith(waiterShowKitchenStatus: value);
+  }
+
+  Future<void> setWaiterNotifyReady(bool value) async {
+    await _prefs.setBool(SettingsKeys.waiterNotifyReady, value);
+    state = state.copyWith(waiterNotifyReady: value);
+  }
+
+  Future<void> setWaiterNotifyCanceled(bool value) async {
+    await _prefs.setBool(SettingsKeys.waiterNotifyCanceled, value);
+    state = state.copyWith(waiterNotifyCanceled: value);
+  }
+
+  Future<void> setWaiterNotifyRupture(bool value) async {
+    await _prefs.setBool(SettingsKeys.waiterNotifyRupture, value);
+    state = state.copyWith(waiterNotifyRupture: value);
+  }
+
   Future<void> setEnableSnackBars(bool value) async {
     await _prefs.setBool(SettingsKeys.enableSnackBars, value);
     state = state.copyWith(enableSnackBars: value);
@@ -698,32 +758,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setAutoClearTableAfterPaying(bool value) async {
     await _prefs.setBool(SettingsKeys.autoClearTableAfterPaying, value);
     state = state.copyWith(autoClearTableAfterPaying: value);
-  }
-
-  Future<void> setZTrackingEnabled(bool value) async {
-    await _prefs.setBool(SettingsKeys.zTrackingEnabled, value);
-    state = state.copyWith(zTrackingEnabled: value);
-  }
-
-  Future<void> setZOpenMode(String value) async {
-    await _prefs.setString(SettingsKeys.zOpenMode, value);
-    state = state.copyWith(zOpenMode: value);
-  }
-
-  Future<void> setZCloseRequireManager(bool value) async {
-    await _prefs.setBool(SettingsKeys.zCloseRequireManager, value);
-    state = state.copyWith(zCloseRequireManager: value);
-  }
-
-  Future<void> setZCodePrefix(String value) async {
-    final v = value.trim().isEmpty ? 'Z' : value.trim();
-    await _prefs.setString(SettingsKeys.zCodePrefix, v);
-    state = state.copyWith(zCodePrefix: v);
-  }
-
-  Future<void> setZMaxHours(int value) async {
-    await _prefs.setInt(SettingsKeys.zMaxHours, value < 0 ? 0 : value);
-    state = state.copyWith(zMaxHours: value < 0 ? 0 : value);
   }
 
   Future<void> setPrintKitchenCancellations(bool value) async {
@@ -766,25 +800,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(printXOnSessionClose: value);
   }
 
-  Future<void> setPrintZDayTotalOnClose(bool value) async {
-    await _prefs.setBool(SettingsKeys.printZDayTotalOnClose, value);
-    state = state.copyWith(printZDayTotalOnClose: value);
-  }
-
   Future<void> setPrintDiscountsOnClose(bool value) async {
     await _prefs.setBool(SettingsKeys.printDiscountsOnClose, value);
     state = state.copyWith(printDiscountsOnClose: value);
-  }
-
-  Future<void> setZDayLockEnabled(bool value) async {
-    await _prefs.setBool(SettingsKeys.zDayLockEnabled, value);
-    state = state.copyWith(zDayLockEnabled: value);
-  }
-
-  Future<void> setZDayStartHour(int value) async {
-    final v = value.clamp(0, 23);
-    await _prefs.setInt(SettingsKeys.zDayStartHour, v);
-    state = state.copyWith(zDayStartHour: v);
   }
 
   Future<void> setPrintOrdersListOnClose(bool value) async {
@@ -975,6 +993,75 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(ticketFooter: footer);
   }
 
+  /// Stored JSON, read back through the tolerant parser so a hand-edited or
+  /// older-build value cannot throw on startup.
+  Map<String, String> _readTicketTexts(String key) {
+    final raw = _prefs.getString(key);
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      return parseTicketTexts(jsonDecode(raw));
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// Set (or clear, with a blank value) the header for one ticket type.
+  /// Clearing falls the type back to the shared [AppSettings.ticketHeader].
+  Future<void> setTicketHeaderFor(String ticket, String header) async {
+    final next = Map<String, String>.from(state.ticketHeaders);
+    if (header.trim().isEmpty) {
+      next.remove(ticket);
+    } else {
+      next[ticket] = header;
+    }
+    await _prefs.setString(
+        SettingsKeys.ticketHeadersByType, jsonEncode(next));
+    state = state.copyWith(ticketHeaders: next);
+  }
+
+  /// Footer counterpart of [setTicketHeaderFor].
+  Future<void> setTicketFooterFor(String ticket, String footer) async {
+    final next = Map<String, String>.from(state.ticketFooters);
+    if (footer.trim().isEmpty) {
+      next.remove(ticket);
+    } else {
+      next[ticket] = footer;
+    }
+    await _prefs.setString(
+        SettingsKeys.ticketFootersByType, jsonEncode(next));
+    state = state.copyWith(ticketFooters: next);
+  }
+
+  Future<void> setPrintDiscountReason(bool value) async {
+    await _prefs.setBool(SettingsKeys.printDiscountReason, value);
+    state = state.copyWith(printDiscountReason: value);
+  }
+
+  Future<void> setShowOrderNumberInLists(bool value) async {
+    await _prefs.setBool(SettingsKeys.showOrderNumberInLists, value);
+    state = state.copyWith(showOrderNumberInLists: value);
+  }
+
+  Future<void> setShowOrderNumberOnKds(bool value) async {
+    await _prefs.setBool(SettingsKeys.showOrderNumberOnKds, value);
+    state = state.copyWith(showOrderNumberOnKds: value);
+  }
+
+  Future<void> setShowOrderNumberOnWaiter(bool value) async {
+    await _prefs.setBool(SettingsKeys.showOrderNumberOnWaiter, value);
+    state = state.copyWith(showOrderNumberOnWaiter: value);
+  }
+
+  Future<void> setTotalsIncludeDeliveryFee(bool value) async {
+    await _prefs.setBool(SettingsKeys.totalsIncludeDeliveryFee, value);
+    state = state.copyWith(totalsIncludeDeliveryFee: value);
+  }
+
+  Future<void> setOrderNumberResetMode(String value) async {
+    await _prefs.setString(SettingsKeys.orderNumberResetMode, value);
+    state = state.copyWith(orderNumberResetMode: value);
+  }
+
   Future<void> setShowFavoritesCategory(bool value) async {
     await _prefs.setBool(SettingsKeys.showFavoritesCategory, value);
     state = state.copyWith(showFavoritesCategory: value);
@@ -1045,14 +1132,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _prefs.remove(SettingsKeys.openOnStartup);
     await _prefs.remove(SettingsKeys.autoClearSyncedData);
     await _prefs.remove(SettingsKeys.sseEnabled);
-    await _prefs.remove(SettingsKeys.zDayLockEnabled);
-    await _prefs.remove(SettingsKeys.zDayStartHour);
     await _prefs.remove(SettingsKeys.printOrdersListOnClose);
     await _prefs.remove(SettingsKeys.printProductSummaryOnClose);
-    // The day/Z-number counter is not an AppSettings field, but a reset that
-    // left a "day closed" lock behind would block login with no way to explain
-    // it from the settings UI.
-    await _prefs.remove(kZDayStateKey);
+    // Leftover of the retired local day lock (pre-v3 Z); nothing reads it.
+    await _prefs.remove('z_day_state_json');
     state = const AppSettings();
   }
 }

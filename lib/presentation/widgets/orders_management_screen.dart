@@ -16,9 +16,11 @@ import '../../domain/models/order_models.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/settings_provider.dart';
 import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
 import 'admin_mode_chip.dart';
+import 'delivery_fee_totals_chip.dart';
 import 'permission_guard.dart';
 import 'order_details_dialog.dart';
 import 'refund_dialog.dart';
@@ -485,6 +487,8 @@ class _OrdersManagementScreenState
                 Expanded(flex: 2, child: _buildTableFilterField(l10n)),
                 const SizedBox(width: 12),
                 _buildDateRangeButton(l10n),
+                const SizedBox(width: 12),
+                const DeliveryFeeTotalsChip(),
                 if (_hasAnyFilter()) ...[
                   const SizedBox(width: 4),
                   _buildResetAllButton(l10n),
@@ -510,6 +514,8 @@ class _OrdersManagementScreenState
                 Row(
                   children: [
                     Expanded(child: _buildDateRangeButton(l10n)),
+                    const SizedBox(width: 8),
+                    const DeliveryFeeTotalsChip(),
                     if (_hasAnyFilter()) ...[
                       const SizedBox(width: 8),
                       _buildResetAllButton(l10n),
@@ -538,6 +544,11 @@ class _OrdersManagementScreenState
                     _buildResetAllButton(l10n),
                   ],
                 ],
+              ),
+              const SizedBox(height: 8),
+              const Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: DeliveryFeeTotalsChip(),
               ),
             ],
           );
@@ -1386,6 +1397,7 @@ class _OrdersManagementScreenState
       ),
       title: Row(
         children: [
+          ..._orderNoBadge(order),
           Text(order.code, style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(width: 8),
           if (isZLocked)
@@ -1414,7 +1426,12 @@ class _OrdersManagementScreenState
             const SizedBox(width: 12),
           ],
           Text(
-            CurrencyFormatter.formatWithCurrency(orderDetails.total, currency),
+            // With the fee by default: a delivery order's bill includes it, so
+            // products-only does not match the money taken. The operator can
+            // switch that off. The paid/unpaid decision always uses `total` —
+            // see OrderFullDetails.deliveryFee.
+            CurrencyFormatter.formatWithCurrency(
+                _displayTotal(orderDetails), currency),
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(width: 8),
@@ -1516,6 +1533,41 @@ class _OrdersManagementScreenState
         _buildPaginationControls(l10n),
       ],
     );
+  }
+
+  /// The order's total as the list shows it: with or without the delivery
+  /// fee, per the toolbar toggle.
+  double _displayTotal(OrderFullDetails d) =>
+      ref.watch(settingsProvider).totalsIncludeDeliveryFee
+          ? d.grandTotal
+          : d.total;
+
+  /// "#12" ahead of the order code, when the per-session number is switched
+  /// on for lists and the order has one.
+  List<Widget> _orderNoBadge(Order order) {
+    final no = order.sessionOrderNo;
+    if (no == null || !ref.watch(settingsProvider).showOrderNumberInLists) {
+      return const [];
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          '#$no',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 12,
+            color: scheme.onPrimaryContainer,
+          ),
+        ),
+      ),
+      const SizedBox(width: 6),
+    ];
   }
 
   DataRow _buildDataRow(OrderFullDetails orderDetails, String currency, AppLocalizations l10n) {
@@ -1642,6 +1694,7 @@ class _OrdersManagementScreenState
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              ..._orderNoBadge(order),
               Text(order.code, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
               const SizedBox(width: 4),
               if (isZLocked)
@@ -1683,7 +1736,8 @@ class _OrdersManagementScreenState
         DataCell(Text(orderDetails.productCount.toString())),
         DataCell(
           Text(
-            CurrencyFormatter.formatWithCurrency(orderDetails.total, currency),
+            CurrencyFormatter.formatWithCurrency(
+                _displayTotal(orderDetails), currency),
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
         ),
@@ -2657,6 +2711,10 @@ class _OrderDetailsDialog extends ConsumerWidget {
                           children: [
                             _buildInfoRow(context, l10n.translate('order_id'), '#${order.id}'),
                             _buildInfoRow(context, l10n.translate('order_code'), order.code),
+                            if (order.sessionOrderNo != null &&
+                                ref.watch(settingsProvider).showOrderNumberInLists)
+                              _buildInfoRow(context, l10n.translate('order_number_section'),
+                                  '#${order.sessionOrderNo}'),
                             _buildInfoRow(context, l10n.translate('status'), _getTranslatedStatus(order.status, l10n)),
                             _buildInfoRow(context, l10n.translate('type'), order.type.replaceAll('_', ' ')),
                             _buildInfoRow(context, l10n.translate('number_of_persons'), '${order.persons}'),
@@ -2678,7 +2736,10 @@ class _OrderDetailsDialog extends ConsumerWidget {
                     const SizedBox(height: 24),
                     Text(l10n.translate('financial_summary'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-                    _buildFinancialCard(context, currency, l10n),
+                    _buildFinancialCard(context, currency, l10n,
+                        includeDeliveryFee: ref
+                            .watch(settingsProvider)
+                            .totalsIncludeDeliveryFee),
                   ],
                 ),
               ),
@@ -2818,7 +2879,8 @@ class _OrderDetailsDialog extends ConsumerWidget {
     );
   }
 
-  Widget _buildFinancialCard(BuildContext context, String currency, AppLocalizations l10n) {
+  Widget _buildFinancialCard(BuildContext context, String currency, AppLocalizations l10n,
+      {required bool includeDeliveryFee}) {
     return Card(
       elevation: 2,
       child: Padding(
@@ -2840,7 +2902,24 @@ class _OrderDetailsDialog extends ConsumerWidget {
               _buildFinancialRow(l10n.translate('total_discount'), '-${CurrencyFormatter.formatWithCurrency(fullDetails.totalDiscount, currency)}', color: Colors.red),
             _buildFinancialRow(l10n.translate('total_tva'), CurrencyFormatter.formatWithCurrency(fullDetails.totalTva, currency)),
             const Divider(height: 20, thickness: 2),
-            _buildFinancialRow(l10n.translate('total'), CurrencyFormatter.formatWithCurrency(fullDetails.total, currency), fontSize: 18, isBold: true),
+            // Products, then delivery, then what is actually owed. Broken out
+            // rather than folded in so the products figure still reconciles
+            // with the ticket rows and every sales total built from them.
+            if (fullDetails.deliveryFee > 0 && includeDeliveryFee) ...[
+              _buildFinancialRow(l10n.translate('total'),
+                  CurrencyFormatter.formatWithCurrency(fullDetails.total, currency)),
+              _buildFinancialRow(
+                  l10n.translate('delivery_fee'),
+                  CurrencyFormatter.formatWithCurrency(
+                      fullDetails.deliveryFee, currency)),
+              _buildFinancialRow(
+                  l10n.translate('total_collected'),
+                  CurrencyFormatter.formatWithCurrency(
+                      fullDetails.grandTotal, currency),
+                  fontSize: 18,
+                  isBold: true),
+            ] else
+              _buildFinancialRow(l10n.translate('total'), CurrencyFormatter.formatWithCurrency(fullDetails.total, currency), fontSize: 18, isBold: true),
             const Divider(height: 20),
             _buildFinancialRow(
               l10n.translate('total_paid'),

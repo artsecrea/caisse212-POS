@@ -28,7 +28,7 @@ const Map<String, List<String>> kPermissionGroups = <String, List<String>>{
   'Logs':        ['pos:logs:view'],
   'Settings':    ['pos:settings:view', 'pos:settings:update'],
   'Reports':     ['pos:reports:view'],
-  'Z':           ['pos:z:open', 'pos:z:close', 'pos:z:view', 'pos:z:print'],
+  'Z':           ['pos:z:open', 'pos:z:close', 'pos:z:view', 'pos:z:print', 'pos:z:override'],
   'Sync':        ['pos:sync:orders', 'pos:sync:tickets', 'pos:sync:sessions', 'pos:sync:customers', 'pos:sync:all', 'pos:sync:viewPending', 'pos:sync:managePending'],
   'Other':       ['pos:manualDiscount', 'pos:printing'],
 };

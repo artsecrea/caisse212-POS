@@ -102,9 +102,15 @@ void main() {
       expect(PrinterConfig.fieldDefaultOn('discount', 'order'), isTrue);
     });
 
-    test('the paid receipts keep VAT and the cash block off', () {
+    test('the paid receipts show VAT and keep the cash block off', () {
       for (final ticket in const ['customer', 'store']) {
-        expect(PrinterConfig.fieldDefaultOn('tva', ticket), isFalse);
+        // VAT used to be opt-in here, on the reasoning that turning it on
+        // would silently add a line to every receipt in the field. That does
+        // not hold for a document handed to a customer: a receipt with no tax
+        // line reads as broken rather than as a choice.
+        expect(PrinterConfig.fieldDefaultOn('tva', ticket), isTrue);
+        // Cash given and change stay opt-in — a counter-shop habit, not a
+        // legal line.
         expect(PrinterConfig.fieldDefaultOn('amountGiven', ticket), isFalse);
         expect(PrinterConfig.fieldDefaultOn('change', ticket), isFalse);
         expect(PrinterConfig.fieldDefaultOn('table', ticket), isTrue);

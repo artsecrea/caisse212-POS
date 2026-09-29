@@ -4,6 +4,9 @@ import '../core/enums.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/session_rules.dart';
 import 'cash_movement_service.dart';
+import 'daily_summary_service.dart';
+import 'session_z_details.dart';
+import 'cash_report_sections.dart' show CashReportSections;
 import 'refund_service.dart';
 import 'pending_operations_service.dart';
 import '../utils/pos_log.dart';
@@ -50,7 +53,17 @@ class PaymentBreakdown {
         'totalPaid': totalPaid,
       };
 
-  static PaymentBreakdown fromTickets(Iterable<Ticket> tickets) {
+  /// [feeByTicketId] adds the delivery charge collected on a ticket to the
+  /// method that collected it.
+  ///
+  /// `Ticket.amount` is products-only by design — every sales figure is built
+  /// from it — so a delivery fee appears on no ticket row at all. It is still
+  /// money in the drawer, and without this the close-session count came up
+  /// over by exactly the fees taken in cash. Empty map = the old behaviour.
+  static PaymentBreakdown fromTickets(
+    Iterable<Ticket> tickets, {
+    Map<int, double> feeByTicketId = const {},
+  }) {
     double cash = 0, card = 0, mobile = 0, other = 0, cancelled = 0;
     int cancelledCount = 0, paidCount = 0;
     for (final t in tickets) {
@@ -63,16 +76,16 @@ class PaymentBreakdown {
       paidCount++;
       switch (TransactionType.fromString(t.paymentMethod)) {
         case TransactionType.cash:
-          cash += t.amount;
+          cash += t.amount + (feeByTicketId[t.id] ?? 0.0);
           break;
         case TransactionType.card:
-          card += t.amount;
+          card += t.amount + (feeByTicketId[t.id] ?? 0.0);
           break;
         case TransactionType.mobile:
-          mobile += t.amount;
+          mobile += t.amount + (feeByTicketId[t.id] ?? 0.0);
           break;
         case TransactionType.other:
-          other += t.amount;
+          other += t.amount + (feeByTicketId[t.id] ?? 0.0);
           break;
       }
     }
@@ -218,9 +231,15 @@ class SessionService {
   SessionService(this._database);
 
   /// Start a new cash session
+  ///
+  /// [moneyEntered] is the cash the cashier brought in, [moneyCarriedOver]
+  /// what was left from the previous session — both POS-counted and sent as
+  /// is; the server only sums them per Z.
   Future<CashSession> startSession({
     required int cashierId,
     required double moneyAtStart,
+    double? moneyEntered,
+    double? moneyCarriedOver,
   }) async {
     // Check if there's an active session for this user
     final existingSession = await getActiveSession(cashierId);
@@ -241,6 +260,8 @@ class SessionService {
         code: sessionCode,
         cashierId: cashierId,
         moneyAtStart: moneyAtStart,
+        moneyEntered: Value(moneyEntered),
+        moneyCarriedOver: Value(moneyCarriedOver),
         status: const Value('active'),
         startedAt: Value(DateTime.now()),
       ),
@@ -258,10 +279,14 @@ class SessionService {
   /// and store both. `moneyAtEnd` becomes the counted amount (the number an
   /// accountant cares about); otherwise it falls back to the expected amount,
   /// preserving the old single-arg behaviour.
+  ///
+  /// [autoClosed] marks a session ended by the system (a Z close sweeping it
+  /// up, the day rollover, a session rule) rather than by its cashier.
   Future<void> endSession({
     required int sessionId,
     double? countedCash,
     String? countNotes,
+    bool autoClosed = false,
   }) async {
     final session = await getSessionById(sessionId);
     if (session == null) {
@@ -278,6 +303,18 @@ class SessionService {
     final moneyAtEnd = countedCash ?? expectedCash;
     final variance =
         countedCash == null ? null : countedCash - expectedCash;
+    // Full figures for the server's Z sum. A report failure must never block
+    // the close: the payment totals alone still go.
+    CashReportSections? sections;
+    try {
+      sections = (await DailySummaryService(_database)
+              .generateSessionReport(sessionId))
+          .sections;
+    } catch (e) {
+      posLog('Session details: report sections unavailable: $e');
+    }
+    final details =
+        buildSessionDetails(summary, sections: sections, variance: variance);
 
     await (_database.update(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(sessionId)))
@@ -286,12 +323,13 @@ class SessionService {
           endedAt: Value(endedAt),
           moneyAtEnd: Value(moneyAtEnd),
           totalPaid: Value(summary.totalPaid),
-          details: Value(jsonEncode(summary.details)),
+          details: Value(jsonEncode(details)),
           status: const Value('ended'),
           countedCash: Value(countedCash),
           variance: Value(variance),
           countedAt: Value(countedCash == null ? null : endedAt),
           countNotes: Value(countNotes),
+          autoClosed: Value(autoClosed),
           // Always mark unsynced so syncSessionsBulk / syncSingleSession
           // can push the closed state to the server on next opportunity.
           isSynced: const Value(false),
@@ -357,9 +395,25 @@ class SessionService {
     SessionRules rules, {
     required bool isAdmin,
     required int cashierId,
+    double moneyAtStart = 0,
   }) async {
     if (isAdmin) return;
     if (!rules.hasAnyRule) return;
+
+    if (rules.requireOpeningFloat && moneyAtStart <= 0) {
+      throw SessionRuleViolation('An opening float is required');
+    }
+
+    final maxOpen = rules.maxOpenSessionsPerTerminal;
+    if (maxOpen != null && maxOpen > 0) {
+      final open = await (_database.select(_database.cashSessions)
+            ..where((s) => s.status.isIn(['active', 'paused'])))
+          .get();
+      if (open.length >= maxOpen) {
+        throw SessionRuleViolation(
+            'Maximum $maxOpen open session(s) on this terminal reached');
+      }
+    }
 
     final hour = DateTime.now().hour;
 
@@ -411,6 +465,11 @@ class SessionService {
     if (session == null) {
       throw Exception('Session not found');
     }
+    // A closed session is part of its Z's totals: the server refuses to
+    // delete it (409), and a queued delete would retry forever.
+    if (session.status == 'ended') {
+      throw Exception('A closed session cannot be deleted');
+    }
     final wasSynced = session.isSynced;
 
     // Queue delete operation if session was synced
@@ -440,6 +499,38 @@ class SessionService {
       .get();
   }
 
+  /// Which ticket collected each order's delivery charge.
+  ///
+  /// An order carries one charge however many ways the bill is divided, and it
+  /// rides the FIRST settlement — the same rule `deliveryFeeToCollect` applies
+  /// when taking the money, and the same rule a reprint uses. Keyed by ticket
+  /// so the caller can attribute it to the method that ticket was paid with.
+  Future<Map<int, double>> _deliveryFeeByTicket(List<Ticket> tickets) async {
+    final live = tickets.where((t) => t.isPaid && !t.isCancelled).toList();
+    if (live.isEmpty) return const {};
+
+    final orderIds = live.map((t) => t.orderId).toSet().toList();
+    final orders = await (_database.select(_database.orders)
+          ..where((o) => o.id.isIn(orderIds)))
+        .get();
+    final feeByOrder = {
+      for (final o in orders)
+        if ((o.deliveryFee ?? 0) > 0) o.id: o.deliveryFee!,
+    };
+    if (feeByOrder.isEmpty) return const {};
+
+    final firstTicketByOrder = <int, Ticket>{};
+    for (final t in live) {
+      if (!feeByOrder.containsKey(t.orderId)) continue;
+      final held = firstTicketByOrder[t.orderId];
+      if (held == null || t.id < held.id) firstTicketByOrder[t.orderId] = t;
+    }
+    return {
+      for (final entry in firstTicketByOrder.entries)
+        entry.value.id: feeByOrder[entry.key]!,
+    };
+  }
+
   /// Get session summary with calculated totals
   Future<SessionSummary> getSessionSummary(int sessionId) async {
     final session = await getSessionById(sessionId);
@@ -461,9 +552,15 @@ class SessionService {
     final refundsTotal = await refunds.totalForSession(sessionId);
     final refundsCash = await refunds.cashTotalForSession(sessionId);
 
+    // Delivery charges, attributed the way the payment screen collects them:
+    // one per order, on whichever ticket settled first. Reconstructed rather
+    // than read off a ticket row because no ticket row carries it.
+    final feeByTicketId = await _deliveryFeeByTicket(tickets);
+
     return SessionSummary(
       session: session,
-      breakdown: PaymentBreakdown.fromTickets(tickets),
+      breakdown:
+          PaymentBreakdown.fromTickets(tickets, feeByTicketId: feeByTicketId),
       ticketCount: tickets.length,
       cashMovementsNet: totals.paidIn - totals.paidOut,
       cashPaidIn: totals.paidIn,

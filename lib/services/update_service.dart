@@ -2,12 +2,18 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
+import 'package:cryptography_plus/cryptography_plus.dart' as ed;
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:loggecrea/loggecrea.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
+import 'update_config.dart';
 
+/// A release the updates service offered. Every field except [releaseNotes]
+/// comes from the manifest, never from the loose body fields.
 class UpdateInfo {
   final String version;
   final int buildNumber;
@@ -42,9 +48,22 @@ class UpdateInfo {
 
 class UpdateService {
   final ApiService _apiService;
+  final SharedPreferences _prefs;
   final _logger = Logger.instance;
 
-  UpdateService(this._apiService);
+  // Separate from ApiService.dio on purpose: the updates service takes no JWT,
+  // and BMS headers must not leak to it or to the binaries host.
+  final Dio _dio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 10),
+    validateStatus: (code) => code != null && code < 500,
+  ));
+
+  final Map<String, String> _pinnedKeys;
+
+  UpdateService(this._apiService, this._prefs,
+      {Map<String, String> pinnedKeys = UpdateConfig.pinnedKeys})
+      : _pinnedKeys = pinnedKeys;
 
   static String get currentPlatform {
     if (Platform.isAndroid) return 'android';
@@ -55,23 +74,57 @@ class UpdateService {
     return 'unknown';
   }
 
+  static bool get platformSupported =>
+      Platform.isWindows || Platform.isLinux || Platform.isAndroid;
+
+  String get baseUrl {
+    final raw = _prefs.getString(UpdateConfig.baseUrlPrefKey) ??
+        UpdateConfig.defaultBaseUrl;
+    return raw.trim().replaceAll(RegExp(r'/+$'), '');
+  }
+
+  Future<void> setBaseUrl(String url) =>
+      _prefs.setString(UpdateConfig.baseUrlPrefKey, url.trim());
+
+  String get appSlug {
+    final raw =
+        _prefs.getString(UpdateConfig.appSlugPrefKey)?.trim().toLowerCase() ??
+            '';
+    return raw.isEmpty ? UpdateConfig.defaultAppSlug : raw;
+  }
+
+  /// Empty resets to [UpdateConfig.defaultAppSlug].
+  Future<void> setAppSlug(String slug) =>
+      _prefs.setString(UpdateConfig.appSlugPrefKey, slug.trim());
+
   // ── Check ──────────────────────────────────────────────────────────────────
 
-  /// Unified update check. The Dio path here is `/pos/updates/latest`, but the
-  /// interceptor prepends the base + `/api` (base already ends in `/api`), so
-  /// the real wire path is `/api/api/pos/updates/latest` (double `/api` — the
-  /// backend's normal REST depth). Auth + token refresh are injected by the
-  /// ApiService interceptor; business is resolved server-side from the JWT
-  /// tenant + terminal. 404 = no update (or iOS). See docs/update flow §0/§1.
-  Future<UpdateInfo?> checkForUpdates() async {
+  /// `GET {base}/v1/{app}/{platform}/latest`. 404 = nothing newer for this
+  /// till. A 200 is only trusted after [verify]; anything off returns null.
+  Future<UpdateInfo?> checkForUpdates({required int installedBuild}) async {
+    if (!platformSupported) return null;
+    final base = baseUrl;
+    if (base.isEmpty) {
+      _logger.info('Update check skipped: no updates server configured');
+      return null;
+    }
+
+    // Sent exactly as stored (Dio URL-encodes). business and terminal only
+    // travel together — the server matches terminal stages on the pair.
+    final query = <String, dynamic>{'build': installedBuild};
+    final tenant = _apiService.getTenantId();
+    if (tenant != null) query['tenant'] = tenant;
+    final business = _apiService.getBusinessId();
+    final terminal = _apiService.getPosName();
+    if (business != null && terminal != null) {
+      query['business'] = business;
+      query['terminal'] = terminal;
+    }
+
     try {
-      final response = await _apiService.dio.get(
-        '/pos/updates/latest',
-        queryParameters: {'platform': currentPlatform},
-        options: Options(
-          validateStatus: (code) => code != null && code < 500,
-          receiveTimeout: const Duration(seconds: 10),
-        ),
+      final response = await _dio.get(
+        '$base/v1/${Uri.encodeComponent(appSlug)}/$currentPlatform/latest',
+        queryParameters: query,
       );
 
       if (response.statusCode == 404) return null;
@@ -81,12 +134,12 @@ class UpdateService {
       }
 
       final data = response.data;
-      if (data == null || data is! Map<String, dynamic> || data.isEmpty) {
-        return null;
-      }
+      if (data is! Map<String, dynamic> || data.isEmpty) return null;
 
-      final info = UpdateInfo.fromJson(data);
-      _logger.info('Update available: ${info.version}+${info.buildNumber}');
+      final info = await verify(data, installedBuild);
+      if (info != null) {
+        _logger.info('Update available: ${info.version}+${info.buildNumber}');
+      }
       return info;
     } on DioException catch (e) {
       _logger.error('Update check failed: ${e.message}');
@@ -95,6 +148,64 @@ class UpdateService {
       _logger.error('Update check failed: $e');
       return null;
     }
+  }
+
+  @visibleForTesting
+  Future<UpdateInfo?> verify(
+      Map<String, dynamic> body, int installedBuild) async {
+    final manifestB64 = body['manifest'] as String?;
+    if (manifestB64 == null || manifestB64.isEmpty) {
+      _logger.warning('Update rejected: no manifest');
+      return null;
+    }
+    final manifestBytes = base64.decode(manifestB64);
+
+    // Signing was dropped server-side (owner's decision, 2026-09-29): releases
+    // arrive with empty kid/signature and are trusted as served. A signature
+    // from a pinned key is still checked, so a tampered signed release fails.
+    final kid = body['kid'] as String? ?? '';
+    final signatureB64 = body['signature'] as String? ?? '';
+    final pub = _pinnedKeys[kid];
+    if (pub != null && signatureB64.isNotEmpty) {
+      final ok = await ed.Ed25519().verify(
+        manifestBytes,
+        signature: ed.Signature(
+          base64.decode(signatureB64),
+          publicKey: ed.SimplePublicKey(base64.decode(pub),
+              type: ed.KeyPairType.ed25519),
+        ),
+      );
+      if (!ok) {
+        _logger.warning('Update rejected: bad signature (kid $kid)');
+        return null;
+      }
+    }
+
+    final m = jsonDecode(utf8.decode(manifestBytes)) as Map<String, dynamic>;
+    if (m['app'] != appSlug || m['platform'] != currentPlatform) {
+      _logger.warning(
+          'Update rejected: manifest is for ${m['app']}/${m['platform']}');
+      return null;
+    }
+    final build = (m['buildNumber'] as num?)?.toInt() ?? 0;
+    if (build <= installedBuild) return null;
+
+    final sha = m['sha256'] as String? ?? '';
+    final size = (m['sizeBytes'] as num?)?.toInt();
+    if (sha.isEmpty || size == null || size <= 0) {
+      _logger.warning('Update rejected: manifest lacks sha256/sizeBytes');
+      return null;
+    }
+
+    return UpdateInfo(
+      version: m['version'] as String,
+      buildNumber: build,
+      downloadUrl: m['downloadUrl'] as String,
+      checksum: sha,
+      isMandatory: m['mandatory'] as bool? ?? false,
+      sizeBytes: size,
+      releaseNotes: body['releaseNotes'] as String?,
+    );
   }
 
   // ── Background prepare (no app exit) ──────────────────────────────────────
@@ -121,7 +232,7 @@ class UpdateService {
       final file = File(apkPath);
       if (await file.exists()) await file.delete();
       await _download(info.downloadUrl, apkPath, onProgress);
-      await _verifyChecksum(file, info.checksum);
+      await _verifyChecksum(file, info);
       await _writeMarker(tmp.path, info, apkPath);
       return;
     }
@@ -136,7 +247,7 @@ class UpdateService {
     if (await extractDir.exists()) await extractDir.delete(recursive: true);
 
     await _download(info.downloadUrl, zipPath, onProgress);
-    await _verifyChecksum(zipFile, info.checksum);
+    await _verifyChecksum(zipFile, info);
 
     _logger.info('Extracting to: $extractPath');
     await extractDir.create(recursive: true);
@@ -480,24 +591,33 @@ class UpdateService {
     String savePath,
     Function(double)? onProgress,
   ) async {
-    await _apiService.dio.download(
+    await _dio.download(
       url,
       savePath,
       onReceiveProgress: (received, total) {
         if (total > 0 && onProgress != null) onProgress(received / total);
       },
-      options: Options(receiveTimeout: const Duration(minutes: 15)),
+      options: Options(
+        receiveTimeout: const Duration(minutes: 15),
+        validateStatus: (code) => code == 200,
+      ),
     );
     _logger.info('Download complete: $savePath');
   }
 
-  Future<void> _verifyChecksum(File file, String expected) async {
-    if (expected.isEmpty) return;
-    final bytes = await file.readAsBytes();
-    final actual = sha256.convert(bytes).toString();
-    if (actual != expected) {
+  /// Size and sha256 both come from the signed manifest, so a matching file is
+  /// byte-for-byte the release that was signed.
+  Future<void> _verifyChecksum(File file, UpdateInfo info) async {
+    final size = await file.length();
+    if (info.sizeBytes != null && size != info.sizeBytes) {
       await file.delete();
-      throw Exception('Checksum mismatch — expected $expected, got $actual');
+      throw Exception('Size mismatch — expected ${info.sizeBytes}, got $size');
+    }
+    final actual = (await sha256.bind(file.openRead()).first).toString();
+    if (actual.toLowerCase() != info.checksum.toLowerCase()) {
+      await file.delete();
+      throw Exception(
+          'Checksum mismatch — expected ${info.checksum}, got $actual');
     }
     _logger.info('Checksum OK');
   }

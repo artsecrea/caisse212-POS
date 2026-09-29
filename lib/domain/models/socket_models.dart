@@ -3,6 +3,7 @@
 import '../../core/enums.dart';
 import '../../data/database/app_database.dart';
 import 'kds-models.dart';
+import 'order_course.dart';
 import 'order_models.dart';
 
 
@@ -22,6 +23,8 @@ class SocketOrderModel {
   final List<SocketOrderProductModel> products;
   final String? note;
   final String? cancellationReason;
+  /// Per-session order number; only set when the KDS setting is on.
+  final int? orderNumber;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -40,6 +43,7 @@ class SocketOrderModel {
     required this.products,
     this.note,
     this.cancellationReason,
+    this.orderNumber,
     this.createdAt,
     this.updatedAt,
   });
@@ -48,6 +52,7 @@ class SocketOrderModel {
     return {
       'id': id,
       'code': code,
+      if (orderNumber != null) 'orderNumber': orderNumber,
       'status': status,
       'type': type,
       'priority': priority,
@@ -115,6 +120,15 @@ class SocketOrderProductModel {
   final double? tvaAmount;
   final double? discountAmount;
 
+  /// 1 entrée / 2 plat / 3 dessert (see `OrderCourse`). Omitted from the JSON
+  /// when null, so a KDS reads "no course" rather than a placeholder.
+  final int? courseNo;
+
+  /// Set on a linked line (an option shown on its own product's station): the
+  /// real order line it came from. Such a line has a negative [id] and is
+  /// read-only on the KDS - its state is the parent's.
+  final int? parentLineId;
+
   SocketOrderProductModel({
     required this.id,
     required this.productId,
@@ -130,6 +144,8 @@ class SocketOrderProductModel {
     this.note,
     this.tvaAmount,
     this.discountAmount,
+    this.courseNo,
+    this.parentLineId,
   });
 
   Map<String, dynamic> toJson() {
@@ -148,6 +164,8 @@ class SocketOrderProductModel {
       'stationName': stationName,
       'components': components.map((c) => c.toJson()).toList(),
       'note': note,
+      if (courseNo != null) 'courseNo': courseNo,
+      if (parentLineId != null) 'parentLineId': parentLineId,
     };
   }
 
@@ -170,6 +188,8 @@ class SocketOrderProductModel {
           .fromJson(c as Map<String, dynamic>))
           .toList(),
       note: json['note'] as String?,
+      courseNo: normalizeCourseNo(json['courseNo']),
+      parentLineId: (json['parentLineId'] as num?)?.toInt(),
     );
   }
 }

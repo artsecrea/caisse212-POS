@@ -15,12 +15,15 @@ void main() {
   setUp(() => db = AppDatabase.forTesting(NativeDatabase.memory()));
   tearDown(() => db.close());
 
-  Future<int> session(String code, DateTime startedAt) =>
+  Future<int> session(String code, DateTime startedAt,
+          {String status = 'ended', int? zId}) =>
       db.into(db.cashSessions).insert(CashSessionsCompanion.insert(
             code: code,
             cashierId: 1,
             moneyAtStart: 0,
             startedAt: Value(startedAt),
+            status: Value(status),
+            zId: Value(zId),
           ));
 
   test('no sessions means nothing to report on', () async {
@@ -47,19 +50,38 @@ void main() {
     expect([for (final d in days) d.day.day], [9, 1]);
   });
 
-  test('a Z covering the day lends it its number', () async {
+  test('a Z covering the day lends it its sequence', () async {
     await session('S1', DateTime(2026, 3, 4, 8));
     await db.into(db.zs).insert(ZsCompanion.insert(
-          code: 'Z-20260304-080000-001',
+          code: 'Z-20260304-1-080000001',
           createdBy: 1,
           startedAt: Value(DateTime(2026, 3, 4, 8)),
-          details: const Value('{"number":17,"businessDay":"2026-03-04"}'),
+          zDay: const Value('2026-03-04'),
+          zSeq: const Value(1),
+          status: const Value('closed'),
         ));
 
     final day = (await loadZDayOptions(db)).single;
-    expect(day.zNumber, 17);
-    expect(day.zCode, 'Z-20260304-080000-001');
-    expect(day.label, contains('Z17'));
+    expect(day.zNumber, 1);
+    expect(day.zCode, 'Z-20260304-1-080000001');
+    expect(day.label, contains('Z1'));
+  });
+
+  test('the Z is matched by its business day, not its opening clock', () async {
+    // Opened at 02:00 on the 5th inside the 4th's business day (start 05:00).
+    await session('S1', DateTime(2026, 3, 4, 20));
+    await db.into(db.zs).insert(ZsCompanion.insert(
+          code: 'Z-late',
+          createdBy: 1,
+          startedAt: Value(DateTime(2026, 3, 5, 2)),
+          zDay: const Value('2026-03-04'),
+          zSeq: const Value(2),
+          status: const Value('closed'),
+        ));
+
+    final day = (await loadZDayOptions(db)).single;
+    expect(day.day, DateTime(2026, 3, 4));
+    expect(day.zNumber, 2);
   });
 
   test('a day with no Z is still reportable, just unlabelled', () async {
@@ -69,7 +91,9 @@ void main() {
           code: 'Z1',
           createdBy: 1,
           startedAt: Value(DateTime(2026, 3, 5, 8)),
-          details: const Value('{"number":2}'),
+          zDay: const Value('2026-03-05'),
+          zSeq: const Value(2),
+          status: const Value('closed'),
         ));
 
     final days = await loadZDayOptions(db);
@@ -79,37 +103,30 @@ void main() {
     expect(days[1].sessionIds, hasLength(1));
   });
 
-  group('zDetailNumber', () {
-    test('reads the number out of the details blob', () {
-      final z = Z(
-        id: 1,
-        code: 'Z1',
-        createdBy: 1,
-        status: 'closed',
-        startedAt: DateTime(2026),
-        isSynced: false,
-        updatedAt: DateTime(2026),
-        details: '{"number":42,"businessDay":"2026-01-01"}',
-      );
-      expect(zDetailNumber(z), 42);
+  group('a Z is only offered once its day is closed', () {
+    test('a day with a session still open is not offered', () async {
+      await session('S1', DateTime(2026, 3, 4, 8));
+      await session('S2', DateTime(2026, 3, 4, 17), status: 'active');
+      await session('S3', DateTime(2026, 3, 3, 9));
+      final days = await loadZDayOptions(db);
+      expect([for (final d in days) d.day], [DateTime(2026, 3, 3)]);
     });
 
-    test('tolerates a missing, empty or malformed blob', () {
-      Z withDetails(String? d) => Z(
-            id: 1,
-            code: 'Z1',
+    test('a paused session blocks the day too', () async {
+      await session('S1', DateTime(2026, 3, 4, 8), status: 'paused');
+      expect(await loadZDayOptions(db), isEmpty);
+    });
+
+    test('a day whose Z is still open is not offered, even with every '
+        'session ended', () async {
+      final zId = await db.into(db.zs).insert(ZsCompanion.insert(
+            code: 'Z-open',
             createdBy: 1,
-            status: 'closed',
-            startedAt: DateTime(2026),
-            isSynced: false,
-            updatedAt: DateTime(2026),
-            details: d,
-          );
-      expect(zDetailNumber(null), isNull);
-      expect(zDetailNumber(withDetails(null)), isNull);
-      expect(zDetailNumber(withDetails('')), isNull);
-      expect(zDetailNumber(withDetails('not json')), isNull);
-      expect(zDetailNumber(withDetails('{"businessDay":"2026-01-01"}')), isNull);
+            startedAt: Value(DateTime(2026, 3, 4, 8)),
+            zDay: const Value('2026-03-04'),
+          ));
+      await session('S1', DateTime(2026, 3, 4, 8), zId: zId);
+      expect(await loadZDayOptions(db), isEmpty);
     });
   });
 }

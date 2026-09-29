@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -9,6 +10,7 @@ import '../../providers/settings_provider.dart';
 import '../../providers/server_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
+import '../../services/update_config.dart';
 import '../widgets/users_management_screen.dart' show kPermissionGroups;
 import '../widgets/update_dialog.dart';
 import '../../domain/models/app_settings.dart';
@@ -20,13 +22,18 @@ import '../../domain/models/scale_config.dart';
 import '../../providers/scale_config_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/session_rules_provider.dart';
-import '../../providers/z_day_provider.dart';
+import '../../providers/business_day_provider.dart';
+import '../../services/z_service.dart' show ZService;
+import '../../providers/sse_provider.dart';
+import '../../services/sse_service.dart';
+import '../widgets/settings_lock_dialog.dart'
+    show kSettingsPinMaxLength, isValidSettingsPin;
 import '../../services/permission_service.dart'
     show Permissions, permissionServiceProvider;
-import '../../utils/admin_auth.dart' show showAdminCredentialDialog;
-import '../../utils/snackbar_helper.dart';
 import '../../services/autostart_service.dart';
 import '../../utils/full_logout.dart';
+import '../../services/z_day_resolver.dart';
+import '../../providers/admin_elevation_provider.dart';
 import '../widgets/adaptive_text_field.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -690,9 +697,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   obscureText: true,
                   textAlign: TextAlign.center,
                   keyboardType: TextInputType.number,
-                  maxLength: 4,
+                  maxLength: kSettingsPinMaxLength,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  style: const TextStyle(fontSize: 24, letterSpacing: 10),
+                  // Letter-spacing drops with the longer maximum: at 10 an
+                  // 8-digit pin overflows the 320-wide dialog field.
+                  style: const TextStyle(fontSize: 24, letterSpacing: 6),
                   decoration: InputDecoration(
                     labelText: label,
                     counterText: '',
@@ -727,8 +736,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               FilledButton(
                 onPressed: () {
                   final a = first.text.trim();
-                  if (a.length != 4) {
-                    setLocal(() => error = l10n.translate('pin_must_be_4'));
+                  if (!isValidSettingsPin(a)) {
+                    setLocal(() => error = l10n.translate('pin_length_rule'));
                     return;
                   }
                   if (a != second.text.trim()) {
@@ -768,141 +777,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          l10n.translate('z_settings_subtitle'),
+          l10n.translate('z_rules_server_managed'),
           style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 16),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(l10n.translate('z_tracking_enabled'),
-              style: const TextStyle(fontSize: 18)),
-          subtitle: Text(l10n.translate('z_tracking_enabled_subtitle'),
-              style: const TextStyle(fontSize: 14)),
-          value: settings.zTrackingEnabled,
-          onChanged: (v) => notifier.setZTrackingEnabled(v),
-        ),
-        const Divider(height: 24),
-        // Open policy.
-        Opacity(
-          opacity: settings.zTrackingEnabled ? 1 : 0.5,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(l10n.translate('z_open_mode'),
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-              Text(l10n.translate('z_open_mode_subtitle'),
-                  style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 8),
-              SegmentedButton<String>(
-                segments: [
-                  ButtonSegment(
-                      value: 'auto', label: Text(l10n.translate('z_open_auto'))),
-                  ButtonSegment(
-                      value: 'manager',
-                      label: Text(l10n.translate('z_open_manager'))),
-                ],
-                selected: {settings.zOpenMode},
-                onSelectionChanged: settings.zTrackingEnabled
-                    ? (s) => notifier.setZOpenMode(s.first)
-                    : null,
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 24),
-        // Close policy.
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(l10n.translate('z_close_require_manager'),
-              style: TextStyle(
-                  fontSize: 18,
-                  color: settings.zTrackingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
-          subtitle: Text(l10n.translate('z_close_require_manager_subtitle'),
-              style: TextStyle(
-                  fontSize: 14,
-                  color: settings.zTrackingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
-          value: settings.zCloseRequireManager,
-          onChanged: settings.zTrackingEnabled
-              ? (v) => notifier.setZCloseRequireManager(v)
-              : null,
-        ),
-        const Divider(height: 24),
-        // Day lock — the fiscal-day layer on top of Z tracking.
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(l10n.translate('z_day_lock_enabled'),
-              style: TextStyle(
-                  fontSize: 18,
-                  color: settings.zTrackingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
-          subtitle: Text(l10n.translate('z_day_lock_enabled_subtitle'),
-              style: TextStyle(
-                  fontSize: 14,
-                  color: settings.zTrackingEnabled ? null : Theme.of(context).colorScheme.onSurfaceVariant)),
-          value: settings.zDayLockEnabled,
-          onChanged: settings.zTrackingEnabled
-              ? (v) => notifier.setZDayLockEnabled(v)
-              : null,
-        ),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<int>(
-          initialValue: settings.zDayStartHour,
-          decoration: InputDecoration(
-            labelText: l10n.translate('z_day_start_hour'),
-            helperText: l10n.translate('z_day_start_hour_subtitle'),
-            border: const OutlineInputBorder(),
-            isDense: true,
-          ),
-          items: [
-            for (var h = 0; h < 24; h++)
-              DropdownMenuItem(
-                value: h,
-                child: Text('${h.toString().padLeft(2, '0')}:00'),
-              ),
-          ],
-          onChanged: settings.zTrackingEnabled && settings.zDayLockEnabled
-              ? (v) => notifier.setZDayStartHour(v ?? 0)
-              : null,
-        ),
-        const SizedBox(height: 12),
-        const _ZDayStatusCard(),
-        const Divider(height: 24),
-        // Identity & limits.
-        Row(
-          children: [
-            Expanded(
-              child: AdaptiveKeyboardTextField(
-                initialValue: settings.zCodePrefix,
-                enabled: settings.zTrackingEnabled,
-                decoration: InputDecoration(
-                  labelText: l10n.translate('z_code_prefix'),
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                ),
-                onChanged: (v) => notifier.setZCodePrefix(v),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: AdaptiveKeyboardTextField(
-                initialValue: settings.zMaxHours == 0
-                    ? ''
-                    : settings.zMaxHours.toString(),
-                enabled: settings.zTrackingEnabled,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: l10n.translate('z_max_hours'),
-                  hintText: '0',
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                ),
-                onChanged: (v) => notifier.setZMaxHours(int.tryParse(v) ?? 0),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(l10n.translate('z_max_hours_subtitle'),
-            style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        const _ZRulesView(),
       ],
     );
   }
@@ -1212,6 +1091,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Restarts the order numbering the next order would draw from at #1 —
+  /// the open session's, its Z's, or the manual counter, per the mode.
+  Future<void> _confirmResetOrderNumber(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final messenger = ScaffoldMessenger.of(context);
+    final db = ref.read(databaseProvider);
+    final mode = ref.read(settingsProvider).orderNumberResetMode;
+    final session = await ZDayResolver(db).activeSession();
+    if (!context.mounted) return;
+    if (session == null && mode != 'manual') {
+      messenger.showSnackBar(SnackBar(
+          content: Text(l10n.translate('reset_order_number_no_session'))));
+      return;
+    }
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.translate('reset_order_number')),
+        content: Text(l10n.translate('reset_order_number_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(l10n.translate('reset_order_number')),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    await db.resetOrderNumber(session?.id, mode: mode);
+    messenger.showSnackBar(SnackBar(
+        content: Text(l10n.translate('reset_order_number_done'))));
+  }
+
   Widget _buildOrderDefaultsContent(
       AppSettings settings,
       SettingsNotifier notifier,
@@ -1285,6 +1201,84 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           currentMethod: settings.defaultPaymentMethod,
           onChanged: (value) => notifier.setDefaultPaymentMethod(value),
         ),
+
+        // ── Order number ─────────────────────────────────────────────────
+        const SizedBox(height: 28),
+        Text(
+          l10n.translate('order_number_section'),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.translate('order_number_section_hint'),
+          style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.format_list_numbered,
+          title: l10n.translate('show_order_number_in_lists'),
+          subtitle: l10n.translate('show_order_number_in_lists_subtitle'),
+          value: settings.showOrderNumberInLists,
+          onChanged: (value) => notifier.setShowOrderNumberInLists(value),
+        ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.soup_kitchen_outlined,
+          title: l10n.translate('show_order_number_on_kds'),
+          subtitle: l10n.translate('show_order_number_on_kds_subtitle'),
+          value: settings.showOrderNumberOnKds,
+          onChanged: (value) => notifier.setShowOrderNumberOnKds(value),
+        ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.room_service_outlined,
+          title: l10n.translate('show_order_number_on_waiter'),
+          subtitle: l10n.translate('show_order_number_on_waiter_subtitle'),
+          value: settings.showOrderNumberOnWaiter,
+          onChanged: (value) => notifier.setShowOrderNumberOnWaiter(value),
+        ),
+        const SizedBox(height: 12),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.restart_alt,
+              color: Theme.of(context).colorScheme.primary),
+          title: Text(l10n.translate('order_number_reset_mode')),
+          subtitle: Text(
+            l10n.translate(
+                'order_number_reset_mode_${settings.orderNumberResetMode}_hint'),
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: DropdownButton<String>(
+            value: settings.orderNumberResetMode,
+            onChanged: (v) {
+              if (v != null) notifier.setOrderNumberResetMode(v);
+            },
+            items: [
+              for (final mode in const ['session', 'z', 'manual'])
+                DropdownMenuItem(
+                  value: mode,
+                  child: Text(l10n.translate('order_number_reset_mode_$mode')),
+                ),
+            ],
+          ),
+        ),
+        if (ref.watch(currentUserProvider)?.type.toLowerCase() == 'admin' ||
+            ref.watch(adminElevationProvider) != null) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: OutlinedButton.icon(
+              onPressed: () => _confirmResetOrderNumber(context),
+              icon: const Icon(Icons.restart_alt),
+              label: Text(l10n.translate('reset_order_number')),
+            ),
+          ),
+        ],
 
         // ── Payment & tickets ─────────────────────────────────────────────
         const SizedBox(height: 28),
@@ -3488,6 +3482,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             value: settings.sseEnabled,
             onChanged: (value) => notifier.setSseEnabled(value),
           ),
+          // Is the push actually working? Without this the only answer was in
+          // the log file: the service reconnects silently, so a till that had
+          // not been pushed an order in hours looked exactly like a quiet one.
+          if (settings.sseEnabled) ...[
+            const SizedBox(height: 8),
+            const _SseStatusTile(),
+          ],
           const SizedBox(height: 12),
         ],
 
@@ -3500,6 +3501,74 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           subtitle: l10n.translate('waiter_dashboard_show_owed_subtitle'),
           value: settings.waiterDashboardShowOwed,
           onChanged: (value) => notifier.setWaiterDashboardShowOwed(value),
+        ),
+        const SizedBox(height: 12),
+
+        // Call a waiter's phone from the till. The ring-style switch only
+        // matters once calls are on, so it is nested rather than listed
+        // beside it.
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.campaign,
+          title: l10n.translate('waiter_call_enabled'),
+          subtitle: l10n.translate('waiter_call_enabled_subtitle'),
+          value: settings.waiterCallEnabled,
+          onChanged: (value) => notifier.setWaiterCallEnabled(value),
+        ),
+        if (settings.waiterCallEnabled) ...[
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(start: 24),
+            child: _buildSwitchTile(
+              context: context,
+              icon: Icons.notifications_active,
+              title: l10n.translate('waiter_call_ring_until_dismissed'),
+              subtitle:
+                  l10n.translate('waiter_call_ring_until_dismissed_subtitle'),
+              value: settings.waiterCallRingUntilDismissed,
+              onChanged: (value) =>
+                  notifier.setWaiterCallRingUntilDismissed(value),
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+
+        // Kitchen feedback on the waiter phones — each push is its own switch
+        // so a noisy kitchen can keep "ready" while muting the rest.
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.soup_kitchen,
+          title: l10n.translate('waiter_show_kitchen_status'),
+          subtitle: l10n.translate('waiter_show_kitchen_status_subtitle'),
+          value: settings.waiterShowKitchenStatus,
+          onChanged: (value) => notifier.setWaiterShowKitchenStatus(value),
+        ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.room_service,
+          title: l10n.translate('waiter_notify_ready'),
+          subtitle: l10n.translate('waiter_notify_ready_subtitle'),
+          value: settings.waiterNotifyReady,
+          onChanged: (value) => notifier.setWaiterNotifyReady(value),
+        ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.cancel_outlined,
+          title: l10n.translate('waiter_notify_canceled'),
+          subtitle: l10n.translate('waiter_notify_canceled_subtitle'),
+          value: settings.waiterNotifyCanceled,
+          onChanged: (value) => notifier.setWaiterNotifyCanceled(value),
+        ),
+        const SizedBox(height: 12),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.remove_shopping_cart,
+          title: l10n.translate('waiter_notify_rupture'),
+          subtitle: l10n.translate('waiter_notify_rupture_subtitle'),
+          value: settings.waiterNotifyRupture,
+          onChanged: (value) => notifier.setWaiterNotifyRupture(value),
         ),
         const SizedBox(height: 16),
 
@@ -4009,6 +4078,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               onChanged: (v) =>
                   ref.read(settingsProvider.notifier).setAutoUpdate(v),
             ),
+            const SizedBox(height: 8),
+            _buildUpdatesServerTile(context),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: () => _runUpdateCheck(context),
@@ -4049,6 +4120,151 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  Widget _buildUpdatesServerTile(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final service = ref.read(updateServiceProvider);
+    final url = service.baseUrl;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withValues(alpha: 0.3),
+      child: ListTile(
+        leading: const Icon(Icons.dns),
+        title: Text(l10n.translate('updates_server')),
+        subtitle: Text(
+          '${url.isEmpty ? l10n.translate('updates_server_not_set') : url}\n'
+          '${l10n.translate('updates_app_name')}: ${service.appSlug}',
+          style: const TextStyle(fontFamily: 'monospace'),
+        ),
+        trailing: const Icon(Icons.lock_outline),
+        onTap: () => _editUpdatesServer(context),
+      ),
+    );
+  }
+
+  /// Field is locked with the till's local date as yyyymmdd — a technician
+  /// password that rotates daily, not real security.
+  Future<void> _editUpdatesServer(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final now = DateTime.now();
+    final expected = '${now.year.toString().padLeft(4, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}';
+
+    final pwdCtrl = TextEditingController();
+    final unlocked = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('updates_server')),
+        content: AdaptiveKeyboardTextField(
+          controller: pwdCtrl,
+          autofocus: true,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          decoration:
+              InputDecoration(labelText: l10n.translate('password')),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim() == expected),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.translate('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, pwdCtrl.text.trim() == expected),
+            child: Text(l10n.translate('ok')),
+          ),
+        ],
+      ),
+    );
+    final typed = pwdCtrl.text;
+    pwdCtrl.dispose();
+    if (unlocked != true) {
+      if (unlocked == false && context.mounted && typed.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('updates_server_wrong_password')),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ));
+      }
+      return;
+    }
+    if (!context.mounted) return;
+
+    final service = ref.read(updateServiceProvider);
+    final urlCtrl = TextEditingController(text: service.baseUrl);
+    final appCtrl = TextEditingController(text: service.appSlug);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.translate('updates_server')),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AdaptiveKeyboardTextField(
+                controller: urlCtrl,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'URL',
+                  hintText: 'https://updates.example.com',
+                ),
+              ),
+              const SizedBox(height: 12),
+              AdaptiveKeyboardTextField(
+                controller: appCtrl,
+                decoration: InputDecoration(
+                  labelText: l10n.translate('updates_app_name'),
+                  hintText: UpdateConfig.defaultAppSlug,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.translate('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.translate('save')),
+          ),
+        ],
+      ),
+    );
+    final url = urlCtrl.text.trim();
+    final app = appCtrl.text.trim().toLowerCase();
+    urlCtrl.dispose();
+    appCtrl.dispose();
+    if (saved != true) return;
+
+    final uri = Uri.tryParse(url);
+    final String? invalidKey;
+    if (url.isNotEmpty &&
+        (uri == null || !uri.hasScheme || !uri.scheme.startsWith('http'))) {
+      invalidKey = 'updates_server_invalid';
+    } else if (app.isNotEmpty && !RegExp(r'^[a-z0-9_-]+$').hasMatch(app)) {
+      invalidKey = 'updates_app_name_invalid';
+    } else {
+      invalidKey = null;
+    }
+    if (invalidKey != null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(l10n.translate(invalidKey)),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ));
+      return;
+    }
+    await service.setBaseUrl(url);
+    await service.setAppSlug(app);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _runUpdateCheck(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
 
@@ -4057,9 +4273,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       duration: const Duration(seconds: 2),
     ));
 
-    // Unified update check for BOTH Android and desktop — hits
-    // `/api/api/pos/updates/latest` via UpdateService. (The legacy
-    // desktop_updater / app-archive.json channel was removed.)
+    // Signed update check against the caisse212-updates service (see
+    // UpdateService); macOS/iOS are skipped inside the service.
     if (!kIsWeb &&
         (Platform.isAndroid ||
             Platform.isWindows ||
@@ -4776,79 +4991,164 @@ class _ColumnRow extends StatelessWidget {
   }
 }
 
-/// Read-only view of the terminal's business day + Z number, with the in-app
-/// "Reopen the day" escape hatch. This is the safety valve: if the day is
-/// closed by mistake, a manager lifts the lock from here instead of waiting
-/// for midnight.
-class _ZDayStatusCard extends ConsumerWidget {
-  const _ZDayStatusCard();
+/// The terminal's Z rules as the server set them, and the business day they
+/// are measured from. Read-only: they are edited in the back office.
+class _ZRulesView extends ConsumerWidget {
+  const _ZRulesView();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context)!;
-    final cs = Theme.of(context).colorScheme;
-    final settings = ref.watch(settingsProvider);
-    final day = ref.watch(zDayStateProvider);
-    final today = zBusinessDayKey(DateTime.now(), settings.zDayStartHour);
-    final locked = day.isLockedFor(today);
+    final rules = ref.watch(sessionRulesProvider);
+    final day = ref.watch(businessDayProvider);
+    final open = ref.watch(currentZProvider);
+    String orNone(String? v) =>
+        (v == null || v.isEmpty) ? l10n.translate('z_rule_none') : v;
+    Widget row(String label, String value) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(children: [
+            Expanded(child: Text(label, style: const TextStyle(fontSize: 15))),
+            Text(value,
+                style:
+                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+          ]),
+        );
+    final start = '${day.startHour.toString().padLeft(2, '0')}:00';
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(children: [
+          row(l10n.translate('z_current'),
+              open == null ? l10n.translate('no_open_z') : ZService.displayName(open)),
+          row(l10n.translate('business_day'),
+              ref.read(businessDayProvider.notifier).currentZDay()),
+          row(l10n.translate('z_day_start_hour'), start),
+          row(l10n.translate('timezone'), orNone(day.timezone)),
+          const Divider(height: 20),
+          row(l10n.translate('z_open_mode'), orNone(rules.zOpenMode ?? 'AUTO')),
+          row(l10n.translate('z_cant_open_after'), orNone(rules.zCantOpenAfter)),
+          row(l10n.translate('z_close_mode'), orNone(rules.zCloseMode ?? 'MANUAL')),
+          row(l10n.translate('z_auto_close_after'), orNone(rules.zAutoCloseAfter)),
+          row(l10n.translate('z_earliest_close_time'),
+              orNone(rules.zEarliestCloseTime)),
+        ]),
+      ),
+    );
+  }
+}
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: (locked ? cs.errorContainer : cs.surfaceContainerHighest)
-            .withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            l10n.translate('z_day_status'),
-            style: const TextStyle(fontWeight: FontWeight.w700),
+class _SseStatusTile extends ConsumerStatefulWidget {
+  const _SseStatusTile();
+
+  @override
+  ConsumerState<_SseStatusTile> createState() => _SseStatusTileState();
+}
+
+class _SseStatusTileState extends ConsumerState<_SseStatusTile> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    // The status object only changes on a state change or a heartbeat (~25s).
+    // The "last frame" age has to keep counting between those, or a stalled
+    // pipe reads as fresh for as long as nothing happens.
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  String _ago(BuildContext context, DateTime? at) {
+    final l10n = AppLocalizations.of(context)!;
+    if (at == null) return l10n.translate('sse_never');
+    final d = DateTime.now().difference(at);
+    if (d.inSeconds < 60) return '${d.inSeconds}s';
+    if (d.inMinutes < 60) return '${d.inMinutes}m';
+    return '${d.inHours}h';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+
+    return ValueListenableBuilder<SseStatus>(
+      valueListenable: ref.watch(sseServiceProvider).status,
+      builder: (context, status, _) {
+        final (Color color, String labelKey) = switch (status.state) {
+          SseConnectionState.live => (Colors.green, 'sse_state_live'),
+          SseConnectionState.connecting =>
+            (Colors.amber, 'sse_state_connecting'),
+          SseConnectionState.retrying =>
+            (Colors.orange, 'sse_state_retrying'),
+          SseConnectionState.rejected => (cs.error, 'sse_state_rejected'),
+          SseConnectionState.stopped => (cs.outline, 'sse_state_stopped'),
+        };
+
+        // A stalled pipe: still nominally live, but the server's 25s heartbeat
+        // has not arrived. Said plainly rather than left for the operator to
+        // infer from a timestamp.
+        final stale = status.state == SseConnectionState.live &&
+            status.lastFrameAt != null &&
+            DateTime.now().difference(status.lastFrameAt!).inSeconds > 40;
+
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: cs.outlineVariant),
           ),
-          const SizedBox(height: 6),
-          Text('${l10n.translate('business_day')}: $today'),
-          Text('${l10n.translate('z_number')}: '
-              '${day.zNumber == 0 ? 1 : day.zNumber}'),
-          Text(
-            locked
-                ? (day.closedByName == null
-                    ? l10n.translate('day_closed')
-                    : l10n
-                        .translate('day_closed_by')
-                        .replaceAll('{0}', day.closedByName!))
-                : l10n.translate('day_open'),
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: locked ? cs.error : cs.tertiary,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: stale ? Colors.orange : color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    l10n.translate(stale ? 'sse_state_stalled' : labelKey),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${l10n.translate('sse_last_frame')}: '
+                    '${_ago(context, status.lastFrameAt)}',
+                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
+                ],
+              ),
+              if (status.detail != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  status.detail!,
+                  style: TextStyle(fontSize: 12, color: cs.error),
+                ),
+              ],
+              const SizedBox(height: 6),
+              Text(
+                '${l10n.translate('sse_events_received')}: ${status.eventCount}'
+                '   \u00b7   ${l10n.translate('sse_attempts')}: ${status.attempts}',
+                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+              ),
+            ],
           ),
-          if (locked) ...[
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.lock_open),
-              label: Text(l10n.translate('reopen_day')),
-              onPressed: () async {
-                final elev = await showAdminCredentialDialog(
-                  context,
-                  ref,
-                  title: l10n.translate('reopen_day'),
-                  description: l10n.translate('reopen_day_subtitle'),
-                  permission: Permissions.zClose,
-                );
-                if (elev == null) return;
-                await ref
-                    .read(zDayStateProvider.notifier)
-                    .reopenDay(byUserId: elev.adminId);
-                if (context.mounted) {
-                  SnackBarHelper.success(
-                      context, l10n.translate('day_reopened'));
-                }
-              },
-            ),
-          ],
-        ],
-      ),
+        );
+      },
     );
   }
 }

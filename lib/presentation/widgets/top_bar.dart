@@ -7,7 +7,6 @@ import 'package:caisse212/providers/stat_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
 import 'package:caisse212/services/data_sync_service.dart';
 import 'package:caisse212/services/permission_service.dart';
-import 'z_management_dialog.dart';
 import 'package:caisse212/services/activity_log_service.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
@@ -30,6 +29,7 @@ import 'calculator_dialog.dart';
 import 'close_session_dialog.dart';
 import 'x_report_dialog.dart';
 import 'z_report_dialog.dart';
+import '../../utils/snackbar_helper.dart';
 import 'settle_unpaid_dialog.dart';
 // import 'notify_admin_dialog.dart';
 import 'report_issue_dialog.dart';
@@ -394,11 +394,19 @@ class _TopBarState extends ConsumerState<TopBar> {
   /// till is typically left logged in as whichever cashier is on. An admin
   /// passes by being an admin; anyone else needs `pos:z:print`.
   ///
-  /// Not gated on `zTrackingEnabled` — a day's totals are readable whether or
-  /// not this terminal runs the Z shift lifecycle. See
-  /// [showPrintZReportDialog].
+  /// See [showPrintZReportDialog].
   Future<void> _handleZReport() async {
     final l10n = AppLocalizations.of(context);
+    // Refuse before asking for credentials — typing a password only to be
+    // told no is worse than being told no.
+    if (await zReportBlockedByOpenShift(ref.read(databaseProvider))) {
+      if (mounted) {
+        SnackBarHelper.error(
+            context, l10n?.translate('z_report_blocked_open') ?? 'Close the Z first');
+      }
+      return;
+    }
+    if (!mounted) return;
     final elevation = await showAdminCredentialDialog(
       context,
       ref,
@@ -556,10 +564,9 @@ class _TopBarState extends ConsumerState<TopBar> {
         return;
       }
 
-      // Z (shift) close availability — offered next to End Session.
-      final zEnabled = ref.read(settingsProvider).zTrackingEnabled;
-      final openZForClose =
-          zEnabled ? await ref.read(zServiceProvider).getOpenZ() : null;
+      // Z close availability — offered next to End Session. The dialog it
+      // opens re-checks every Z rule; this only decides whether to offer it.
+      final openZForClose = await ref.read(zServiceProvider).getOpenZ();
       final canCloseZ = openZForClose != null &&
           ref.read(permissionServiceProvider).hasPermission(Permissions.zClose);
 
@@ -730,29 +737,23 @@ class _TopBarState extends ConsumerState<TopBar> {
         await Future.delayed(const Duration(milliseconds: 500));
         await _doLogout();
       } else if (choice == 'closez') {
-        // Close policy: optionally require an admin/manager credential first.
-        if (ref.read(settingsProvider).zCloseRequireManager) {
-          final elev = await showAdminCredentialDialog(
-            context,
-            ref,
-            title: l10n?.translate('close_z'),
-            description: l10n?.translate('enter_admin_credentials'),
-            permission: Permissions.zClose,
-          );
-          if (elev == null) return;
-        }
-        // Close dialog offers Print Z / Print X, then a plain Close (auto-closes
-        // the Z's sessions). Returns true only if the Z was actually closed.
-        final closed = await showZCloseDialog(
-          context,
-          ref,
-          endedBy: ref.read(currentUserProvider)?.id,
+        // The session close with "close the Z" ticked: the cash is counted,
+        // then the Z closes on this — its last — session.
+        final result = await showCloseSessionDialog(
+          context: context,
+          ref: ref,
+          sessionId: session.id,
+          closeZ: true,
         );
-        if (!closed) return;
+        if (!result.closed) return;
+        final closed = result.zClosed;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(l10n?.translate('z_closed') ?? 'Z closed'),
+              content: Text(closed
+                  ? (l10n?.translate('z_closed') ?? 'Z closed')
+                  : (l10n?.translate('session_ended_successfully') ??
+                      'Session ended successfully.')),
               backgroundColor: Colors.green,
             ),
           );
@@ -792,12 +793,10 @@ class _TopBarState extends ConsumerState<TopBar> {
           await SessionService(database).endSession(sessionId: session.id);
         }
       }
-      // Push Z (shift) rows before sessions — sessions carry their z_code, so
-      // the Z must exist server-side first.
       await syncService.syncPendingOperations();
-      await syncService.syncZsBulk();
       await Future.wait([
         syncService.syncSessionsBulk(),
+        syncService.syncCashMovementsBulk(),
         syncService.syncOrdersBulk(),
         syncService.syncTicketsBulk(),
       ]).timeout(const Duration(seconds: 15));

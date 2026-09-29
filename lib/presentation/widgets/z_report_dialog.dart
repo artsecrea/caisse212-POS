@@ -11,6 +11,7 @@ import 'report_documents.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../services/z_service.dart' show ZService;
 
 /// One trading day that has something to report on, with what it holds.
 ///
@@ -42,7 +43,16 @@ class ZDayOption {
   }
 }
 
-/// Every day that has at least one cash session, newest first.
+/// Every CLOSED business day that has at least one cash session, newest
+/// first.
+///
+/// A Z is only printable once the day is over on paper: a day still holding
+/// an open or paused session, or a Z that has not been closed, is left out —
+/// its figures are not final, and a Z printed from them would be a legal
+/// document that later disagrees with the real one. Its X is always there.
+///
+/// Days are business days: a session belongs to its Z's zDay, and a legacy
+/// session with no Z to the day it opened.
 ///
 /// Capped because this feeds a dropdown, not an archive browser; a shop
 /// wanting an older day has the sessions screen. The cap is generous enough
@@ -53,22 +63,32 @@ Future<List<ZDayOption>> loadZDayOptions(AppDatabase db,
         ..orderBy([(s) => OrderingTerm.desc(s.startedAt)]))
       .get();
 
+  final zs = await db.select(db.zs).get();
+  final zById = {for (final z in zs) z.id: z};
+
   final byDay = <DateTime, List<CashSession>>{};
+  final unfinished = <DateTime>{};
   for (final s in sessions) {
-    final d = DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day);
+    final z = s.zId == null ? null : zById[s.zId];
+    final d = z != null
+        ? ZService.zDayOf(z)
+        : DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day);
     byDay.putIfAbsent(d, () => []).add(s);
+    if (s.status != 'ended') unfinished.add(d);
   }
 
-  // Z rows are matched by the day they opened on, which is how a session's
-  // z-day is derived everywhere else (see `zDayForSession`).
-  final zs = await db.select(db.zs).get();
+  // Z rows are matched by their business day. A day with several Zs names
+  // the first; the report itself covers every session of the day.
   final zByDay = <DateTime, Z>{};
   for (final z in zs) {
-    final d = DateTime(z.startedAt.year, z.startedAt.month, z.startedAt.day);
-    zByDay.putIfAbsent(d, () => z);
+    final d = ZService.zDayOf(z);
+    if (z.status != 'closed') unfinished.add(d);
+    final held = zByDay[d];
+    if (held == null || z.zSeq < held.zSeq) zByDay[d] = z;
   }
 
-  final days = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
+  final days = byDay.keys.where((d) => !unfinished.contains(d)).toList()
+    ..sort((a, b) => b.compareTo(a));
   return [
     for (final day in days.take(limitDays))
       ZDayOption(
@@ -76,32 +96,28 @@ Future<List<ZDayOption>> loadZDayOptions(AppDatabase db,
         sessionIds: [for (final s in byDay[day]!) s.id],
         sessionCodes: [for (final s in byDay[day]!) s.code],
         zCode: zByDay[day]?.code,
-        zNumber: zDetailNumber(zByDay[day]),
+        zNumber: zByDay[day]?.zSeq,
       ),
   ];
 }
 
-/// The Z number stashed in the row's JSON `details` blob — see
-/// [ZService.ensureOpenZ], which puts it there so the number reaches the
-/// backend without a schema change.
-int? zDetailNumber(Z? z) {
-  final raw = z?.details;
-  if (raw == null || raw.isEmpty) return null;
-  try {
-    final match = RegExp(r'"number"\s*:\s*(\d+)').firstMatch(raw);
-    return match == null ? null : int.tryParse(match.group(1)!);
-  } catch (_) {
-    return null;
-  }
+/// True while the till is still trading: a Z is open, or a cash session is
+/// active or paused. The Z report is the closing document, so it is not
+/// printable until then — mid-shift figures are the X report's job.
+Future<bool> zReportBlockedByOpenShift(AppDatabase db) async {
+  final openZ = await (db.select(db.zs)
+        ..where((z) => z.status.equals('open'))
+        ..limit(1))
+      .getSingleOrNull();
+  if (openZ != null) return true;
+  final running = await (db.select(db.cashSessions)
+        ..where((s) => s.status.isIn(const ['active', 'paused']))
+        ..limit(1))
+      .getSingleOrNull();
+  return running != null;
 }
 
 /// Print a Z report for a chosen trading day, picking the documents freely.
-///
-/// Deliberately independent of the `zTrackingEnabled` setting. That switch
-/// governs whether the terminal RUNS a Z shift lifecycle (opening, closing,
-/// day locks); it has never had anything to do with whether a manager may
-/// read a day's totals back, and gating this on it left an admin unable to
-/// see their own trading figures on a terminal that simply closes sessions.
 ///
 /// The caller is responsible for establishing who is asking — the top bar and
 /// the login screen both put [showAdminCredentialDialog] in front of this.
@@ -115,6 +131,13 @@ Future<void> showPrintZReportDialog({
 }) async {
   final l10n = AppLocalizations.of(context)!;
   final db = ref.read(databaseProvider);
+
+  if (await zReportBlockedByOpenShift(db)) {
+    if (context.mounted) {
+      SnackBarHelper.error(context, l10n.translate('z_report_blocked_open'));
+    }
+    return;
+  }
 
   final days = await loadZDayOptions(db);
   if (!context.mounted) return;
@@ -232,6 +255,8 @@ Future<void> showPrintZReportDialog({
       final ok = await ref.read(printingServiceProvider).printDailySummaryReport(
         report: report,
         reportType: 'Z',
+        // Every Z of the day was printed when it closed; this is a copy.
+        isReprint: true,
         l10n: l10n,
         currencyFormatter: ref.read(currencyFormatterProvider),
         businessName:

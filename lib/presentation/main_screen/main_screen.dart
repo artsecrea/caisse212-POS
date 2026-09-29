@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:caisse212/domain/models/order_course.dart';
 import 'package:caisse212/domain/models/order_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,7 +10,6 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
-import '../../providers/z_day_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/external_order_models.dart';
 import '../../services/permission_service.dart';
@@ -43,11 +41,15 @@ import '../widgets/top_bar.dart';
 import '../../utils/order_permissions.dart';
 import '../../utils/order_validation.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../services/waiter_call_service.dart' show WaiterCall, waiterCallAckProvider;
 import '../../utils/responsive_utils.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/sse_provider.dart';
 import '../../providers/session_rules_provider.dart';
+import '../../providers/business_day_provider.dart';
+import '../../services/z_actions.dart' show closeZNow;
+import '../../services/z_service.dart';
 import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
 import '../../services/scale_barcode_service.dart';
@@ -465,21 +467,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     _autoCloseTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
 
-      // Day lock: the manager may have closed the day (here or on another
-      // terminal) while this one sat idle. Checked BEFORE the session-rules
-      // early-return below, which bails out entirely when no rules are set.
-      // Deliberately not fired on plain day rollover — that would eject a
-      // cashier mid-shift at midnight, which is the opposite of Z mode's point.
-      final zSettings = ref.read(settingsProvider);
-      if (zSettings.zTrackingEnabled && zSettings.zDayLockEnabled) {
-        final today =
-            zBusinessDayKey(DateTime.now(), zSettings.zDayStartHour);
-        final dayState = ref.read(zDayStateProvider);
-        final openSession = ref.read(currentSessionProvider);
-        if (openSession != null &&
-            dayState.isLockedFor(today) &&
-            ref.read(orderProvider).items.isEmpty) {
-          _autoCloseSession(openSession, 'auto_close_day_closed');
+      // Day rollover: a session never outlives its Z. Once the business day
+      // has moved past the open Z's, close it FORCED — which ends every open
+      // session — as soon as the order panel is empty. Checked before the
+      // session-rules early return, which bails when no rules are set.
+      final openZ = ref.read(currentZProvider);
+      if (openZ != null &&
+          ref.read(currentSessionProvider) != null &&
+          ref.read(orderProvider).items.isEmpty) {
+        final today = ref.read(businessDayProvider.notifier).currentZDay();
+        if (ZService.labelOf(openZ).zDay.compareTo(today) < 0) {
+          _closeStaleZ(openZ);
           return;
         }
       }
@@ -535,13 +533,36 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     }
   }
 
+  Future<void> _closeStaleZ(Z z) async {
+    _autoCloseTimer?.cancel();
+    try {
+      await closeZNow(ref, z, closeMode: ZService.closeForced);
+      ref.read(currentSessionProvider.notifier).state = null;
+      if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(l10n.translate('auto_close_day_closed')),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
+        ));
+        FocusManager.instance.primaryFocus?.unfocus();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) Navigator.of(context).pushReplacementNamed('/login');
+        });
+      }
+    } catch (e) {
+      _logger.error('Day-rollover Z close failed: $e');
+      _startAutoCloseTimer();
+    }
+  }
+
   Future<void> _autoCloseSession(
       CashSession session, String reasonKey) async {
     _autoCloseTimer?.cancel();
     try {
       final db = ref.read(databaseProvider);
       final sessionService = SessionService(db);
-      await sessionService.endSession(sessionId: session.id);
+      await sessionService.endSession(sessionId: session.id, autoClosed: true);
       ref.read(currentSessionProvider.notifier).state = null;
       // Sync all pending data to server before returning to login.
       try {
@@ -635,6 +656,20 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     ref.listen<int>(sseSessionClosedProvider, (prev, next) {
       if (prev == next) return;
       _handleSseSessionClose();
+    });
+
+    // A waiter dismissed a call on their phone. Worth a line on screen: the
+    // cashier's alternative to knowing is ringing again, which is exactly the
+    // nuisance the acknowledgement exists to prevent.
+    ref.listen<AsyncValue<WaiterCall>>(waiterCallAckProvider, (_, next) {
+      final call = next.valueOrNull;
+      if (call == null || !mounted) return;
+      SnackBarHelper.info(
+        context,
+        l10n
+            .translate('call_waiter_acknowledged')
+            .replaceAll('{0}', call.waiterName),
+      );
     });
 
     // Show SnackBar when admin pushes a DISPLAY_ALERT command
@@ -1368,35 +1403,33 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   final tableId = result['id'];
                   final tableName = result['name'];
 
-                  // Handle transfer action
+                  // Explicit transfer: the cashier armed the Transfer button
+                  // in the picker and then chose a free table. The repository
+                  // moves both table pointers and the order's own tableId in
+                  // one transaction, and marks the order unsynced so the move
+                  // reaches the backend.
                   if (action == 'transfer') {
                     final oldTableId = result['oldTableId'] as int?;
                     final orderId = currentOrder.orderId;
-
-                    if (oldTableId != null && orderId != null && tableId != null) {
-                      final orderRepo = ref.read(orderRepositoryProvider);
-                      await orderRepo.transferOrderToTable(orderId, oldTableId, tableId);
-
-                      // Update current order state with new table
-                      ref.read(orderProvider.notifier).updateTable(tableId, tableName);
-
-                      // Refresh tables provider
+                    if (oldTableId != null &&
+                        orderId != null &&
+                        tableId != null) {
+                      await ref
+                          .read(orderRepositoryProvider)
+                          .transferOrderToTable(orderId, oldTableId, tableId);
+                      ref
+                          .read(orderProvider.notifier)
+                          .updateTable(tableId, tableName);
                       ref.invalidate(areaTablesProvider);
-                    }
-                    return;
-                  }
-
-                  // "Switch" — saved order stays where it is; just empty the
-                  // working panel and move the cashier to the new table.
-                  if (action == 'switch') {
-                    ref.read(orderProvider.notifier).clearOrder();
-                    if (tableId != null) {
-                      ref
-                          .read(orderProvider.notifier)
-                          .setTable(tableId, tableName);
-                      ref
-                          .read(orderProvider.notifier)
-                          .setOrderType('DINE_IN');
+                      if (context.mounted) {
+                        SnackBarHelper.showSuccessSnackBar(
+                          context,
+                          ref,
+                          AppLocalizations.of(context)!
+                              .translate('order_transferred')
+                              .replaceAll('{table}', '$tableName'),
+                        );
+                      }
                     }
                     return;
                   }
@@ -1431,12 +1464,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   }
 
                   final hasItems =
-                      ref.read(orderProvider).items.isNotEmpty;
+                      ref.read(orderProvider).hasUnsavedChanges;
 
                   if (existingOrder != null) {
-                    // Table already has an open order. If the cashier has
-                    // their own items in the cart, ask before discarding
-                    // them.
+                    // Table already has an open order. Ask only when the cart
+                    // holds work that switching would actually lose — a saved
+                    // order stays on its own table either way.
                     if (hasItems) {
                       final confirmed =
                           await _confirmDiscardCurrentForTableOrder(
@@ -1602,6 +1635,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         context: context,
                         builder: (context) => ManualDiscountDialog(
                           currentPercentage: currentOrder.discountPercentage,
+                          // The base the percentage multiplies, so the dialog
+                          // can convert an amount the cashier types into the
+                          // percentage the order actually stores.
+                          orderTotal: currentOrder.totalBeforeDiscount,
+                          currencySymbol:
+                              ref.read(currencyFormatterProvider).symbol,
                           // The dialog's field is "reason for discount" — it
                           // used to be stored in `order.note`, which the KDS
                           // and the kitchen ticket read, so a discount wiped
@@ -1652,21 +1691,23 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       // the additions-only order ticket both re-sent them the
                       // next time round.
                       //
-                      // Skipped for an order this cashier may not write to, so
-                      // Print stays a reprint rather than becoming a way round
-                      // the waiter-order guard (updateOrder also claims the
-                      // order for the current user). They cannot have added
-                      // anything to it either — canAddItemToCurrentOrder gates
-                      // on the same rule — so there is nothing to persist.
-                      final mayPersist = canEditWaiterOrder(ref);
+                      // On a waiter's order the cashier may still have set a
+                      // remise or a note, and Print is where that has to stick:
+                      // this used to skip the save entirely, so the discount
+                      // showed on screen, never reached the database, and the
+                      // ticket printed at full price. Their LINES are still off
+                      // limits — `headerOnly` is what enforces that, in the
+                      // repository, rather than trusting the panel.
+                      final mayEditLines = canEditWaiterOrder(ref);
 
                       int? orderId = currentOrder.orderId;
                       try {
                         if (currentOrder.isSaved()) {
-                          if (mayPersist) {
-                            _logger.debug('Print: Updating order $orderId with ${currentOrder.items.length} items');
-                            await orderRepo.updateOrder(currentOrder);
-                          }
+                          _logger.debug(
+                              'Print: Updating order $orderId with ${currentOrder.items.length} items'
+                              '${mayEditLines ? '' : ' (header only — waiter order)'}');
+                          await orderRepo.updateOrder(currentOrder,
+                              headerOnly: !mayEditLines);
                         } else {
                           _logger.debug('Print: Saving new order with ${currentOrder.items.length} items');
                           orderId = await orderRepo.saveOrder(
@@ -1893,17 +1934,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           // New order needs orders:create; persisting a saved order is allowed if
           // the user can make any kind of edit (add/remove/modify) or has update.
           final canProceed = currentOrder.isSaved()
-              // Proceed on a saved order PERSISTS edits (updateOrder), so a
-              // waiter's order is off limits here too — otherwise the item
-              // guards could be satisfied line-by-line and the whole order
-              // still written back by a cashier who may not touch it.
-              ? (canEditWaiterOrder(ref) &&
-                  permissionService.hasAnyPermission([
-                    Permissions.ordersUpdate,
-                    Permissions.ordersItemAdd,
-                    Permissions.ordersItemRemove,
-                    Permissions.ordersItemModify,
-                  ]))
+              // A waiter's order is NOT off limits here: settling it is exactly
+              // what the cashier is for, and the remise they just applied has
+              // to persist. The lines are protected by `headerOnly` inside
+              // updateOrder, so satisfying the item guards line-by-line can no
+              // longer write food back through this path.
+              ? permissionService.hasAnyPermission([
+                  Permissions.ordersUpdate,
+                  Permissions.ordersItemAdd,
+                  Permissions.ordersItemRemove,
+                  Permissions.ordersItemModify,
+                ])
               : permissionService.hasPermission(Permissions.ordersCreate);
           // Long-press additionally opens the payment screen (with the
           // ticket-division grid forced open) — same downstream action the
@@ -1961,7 +2002,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       int orderId;
                       if (currentOrder.isSaved()) {
                         _logger.error("order updated");
-                        await orderRepo.updateOrder(currentOrder);
+                        // Lines stay the waiter's; the header is the cashier's.
+                        await orderRepo.updateOrder(currentOrder,
+                            headerOnly: !canEditWaiterOrder(ref));
                         orderId = currentOrder.orderId!;
                       } else {
                         _logger.error("new order created with ${currentOrder.items.length} items");
@@ -2078,7 +2121,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // Save or update order first.
       if (currentOrder.isSaved()) {
         _logger.debug('Updating existing order with ${currentOrder.items.length} items');
-        await orderRepo.updateOrder(currentOrder);
+        // Lines stay the waiter's; the header is the cashier's.
+        await orderRepo.updateOrder(currentOrder,
+            headerOnly: !canEditWaiterOrder(ref));
         orderId = currentOrder.orderId!;
       } else {
         _logger.debug('Creating new order with ${currentOrder.items.length} items');
@@ -2481,7 +2526,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       int orderId;
       // Save or update order first.
       if (currentOrder.isSaved()) {
-        await orderRepo.updateOrder(currentOrder);
+        // Lines stay the waiter's; the header is the cashier's.
+        await orderRepo.updateOrder(currentOrder,
+            headerOnly: !canEditWaiterOrder(ref));
         orderId = currentOrder.orderId!;
       } else {
         orderId = await orderRepo.saveOrder(
@@ -2585,57 +2632,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   /// answer, because a kitchen waiting on food should never be held up by a
   /// bookkeeping prompt. The untagged lines then print under "Other", which
   /// is honest about what the cashier actually said.
-  Future<bool> _resolveMissingCourses() async {
-    if (!ref.read(settingsProvider).coursesEnabled) return true;
-    final order = ref.read(orderProvider);
-    // Paid lines are already on a printed ticket; nothing can be done about
-    // their course now, so they must not trigger the prompt.
-    final open = [
-      for (final item in order.items)
-        if (item.ticketId == null) item,
-    ];
-    if (!hasPartialCourses([for (final i in open) i.courseNo])) return true;
-    if (!mounted) return true;
-
-    final l10n = AppLocalizations.of(context)!;
-    final missing = [
-      for (final i in open)
-        if (OrderCourse.fromNumber(i.courseNo) == null) i.displayName,
-    ];
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.translate('course_missing_title')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(l10n.translate('course_missing_hint')),
-            const SizedBox(height: 12),
-            // Naming them turns "go and look" into "go and fix these three".
-            Text(
-              missing.take(6).join(', ') + (missing.length > 6 ? '…' : ''),
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l10n.translate('cancel')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l10n.translate('send_anyway')),
-          ),
-        ],
-      ),
-    );
-    return go == true;
-  }
-
   Future<bool> _resolveRuleViolations() async {
-    if (!await _resolveMissingCourses()) return false;
     final settings = ref.read(settingsProvider);
     final startedOnOrderId = ref.read(orderProvider).orderId;
     while (true) {
@@ -2699,8 +2696,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final existingOrder = result['existingOrder'] as CurrentOrder?;
 
     if (existingOrder != null) {
-      // Reuse the same conflict prompt the normal table-pick flow uses.
-      final hasItems = ref.read(orderProvider).items.isNotEmpty;
+      // Reuse the same conflict prompt the normal table-pick flow uses, on the
+      // same terms: only unsaved work is worth stopping the cashier for.
+      final hasItems = ref.read(orderProvider).hasUnsavedChanges;
       if (hasItems && context.mounted) {
         final l10n = AppLocalizations.of(context)!;
         final confirmed = await _confirmDiscardCurrentForTableOrder(

@@ -26,6 +26,7 @@ class CashReportSections {
     required this.families,
     required this.topArticles,
     required this.live,
+    this.removedItems = const RemovedItemsSummary(),
   });
 
   final GeneralSummary general;
@@ -47,6 +48,11 @@ class CashReportSections {
 
   final LiveStatuses live;
 
+  /// Lines taken OFF saved orders during the period — read from the annulment
+  /// tombstones, not from `order_products`, because the rows they describe
+  /// have been deleted by the time this runs.
+  final RemovedItemsSummary removedItems;
+
   double get vatTotalHt =>
       vatBands.fold(0.0, (sum, b) => sum + b.baseHt);
   double get vatTotalVat => vatBands.fold(0.0, (sum, b) => sum + b.vat);
@@ -63,6 +69,41 @@ class CashReportSections {
     topArticles: [],
     live: LiveStatuses(),
   );
+}
+
+/// Annulments: what was rung up and then pulled off a SAVED order.
+///
+/// Sourced from `removed_order_items`. Separate from
+/// [GeneralSummary.cancelledLines], which counts lines still present on the
+/// order but struck (state CANCELED) — these are lines that no longer exist.
+class RemovedItemsSummary {
+  const RemovedItemsSummary({
+    this.lineCount = 0,
+    this.quantity = 0,
+    this.amount = 0,
+    this.afterKitchenQuantity = 0,
+    this.afterKitchenAmount = 0,
+    this.rows = const [],
+  });
+
+  /// How many annulment events — one per product+variant pulled.
+  final int lineCount;
+
+  /// Units pulled. Real, because weighed lines sell in kg.
+  final double quantity;
+
+  /// What those units were worth at the price they carried.
+  final double amount;
+
+  /// The subset the kitchen had already been told to make. This is the figure
+  /// that means waste; the rest was pulled before anyone started cooking.
+  final double afterKitchenQuantity;
+  final double afterKitchenAmount;
+
+  /// Per-article detail, biggest first.
+  final List<CategoryRow> rows;
+
+  bool get isEmpty => lineCount == 0;
 }
 
 /// §1 RESUME GENERAL.
@@ -121,6 +162,7 @@ class CashMovements {
   const CashMovements({
     this.openingFloat = 0,
     this.cashSales = 0,
+    this.cashDeliveryFees = 0,
     this.cashIn = 0,
     this.cashOut = 0,
     this.countedCash,
@@ -131,6 +173,13 @@ class CashMovements {
   /// Takings in physical cash — the only payment method that reaches the
   /// drawer, which is what makes the expected figure below meaningful.
   final double cashSales;
+
+  /// Delivery charges collected in cash, inside [cashSales].
+  ///
+  /// Broken out for the printed report only: the fee is real money in the
+  /// drawer, but it is not a product sale, and a manager counting down wants
+  /// to see why the takings exceed the ticket rows.
+  final double cashDeliveryFees;
 
   /// Paid in / paid out through the cash-movement flow.
   final double cashIn;
@@ -377,17 +426,55 @@ class CashReportBuilder {
     // rather than to what was rung.
     final liveTickets =
         tickets.where((t) => t.isPaid && !t.isCancelled).toList();
+
+    // Delivery charges, attributed to the ticket that actually collected
+    // them.
+    //
+    // A fee belongs to the ORDER and rides the FIRST settlement — see
+    // `deliveryFeeToCollect` — so it is never on a ticket row: `ticket.amount`
+    // is products-only, by design, to keep the fee out of sales figures. The
+    // consequence nobody had accounted for is that the cash is in the drawer
+    // and in no report, so a shift with deliveries always counted OVER and the
+    // variance was written off as a miscount.
+    //
+    // Reconstructed here the same way a reprint reconstructs it: the earliest
+    // live ticket on the order is the one that took the fee, and its method is
+    // the method the fee arrived in.
+    final feeByTicketId = <int, double>{};
+    final ticketsByOrder = <int, List<dynamic>>{};
+    for (final t in liveTickets) {
+      ticketsByOrder.putIfAbsent(t.orderId, () => []).add(t);
+    }
+    ticketsByOrder.forEach((orderId, ts) {
+      final fee = orderById[orderId]?.deliveryFee ?? 0.0;
+      if (fee <= 0) return;
+      // Lowest id = settled first. Matches `_ticketDeliveryFee` in the
+      // tickets screen, so the report and the reprint agree.
+      final first = ts.reduce((a, b) => a.id <= b.id ? a : b);
+      feeByTicketId[first.id as int] = fee;
+    });
     final salesByType = <String, double>{};
     for (final ticket in liveTickets) {
       final order = orderById[ticket.orderId];
       final type = order?.type ?? 'OTHER';
-      salesByType[type] = (salesByType[type] ?? 0) + ticket.amount;
+      // Built from live tickets so the split adds up to what was TAKEN — and
+      // the delivery fee was taken, so leaving it out made the split disagree
+      // with the drawer by exactly the fees.
+      salesByType[type] = (salesByType[type] ?? 0) +
+          ticket.amount +
+          (feeByTicketId[ticket.id] ?? 0.0);
     }
 
     // ---- §3 is the existing payment rollup, §5 the drawer ------------------
-    final cashSales = liveTickets
+    final cashDeliveryFees = liveTickets
         .where((t) => t.paymentMethod.toUpperCase() == 'CASH')
-        .fold(0.0, (sum, t) => sum + t.amount);
+        .fold(0.0, (sum, t) => sum + (feeByTicketId[t.id] ?? 0.0));
+    final cashSales = liveTickets
+            .where((t) => t.paymentMethod.toUpperCase() == 'CASH')
+            .fold(0.0, (sum, t) => sum + t.amount) +
+        // In the drawer, so in the expected figure — otherwise every cash
+        // delivery leaves the count over by its fee.
+        cashDeliveryFees;
 
     var cashIn = 0.0;
     var cashOut = 0.0;
@@ -411,6 +498,7 @@ class CashReportBuilder {
     final cash = CashMovements(
       openingFloat: openingFloat,
       cashSales: cashSales,
+      cashDeliveryFees: cashDeliveryFees,
       cashIn: cashIn,
       cashOut: cashOut,
       countedCash: counted,
@@ -466,6 +554,7 @@ class CashReportBuilder {
       families: _sortedRows(byCategory),
       topArticles: _sortedRows(byArticle).take(topArticlesLimit).toList(),
       live: live,
+      removedItems: await _removedItems(sessionIds),
     );
   }
 
@@ -532,6 +621,50 @@ class CashReportBuilder {
       families: const [],
       topArticles: const [],
       live: await _liveStatuses(),
+      // A period can have no surviving orders and still have annulments.
+      removedItems: await _removedItems(sessionIds),
+    );
+  }
+
+  /// Roll up the annulment tombstones for these sessions.
+  ///
+  /// Scoped by `sessionId` like every other section. Rows whose session is null
+  /// (a removal on an order raised outside a session) are simply not in any
+  /// report, which matches how orders themselves are scoped.
+  Future<RemovedItemsSummary> _removedItems(List<int> sessionIds) async {
+    final rows = await (_db.select(_db.removedOrderItems)
+          ..where((r) => r.sessionId.isIn(sessionIds)))
+        .get();
+    if (rows.isEmpty) return const RemovedItemsSummary();
+
+    var quantity = 0.0;
+    var amount = 0.0;
+    var afterKitchenQty = 0.0;
+    var afterKitchenAmount = 0.0;
+    final byArticle = <String, _RowAcc>{};
+
+    for (final r in rows) {
+      quantity += r.quantity;
+      amount += r.amount;
+      if (r.wasSentToKitchen) {
+        afterKitchenQty += r.quantity;
+        afterKitchenAmount += r.amount;
+      }
+      final label = r.variantName == null || r.variantName!.isEmpty
+          ? r.productName
+          : '${r.productName} (${r.variantName})';
+      final acc = byArticle.putIfAbsent(label, () => _RowAcc());
+      acc.qty += r.quantity;
+      acc.amount += r.amount;
+    }
+
+    return RemovedItemsSummary(
+      lineCount: rows.length,
+      quantity: quantity,
+      amount: amount,
+      afterKitchenQuantity: afterKitchenQty,
+      afterKitchenAmount: afterKitchenAmount,
+      rows: _sortedRows(byArticle),
     );
   }
 

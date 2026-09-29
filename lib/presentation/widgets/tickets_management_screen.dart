@@ -7,6 +7,7 @@ import '../../data/database/app_database.dart';
 import '../../providers/ticket_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/pending_operations_service.dart';
 import '../../services/permission_service.dart';
@@ -14,6 +15,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/customer_display.dart';
 import '../../utils/currency_formatter.dart';
 import 'admin_mode_chip.dart';
+import 'delivery_fee_totals_chip.dart';
 import './adaptive_text_field.dart';
 
 class TicketsManagementScreen extends ConsumerStatefulWidget {
@@ -362,6 +364,8 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
             flex: 2,
             child: _buildDateRangeControl(),
           ),
+          const SizedBox(width: 16),
+          const DeliveryFeeTotalsChip(),
         ],
       ),
     );
@@ -581,10 +585,20 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
               ? TextStyle(decoration: TextDecoration.lineThrough, color: Theme.of(context).colorScheme.onSurfaceVariant)
               : null,
         )),
-        DataCell(Text(ticket.orderId.toString())),
+        // The per-session number rides in the order column rather than its
+        // own: sorting is keyed on column index.
+        DataCell(Text(
+          ticketDetails.orderNumber != null &&
+                  ref.watch(settingsProvider).showOrderNumberInLists
+              ? '#${ticketDetails.orderNumber} · ${ticket.orderId}'
+              : ticket.orderId.toString(),
+        )),
         DataCell(Text(ticketDetails.itemCount.toString())),
         DataCell(Text(
-          ref.watch(currencyFormatterProvider).format(ticket.amount),
+          ref.watch(currencyFormatterProvider).format(
+              ticketDetails.displayAmount(
+                  includeDeliveryFee:
+                      ref.watch(settingsProvider).totalsIncludeDeliveryFee)),
           style: ticket.isCancelled
               ? TextStyle(decoration: TextDecoration.lineThrough, color: Theme.of(context).colorScheme.onSurfaceVariant)
               : null,
@@ -808,6 +822,9 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
           ? null
           : await _ticketDeliveryFee(database, orderData.id, ticket.id),
       tvaAmount: await _ticketTvaTotal(database, ticket.id),
+      discountAmount: await _ticketDiscountTotal(
+          database, ticket.id, orderData?.discountPercentage ?? 0),
+      discountReason: orderData?.discountReason,
       paymentMethod: ticket.paymentMethod,
       createdAt: ticket.date,
       items: itemsForPrint,
@@ -925,6 +942,10 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
           ..where((tbl) => tbl.id.equals(ticket.orderId)))
         .getSingleOrNull();
 
+    final deliveryFee = orderData == null
+        ? 0.0
+        : await _ticketDeliveryFee(database, orderData.id, ticket.id) ?? 0.0;
+
     if (!mounted) return;
 
     showDialog(
@@ -934,6 +955,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         itemCount: itemCount,
         items: itemsWithNames,
         orderCode: orderData?.code ?? 'N/A',
+        deliveryFee: deliveryFee,
       ),
     );
   }
@@ -1020,12 +1042,14 @@ class _TicketDetailsDialog extends ConsumerWidget {
   final int itemCount;
   final List<Map<String, dynamic>> items; // Changed to Map to include product name
   final String orderCode;
+  final double deliveryFee; // Non-zero only on the ticket that collected it
 
   const _TicketDetailsDialog({
     required this.ticket,
     required this.itemCount,
     required this.items,
     required this.orderCode,
+    this.deliveryFee = 0.0,
   });
 
   @override
@@ -1100,7 +1124,15 @@ class _TicketDetailsDialog extends ConsumerWidget {
                             _buildInfoRow(context, 'Order ID', '#${ticket.orderId}'),
                             _buildInfoRow(context, 'Status', ticket.isPaid ? 'PAID' : 'UNPAID'),
                             _buildInfoRow(context, 'Payment Method', ticket.paymentMethod.toUpperCase()),
-                            _buildInfoRow(context, 'Amount', currencyFormatter.format(ticket.amount)),
+                            if (deliveryFee > 0 &&
+                                ref.watch(settingsProvider).totalsIncludeDeliveryFee) ...[
+                              _buildInfoRow(context, 'Amount', currencyFormatter.format(ticket.amount)),
+                              _buildInfoRow(context, AppLocalizations.of(context)!.translate('delivery_fee'),
+                                  currencyFormatter.format(deliveryFee)),
+                              _buildInfoRow(context, AppLocalizations.of(context)!.translate('total_collected'),
+                                  currencyFormatter.format(ticket.amount + deliveryFee)),
+                            ] else
+                              _buildInfoRow(context, 'Amount', currencyFormatter.format(ticket.amount)),
                             _buildInfoRow(context, 'Print Count', ticket.printCount.toString()),
                             _buildInfoRow(context, 'Date', _formatFullDateTime(ticket.date)),
                           ],
@@ -1247,6 +1279,9 @@ class _TicketDetailsDialog extends ConsumerWidget {
             ? null
             : await _ticketDeliveryFee(database, orderData.id, ticket.id),
         tvaAmount: await _ticketTvaTotal(database, ticket.id),
+        discountAmount: await _ticketDiscountTotal(
+            database, ticket.id, orderData?.discountPercentage ?? 0),
+        discountReason: orderData?.discountReason,
         paymentMethod: ticket.paymentMethod,
         createdAt: ticket.date,
         items: itemsForPrint,
@@ -1453,6 +1488,31 @@ Future<double?> _ticketDeliveryFee(
   final firstTicketId =
       ticketIds.map((t) => t.id).reduce((a, b) => a < b ? a : b);
   return ticketId == firstTicketId ? fee : null;
+}
+
+/// Everything taken off this ticket: the per-line reductions plus this
+/// ticket's share of the order-level remise.
+///
+/// The remise is a percentage on the ORDER and is never stored per line, so a
+/// reprint has to recompute it the way the payment screen did when the ticket
+/// was first rung up — otherwise the reprint quietly shows a smaller reduction
+/// than the original receipt.
+Future<double> _ticketDiscountTotal(
+    AppDatabase database, int ticketId, double orderDiscountPercentage) async {
+  final products = await (database.select(database.orderProducts)
+        ..where((tbl) => tbl.ticketId.equals(ticketId)))
+      .get();
+  final lineDiscount = products.fold<double>(
+      0.0, (sum, p) => sum + ((p.unitaryDiscount + p.manualDiscount) * p.quantity));
+  if (orderDiscountPercentage <= 0) return lineDiscount;
+
+  final base = products.fold<double>(
+        0.0,
+        (sum, p) => sum + ((p.unitaryPrice + p.unitaryTva) * p.quantity),
+      ) -
+      lineDiscount;
+  if (base <= 0) return lineDiscount;
+  return lineDiscount + base * (orderDiscountPercentage / 100.0);
 }
 
 Future<double> _ticketTvaTotal(AppDatabase database, int ticketId) async {

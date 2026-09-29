@@ -2,207 +2,206 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import 'session_service.dart';
+import 'z_rules.dart';
 
-/// Manages the "Z" shift entity: one open Z per POS terminal, owning one or more
-/// cash sessions. Mirrors [SessionService] conventions (code generation,
-/// unique code, isSynced push flag).
+/// The till's local Z records (contract v3): one open Z at a time, each a
+/// (zDay, zSeq) label over a run of cash sessions. Nothing here talks to the
+/// server — the Z reaches it through the fields its sessions carry.
 class ZService {
   final AppDatabase _database;
 
   ZService(this._database);
 
-  /// Z code — `<prefix>-YYYYMMDD-HHMMSS-XXX` (prefix configurable, default 'Z').
-  String _generateCode(String prefix) {
-    final p = prefix.trim().isEmpty ? 'Z' : prefix.trim();
+  static const String openAuto = 'AUTO';
+  static const String openManual = 'MANUAL';
+  static const String closeManual = 'MANUAL';
+  static const String closeAuto = 'AUTO';
+  static const String closeForced = 'FORCED';
+
+  /// Local row key. Never sent: the server keys a Z by (terminal, zDay, zSeq).
+  String _generateCode(ZLabel label) {
     final now = DateTime.now();
-    final d = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
     final t = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
     final suffix = now.microsecond.toString().padLeft(3, '0').substring(0, 3);
-    return '$p-$d-$t-$suffix';
+    return 'Z-${label.zDay.replaceAll('-', '')}-${label.zSeq}-$t$suffix';
   }
 
-  /// The currently-open Z for this terminal (or null). When [posId] is given,
-  /// it's matched (an open Z with a null posId also counts, so a Z opened
-  /// before the terminal id was known is still adopted).
-  Future<Z?> getOpenZ({int? posId}) async {
-    final open = await (_database.select(_database.zs)
-          ..where((z) => z.status.equals('open'))
-          ..orderBy([(z) => OrderingTerm.desc(z.startedAt)]))
-        .get();
-    if (open.isEmpty) return null;
-    if (posId == null) return open.first;
-    return open.firstWhere(
-      (z) => z.posId == null || z.posId == posId,
-      orElse: () => open.first,
-    );
+  /// The business day of [z]: its stored label, or its opening calendar day on
+  /// a row too old to have one.
+  static DateTime zDayOf(Z z) =>
+      parseZDay(z.zDay) ??
+      DateTime(z.startedAt.year, z.startedAt.month, z.startedAt.day);
+
+  static ZLabel labelOf(Z z) => ZLabel(formatZDay(zDayOf(z)), z.zSeq);
+
+  /// "2026-09-25 · Z1" — how a Z is named on screen and on paper.
+  static String displayName(Z z) {
+    final l = labelOf(z);
+    return '${l.zDay} · Z${l.zSeq}';
   }
 
-  /// Returns this terminal's open Z, creating one if none exists.
-  ///
-  /// [number] / [businessDay] come from the terminal's `ZDayState` and are
-  /// stamped into `details` so the Z number reaches the backend without a
-  /// schema or API change.
-  Future<Z> ensureOpenZ({
-    required int createdBy,
-    int? posId,
-    String codePrefix = 'Z',
-    int? number,
-    String? businessDay,
-  }) async {
-    final existing = await getOpenZ(posId: posId);
-    if (existing != null) return existing;
+  Future<Z?> getOpenZ() => (_database.select(_database.zs)
+        ..where((z) => z.status.equals('open'))
+        ..orderBy([(z) => OrderingTerm.desc(z.startedAt)])
+        ..limit(1))
+      .getSingleOrNull();
 
-    final now = DateTime.now();
-    final details = <String, dynamic>{
-      if (number != null) 'number': number,
-      if (businessDay != null) 'businessDay': businessDay,
-    };
-    final id = await _database.into(_database.zs).insert(
-          ZsCompanion.insert(
-            id: const Value.absent(),
-            code: _generateCode(codePrefix),
-            posId: Value(posId),
-            createdBy: createdBy,
-            startedAt: Value(now),
-            status: const Value('open'),
-            details:
-                details.isEmpty ? const Value.absent() : Value(jsonEncode(details)),
-          ),
-        );
-    return (await _database.select(_database.zs)..where((z) => z.id.equals(id)))
-        .getSingle();
-  }
-
-  /// The Z number stamped into `details` at open (null on legacy rows opened
-  /// before Z-day numbering existed).
-  static int? numberOf(Z? z) {
-    if (z?.details == null) return null;
-    try {
-      final decoded = jsonDecode(z!.details!);
-      if (decoded is Map) return (decoded['number'] as num?)?.toInt();
-    } catch (_) {}
-    return null;
-  }
+  /// Newest Z of any status, by label.
+  Future<Z?> latestZ() => (_database.select(_database.zs)
+        ..orderBy([
+          (z) => OrderingTerm.desc(z.zDay),
+          (z) => OrderingTerm.desc(z.zSeq),
+          (z) => OrderingTerm.desc(z.startedAt),
+        ])
+        ..limit(1))
+      .getSingleOrNull();
 
   Future<Z?> getById(int zId) => (_database.select(_database.zs)
         ..where((z) => z.id.equals(zId)))
       .getSingleOrNull();
 
-  /// Most-recent Z's (open + closed), newest first — for the history list in
-  /// the Z management dialog.
-  Future<List<Z>> recentZs({int limit = 25}) =>
-      (_database.select(_database.zs)
-            ..orderBy([(z) => OrderingTerm.desc(z.startedAt)])
-            ..limit(limit))
-          .get();
+  /// Most recent Zs (open + closed), newest first — for the history list.
+  Future<List<Z>> recentZs({int limit = 25}) => (_database.select(_database.zs)
+        ..orderBy([
+          (z) => OrderingTerm.desc(z.zDay),
+          (z) => OrderingTerm.desc(z.zSeq),
+          (z) => OrderingTerm.desc(z.startedAt),
+        ])
+        ..limit(limit))
+      .get();
 
-  /// Link a cash session to its Z (shift).
+  /// Open a Z under [label]. [openMode] is null for a Z adopted from the
+  /// server, whose opening session is already there.
+  ///
+  /// [openOverride]: opened past `zCantOpenAfter` under `pos:z:override`.
+  Future<Z> openZ({
+    required ZLabel label,
+    required int createdBy,
+    String? openMode,
+    int? posId,
+    bool openOverride = false,
+  }) async {
+    final existing = await getOpenZ();
+    if (existing != null) return existing;
+    final id = await _database.into(_database.zs).insert(
+          ZsCompanion.insert(
+            id: const Value.absent(),
+            code: _generateCode(label),
+            posId: Value(posId),
+            createdBy: createdBy,
+            startedAt: Value(DateTime.now()),
+            status: const Value('open'),
+            zDay: Value(label.zDay),
+            zSeq: Value(label.zSeq),
+            openMode: Value(openMode),
+            openOverride: Value(openOverride),
+          ),
+        );
+    return (await getById(id))!;
+  }
+
+  /// Link [sessionId] to [zId]. The first session of a Z that this till
+  /// opened carries its open mode, which is how the server learns the Z began.
   Future<void> attachSession(int sessionId, int zId) async {
+    final z = await getById(zId);
+    final earlier = await (_database.select(_database.cashSessions)
+          ..where((s) => s.zId.equals(zId) & s.id.isNotValue(sessionId)))
+        .get();
+    final isOpener = earlier.isEmpty && z?.openMode != null;
     await (_database.update(_database.cashSessions)
           ..where((s) => s.id.equals(sessionId)))
         .write(CashSessionsCompanion(
       zId: Value(zId),
+      zOpenMode: isOpener ? Value(z!.openMode) : const Value.absent(),
+      zOverride: isOpener && z!.openOverride
+          ? const Value(true)
+          : const Value.absent(),
+      isSynced: const Value(false),
       updatedAt: Value(DateTime.now()),
     ));
   }
 
-  /// Insert (or return existing) a Z that the SERVER already has open for this
-  /// terminal, so we adopt it instead of opening a duplicate. Marked synced.
-  Future<Z> adoptServerZ(Map<String, dynamic> data, {int? posId}) async {
-    final code = data['code'] as String;
-    final existing = await (_database.select(_database.zs)
-          ..where((z) => z.code.equals(code)))
-        .getSingleOrNull();
-    if (existing != null) return existing;
-    final startedAt =
-        DateTime.tryParse('${data['startedAt'] ?? ''}') ?? DateTime.now();
-    // Carry the server's details across (it holds the Z number) so a Z adopted
-    // on a second terminal keeps its original numbering.
-    String? details;
-    final raw = data['details'];
-    if (raw is String && raw.trim().isNotEmpty) {
-      details = raw;
-    } else if (raw is Map) {
-      details = jsonEncode(raw);
-    }
-    final id = await _database.into(_database.zs).insert(
-          ZsCompanion.insert(
-            id: const Value.absent(),
-            code: code,
-            posId: Value(posId ?? (data['posId'] as num?)?.toInt()),
-            createdBy: (data['createdBy'] as num?)?.toInt() ?? 0,
-            startedAt: Value(startedAt),
-            status: const Value('open'),
-            isSynced: const Value(true),
-            details: Value(details),
-          ),
-        );
-    return (_database.select(_database.zs)..where((z) => z.id.equals(id)))
-        .getSingle();
-  }
-
-  /// All sessions that belong to [zId].
+  /// All sessions that belong to [zId], oldest first.
   Future<List<CashSession>> sessionsForZ(int zId) =>
       (_database.select(_database.cashSessions)
             ..where((s) => s.zId.equals(zId))
             ..orderBy([(s) => OrderingTerm.asc(s.startedAt)]))
           .get();
 
-  /// Close a Z: end every still-open/paused session it owns (expected cash),
-  /// aggregate the Z totals, and mark it closed + unsynced. [sessionService] is
-  /// used to end the sessions so their close totals/tickets are consistent.
+  /// Sessions of [zId] still active or paused, other than [except].
+  Future<List<CashSession>> openSessionsOf(int zId, {int? except}) async {
+    final all = await sessionsForZ(zId);
+    return all
+        .where((s) =>
+            (s.status == 'active' || s.status == 'paused') && s.id != except)
+        .toList();
+  }
+
+  /// Close a Z.
+  ///
+  /// A session never outlives its Z: every session still open or paused —
+  /// other cashiers' included — is ended first, uncounted and flagged
+  /// `autoClosed`. The session ended LAST is then flagged as the closing one
+  /// and marked unsynced: closing a Z on the server means re-pushing that
+  /// session with the close fields, which the server fills once even on a
+  /// session it already has closed. [closeOverride]: closed before
+  /// `zEarliestCloseTime` under `pos:z:override`.
   Future<void> closeZ({
     required int zId,
+    required String closeMode,
     required SessionService sessionService,
     int? endedBy,
+    bool closeOverride = false,
   }) async {
+    for (final s in await openSessionsOf(zId)) {
+      await sessionService.endSession(sessionId: s.id, autoClosed: true);
+    }
+
     final sessions = await sessionsForZ(zId);
-
-    // 1. Auto-close any session still open/paused.
-    for (final s in sessions) {
-      if (s.status == 'active' || s.status == 'paused') {
-        await sessionService.endSession(sessionId: s.id);
-      }
-    }
-
-    // 2. Re-read (now-ended) sessions and aggregate.
-    final ended = await sessionsForZ(zId);
+    final byEnd = [...sessions]..sort((a, b) =>
+        (a.endedAt ?? a.startedAt).compareTo(b.endedAt ?? b.startedAt));
+    final now = DateTime.now();
     var totalPaid = 0.0;
-    var moneyAtStart = 0.0;
-    for (final s in ended) {
+    for (final s in sessions) {
       totalPaid += s.totalPaid ?? 0.0;
-      moneyAtStart += s.moneyAtStart;
     }
-    // Merge, never replace: `details` already carries the Z number and business
-    // day written at open. Overwriting it here would drop the number before it
-    // is ever pushed to the server.
-    final prev = <String, dynamic>{};
-    final current = await getById(zId);
-    if (current?.details != null) {
-      try {
-        final decoded = jsonDecode(current!.details!);
-        if (decoded is Map) prev.addAll(Map<String, dynamic>.from(decoded));
-      } catch (_) {/* corrupt blob — the close must still succeed */}
-    }
-    final details = {
-      ...prev,
-      'sessionCount': ended.length,
-      'sessionCodes': ended.map((s) => s.code).toList(),
-      'totalPaid': totalPaid,
-      'moneyAtStart': moneyAtStart,
-    };
 
-    // 3. Mark the Z closed.
-    await (_database.update(_database.zs)..where((z) => z.id.equals(zId))).write(
-      ZsCompanion(
+    await _database.transaction(() async {
+      if (byEnd.isNotEmpty) {
+        await (_database.update(_database.cashSessions)
+              ..where((s) => s.id.equals(byEnd.last.id)))
+            .write(CashSessionsCompanion(
+          isClosingSession: const Value(true),
+          zOverride: closeOverride ? const Value(true) : const Value.absent(),
+          isSynced: const Value(false),
+          updatedAt: Value(now),
+        ));
+      }
+      await (_database.update(_database.zs)..where((z) => z.id.equals(zId)))
+          .write(ZsCompanion(
         status: const Value('closed'),
-        endedAt: Value(DateTime.now()),
+        endedAt: Value(now),
         endedBy: Value(endedBy),
+        closeMode: Value(closeMode),
         totalPaid: Value(totalPaid),
-        details: Value(jsonEncode(details)),
-        isSynced: const Value(false),
-        updatedAt: Value(DateTime.now()),
-      ),
-    );
+        details: Value(jsonEncode({
+          'sessionCount': sessions.length,
+          'sessionCodes': sessions.map((s) => s.code).toList(),
+        })),
+        updatedAt: Value(now),
+      ));
+    });
+  }
+
+  /// The server already has this Z closed (another path closed it, e.g. its
+  /// stale-day sweep). Close the local row to match — nothing to push.
+  Future<void> markClosedByServer(int zId, {String? closeMode}) async {
+    await (_database.update(_database.zs)..where((z) => z.id.equals(zId)))
+        .write(ZsCompanion(
+      status: const Value('closed'),
+      endedAt: Value(DateTime.now()),
+      closeMode: Value(closeMode ?? closeForced),
+      updatedAt: Value(DateTime.now()),
+    ));
   }
 }

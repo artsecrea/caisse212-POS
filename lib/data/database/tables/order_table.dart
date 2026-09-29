@@ -62,6 +62,12 @@ class Orders extends Table {
   TextColumn get address => text().nullable()(); // Delivery address (for DELIVERY order type)
   TextColumn get cancellationReason => text().nullable()(); // Reason for cancellation when status is CANCELED
   IntColumn get sessionId => integer().nullable()(); // Cash session this order was created in (for Z-report locking)
+  /// Short, human-facing number counted per cash session (1, 2, 3…), called
+  /// out at the counter and shown on tickets/KDS when the setting is on.
+  /// Local only: never sent to the server, and null on orders that arrived
+  /// from the cloud or were created outside a session. See
+  /// [AppDatabase.nextSessionOrderNo].
+  IntColumn get sessionOrderNo => integer().nullable()();
   // Delivery-platform fields. `externalOrderId` echoes the id from the queue
   // payload back on every re-sync (the server can backfill it from the queue by
   // code, but echoing keeps the link explicit). `deliveryStatus` is only sent

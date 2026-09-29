@@ -36,8 +36,15 @@ class CashMovementService {
     }
     final dir = direction == directionIn ? directionIn : directionOut;
 
+    final now = DateTime.now();
+    final code = 'CM-${now.year}${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}-'
+        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}'
+        '${now.second.toString().padLeft(2, '0')}-'
+        '${now.microsecondsSinceEpoch.remainder(1000000).toString().padLeft(6, '0')}';
     final id = await _database.into(_database.cashMovements).insert(
           CashMovementsCompanion.insert(
+            code: Value(code),
             direction: Value(dir),
             amount: magnitude,
             reason: reason.trim(),

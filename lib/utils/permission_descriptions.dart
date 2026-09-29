@@ -346,6 +346,10 @@ const Map<String, PermissionDescription> kPermissionDescriptions = {
     titleKey: 'perm_pos_z_print_title',
     subtitleKey: 'perm_pos_z_print_subtitle',
   ),
+  'pos:z:override': PermissionDescription(
+    titleKey: 'perm_pos_z_override_title',
+    subtitleKey: 'perm_pos_z_override_subtitle',
+  ),
 };
 
 /// Resolve display strings for a token at runtime. Falls back to the raw

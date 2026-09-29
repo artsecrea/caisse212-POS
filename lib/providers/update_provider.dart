@@ -1,6 +1,9 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import '../services/update_config.dart';
 import '../services/update_service.dart';
 import 'database_providers.dart';
 
@@ -62,18 +65,45 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
   final UpdateService _updateService;
   final _logger = Logger.instance;
 
+  Timer? _pollTimer;
+  final _random = Random();
+
   UpdateNotifier(this._updateService) : super(UpdateState());
 
-  /// Checks the API for an update and surfaces it in state — does NOT start
-  /// downloading. The login screen listens and shows the dialog when
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Re-checks every [UpdateConfig.pollInterval] ± jitter so a fleet of tills
+  /// doesn't hit the updates service in lockstep. Started by the first check.
+  void _scheduleNextPoll() {
+    _pollTimer?.cancel();
+    final jitterMs = UpdateConfig.pollJitter.inMilliseconds;
+    final offset = _random.nextInt(2 * jitterMs + 1) - jitterMs;
+    _pollTimer = Timer(
+      UpdateConfig.pollInterval + Duration(milliseconds: offset),
+      () {
+        if (!mounted) return;
+        checkOnly();
+      },
+    );
+  }
+
+  /// Checks the updates service and surfaces an update in state — does NOT
+  /// start downloading. The login screen listens and shows the dialog when
   /// [UpdateState.availableUpdate] becomes non-null.
   Future<void> checkOnly() async {
+    if (!UpdateService.platformSupported) return;
+    _scheduleNextPoll();
     if (state.isBusy || state.updateReady || state.hasUpdate) return;
 
     state = state.copyWith(isChecking: true, clearError: true);
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentVersion = packageInfo.version;
+      final installedBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
       state = state.copyWith(currentVersion: currentVersion);
 
       // A previous session already prepared an update — surface it immediately.
@@ -88,8 +118,11 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
         return;
       }
 
-      final info = await _updateService.checkForUpdates();
-      if (info == null || _compareVersions(info.version, currentVersion) <= 0) {
+      // The service and UpdateService.verify both enforce buildNumber >
+      // installed, so a revoked release never downgrades this till.
+      final info =
+          await _updateService.checkForUpdates(installedBuild: installedBuild);
+      if (info == null || info.buildNumber <= installedBuild) {
         state = state.copyWith(isChecking: false);
         return;
       }
@@ -167,25 +200,11 @@ class UpdateNotifier extends StateNotifier<UpdateState> {
     await startDownload();
     return state.updateReady;
   }
-
-  // ── Version comparison ─────────────────────────────────────────────────────
-
-  int _compareVersions(String v1, String v2) {
-    final p1 = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    final p2 = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    for (int i = 0; i < 3; i++) {
-      final a = i < p1.length ? p1[i] : 0;
-      final b = i < p2.length ? p2[i] : 0;
-      if (a > b) return 1;
-      if (a < b) return -1;
-    }
-    return 0;
-  }
 }
 
 final updateServiceProvider = Provider<UpdateService>((ref) {
   final apiService = ref.watch(apiServiceProvider);
-  return UpdateService(apiService);
+  return UpdateService(apiService, ref.watch(sharedPreferencesProvider));
 });
 
 final updateProvider =

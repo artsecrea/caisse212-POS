@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +9,7 @@ import '../../domain/models/order_course.dart';
 import '../../domain/models/order_models.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/elapsed_label.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../services/permission_service.dart';
 import '../../services/activity_log_service.dart';
@@ -1139,6 +1141,15 @@ class OrderPanel extends ConsumerWidget {
                                                       overflow: TextOverflow.ellipsis,
                                                     ),
                                                   ),
+                                                  // How long the kitchen has
+                                                  // had it. Only on lines that
+                                                  // actually went — an unsent
+                                                  // line has nothing to count
+                                                  // from.
+                                                  if (item.kdsPrintedAt != null)
+                                                    _ElapsedBadge(
+                                                        since:
+                                                            item.kdsPrintedAt!),
                                                 ],
                                               ),
 
@@ -1813,6 +1824,78 @@ class _CourseChip extends ConsumerWidget {
               )
             : Icon(Icons.restaurant_menu,
                 size: 20, color: scheme.onSurfaceVariant),
+      ),
+    );
+  }
+}
+
+/// "How long ago did this go to the kitchen", ticking on its own.
+///
+/// Its own widget with its own timer rather than a rebuild of the whole panel:
+/// the panel redraws on every cart change and does not need a clock attached
+/// to it, and a badge that only refreshed when something else happened would
+/// sit reading "2m" through a twenty-minute wait — which is worse than no
+/// badge, because it looks like information.
+class _ElapsedBadge extends StatefulWidget {
+  const _ElapsedBadge({required this.since});
+
+  final DateTime since;
+
+  @override
+  State<_ElapsedBadge> createState() => _ElapsedBadgeState();
+}
+
+class _ElapsedBadgeState extends State<_ElapsedBadge> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    // A minute is the resolution the label itself has, so anything finer would
+    // be redraws nobody can see.
+    _ticker = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = elapsedLabel(
+      widget.since,
+      locale: Localizations.localeOf(context).languageCode,
+    );
+    if (label.isEmpty) return const SizedBox.shrink();
+
+    // Loud once the food has been out there a while. The threshold is the
+    // point a cashier would want to go and ask, not an SLA.
+    final stale = DateTime.now().difference(widget.since) >=
+        const Duration(minutes: 30);
+    final scheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: (stale ? scheme.error : scheme.onSurfaceVariant)
+              .withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            height: 1.1,
+            fontWeight: FontWeight.w600,
+            color: stale ? scheme.error : scheme.onSurfaceVariant,
+          ),
+        ),
       ),
     );
   }

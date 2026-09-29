@@ -41,6 +41,13 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   final TextEditingController _businessIceController = TextEditingController();
   final TextEditingController _ticketHeaderController = TextEditingController();
   final TextEditingController _ticketFooterController = TextEditingController();
+
+  /// Which ticket type the per-type header/footer boxes below are editing.
+  /// One box per type would be six always-visible fields for something most
+  /// shops set once; a selector keeps the page readable.
+  String _ticketTextType = 'order';
+  final TextEditingController _typeHeaderController = TextEditingController();
+  final TextEditingController _typeFooterController = TextEditingController();
   Uint8List? _logoBytes;
 
   // Local mirrors of the printing service's per-station routing state.
@@ -104,6 +111,8 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     _businessIceController.dispose();
     _ticketHeaderController.dispose();
     _ticketFooterController.dispose();
+    _typeHeaderController.dispose();
+    _typeFooterController.dispose();
     super.dispose();
   }
 
@@ -129,6 +138,8 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     final settings = ref.read(settingsProvider);
     _ticketHeaderController.text = settings.ticketHeader;
     _ticketFooterController.text = settings.ticketFooter;
+    _typeHeaderController.text = settings.ticketHeaders[_ticketTextType] ?? '';
+    _typeFooterController.text = settings.ticketFooters[_ticketTextType] ?? '';
   }
 
   Future<void> _saveBusinessName(String name) async =>
@@ -1003,6 +1014,96 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                         ref.read(settingsProvider.notifier).setTicketFooter(value);
                       },
                     ),
+                    const Divider(height: 40),
+
+                    // ── Per-ticket-type overrides ───────────────────────
+                    Text(
+                      l10n.translate('ticket_text_per_type'),
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      l10n.translate('ticket_text_per_type_subtitle'),
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 15),
+                    ),
+                    const SizedBox(height: 12),
+                    SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(
+                            value: 'order',
+                            label: Text(l10n.translate('order_ticket'))),
+                        ButtonSegment(
+                            value: 'customer',
+                            label: Text(l10n.translate('customer_copy'))),
+                        ButtonSegment(
+                            value: 'store',
+                            label: Text(l10n.translate('store_copy'))),
+                      ],
+                      selected: {_ticketTextType},
+                      onSelectionChanged: (sel) {
+                        final settings = ref.read(settingsProvider);
+                        setState(() {
+                          _ticketTextType = sel.first;
+                          _typeHeaderController.text =
+                              settings.ticketHeaders[_ticketTextType] ?? '';
+                          _typeFooterController.text =
+                              settings.ticketFooters[_ticketTextType] ?? '';
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _typeHeaderController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        labelText: l10n.translate('ticket_header'),
+                        hintText: l10n.translate('ticket_text_inherits_hint'),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.article_outlined),
+                      ),
+                      style: const TextStyle(fontSize: 17),
+                      onChanged: (value) => ref
+                          .read(settingsProvider.notifier)
+                          .setTicketHeaderFor(_ticketTextType, value),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _typeFooterController,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        labelText: l10n.translate('ticket_footer'),
+                        hintText: l10n.translate('ticket_text_inherits_hint'),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.notes_outlined),
+                      ),
+                      style: const TextStyle(fontSize: 17),
+                      onChanged: (value) => ref
+                          .read(settingsProvider.notifier)
+                          .setTicketFooterFor(_ticketTextType, value),
+                    ),
+                    const Divider(height: 40),
+
+                    // ── Reduction reason ────────────────────────────────
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(l10n.translate('print_discount_reason'),
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w500)),
+                      subtitle: Text(
+                        l10n.translate('print_discount_reason_subtitle'),
+                        style: TextStyle(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                            fontSize: 15),
+                      ),
+                      value: ref.watch(settingsProvider).printDiscountReason,
+                      onChanged: (v) => ref
+                          .read(settingsProvider.notifier)
+                          .setPrintDiscountReason(v),
+                    ),
                   ],
                 ),
               ),
@@ -1585,6 +1686,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     'storePhone': 'Store phone',
     'stationName': 'Station name',
     'orderCode': 'Order code',
+    'orderNumber': 'Order number (per session)',
     'date': 'Date / time',
     'time': 'Time',
     'cashier': 'Cashier',
@@ -1612,6 +1714,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   // changed" on a card payment reads as a bug.
   static const _ticketFieldHints = {
     'waiter': 'Only prints when a waiter is attached to the order',
+    'orderNumber': 'Short #1, #2… — when it restarts is set in Settings › Order defaults',
     'tva': 'Prints the VAT already included in the total',
     'amountGiven': 'Only when the cashier keyed the amount received',
     'change': 'Only when the cashier keyed the amount received',

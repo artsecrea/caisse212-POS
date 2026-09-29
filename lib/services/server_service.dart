@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:archive/archive.dart' show ZipDecoder;
@@ -25,12 +26,21 @@ import '../providers/sync_manager_provider.dart' show syncManagerProvider;
 import 'activity_log_service.dart' show activityLogServiceProvider;
 import 'order_log_service.dart';
 import 'discovery_service.dart' show DiscoveryService;
+import 'lan_notification_hub.dart';
+import 'waiter_call_service.dart' show waiterCallServiceProvider;
+import 'kds_feed_scope.dart';
+import 'waiter_kitchen_events.dart';
+import 'waiter_order_money.dart';
+import 'waiter_live_updates.dart';
+import 'waiter_notification_inbox.dart';
 import 'printing_service.dart' show PrintOutput, KdsPrintMode, printingServiceProvider;
 import '../utils/order_code.dart';
 import 'package:drift/drift.dart' as drift;
 import '../utils/pos_log.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'product_cost_resolver.dart';
+import 'z_day_resolver.dart';
+import 'pos_notifications.dart';
 
 /// Thrown inside a DB transaction to abort it (rolling back all writes) and
 /// surface a specific HTTP error to the client. Lets a race-safe check *inside*
@@ -41,7 +51,13 @@ class _WaiterConflict implements Exception {
   final int status;
   final String code;
   final String message;
-  const _WaiterConflict(this.status, this.code, this.message);
+
+  /// The order already sitting on the table, when there is one. Sent back so
+  /// the tablet can offer to open it rather than leaving the waiter with an
+  /// error and no way forward.
+  final String? orderCode;
+
+  const _WaiterConflict(this.status, this.code, this.message, {this.orderCode});
 }
 
 class ServerService {
@@ -56,6 +72,10 @@ class ServerService {
   // first-hits (a browser fires many parallel requests on load).
   String? _kdsWebDir;
   Future<String?>? _kdsExtraction;
+
+  /// Kitchen tickets waiting for the waiter to finish adding, keyed by order.
+  /// See [_fireKdsForWaiterAddedProduct] and [AppSettings.waiterKdsBatchSeconds].
+  final Map<int, Timer> _pendingWaiterKds = {};
 
   ServerService(this._ref, {int port = 8080}) : _port = port;
 
@@ -79,6 +99,7 @@ class ServerService {
     try {
       _server = await shelf_io.serve(handler, InternetAddress.anyIPv4, _port);
       _isRunning = true;
+      _ref.read(waiterLiveUpdateServiceProvider).start();
       // The server binds to 0.0.0.0 (all interfaces); log the REACHABLE LAN URL
       // instead of 0.0.0.0 so the console shows what a KDS/waiter should connect
       // to.
@@ -93,6 +114,10 @@ class ServerService {
 
   /// Stop the HTTP server
   Future<void> stop() async {
+    // Anything still waiting for "one more item" goes to the kitchen NOW.
+    // A ticket sitting in a timer when the POS closes is food nobody cooks.
+    await _flushPendingWaiterKds();
+    await _ref.read(waiterLiveUpdateServiceProvider).stop();
     if (_server != null) {
       await _server!.close(force: true);
       _server = null;
@@ -139,11 +164,20 @@ class ServerService {
     router.get('/waiters/orders/<code>', _waiterOrderDetail);
     router.post('/waiters/orders', _waiterCreateOrder);
     router.put('/waiters/orders/<code>/add-product', _waiterAddProductToOrder);
+    router.put(
+        '/waiters/orders/<code>/add-products', _waiterAddProductsToOrder);
     router.post('/waiters/orders/<code>/print', _waiterPrintOrder);
     router.post('/waiters/orders/<code>/cancel', _waiterCancelOrder);
     router.post('/waiters/orders/<code>/transfer-table', _waiterTransferTable);
     router.delete('/waiters/orders/<code>/products/<opId>', _waiterRemoveProduct);
     router.post('/waiters/tables/<tableId>/clear', _waiterClearTable);
+
+    // Push channel: the waiter app holds this open for the whole shift.
+    router.get('/waiters/events', _waiterEvents);
+    router.post('/waiters/calls/<callId>/ack', _waiterAckCall);
+    // In-memory history of what was pushed — gone on a POS restart.
+    router.get('/waiters/notifications', _waiterNotifications);
+    router.post('/waiters/notifications/read', _waiterNotificationsRead);
 
     // Catch-all for 404
     router.all('/<ignored|.*>', _notFound);
@@ -196,7 +230,7 @@ class ServerService {
   Map<String, String> get _corsHeaders => {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Origin, Content-Type, Accept, X-Server-Password',
+        'Access-Control-Allow-Headers': 'Origin, Content-Type, Accept, X-Server-Password, Last-Event-ID',
       };
 
   // ==================== ENDPOINT HANDLERS ====================
@@ -218,6 +252,19 @@ class ServerService {
   /// Always present, never null: their parse treats an absent field as false,
   /// which is the right degradation for an older POS build but a confusing
   /// one to debug if we started omitting it on purpose.
+  Map<String, bool> _waiterKitchenSwitches() {
+    final s = _ref.read(settingsProvider);
+    return {
+      // Not a setting: this build sends `order-updated` / `tables-changed`,
+      // so the app keeps its stream open whatever else is switched on.
+      'waiterLiveUpdates': true,
+      'waiterShowKitchenStatus': s.waiterShowKitchenStatus,
+      'waiterNotifyReady': s.waiterNotifyReady,
+      'waiterNotifyCanceled': s.waiterNotifyCanceled,
+      'waiterNotifyRupture': s.waiterNotifyRupture,
+    };
+  }
+
   Future<Response> _healthCheck(Request request) async {
     return Response.ok(
       jsonEncode({
@@ -225,6 +272,13 @@ class ServerService {
         'timestamp': DateTime.now().toIso8601String(),
         'port': _port,
         'coursesEnabled': _ref.read(settingsProvider).coursesEnabled,
+        // Lets a client show or hide its own call-related UI, and makes a
+        // "nothing rings" report answerable from one curl.
+        'waiterCallsEnabled': _ref.read(settingsProvider).waiterCallEnabled,
+        // Kitchen feedback switches. The app gates its status chips on the
+        // first; the notify ones are informational (the POS only sends those
+        // events when they're on) but let the app explain a silent phone.
+        ..._waiterKitchenSwitches(),
         // Opaque to the client: compare it with the last one seen and re-fetch
         // the catalogue when it differs. See [_catalogVersion].
         'catalogVersion': await _catalogVersion(),
@@ -363,6 +417,9 @@ class ServerService {
               .toList()
           : <String>[];
 
+      // Printer-style options (order types / sources, unassigned, linked).
+      final feedFilter = KdsFeedFilter.fromQuery(q);
+
       // Status: ONHOLD never reaches KDS
       final List<String> status = statusStr != null
           ? statusStr.split(',').map((s) => s.trim().toUpperCase()).toList()
@@ -480,8 +537,35 @@ class ServerService {
             ..addColumns([database.productStations.productId])
             ..where(database.productStations.stationId.isIn(stationIds));
 
-          joinQuery.where(database.products.stationId.isIn(stationIds) |
-              database.products.id.isInQuery(extraStationProductIds));
+          var inScope = database.products.stationId.isIn(stationIds) |
+              database.products.id.isInQuery(extraStationProductIds);
+
+          // Stationless products: no primary station and no join-table row.
+          if (feedFilter.unassigned) {
+            final anyStationProductIds = database.selectOnly(database.productStations)
+              ..addColumns([database.productStations.productId]);
+            inScope = inScope |
+                (database.products.stationId.isNull() &
+                    database.products.id.isNotInQuery(anyStationProductIds));
+          }
+
+          // Lines carrying an option that IS a product routed here (the drink
+          // inside a menu, for the bar). The parent line's state stands in for
+          // the option's when picking new tickets.
+          if (feedFilter.linked) {
+            final linkedComponentIds = await linkedComponentIdsForStations(
+                database, stationIds.toSet());
+            if (linkedComponentIds.isNotEmpty) {
+              final linkedLineIds = database.selectOnly(database.orderProductComponents)
+                ..addColumns([database.orderProductComponents.orderProductId])
+                ..where(database.orderProductComponents.componentId
+                    .isIn(linkedComponentIds));
+              inScope = inScope |
+                  database.orderProducts.id.isInQuery(linkedLineIds);
+            }
+          }
+
+          joinQuery.where(inScope);
         }
 
         final rows = await joinQuery.get();
@@ -536,7 +620,9 @@ class ServerService {
       if (afterId != null) {
         newOrdersQuery..where((o) => o.id.isBiggerThanValue(afterId));
       }
-      final newOrders = await newOrdersQuery.get();
+      final newOrders = (await newOrdersQuery.get())
+          .where(feedFilter.allowsOrder)
+          .toList();
 
       // ── 4. Updated orders — date PRIMARY, log cursor secondary ───────────
       // Log cursor always constrained by the date window (never widens scope).
@@ -550,7 +636,9 @@ class ServerService {
         final updatedQuery = database.select(database.orders)
           ..where((o) => o.id.isIn(updatedOrderIds));
         applyFilters(updatedQuery);
-        updatedOrders = await updatedQuery.get();
+        updatedOrders = (await updatedQuery.get())
+            .where(feedFilter.allowsOrder)
+            .toList();
       }
 
       // ── 5. Deleted order IDs — same date-primary pattern ─────────────────
@@ -560,8 +648,10 @@ class ServerService {
 
       // ── 6. Build socket models + respond ────────────────────────────────
       final [socketNewRaw, socketUpdatedRaw, lastLogIdRaw] = await Future.wait([
-        Future.wait(newOrders.map((o) => _buildSocketOrder(o, stationFilters))),
-        Future.wait(updatedOrders.map((o) => _buildSocketOrder(o, stationFilters))),
+        Future.wait(newOrders
+            .map((o) => _buildSocketOrder(o, stationFilters, feedFilter))),
+        Future.wait(updatedOrders
+            .map((o) => _buildSocketOrder(o, stationFilters, feedFilter))),
         logService.getLastUpdateLogId(),
       ]);
 
@@ -622,8 +712,21 @@ class ServerService {
         }
       }
 
-      // z_day from active session — O(1) state read
-      final _createZDay = _ref.read(currentZDayProvider);
+      // The shift this order belongs to. Read from `cash_sessions`, not from
+      // `currentSessionProvider`: that provider is only ever populated by the
+      // login screen, and this endpoint serves KDS/kiosk devices that post
+      // over the LAN whether or not a cashier has signed in on this terminal.
+      // When it was null the z_day fell through to `DateTime.now()`, so a
+      // kiosk order taken at 00:30 inside a 20:00 shift was stamped with the
+      // NEXT day.
+      //
+      // `sessionId` was never set here at all, which also kept these orders
+      // out of every session-scoped view and left the backend with nothing to
+      // reconcile them to.
+      final createSession = await ZDayResolver(database).activeSession();
+      final createZDay =
+          await ZDayResolver(database).forSession(createSession?.id) ??
+              _ref.read(currentZDayProvider);
 
       // Convert to database order
       final orderId = await database.into(database.orders).insert(
@@ -639,7 +742,11 @@ class ServerService {
           createdBy: drift.Value(createdBy),
           takenBy: drift.Value(takenBy),
           note: drift.Value(socketOrder.note),
-          zDay: drift.Value(_createZDay),
+          sessionId: drift.Value(createSession?.id),
+          sessionOrderNo: drift.Value(await database.nextSessionOrderNo(
+              createSession?.id,
+              mode: _ref.read(settingsProvider).orderNumberResetMode)),
+          zDay: drift.Value(createZDay),
           createdAt: drift.Value(socketOrder.date),
           updatedAt: drift.Value(DateTime.now()),
         ),
@@ -695,7 +802,7 @@ class ServerService {
             unitaryTva: drift.Value(unitTva),
             note: drift.Value(product.note),
             state: drift.Value(product.state),
-            zDay: drift.Value(_createZDay),
+            zDay: drift.Value(createZDay),
           ),
         );
 
@@ -932,6 +1039,16 @@ class ServerService {
       ));
 
       final orderId = existing.orderId;
+      // First time the kitchen is done with this line → the waiter has food
+      // to carry. Stage timestamps are write-once, so a remake bounced back
+      // and re-bumped does not ring twice.
+      if (isKitchenDoneState(newState) &&
+          existing.readyAt == null &&
+          existing.servedAt == null) {
+        _ref
+            .read(waiterKitchenEventServiceProvider)
+            .lineReady(orderId: orderId, lineId: productId);
+      }
       final allProducts = await (database.select(database.orderProducts)
             ..where((tbl) => tbl.orderId.equals(orderId)))
           .get();
@@ -1024,6 +1141,176 @@ class ServerService {
       jsonEncode({'error': 'Endpoint not found'}),
       headers: {'Content-Type': 'application/json'},
     );
+  }
+
+  // ==================== WAITER PUSH CHANNEL ====================
+
+  /// GET /waiters/events?waiterId=12 — Server-Sent Events, held open for the
+  /// whole shift.
+  ///
+  /// Deliberately LAN-only. The cloud SSE channel this mirrors ([SseService])
+  /// is for things the *company* pushes; a cashier asking a waiter to come to
+  /// table 7 is a room-sized event that must keep working when the internet
+  /// does not. Same Wi-Fi, same Shelf server, no round trip.
+  ///
+  /// Unlike the other waiter routes this one does not 400 on a missing waiter:
+  /// it is held open for hours, so an identity that has since been
+  /// deactivated has to fail at *connect* time and stay failed, rather than
+  /// leave the phone reconnecting in a loop against an endpoint that answers.
+  ///
+  /// 200: `text/event-stream`, framed `connected` / `waiter-call` /
+  /// `waiter-call-cancelled` events plus `: hb` comments every 20s.
+  Future<Response> _waiterEvents(Request request) async {
+    final waiterId = int.tryParse(request.url.queryParameters['waiterId'] ?? '');
+    if (waiterId == null) {
+      return Response.badRequest(
+        body: jsonEncode({'error': 'waiterId is required'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+
+    final db = _ref.read(databaseProvider);
+    final waiter = await (db.select(db.waiters)
+          ..where((w) => w.id.equals(waiterId)))
+        .getSingleOrNull();
+    if (waiter == null || !waiter.isActive) {
+      return Response.forbidden(
+        jsonEncode({'error': 'unknown_waiter'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+
+    final calls = _ref.read(waiterCallServiceProvider);
+    final stream = _ref.read(lanNotificationHubProvider).subscribe(
+          'waiter:$waiterId',
+          hello: {
+            'waiterId': waiterId,
+            'callsEnabled': _ref.read(settingsProvider).waiterCallEnabled,
+            ..._waiterKitchenSwitches(),
+            'heartbeatSeconds': LanNotificationHub.heartbeatInterval.inSeconds,
+          },
+          // A call placed while this phone was locked, out of range, or on the
+          // login screen is still owed to the waiter. Replaying it on connect
+          // is what turns best-effort push into something a cashier can rely on.
+          replay: [
+            ...calls.replayEventsFor(waiterId),
+            ..._ref
+                .read(waiterKitchenEventServiceProvider)
+                .replayEventsFor(waiterId),
+          ],
+        );
+
+    return Response.ok(
+      stream,
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        // Tells any reverse proxy in front of the till not to buffer. Without
+        // it a proxy can hold events until the response "finishes", which for
+        // a stream is never.
+        'X-Accel-Buffering': 'no',
+      },
+      // shelf_io buffers response bodies by default, which for SSE means the
+      // client sees nothing until the buffer fills. This is the documented
+      // opt-out and the single line that makes the whole channel work.
+      context: {'shelf.io.buffer_output': false},
+    );
+  }
+
+  /// POST /waiters/calls/<callId>/ack — the waiter dismissed the notification.
+  ///
+  /// Stops the ringing on that waiter's other devices and lets the POS tell
+  /// the cashier somebody is on the way, so they do not call twice.
+  ///
+  /// 200 on success; 404 when the call already expired or was acknowledged —
+  /// both are fine outcomes for the phone, which should stop ringing either way.
+  Future<Response> _waiterAckCall(Request request, String callId) async {
+    try {
+      String? by;
+      final raw = await request.readAsString();
+      if (raw.trim().isNotEmpty) {
+        final body = jsonDecode(raw);
+        if (body is Map<String, dynamic>) by = body['by'] as String?;
+      }
+
+      final call = _ref.read(waiterCallServiceProvider).acknowledge(callId, by: by);
+      if (call == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'unknown_call', 'callId': callId}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      return Response.ok(
+        jsonEncode({
+          'acknowledged': true,
+          'callId': call.id,
+          'acknowledgedAt': call.acknowledgedAt?.toIso8601String(),
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, st) {
+      Logger.instance.error('_waiterAckCall failed: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'ack_failed', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  }
+
+  /// GET /waiters/notifications?waiterId=&limit= — the waiter's notification
+  /// history (kitchen events + calls), newest first, with read flags.
+  ///
+  /// Held in memory by [WaiterNotificationInbox]: survives app restarts and
+  /// reconnects, not a POS restart. Same entries and ids as the live SSE
+  /// frames, so the app can merge the two.
+  Future<Response> _waiterNotifications(Request request) async {
+    final q = request.url.queryParameters;
+    final waiterId = int.tryParse(q['waiterId'] ?? '');
+    if (waiterId == null) {
+      return Response.badRequest(
+        body: jsonEncode({'error': 'waiterId is required'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+    final limit = (int.tryParse(q['limit'] ?? '') ?? 100).clamp(1, 500);
+    final inbox = _ref.read(waiterNotificationInboxProvider);
+    return Response.ok(
+      jsonEncode({
+        'notifications': inbox.listFor(waiterId, limit: limit),
+        'unreadCount': inbox.unreadCount(waiterId),
+      }),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+
+  /// POST /waiters/notifications/read — body `{"waiterId": 12, "ids": [...]}`.
+  /// Omit `ids` to mark everything read. Returns the new unread count.
+  Future<Response> _waiterNotificationsRead(Request request) async {
+    try {
+      final raw = await request.readAsString();
+      final body = raw.trim().isEmpty ? null : jsonDecode(raw);
+      final waiterId =
+          body is Map<String, dynamic> ? (body['waiterId'] as num?)?.toInt() : null;
+      if (waiterId == null) {
+        return Response.badRequest(
+          body: jsonEncode({'error': 'waiterId is required'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      final ids = (body['ids'] as List?)?.map((e) => e.toString());
+      final inbox = _ref.read(waiterNotificationInboxProvider);
+      inbox.markRead(waiterId, ids);
+      return Response.ok(
+        jsonEncode({'unreadCount': inbox.unreadCount(waiterId)}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e) {
+      return Response.badRequest(
+        body: jsonEncode({'error': 'invalid_body', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
   }
 
   // ==================== EMBEDDED KDS WEB APP ====================
@@ -1987,6 +2274,21 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
               ..where((c) => c.orderProductId.isIn(allOpIds)))
               .get();
 
+      // Batch: the waiters holding those orders, for `orderWaiterName`.
+      // Same batched shape as the areas above rather than a lookup per table —
+      // a busy floor is 30+ tables and this endpoint is polled.
+      final orderWaiterIds = ordersRaw
+          .where((o) => o.waiterId != null)
+          .map((o) => o.waiterId!)
+          .toSet()
+          .toList();
+      final waitersRaw = orderWaiterIds.isEmpty
+          ? <Waiter>[]
+          : await (database.select(database.waiters)
+                ..where((w) => w.id.isIn(orderWaiterIds)))
+              .get();
+      final waitersMap = {for (final w in waitersRaw) w.id: w};
+
       // Build lookup maps
       final productsByOrderId = <int, List<OrderProduct>>{};
       for (final p in allProducts) {
@@ -2013,6 +2315,20 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           }
         }
 
+        // Who is serving this table, for the waiter app's "my tables" view.
+        //
+        // Named `orderWaiterId`, not `waiterId`: this endpoint's query param is
+        // already `waiterId` and means the CALLER, so a bare name here would be
+        // two different things spelled the same. It reads alongside `orderId` /
+        // `orderCode`, which is what it belongs to.
+        //
+        // Null means "nobody's", in all three of its cases — a free table, an
+        // order the cashier rang up at the till (`Orders.waiterId` is nullable),
+        // and an older client that never sees the key. None of them is a
+        // wildcard: a null must never make a table match every waiter.
+        final orderWaiter =
+            order?.waiterId != null ? waitersMap[order!.waiterId!] : null;
+
         tableList.add({
           'id': table.id,
           'name': table.name,
@@ -2021,7 +2337,14 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           'areaName': area?.name,
           'orderId': order?.id,
           'orderCode': order?.code,
+          if (_ref.read(settingsProvider).showOrderNumberOnWaiter &&
+              order?.sessionOrderNo != null)
+            'orderNumber': order!.sessionOrderNo,
           'totalAmount': totalAmount,
+          'orderWaiterId': order?.waiterId,
+          'orderWaiterName': orderWaiter == null
+              ? null
+              : '${orderWaiter.firstName} ${orderWaiter.lastName ?? ''}'.trim(),
         });
       }
 
@@ -2132,6 +2455,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       // so the waiter app can render an itemised order / split-pay checklist.
       final productIds = allProducts.map((p) => p.productId).toSet().toList();
       final productNames = await _loadProductNames(database, productIds);
+      final showKitchen =
+          _ref.read(settingsProvider).waiterShowKitchenStatus;
       final componentIds =
           allComponents.map((c) => c.componentId).toSet().toList();
       final componentNames = await _loadComponentNames(database, componentIds);
@@ -2146,13 +2471,12 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       }
 
       final orderList = <Map<String, dynamic>>[];
+      final showOrderNo = _ref.read(settingsProvider).showOrderNumberOnWaiter;
       for (final order in orders) {
         final table = order.tableId != null ? tablesMap[order.tableId] : null;
         final products = productsByOrderId[order.id] ?? [];
 
-        double totalAmount = 0.0; // full order total (all lines)
-        double balanceAmount = 0.0; // outstanding (unpaid lines only)
-        bool allPaid = true;
+        final money = WaiterOrderMoney.of(order, products, componentsByOpId);
         final lineList = <Map<String, dynamic>>[];
         for (final p in products) {
           final lineComponents = componentsByOpId[p.id] ?? const [];
@@ -2173,11 +2497,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           }
           // Canonical line total (matches the POS) — components × quantity,
           // pre-discount already in unitaryPrice.
-          final item = _waiterLineTotal(p, lineComponents);
+          final lineMoney = WaiterLineMoney.of(p, lineComponents);
+          final item = lineMoney.net;
           final paid = p.ticketId != null;
-          if (!paid) allPaid = false;
-          totalAmount += item;
-          if (!paid) balanceAmount += item;
 
           lineList.add({
             'id': p.id,
@@ -2189,21 +2511,24 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
             'courseNo': p.courseNo,
             'paid': paid,
             'lineTotal': item,
+            'grossTotal': lineMoney.gross,
+            'discountAmount': lineMoney.discount,
             'components': compList,
+            ...waiterKitchenFields(p, enabled: showKitchen),
           });
         }
 
         orderList.add({
           'id': order.id,
           'code': order.code,
+          if (showOrderNo && order.sessionOrderNo != null)
+            'orderNumber': order.sessionOrderNo,
           'status': order.status,
           'type': order.type,
           'persons': order.persons,
           'tableId': order.tableId,
           'tableName': table?.name,
-          'totalAmount': totalAmount,
-          'balanceAmount': balanceAmount,
-          'allPaid': allPaid,
+          ...money.toJson(),
           'productCount': products.length,
           'products': lineList,
           'createdAt': order.createdAt.toIso8601String(),
@@ -2345,11 +2670,14 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       // column above still records which waiter raised it (for the waiter
       // app's own order list / dashboard). Null when no cashier is logged in.
       final posUser = _ref.read(currentUserProvider);
-      // z_day from THIS order's session (same `session` used for sessionId
-      // below) so it can't drift from the current session. Falls back to the
-      // current/today z_day when no session is open.
+      // z_day from THIS order's session (the same `session` used for
+      // sessionId below) so it cannot drift from the shift collecting it.
+      // Through the resolver rather than `zDayForSession` directly, so a
+      // session belonging to a Z takes the Z's opening day and every session
+      // in one shift agrees.
       final waiterZDay =
-          session != null ? zDayForSession(session) : _ref.read(currentZDayProvider);
+          await ZDayResolver(database).forSessionOrCurrent(session?.id) ??
+              _ref.read(currentZDayProvider);
       // Everything below is ONE transaction so it commits atomically: no
       // half-written order is ever visible to a concurrent reader, and — because
       // drift serializes transactions on the single connection — the occupancy
@@ -2389,9 +2717,25 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
                 stillLive = lines.isEmpty ||
                     lines.any((l) => l.state != 'PAID' && l.state != 'CANCELED');
               }
-              final occupiedByOther =
-                  existing != null && stillLive && existing.waiterId != waiterId;
-              if (occupiedByOther) {
+              // A live order blocks the table, whoever raised it.
+              //
+              // This used to exempt the waiter who already held it
+              // (`existing.waiterId != waiterId`), on the assumption that a
+              // waiter would not open the same table twice. They do: the same
+              // waiter signed in on two phones opens two, the second silently
+              // overwrote `area_tables.orderId`, and the first order was
+              // orphaned — off the floor plan, with food already sent.
+              //
+              // Told apart only so the tablet can respond usefully: its own
+              // order is one it can open and add to, another's is not.
+              if (existing != null && stillLive) {
+                if (existing.waiterId == waiterId) {
+                  throw _WaiterConflict(
+                      409,
+                      'table_already_has_your_order',
+                      'You already have an open order on this table. Open it and add to it instead of starting a second one.',
+                      orderCode: existing.code);
+                }
                 String owner = 'another waiter';
                 if (existing.waiterId != null) {
                   final other = await (database.select(database.waiters)
@@ -2406,7 +2750,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
                 throw _WaiterConflict(
                     409,
                     'table_taken_by_other_waiter',
-                    'This table already has an open order by $owner. It must be handled by them or the cashier first.');
+                    'This table already has an open order by $owner. It must be handled by them or the cashier first.',
+                    orderCode: existing.code);
               }
             }
           }
@@ -2423,6 +2768,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
               createdBy: drift.Value(posUser?.id),
               takenBy: drift.Value(posUser?.id),
               sessionId: drift.Value(session?.id),
+              sessionOrderNo: drift.Value(await database.nextSessionOrderNo(
+                  session?.id,
+                  mode: _ref.read(settingsProvider).orderNumberResetMode)),
               zDay: drift.Value(waiterZDay),
               createdAt: drift.Value(now),
               updatedAt: drift.Value(now),
@@ -2431,80 +2779,13 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
 
           // Insert products
           for (final productJson in products) {
-            final productId = productJson['productId'] as int;
-            final variantId = productJson['variantId'] as int?;
-            final quantity =
-                (productJson['quantity'] as num?)?.toDouble() ?? 1.0;
-            final productNote = productJson['note'] as String?;
-            // Course (1 entrée, 2 plat, 3 dessert), optional and normally
-            // absent — the waiter app only sends it when the shop works in
-            // courses. Omitted or null means "no course", which is the state
-            // every line has until somebody chooses one.
-            //
-            // Normalised rather than taken as given: a client promising to
-            // send only 1-3 is a promise living in the client's code, not in
-            // this contract, and the next build of it is not this build.
-            // Anything else becomes null here.
-            final productCourse = normalizeCourseNo(productJson['courseNo']);
-            final components =
-                productJson['components'] as List<dynamic>? ?? [];
-
-            final product = await (database.select(database.products)
-                  ..where((p) => p.id.equals(productId)))
-                .getSingleOrNull();
-            if (product == null) continue;
-
-            // Authoritative price/TVA from the DB (variant overrides product).
-            double unitPrice = product.finalPrice;
-            double unitTva = product.tvaAmount;
-            double unitDiscount = product.discountAmount;
-            if (variantId != null) {
-              final variant = await (database.select(database.productVariants)
-                    ..where((v) => v.id.equals(variantId)))
-                  .getSingleOrNull();
-              if (variant != null) {
-                unitPrice = variant.price;
-                unitTva = variant.tvaAmount;
-                unitDiscount = 0.0; // Variants typically have no pre-discount
-              }
-            }
-
-            final orderProductId =
-                await database.into(database.orderProducts).insert(
-              OrderProductsCompanion.insert(
-                orderId: newOrderId,
-                productId: productId,
-                variantId: drift.Value(variantId),
-                quantity: drift.Value(quantity),
-                unitaryPrice: unitPrice,
-                cost: drift.Value(await ProductCostResolver(database)
-                    .resolve(productId: productId, variantId: variantId)),
-                unitaryDiscount: drift.Value(unitDiscount),
-                unitaryTva: drift.Value(unitTva),
-                note: drift.Value(productNote),
-                courseNo: drift.Value(productCourse),
-                state: drift.Value(waiterItemState),
-                zDay: drift.Value(waiterZDay),
-              ),
+            await _insertWaiterLine(
+              database,
+              newOrderId,
+              (productJson as Map).cast<String, dynamic>(),
+              state: waiterItemState,
+              zDay: waiterZDay,
             );
-
-            // Insert components
-            for (final compJson in components) {
-              final componentId = compJson['componentId'] as int;
-              final compQuantity = compJson['quantity'] as int? ?? 1;
-              final price = (compJson['price'] as num?)?.toDouble() ?? 0.0;
-
-              await database.into(database.orderProductComponents).insert(
-                OrderProductComponentsCompanion.insert(
-                  orderProductId: orderProductId,
-                  componentId: componentId,
-                  quantity: drift.Value(compQuantity),
-                  price: drift.Value(price),
-                  isSpecial: const drift.Value(false),
-                  name: drift.Value(compJson['name'] as String?),
-                ),
-              );
-            }
           }
 
           // Link the table INSIDE the tx so the occupancy check above and this
@@ -2520,7 +2801,11 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       } on _WaiterConflict catch (e) {
         return Response(
           e.status,
-          body: jsonEncode({'error': e.code, 'message': e.message}),
+          body: jsonEncode({
+            'error': e.code,
+            'message': e.message,
+            if (e.orderCode != null) 'orderCode': e.orderCode,
+          }),
           headers: {'Content-Type': 'application/json'},
         );
       }
@@ -2574,11 +2859,20 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         Logger.instance.warning('Waiter order autoSync kickoff failed: $e');
       }
 
+      final int? orderNumber =
+          _ref.read(settingsProvider).showOrderNumberOnWaiter
+              ? (await (database.select(database.orders)
+                        ..where((o) => o.id.equals(orderId)))
+                      .getSingleOrNull())
+                  ?.sessionOrderNo
+              : null;
+
       return Response(
         201,
         body: jsonEncode({
           'id': orderId,
           'code': orderCode,
+          if (orderNumber != null) 'orderNumber': orderNumber,
           'message': 'Order created successfully',
         }),
         headers: {'Content-Type': 'application/json'},
@@ -2705,10 +2999,68 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
   /// rule (`source: 'WAITER'`). [cashierName] is the current POS user, so the
   /// kitchen ticket carries the standard cashier line. Exceptions swallowed:
   /// the product is already saved and the waiter app already got its 200.
-  Future<void> _fireKdsForWaiterAddedProduct(
-      int orderId, String? cashierName) async {
+  /// [roundIsComplete] prints at once instead of waiting.
+  ///
+  /// The wait exists only because N single `add-product` calls carry no signal
+  /// for where a round ends, so the POS has to guess with a timer. A batch
+  /// (`add-products`) IS that signal — the client has said "this is the round"
+  /// — so waiting on it would be a delay bought for nothing, which is exactly
+  /// what the endpoint was added to remove.
+  void _fireKdsForWaiterAddedProduct(int orderId, String? cashierName,
+      {bool roundIsComplete = false}) {
+    // Master switch (see [_firePrintsForWaiterOrder]): off = no waiter paper.
+    if (!_ref.read(settingsProvider).printWaiterPaper) return;
+
+    final wait =
+        roundIsComplete ? 0 : _ref.read(settingsProvider).waiterKdsBatchSeconds;
+    if (wait <= 0) {
+      // Drop anything already waiting on this order. Its lines are unprinted,
+      // so the print below carries them; leaving the timer alive would only
+      // wake up later to find nothing left to say.
+      _pendingWaiterKds.remove(orderId)?.cancel();
+      // ignore: unawaited_futures
+      _printWaiterKdsNow(orderId, cashierName);
+      return;
+    }
+
+    // Group the run. The waiter app has no cart when adding to an open table:
+    // its add-product screen fires one product and navigates back to the menu,
+    // so three items arrive as three calls, tens of seconds apart, and each one
+    // used to cut its own ticket. Nothing on the wire says "that was the last
+    // one", so the ticket waits [wait] seconds for a neighbour and every new
+    // add restarts the wait. The print itself is modifications-only, so
+    // whatever accumulated lands on a single ticket.
+    _pendingWaiterKds.remove(orderId)?.cancel();
+    _pendingWaiterKds[orderId] = Timer(Duration(seconds: wait), () {
+      _pendingWaiterKds.remove(orderId);
+      // ignore: unawaited_futures
+      _printWaiterKdsNow(orderId, cashierName);
+    });
+  }
+
+  /// How many orders currently have a kitchen ticket waiting for more items.
+  /// One pending entry after a run of adds is the whole point: it means those
+  /// adds will land on a single ticket rather than one each.
+  @visibleForTesting
+  int get pendingWaiterKdsCount => _pendingWaiterKds.length;
+
+  /// Fire every waiting kitchen ticket at once and forget the timers.
+  Future<void> _flushPendingWaiterKds() async {
+    if (_pendingWaiterKds.isEmpty) return;
+    final due = _pendingWaiterKds.keys.toList();
+    for (final timer in _pendingWaiterKds.values) {
+      timer.cancel();
+    }
+    _pendingWaiterKds.clear();
+    for (final orderId in due) {
+      await _printWaiterKdsNow(orderId, null);
+    }
+  }
+
+  Future<void> _printWaiterKdsNow(int orderId, String? cashierName) async {
     try {
-      // Master switch (see [_firePrintsForWaiterOrder]): off = no waiter paper.
+      // Re-checked at fire time, not at queue time: the cashier may have turned
+      // waiter paper off while this was waiting.
       if (!_ref.read(settingsProvider).printWaiterPaper) return;
 
       final printingService = _ref.read(printingServiceProvider);
@@ -2716,7 +3068,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       final orderRepo = _ref.read(orderRepositoryProvider);
       final currentOrder = await orderRepo.getOrderById(orderId);
       if (currentOrder == null) {
-        Logger.instance.warning('_fireKdsForWaiterAddedProduct: order $orderId not found');
+        Logger.instance.warning('_printWaiterKdsNow: order $orderId not found');
         return;
       }
       if (!printingService.shouldPrint(
@@ -2734,6 +3086,248 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       );
     } catch (e, st) {
       Logger.instance.error('_fireKdsForWaiterAddedProduct failed: $e\n$st');
+    }
+  }
+
+  /// Insert one waiter-supplied line, with its options, into [orderId].
+  ///
+  /// Shared by order-create and batch-add so the two cannot drift: price, TVA
+  /// and pre-discount are read from the CATALOGUE here, never taken from the
+  /// client — a tablet is not allowed to name its own price. Returns the new
+  /// `order_products.id`, or null when the product id is unknown, which the
+  /// callers report rather than failing a whole round over.
+  Future<int?> _insertWaiterLine(
+    AppDatabase database,
+    int orderId,
+    Map<String, dynamic> productJson, {
+    required String state,
+    DateTime? zDay,
+  }) async {
+    final productId = productJson['productId'] as int;
+    final variantId = productJson['variantId'] as int?;
+    final quantity = (productJson['quantity'] as num?)?.toDouble() ?? 1.0;
+    final productNote = productJson['note'] as String?;
+    // Course (1 entrée, 2 plat, 3 dessert), optional and normally absent — the
+    // waiter app only sends it when the shop works in courses. Omitted or null
+    // means "no course", which is the state every line has until somebody
+    // chooses one.
+    //
+    // Normalised rather than taken as given: a client promising to send only
+    // 1-3 is a promise living in the client's code, not in this contract, and
+    // the next build of it is not this build. Anything else becomes null here.
+    final productCourse = normalizeCourseNo(productJson['courseNo']);
+    final components = productJson['components'] as List<dynamic>? ?? [];
+
+    final product = await (database.select(database.products)
+          ..where((p) => p.id.equals(productId)))
+        .getSingleOrNull();
+    if (product == null) return null;
+
+    // Authoritative price/TVA from the DB (variant overrides product).
+    double unitPrice = product.finalPrice;
+    double unitTva = product.tvaAmount;
+    double unitDiscount = product.discountAmount;
+    if (variantId != null) {
+      final variant = await (database.select(database.productVariants)
+            ..where((v) => v.id.equals(variantId)))
+          .getSingleOrNull();
+      if (variant != null) {
+        unitPrice = variant.price;
+        unitTva = variant.tvaAmount;
+        unitDiscount = 0.0; // Variants typically have no pre-discount
+      }
+    }
+
+    final orderProductId = await database.into(database.orderProducts).insert(
+          OrderProductsCompanion.insert(
+            orderId: orderId,
+            productId: productId,
+            variantId: drift.Value(variantId),
+            quantity: drift.Value(quantity),
+            unitaryPrice: unitPrice,
+            cost: drift.Value(await ProductCostResolver(database)
+                .resolve(productId: productId, variantId: variantId)),
+            unitaryDiscount: drift.Value(unitDiscount),
+            unitaryTva: drift.Value(unitTva),
+            note: drift.Value(productNote),
+            courseNo: drift.Value(productCourse),
+            state: drift.Value(state),
+            zDay: drift.Value(zDay),
+          ),
+        );
+
+    for (final compJson in components) {
+      final componentId = compJson['componentId'] as int;
+      final compQuantity = compJson['quantity'] as int? ?? 1;
+      final price = (compJson['price'] as num?)?.toDouble() ?? 0.0;
+
+      await database.into(database.orderProductComponents).insert(
+            OrderProductComponentsCompanion.insert(
+              orderProductId: orderProductId,
+              componentId: componentId,
+              quantity: drift.Value(compQuantity),
+              price: drift.Value(price),
+              isSpecial: const drift.Value(false),
+              name: drift.Value(compJson['name'] as String?),
+            ),
+          );
+    }
+
+    return orderProductId;
+  }
+
+  /// PUT /waiters/orders/`<code>`/add-products — add SEVERAL products at once.
+  ///
+  /// The batch twin of [_waiterAddProductToOrder], which is left exactly as it
+  /// was: older waiter builds keep working, untouched.
+  ///
+  /// Body: `{ "waiterId": int, "products": [ ... ] }` — each entry
+  /// `{ productId, variantId?, quantity?, note?, courseNo?, components?[] }`,
+  /// the same shape as the `products` array of `POST /waiters/orders`.
+  ///
+  /// Why it exists: the kitchen should get ONE ticket per round of ordering.
+  /// Sent as N single calls there is nothing on the wire saying where the round
+  /// ends, so the POS has to guess with a timer
+  /// ([AppSettings.waiterKdsBatchSeconds]). One call IS the round, so the
+  /// ticket is exact and immediate — a shop whose waiters are all on a
+  /// batching build can set that wait to 0.
+  ///
+  /// Every line commits in ONE transaction: a half-added round is not something
+  /// a waiter can see, let alone correct. An unknown product id does not fail
+  /// the call — it comes back in `skipped` so the tablet can say what it lost.
+  ///
+  /// `skipped` entries carry the INDEX into the request's `products` array as
+  /// well as the product id, because the id alone cannot identify a line: a
+  /// cart legitimately holds two entries of the same product that differ by
+  /// variant, options or course, and they ring up differently. Told only the
+  /// id, a client cannot know which of its two lines to keep for retry.
+  ///
+  /// Responses:
+  ///   - 200 `{ message, added: int, skipped: [ { index, productId } ] }`
+  ///   - 400 bad body / nothing usable, 403 wrong owner, 404 no such order
+  Future<Response> _waiterAddProductsToOrder(
+      Request request, String code) async {
+    try {
+      final database = _ref.read(databaseProvider);
+      final logService = OrderLogService(database);
+      final body = await request.readAsString();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+
+      final waiterId = json['waiterId'] as int?;
+      final products = json['products'] as List<dynamic>? ?? const [];
+
+      if (waiterId == null || products.isEmpty) {
+        return Response.badRequest(
+          body: jsonEncode({
+            'error': 'waiterId and a non-empty products array are required'
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final order = await (database.select(database.orders)
+            ..where((o) => o.code.equals(code)))
+          .getSingleOrNull();
+      if (order == null) {
+        return Response.notFound(
+          jsonEncode({'error': 'Order not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      if (order.waiterId != waiterId) {
+        return Response(
+          403,
+          body: jsonEncode({'error': 'Not authorized to modify this order'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final skipped = <Map<String, dynamic>>[];
+      var added = 0;
+      await database.transaction(() async {
+        for (var index = 0; index < products.length; index++) {
+          final map = (products[index] as Map).cast<String, dynamic>();
+          final inserted = await _insertWaiterLine(
+            database,
+            order.id,
+            map,
+            // Matches the single-product route exactly.
+            state: 'PENDING',
+            // Inherited from the order, so a round lands in the same Z as the
+            // order it was added to.
+            zDay: order.zDay,
+          );
+          if (inserted == null) {
+            skipped.add({
+              'index': index,
+              'productId': map['productId'] as int,
+            });
+          } else {
+            added++;
+          }
+        }
+
+        // `isSynced: false` is the load-bearing half — see the single-product
+        // route for why leaving it true loses the lines on the next delta.
+        await (database.update(database.orders)
+              ..where((o) => o.id.equals(order.id)))
+            .write(OrdersCompanion(
+          updatedAt: drift.Value(DateTime.now()),
+          isSynced: const drift.Value(false),
+        ));
+      });
+
+      if (added == 0) {
+        return Response.badRequest(
+          body: jsonEncode({
+            'error': 'no_known_products',
+            'message': 'None of the products sent exist in the catalogue',
+            'skipped': skipped,
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final waiterRow = await (database.select(database.waiters)
+            ..where((w) => w.id.equals(waiterId)))
+          .getSingleOrNull();
+      final waiterFullName = waiterRow == null
+          ? 'waiter #$waiterId'
+          : '${waiterRow.firstName} ${waiterRow.lastName ?? ''}'.trim();
+      await logService.logOrderUpdated(
+          order.id, '$added product(s) added by waiter $waiterFullName');
+      // ignore: unawaited_futures
+      _ref.read(activityLogServiceProvider).logWaiterProductAdded(
+            waiterName: waiterFullName,
+            productName: '$added product(s)',
+            orderCode: code,
+          );
+
+      // ONE ticket for the whole round, and immediately: this call is itself
+      // the statement that the round is finished, so there is nothing to wait
+      // for. A single-product add still gets the grouping window.
+      final posUser = _ref.read(currentUserProvider);
+      _fireKdsForWaiterAddedProduct(order.id, posUser?.firstName,
+          roundIsComplete: true);
+
+      _autoSyncWaiterOrder(order.id, 'add-products');
+
+      return Response.ok(
+        jsonEncode({
+          'message': 'Products added to order successfully',
+          'added': added,
+          'skipped': skipped,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e, stackTrace) {
+      Logger.instance.error('Error in _waiterAddProductsToOrder: $e');
+      posLog(stackTrace);
+      return Response.internalServerError(
+        body: jsonEncode(
+            {'error': 'Failed to add products', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
   }
 
@@ -2815,12 +3409,12 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
 
       final productNames = await _loadProductNames(
           database, products.map((p) => p.productId).toSet().toList());
+      final showKitchen =
+          _ref.read(settingsProvider).waiterShowKitchenStatus;
       final componentNames = await _loadComponentNames(
           database, components.map((c) => c.componentId).toSet().toList());
 
-      double totalAmount = 0.0;
-      double balanceAmount = 0.0;
-      bool allPaid = true;
+      final money = WaiterOrderMoney.of(order, products, componentsByOpId);
       final lineList = <Map<String, dynamic>>[];
       for (final p in products) {
         final lineComponents = componentsByOpId[p.id] ?? const [];
@@ -2841,11 +3435,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         }
         // Canonical line total (matches the POS) — components × quantity,
         // pre-discount already in unitaryPrice.
-        final item = _waiterLineTotal(p, lineComponents);
+        final lineMoney = WaiterLineMoney.of(p, lineComponents);
+        final item = lineMoney.net;
         final paid = p.ticketId != null;
-        if (!paid) allPaid = false;
-        totalAmount += item;
-        if (!paid) balanceAmount += item;
 
         lineList.add({
           'id': p.id,
@@ -2857,7 +3449,10 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           'courseNo': p.courseNo,
           'paid': paid,
           'lineTotal': item,
+          'grossTotal': lineMoney.gross,
+          'discountAmount': lineMoney.discount,
           'components': compList,
+          ...waiterKitchenFields(p, enabled: showKitchen),
         });
       }
 
@@ -2865,14 +3460,15 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         jsonEncode({
           'id': order.id,
           'code': order.code,
+          if (_ref.read(settingsProvider).showOrderNumberOnWaiter &&
+              order.sessionOrderNo != null)
+            'orderNumber': order.sessionOrderNo,
           'status': order.status,
           'type': order.type,
           'persons': order.persons,
           'tableId': order.tableId,
           'tableName': table?.name,
-          'totalAmount': totalAmount,
-          'balanceAmount': balanceAmount,
-          'allPaid': allPaid,
+          ...money.toJson(),
           'productCount': products.length,
           'products': lineList,
           'createdAt': order.createdAt.toIso8601String(),
@@ -3160,6 +3756,47 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         );
       }
 
+      // Tombstone BEFORE the delete — once the row is gone there is nothing
+      // left to describe, and the Z has to be able to total what was pulled.
+      try {
+        final product = await (database.select(database.products)
+              ..where((t) => t.id.equals(line.productId)))
+            .getSingleOrNull();
+        final variant = line.variantId == null
+            ? null
+            : await (database.select(database.productVariants)
+                  ..where((t) => t.id.equals(line.variantId!)))
+                .getSingleOrNull();
+        final waiterRow = await (database.select(database.waiters)
+              ..where((w) => w.id.equals(waiterId)))
+            .getSingleOrNull();
+        final tombstone = RemovedOrderItemsCompanion.insert(
+          orderId: order.id,
+          orderCode: drift.Value(order.code),
+          sessionId: drift.Value(order.sessionId),
+          zDay: drift.Value(order.zDay),
+          productId: line.productId,
+          variantId: drift.Value(line.variantId),
+          productName: product?.name ?? 'item #${line.productId}',
+          variantName: drift.Value(variant?.name),
+          quantity: line.quantity,
+          unitaryPrice: drift.Value(line.unitaryPrice),
+          amount: drift.Value(line.quantity * line.unitaryPrice),
+          wasSentToKitchen: drift.Value(line.kdsPrintedQuantity > 0),
+          source: const drift.Value('WAITER'),
+          removedBy: drift.Value(waiterId),
+          removedByName: drift.Value(waiterRow == null
+              ? null
+              : '${waiterRow.firstName} ${waiterRow.lastName ?? ''}'.trim()),
+        );
+        await database.into(database.removedOrderItems).insert(tombstone);
+        notifyRemovedItems(_ref.read, [tombstone]);
+      } catch (e) {
+        // Never fail the removal over its own audit row.
+        Logger.instance
+            .warning('Removed-item tombstone failed for line #$orderProductId: $e');
+      }
+
       await (database.delete(database.orderProductComponents)
             ..where((c) => c.orderProductId.equals(orderProductId)))
           .go();
@@ -3168,7 +3805,13 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           .go();
       await (database.update(database.orders)
             ..where((o) => o.id.equals(order.id)))
-          .write(OrdersCompanion(updatedAt: drift.Value(DateTime.now())));
+          .write(OrdersCompanion(
+        updatedAt: drift.Value(DateTime.now()),
+        // Without this the autoSync below is a no-op (`syncSingleOrder`
+        // returns early on a synced order) and the backend keeps the line —
+        // which the next delta pull then re-inserts locally.
+        isSynced: const drift.Value(false),
+      ));
 
       await logService.logOrderUpdated(
           order.id, 'Line #$orderProductId removed by waiter #$waiterId');
@@ -3247,6 +3890,12 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       }
 
       final now = DateTime.now();
+      // Valued before the write, while the lines still count.
+      final cancelledAmount = await _ref
+          .read(orderRepositoryProvider)
+          .getOrderTotals([order.id])
+          .then((t) => t[order.id] ?? 0.0)
+          .catchError((_) => 0.0);
       await (database.update(database.orders)
             ..where((o) => o.id.equals(order.id)))
           .write(OrdersCompanion(
@@ -3254,6 +3903,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         cancellationReason:
             reason != null && reason.isNotEmpty ? drift.Value(reason) : const drift.Value.absent(),
         updatedAt: drift.Value(now),
+        isSynced: const drift.Value(false),
       ));
       await (database.update(database.orderProducts)
             ..where((p) => p.orderId.equals(order.id)))
@@ -3274,6 +3924,18 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
 
       await logService.logOrderUpdated(order.id,
           'Order canceled by waiter #$waiterId${reason != null && reason.isNotEmpty ? ' — $reason' : ''}');
+      final waiterRow = await (database.select(database.waiters)
+            ..where((w) => w.id.equals(waiterId)))
+          .getSingleOrNull();
+      notifyOrderCancelled(
+        _ref.read,
+        orderCode: order.code,
+        amount: cancelledAmount,
+        reason: reason,
+        byName: waiterRow == null
+            ? 'Waiter #$waiterId'
+            : '${waiterRow.firstName} ${waiterRow.lastName ?? ''}'.trim(),
+      );
       _autoSyncWaiterOrder(order.id, 'cancel');
 
       return Response.ok(
@@ -3374,12 +4036,17 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
               .write(OrdersCompanion(
             tableId: drift.Value(newTableId),
             updatedAt: drift.Value(now),
+            isSynced: const drift.Value(false),
           ));
         });
       } on _WaiterConflict catch (e) {
         return Response(
           e.status,
-          body: jsonEncode({'error': e.code, 'message': e.message}),
+          body: jsonEncode({
+            'error': e.code,
+            'message': e.message,
+            if (e.orderCode != null) 'orderCode': e.orderCode,
+          }),
           headers: {'Content-Type': 'application/json'},
         );
       }
@@ -3541,6 +4208,14 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         }
       }
 
+      // A line added to an existing order takes that order's z_day — the same
+      // rule `_insertWaiterLine` follows on the create path, which this one
+      // did not, so a course added later carried a null z_day while its
+      // siblings carried the right day. Falls back to the order's session,
+      // then to the shift open now, for an order that has neither.
+      final addZDay = order.zDay ??
+          await ZDayResolver(database).forSessionOrCurrent(order.sessionId);
+
       // Insert product
       final orderProductId = await database.into(database.orderProducts).insert(
         OrderProductsCompanion.insert(
@@ -3556,6 +4231,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           note: drift.Value(productNote),
           courseNo: drift.Value(productCourse),
           state: const drift.Value('PENDING'),
+          zDay: drift.Value(addZDay),
         ),
       );
 
@@ -3577,9 +4253,15 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         );
       }
 
-      // Update order timestamp
+      // Update order timestamp. `isSynced: false` is the load-bearing half:
+      // `syncSingleOrder` returns early on an already-synced order, so without
+      // this flip the new line never reaches the backend — and the next order
+      // delta, whose snapshot lacks it, deletes it again locally.
       await (database.update(database.orders)..where((o) => o.id.equals(order.id)))
-        .write(OrdersCompanion(updatedAt: drift.Value(DateTime.now())));
+        .write(OrdersCompanion(
+        updatedAt: drift.Value(DateTime.now()),
+        isSynced: const drift.Value(false),
+      ));
 
       // Order-level log + cross-cutting activity log. Same shape as
       // _waiterCreateOrder above: waiter name resolved once, then both
@@ -3604,8 +4286,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       // so only this new line prints — exactly like adding to an order on the
       // POS. Attributed to the current POS cashier.
       final posUser = _ref.read(currentUserProvider);
-      // ignore: unawaited_futures
       _fireKdsForWaiterAddedProduct(order.id, posUser?.firstName);
+
+      _autoSyncWaiterOrder(order.id, 'add-product');
 
       return Response.ok(
         jsonEncode({'message': 'Product added to order successfully'}),
@@ -3625,7 +4308,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
 
   /// Build SocketOrderModel from database order
   Future<SocketOrderModel?> _buildSocketOrder(
-      Order order, Set<String>? stationFilters) async {
+      Order order, Set<String>? stationFilters,
+      [KdsFeedFilter feedFilter = const KdsFeedFilter()]) async {
     final database = _ref.read(databaseProvider);
 
     // Get order products first - if none, return null
@@ -3705,6 +4389,22 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         : <Component>[];
     final componentsMap = {for (final c in componentDetailsList) c.id: c};
 
+    // Linked options, resolved only when this KDS asked for them and is
+    // station-scoped (an unscoped board already shows every parent line).
+    final linkedByComponent = feedFilter.linked && stationFilters != null
+        ? await linkedProductByComponent(database, componentDetailsList)
+        : const <int, int>{};
+    final linkedStations = linkedByComponent.isEmpty
+        ? const <int, Set<int>>{}
+        : await stationIdsByProduct(database, linkedByComponent.values);
+    String? matchingStation(Iterable<int> ids) {
+      for (final id in ids) {
+        final n = stationsMap[id]?.name as String?;
+        if (n != null && stationFilters!.contains(n.toLowerCase())) return n;
+      }
+      return null;
+    }
+
     final tableName = table != null ? (table as dynamic).name : null;
     final clientName = client != null
         ? '${(client as dynamic).firstName} ${(client as dynamic).lastName}'.trim()
@@ -3724,13 +4424,47 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       };
 
       // Filter by station if specified: keep the item if ANY of its stations is
-      // in this KDS's set of stations.
+      // in this KDS's set of stations — or, when asked for, if it has no
+      // station at all.
       if (stationFilters != null) {
         final matches = stationIds.any((id) {
           final n = stationsMap[id]?.name?.toLowerCase();
           return n != null && stationFilters.contains(n);
-        });
-        if (!matches) continue;
+        }) || (feedFilter.unassigned && stationIds.isEmpty);
+        if (!matches) {
+          // Not this station's line, but an option on it may be: the drink in
+          // a menu whose parent the kitchen owns. Shown as its own read-only
+          // line, one per parent unit, following the parent's state.
+          if (linkedByComponent.isNotEmpty) {
+            final comps = componentsByOrderProduct[orderProduct.id] ?? const [];
+            for (var k = 0; k < comps.length; k++) {
+              final comp = comps[k];
+              final lp = linkedByComponent[comp.componentId];
+              if (lp == null) continue;
+              final station = matchingStation(linkedStations[lp] ?? const {});
+              if (station == null) continue;
+              final units = orderProduct.quantity * (comp.quantity as num);
+              if (units <= 0) continue;
+              socketProducts.add(SocketOrderProductModel(
+                id: linkedLineId(orderProduct.id, k),
+                productId: lp,
+                productName: componentsMap[comp.componentId]?.name ??
+                    'Product #$lp',
+                quantity: units.toDouble(),
+                unitaryPrice: 0,
+                state: orderProduct.state,
+                stationName: station,
+                components: const [],
+                note: '← ${product.name}',
+                courseNo: _ref.read(settingsProvider).coursesEnabled
+                    ? normalizeCourseNo(orderProduct.courseNo)
+                    : null,
+                parentLineId: orderProduct.id,
+              ));
+            }
+          }
+          continue;
+        }
       }
 
       // Station name to surface: the item's own matching station when filtering
@@ -3781,6 +4515,11 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         note: orderProduct.note,
         tvaAmount: orderProduct.unitaryTva,
         discountAmount: orderProduct.unitaryDiscount,
+        // Courses off = no sections on the KDS, even for lines tagged while
+        // they were on.
+        courseNo: _ref.read(settingsProvider).coursesEnabled
+            ? normalizeCourseNo(orderProduct.courseNo)
+            : null,
       ));
     }
 
@@ -3805,6 +4544,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       products: socketProducts,
       note: order.note,
       cancellationReason: order.cancellationReason,
+      orderNumber: _ref.read(settingsProvider).showOrderNumberOnKds
+          ? order.sessionOrderNo
+          : null,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     );

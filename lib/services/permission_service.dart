@@ -191,6 +191,9 @@ class Permissions {
   static const String zClose = 'pos:z:close';
   static const String zView = 'pos:z:view';
   static const String zPrint = 'pos:z:print';
+  /// Open or close a Z outside the terminal's time limits (`zCantOpenAfter`,
+  /// `zEarliestCloseTime`). Seeded to admin roles only.
+  static const String zOverride = 'pos:z:override';
 
   // Commercials
   static const String commercialSet = 'pos:commercial:set';

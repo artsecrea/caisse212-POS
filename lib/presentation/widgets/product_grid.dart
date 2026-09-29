@@ -22,6 +22,7 @@ import 'product_modification_dialog.dart' as dialog;
 import 'quick_product_dialog.dart';
 import '../../core/theme/app_theme.dart';
 import 'overlay_label_strip.dart';
+import '../../services/waiter_kitchen_events.dart';
 
 class ProductGrid extends ConsumerWidget {
   const ProductGrid({Key? key}) : super(key: key);
@@ -554,6 +555,15 @@ class _ProductCard extends ConsumerWidget {
         // product without variants would otherwise fall through to quick-add
         // and produce an order the backend rejects at sync time.
         if (product.isSerialTracked) {
+          _showModificationDialog(context, ref);
+          return;
+        }
+
+        // Priced at zero in the catalogue: the price is decided at the
+        // counter, so there is nothing to quick-add. Without this the line
+        // went onto the ticket at 0.00 and the cashier had to notice and
+        // reopen it — and a 0.00 line is easy not to notice.
+        if (product.finalPrice <= 0) {
           _showModificationDialog(context, ref);
           return;
         }
@@ -1251,6 +1261,11 @@ class _ProductCard extends ConsumerWidget {
     final db = ref.read(databaseProvider);
     await (db.update(db.products)..where((p) => p.id.equals(product.id)))
         .write(ProductsCompanion(isAvailable: Value(!makeUnavailable)));
+    ref.read(waiterKitchenEventServiceProvider).productAvailabilityChanged(
+          productId: product.id,
+          name: product.name,
+          isAvailable: !makeUnavailable,
+        );
     // The grid watches products via a stream provider, so it repaints itself.
     if (context.mounted) {
       SnackBarHelper.showSuccessSnackBar(

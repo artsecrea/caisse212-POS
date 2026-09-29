@@ -9,6 +9,9 @@ import '../data/database/app_database.dart';
 import '../data/database/app_database.dart' as db;
 import '../services/session_service.dart';
 import '../services/z_service.dart';
+import '../services/notification_outbox.dart';
+import '../services/z_rules.dart' show parseZDay;
+import 'business_day_provider.dart';
 import '../services/refund_service.dart';
 import '../services/cash_movement_service.dart';
 import '../services/serial_service.dart';
@@ -129,6 +132,13 @@ final zServiceProvider = Provider<ZService>((ref) {
   return ZService(database);
 });
 
+/// Every admin notification goes through the outbox: queued in the DB, sent,
+/// deleted once delivered, retried by the sync job when the network is down.
+final notificationOutboxProvider = Provider<NotificationOutbox>((ref) {
+  return NotificationOutbox(
+      ref.watch(databaseProvider), ref.watch(apiServiceProvider));
+});
+
 // Refund Service Provider
 final refundServiceProvider = Provider<RefundService>((ref) {
   final database = ref.watch(databaseProvider);
@@ -180,38 +190,14 @@ final currentSessionProvider = StateProvider<db.CashSession?>((ref) => null);
 /// with the first session, or by an admin/manager), cleared when it's closed.
 final currentZProvider = StateProvider<db.Z?>((ref) => null);
 
-/// Midnight of a Z's opening day — the canonical z_day for everything created
-/// while that Z is open.
-DateTime zDayForZ(db.Z z) =>
-    DateTime(z.startedAt.year, z.startedAt.month, z.startedAt.day);
+/// The business day of [z] — the canonical z_day for everything created while
+/// that Z is open.
+DateTime zDayForZ(db.Z z) => ZService.zDayOf(z);
 
-/// Canonical z_day for any row that belongs to [session]: midnight of the
-/// session's opening day. Kept as a fallback for rows with no Z (e.g. Z
-/// tracking disabled, or legacy sessions); the primary source is the active Z.
+/// Canonical z_day for a row that belongs to [session] when it has no Z (a
+/// legacy row): midnight of the session's opening day.
 DateTime zDayForSession(db.CashSession session) => DateTime(
     session.startedAt.year, session.startedAt.month, session.startedAt.day);
-
-/// Midnight of the BUSINESS day containing [at], where the trading day starts
-/// at [startHour] (0 = calendar midnight). A 03:00 close with startHour 5 still
-/// belongs to the previous business day.
-///
-/// Used by the day-lock / Z-number logic only. [zDayForZ] and [zDayForSession]
-/// stay calendar-based on purpose: they feed the `z_day` column already written
-/// on existing orders/tickets, and re-basing them would retroactively change
-/// what [DailySummaryService.generateZDayReport] returns for past days.
-DateTime zBusinessDay(DateTime at, int startHour) {
-  final shifted = at.subtract(Duration(hours: startHour));
-  return DateTime(shifted.year, shifted.month, shifted.day);
-}
-
-/// `yyyy-MM-dd` form of [zBusinessDay] — the only representation persisted in
-/// `ZDayState`, so comparisons never trip over time-of-day or timezone drift.
-String zBusinessDayKey(DateTime at, int startHour) {
-  final d = zBusinessDay(at, startHour);
-  return '${d.year.toString().padLeft(4, '0')}-'
-      '${d.month.toString().padLeft(2, '0')}-'
-      '${d.day.toString().padLeft(2, '0')}';
-}
 
 /// The "Z day" for all inserts. Derives from the active Z's opening day (so all
 /// rows across the Z's multiple sessions share one z_day), falling back to the
@@ -251,8 +237,7 @@ final currentZDayProvider = Provider<DateTime>((ref) {
   if (z != null) return zDayForZ(z);
   final session = ref.watch(currentSessionProvider);
   if (session != null) return zDayForSession(session);
-  final now = DateTime.now();
-  return DateTime(now.year, now.month, now.day);
+  return parseZDay(ref.read(businessDayProvider.notifier).currentZDay())!;
 });
 
 class CurrentUser{
@@ -491,6 +476,23 @@ final areaTablesProvider = StreamProvider<List<db.AreaTable>>((ref) {
   return (database.select(database.areaTables)..watch()).watch();
 });
 
+/// Which waiter is on each order, keyed by `orders.id`.
+///
+/// The floor plan has to say who is serving a table, and `area_tables` only
+/// carries an order id — the waiter lives on the order. Keyed by order rather
+/// than by table so a stale table pointer shows nobody instead of borrowing
+/// some other table's waiter.
+final orderWaiterIdsProvider = StreamProvider<Map<int, int>>((ref) {
+  final database = ref.watch(databaseProvider);
+  return (database.select(database.orders)
+        ..where((o) => o.waiterId.isNotNull()))
+      .watch()
+      .map((orders) => {
+            for (final o in orders)
+              if (o.waiterId != null) o.id: o.waiterId!,
+          });
+});
+
 // Commercials Provider
 final commercialsProvider = StreamProvider<List<db.Commercial>>((ref) {
   final database = ref.watch(databaseProvider);
@@ -570,9 +572,14 @@ final productComponentsProvider = StreamProvider.autoDispose.family<List<Map<Str
 /// field it leaves null falls back to the group's own default, and a group
 /// with no override row at all is used exactly as the catalogue defines it.
 final productComponentGroupRulesProvider = FutureProvider.autoDispose
-    .family<Map<int?, ComponentGroupRule>, int>((ref, productId) async {
-  final database = ref.watch(databaseProvider);
+    .family<Map<int?, ComponentGroupRule>, int>((ref, productId) =>
+        loadComponentGroupRules(ref.watch(databaseProvider), productId));
 
+/// The resolution behind [productComponentGroupRulesProvider], callable
+/// without a ref so the kitchen ticket reads the rules exactly as the picker
+/// does.
+Future<Map<int?, ComponentGroupRule>> loadComponentGroupRules(
+    AppDatabase database, int productId) async {
   final groups = await (database.select(database.componentGroups)
         ..orderBy([(tbl) => OrderingTerm(expression: tbl.displayOrder)]))
       .get();
@@ -602,7 +609,7 @@ final productComponentGroupRulesProvider = FutureProvider.autoDispose
     );
   }
   return rules;
-});
+}
 
 /// How many draft tickets the order is currently divided into — see
 /// `TicketDraftSplits`' own doc comment for the full contract. Local-only,

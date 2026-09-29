@@ -216,8 +216,17 @@ class ApiService {
       if (u is String && u.isNotEmpty) _prefs.setString(_usernameKey, u);
     }
     _dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
+      // 10s was too tight for the tills in the field: the logs are full of
+      // "the request connection took longer than 0:00:10 and it was aborted",
+      // thousands of them, on a link that plainly works the rest of the time.
+      // A restaurant's uplink is congested, not absent. Raised — paired with
+      // the streak breaker in DataSyncService, which is what stops a genuinely
+      // unreachable endpoint from costing 20s per queued order instead.
+      connectTimeout: const Duration(seconds: 20),
       receiveTimeout: const Duration(seconds: 30),
+      // Was unset, so a stalled upload had no deadline at all and sat on the
+      // socket until the OS gave up.
+      sendTimeout: const Duration(seconds: 30),
     ));
     _setupInterceptors();
   }
@@ -1750,84 +1759,19 @@ class ApiService {
     }
   }
 
-  // ── Z (shift) sync ─────────────────────────────────────────────────────────
-  // Terminal is identified by the auto-injected X-Pos-Id header; the server
-  // enforces one OPEN Z per POS (see docs/Z_TRACKING_API.md).
+  // ── Z (day close), contract v3 ─────────────────────────────────────────────
+  // No Z entity on the server: a Z is the (zDay, zSeq) label carried on
+  // sessions. The terminal is resolved from X-POS-Name + the JWT tenant.
 
-  /// Bulk upsert Z rows. POST /pos/z/bulk {"zs": [...]}.
-  /// Bulk-upsert Zs. POST /pos/z/bulk.
-  ///
-  /// Throws [ZAlreadyOpenException] on 409 — the terminal already has a
-  /// different open Z server-side and the response body IS that Z. The caller
-  /// adopts it rather than retrying, since a retry can only conflict again.
-  Future<void> syncZs(List<Map<String, dynamic>> zs) async {
-    try {
-      final response = await _dio.post('/pos/z/bulk', data: {"zs": zs});
-      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
-        throw Exception('Server returned status ${response.statusCode} for bulk Z sync');
-      }
-    } on DioException catch (e) {
-      final conflict = _openZConflict(e);
-      if (conflict != null) throw ZAlreadyOpenException(conflict);
-      throw Exception('Failed to sync Z: ${e.message ?? 'Check connection.'}');
-    } catch (e) {
-      if (e is ZAlreadyOpenException) rethrow;
-      throw Exception('Error syncing Z: ${e.toString()}');
-    }
-  }
-
-  /// Upsert a single Z by code. PUT /pos/z/{code}.
-  /// Throws [ZAlreadyOpenException] on 409 — see [syncZs].
-  Future<void> syncSingleZ(String zCode, Map<String, dynamic> zData) async {
-    try {
-      final response = await _dio.put('/pos/z/$zCode', data: zData);
-      if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
-        throw Exception('Server returned status ${response.statusCode} for Z $zCode sync');
-      }
-    } on DioException catch (e) {
-      final conflict = _openZConflict(e);
-      if (conflict != null) throw ZAlreadyOpenException(conflict);
-      throw Exception('Failed to sync Z: ${e.message ?? 'Check connection.'}');
-    } catch (e) {
-      if (e is ZAlreadyOpenException) rethrow;
-      throw Exception('Error syncing Z: ${e.toString()}');
-    }
-  }
-
-  /// The already-open Z carried in a 409 body, or null if this wasn't that.
-  Map<String, dynamic>? _openZConflict(DioException e) {
-    if (e.response?.statusCode != 409) return null;
-    final data = e.response?.data;
-    if (data is Map && data['code'] != null) {
-      return Map<String, dynamic>.from(data);
-    }
-    return null;
-  }
-
-  /// Z history, newest first. GET /pos/z?status=&limit=
-  Future<List<Map<String, dynamic>>> fetchZs({
-    String? status,
-    int limit = 50,
-  }) async {
-    try {
-      final response = await _dio.get('/pos/z', queryParameters: {
-        if (status != null) 'status': status,
-        'limit': limit,
-      });
-      if (response.statusCode == 200 && response.data is List) {
-        return List<Map<String, dynamic>>.from(response.data as List);
-      }
-      return const [];
-    } catch (_) {
-      return const []; // history is informational — never break a screen for it
-    }
-  }
-
-  /// One Z by code, or null on 404. GET /pos/z/{code}.
-  Future<Map<String, dynamic>?> fetchZByCode(String zCode) async {
+  /// This terminal's latest Z, for resuming the counter at startup and after
+  /// a reinstall. GET /pos/z/current →
+  /// `{currentZDay, zDay, zSeq, closed, closeMode, closedAt}` (zDay / zSeq
+  /// null when the terminal never had a session). Null on any failure, so an
+  /// offline till falls back to its own sessions.
+  Future<Map<String, dynamic>?> fetchCurrentZ() async {
     try {
       final response = await _dio.get(
-        '/pos/z/$zCode',
+        '/pos/z/current',
         options: Options(validateStatus: (c) => c != null && c < 500),
       );
       if (response.statusCode == 200 && response.data is Map) {
@@ -1839,19 +1783,71 @@ class ApiService {
     }
   }
 
-  /// The cash sessions belonging to a Z. GET /pos/z/{code}/sessions.
-  Future<List<Map<String, dynamic>>> fetchZSessions(String zCode) async {
+  /// Close a session the server holds open but this till has no record of
+  /// (a reinstall mid-Z). POST /pos/cash-sessions/{code}/close with
+  /// `{endedAt, autoClosed, isClosingSession?, zCloseMode?, zClosedAt?}` —
+  /// never touches its money, times or cashier; idempotent on a closed one.
+  Future<void> closeServerSession(
+      String code, Map<String, dynamic> body) async {
     try {
-      final response = await _dio.get(
-        '/pos/z/$zCode/sessions',
-        options: Options(validateStatus: (c) => c != null && c < 500),
-      );
-      if (response.statusCode == 200 && response.data is List) {
-        return List<Map<String, dynamic>>.from(response.data as List);
+      final response =
+          await _dio.post('/pos/cash-sessions/$code/close', data: body);
+      if (response.statusCode == null ||
+          response.statusCode! < 200 ||
+          response.statusCode! >= 300) {
+        throw Exception(
+            'Server returned status ${response.statusCode} closing session $code');
       }
-      return const [];
-    } catch (_) {
-      return const [];
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to close session $code: ${e.message ?? 'Check connection.'}');
+    }
+  }
+
+  // ── Cash movements (drawer pay-in / pay-out) ──────────────────────────────
+
+  /// Bulk upsert by `code`. POST /pos/cash-movements/bulk {"movements": [...]}.
+  Future<void> syncCashMovements(List<Map<String, dynamic>> movements) async {
+    try {
+      final response = await _dio.post('/pos/cash-movements/bulk',
+          data: {"movements": movements});
+      if (response.statusCode == null ||
+          response.statusCode! < 200 ||
+          response.statusCode! >= 300) {
+        throw Exception(
+            'Server returned status ${response.statusCode} for cash movement sync');
+      }
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to sync cash movements: ${e.message ?? 'Check connection.'}');
+    }
+  }
+
+  /// Upsert one movement. PUT /pos/cash-movements/{code}.
+  Future<void> syncSingleCashMovement(
+      String code, Map<String, dynamic> movement) async {
+    try {
+      final response =
+          await _dio.put('/pos/cash-movements/$code', data: movement);
+      if (response.statusCode == null ||
+          response.statusCode! < 200 ||
+          response.statusCode! >= 300) {
+        throw Exception(
+            'Server returned status ${response.statusCode} for cash movement $code');
+      }
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to sync cash movement: ${e.message ?? 'Check connection.'}');
+    }
+  }
+
+  /// Delete a movement. DELETE /pos/cash-movements/{code}.
+  Future<void> deleteCashMovement(String code) async {
+    try {
+      await _dio.delete('/pos/cash-movements/$code');
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to delete cash movement: ${e.message ?? 'Check connection.'}');
     }
   }
 
@@ -1947,37 +1943,6 @@ class ApiService {
           response.statusCode! < 300;
     } catch (_) {
       return false;
-    }
-  }
-
-  /// The open Z for THIS terminal on the server, or null (404 = none open).
-  /// GET /pos/z/open. Used to avoid opening a duplicate Z.
-  Future<Map<String, dynamic>?> fetchOpenZ() async {
-    try {
-      final response = await _dio.get(
-        '/pos/z/open',
-        options: Options(validateStatus: (c) => c != null && c < 500),
-      );
-      if (response.statusCode == 404) return null;
-      if (response.statusCode == 200 && response.data is Map) {
-        return Map<String, dynamic>.from(response.data as Map);
-      }
-      return null;
-    } on DioException catch (_) {
-      return null; // best-effort; local uniqueness still applies
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Delete a Z by code. DELETE /pos/z/{code}.
-  Future<void> deleteZ(String zCode) async {
-    try {
-      await _dio.delete('/pos/z/$zCode');
-    } on DioException catch (e) {
-      throw Exception('Failed to delete Z: ${e.message ?? 'Check connection.'}');
-    } catch (e) {
-      throw Exception('Error deleting Z: ${e.toString()}');
     }
   }
 
@@ -2183,6 +2148,31 @@ class ApiService {
     }
   }
 
+  /// POST /pos/notify, throwing on any failure — for the outbox, which must
+  /// know whether to delete its row. Callers wanting fire-and-forget use
+  /// [postNotification].
+  Future<void> sendNotification({
+    required String type,
+    required Map<String, String> params,
+    String? refId,
+    required String clientRequestId,
+  }) async {
+    final response = await _dio.post('/pos/notify', data: {
+      'type': type,
+      'params': params,
+      if (refId != null) 'refId': refId,
+      'clientRequestId': clientRequestId,
+    });
+    final code = response.statusCode ?? 0;
+    if (code < 200 || code >= 300) {
+      throw DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+      );
+    }
+  }
+
   // ========== SESSION RULES ==========
 
   /// Fetches server-configured session rules.
@@ -2226,20 +2216,6 @@ class ApiService {
       rethrow;
     }
   }
-}
-
-/// Thrown on HTTP 409 from the Z upsert endpoints: this terminal already has a
-/// DIFFERENT open Z on the server, and [openZ] is that Z (the server returns it
-/// as the conflict body).
-///
-/// Retrying is pointless — the contract is "adopt it". The sync path replaces
-/// the local open Z with this one so both sides agree, then carries on.
-class ZAlreadyOpenException implements Exception {
-  final Map<String, dynamic> openZ;
-  ZAlreadyOpenException(this.openZ);
-  String? get code => openZ['code'] as String?;
-  @override
-  String toString() => 'ZAlreadyOpenException(serverOpenZ=$code)';
 }
 
 /// Thrown by [ApiService.confirmQueueItem] on HTTP 409 — another POS

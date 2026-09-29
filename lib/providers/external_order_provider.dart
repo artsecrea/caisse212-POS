@@ -5,6 +5,7 @@ import '../domain/models/external_order_models.dart';
 import '../services/api_service.dart' show QueueItemTakenException;
 import '../services/external_order_queue_service.dart';
 import 'database_providers.dart';
+import 'settings_provider.dart';
 
 // ── Service provider ──────────────────────────────────────────────────────────
 
@@ -13,6 +14,7 @@ final externalOrderQueueServiceProvider =
   return ExternalOrderQueueService(
     ref.watch(apiServiceProvider),
     ref.watch(databaseProvider),
+    () => ref.read(settingsProvider).orderNumberResetMode,
   );
 });
 

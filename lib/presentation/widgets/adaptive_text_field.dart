@@ -55,6 +55,15 @@ class AdaptiveKeyboardTextField extends ConsumerStatefulWidget {
   final VoidCallback? onEditingComplete;
   final TapRegionCallback? onTapOutside;
 
+  /// Select the whole value when the field takes focus, so typing REPLACES it.
+  ///
+  /// For the numeric fields a cashier retypes rather than edits — a price, a
+  /// quantity — where landing the caret mid-number means the next keypress
+  /// appends to what is already there and produces a figure nobody meant.
+  /// Works on both input paths: the keypad replaces the selected range the
+  /// same way a hardware keyboard does.
+  final bool selectAllOnFocus;
+
   const AdaptiveKeyboardTextField({
     super.key,
     this.controller,
@@ -77,6 +86,7 @@ class AdaptiveKeyboardTextField extends ConsumerStatefulWidget {
     this.onSubmitted,
     this.onEditingComplete,
     this.onTapOutside,
+    this.selectAllOnFocus = false,
   });
 
   /// Probe rather than read the setting: this tests the actual precondition
@@ -162,7 +172,19 @@ class _AdaptiveKeyboardTextFieldState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_effectiveFocusNode.hasFocus) return;
       final controller = _controller;
-      if (controller == null || controller.selection.isValid) return;
+      if (controller == null) return;
+      if (widget.selectAllOnFocus) {
+        // Unconditional, unlike the repair below: a tap puts a VALID caret
+        // wherever the finger landed, and that is exactly the selection being
+        // overridden here.
+        if (controller.text.isEmpty) return;
+        controller.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: controller.text.length,
+        );
+        return;
+      }
+      if (controller.selection.isValid) return;
       controller.selection =
           TextSelection.collapsed(offset: controller.text.length);
     });

@@ -2,7 +2,6 @@
 
 import 'package:flutter/material.dart';
 import '../../providers/settings_provider.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
@@ -10,6 +9,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/responsive_utils.dart';
 import '../../data/database/app_database.dart' as db;
+import 'call_waiter_dialog.dart';
 
 class TableSelectionDialog extends ConsumerStatefulWidget {
   const TableSelectionDialog({Key? key}) : super(key: key);
@@ -51,6 +51,17 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
   String _searchQuery = '';
   String _filterOption = 'all'; // all, withOrder, withoutOrder
   int? _selectedAreaId; // null means "All Areas"
+  int? _selectedWaiterId; // null means "All waiters"
+
+  /// Armed by the Transfer button, and only then does tapping a table move the
+  /// order instead of opening it.
+  ///
+  /// Deliberately a mode rather than a prompt: asking "transfer or switch?" on
+  /// every tap put a question in front of the cashier they had not asked, on
+  /// the most-used action in the app. Moving a bill between tables is rare and
+  /// deliberate, so it gets a button, and the rest of the time a tap is just a
+  /// tap.
+  bool _transferMode = false;
 
   @override
   Widget build(BuildContext context) {
@@ -75,8 +86,7 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
             Row(
               children: [
                 Text(
-                  // Show transfer mode title when saved order with table
-                  hasTable && isSavedOrder
+                  _transferMode
                       ? l10n.translate('transfer_order')
                       : l10n.translate('select_table'),
                   style: TextStyle(
@@ -86,6 +96,25 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                   ),
                 ),
                 const Spacer(),
+                // Only offered when there is something to move: a saved order
+                // that is currently sitting on a table.
+                if (hasTable && isSavedOrder)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _transferMode
+                        ? FilledButton.icon(
+                            onPressed: () =>
+                                setState(() => _transferMode = false),
+                            icon: const Icon(Icons.close, size: 18),
+                            label: Text(l10n.translate('cancel')),
+                          )
+                        : OutlinedButton.icon(
+                            onPressed: () =>
+                                setState(() => _transferMode = true),
+                            icon: const Icon(Icons.swap_horiz, size: 18),
+                            label: Text(l10n.translate('transfer')),
+                          ),
+                  ),
                 // Show current table info when in transfer mode
                 if (hasTable && isSavedOrder)
                   Padding(
@@ -338,6 +367,68 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                     },
                   ),
                 ),
+                const SizedBox(width: 12),
+                // Who is on the floor. Only the waiters actually holding a
+                // table are listed: a roster of everyone who has ever worked
+                // here is a scrolling list of dead ends.
+                Consumer(builder: (context, ref, _) {
+                  final waiters = ref.watch(waitersProvider).valueOrNull ?? [];
+                  final onFloor =
+                      ref.watch(orderWaiterIdsProvider).valueOrNull?.values.toSet() ??
+                          const <int>{};
+                  final shown =
+                      waiters.where((w) => onFloor.contains(w.id)).toList();
+                  if (shown.isEmpty) return const SizedBox.shrink();
+                  // A waiter who leaves the floor while their filter is active
+                  // would otherwise leave the dropdown on a value it no longer
+                  // offers, which throws.
+                  final value =
+                      shown.any((w) => w.id == _selectedWaiterId)
+                          ? _selectedWaiterId
+                          : null;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .outline
+                            .withOpacity(0.5),
+                      ),
+                    ),
+                    child: DropdownButton<int?>(
+                      value: value,
+                      icon: Icon(
+                        Icons.person_outline,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withOpacity(0.7),
+                      ),
+                      underline: Container(),
+                      dropdownColor: Theme.of(context).colorScheme.surface,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontSize: 14,
+                      ),
+                      items: [
+                        DropdownMenuItem<int?>(
+                          value: null,
+                          child: Text(l10n.translate('all_waiters')),
+                        ),
+                        for (final w in shown)
+                          DropdownMenuItem<int?>(
+                            value: w.id,
+                            child: Text(
+                                '${w.firstName} ${w.lastName ?? ''}'.trim()),
+                          ),
+                      ],
+                      onChanged: (v) => setState(() => _selectedWaiterId = v),
+                    ),
+                  );
+                }),
                 const SizedBox(width: 8),
                 IconButton(
                   icon: Icon(
@@ -367,6 +458,8 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
                 searchQuery: _searchQuery,
                 filterOption: _filterOption,
                 selectedAreaId: _selectedAreaId,
+                selectedWaiterId: _selectedWaiterId,
+                transferMode: _transferMode,
               ),
             ),
           ],
@@ -381,17 +474,23 @@ class _AvailableTablesTab extends ConsumerWidget {
   final String searchQuery;
   final String filterOption;
   final int? selectedAreaId;
+  final int? selectedWaiterId;
+  final bool transferMode;
 
   const _AvailableTablesTab({
     required this.isGridView,
     required this.searchQuery,
     required this.filterOption,
     required this.selectedAreaId,
+    required this.selectedWaiterId,
+    required this.transferMode,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tablesAsync = ref.watch(areaTablesProvider);
+    final waiterByOrder =
+        ref.watch(orderWaiterIdsProvider).valueOrNull ?? const <int, int>{};
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final l10n = AppLocalizations.of(context)!;
 
@@ -414,6 +513,15 @@ class _AvailableTablesTab extends ConsumerWidget {
           final hasOrder = table.orderId != null;
           if (filterOption == 'withOrder' && !hasOrder) return false;
           if (filterOption == 'withoutOrder' && hasOrder) return false;
+
+          // Waiter filter. An empty table has no waiter, so it cannot match a
+          // named one — filtering by waiter is asking "where is Amina", not
+          // "which tables might she take".
+          if (selectedWaiterId != null) {
+            final orderId = table.orderId;
+            if (orderId == null) return false;
+            if (waiterByOrder[orderId] != selectedWaiterId) return false;
+          }
 
           return true;
         }).toList();
@@ -458,6 +566,7 @@ class _AvailableTablesTab extends ConsumerWidget {
               return _TableCard(
                 table: table,
                 isDark: isDark,
+                transferMode: transferMode,
               );
             },
           );
@@ -470,6 +579,7 @@ class _AvailableTablesTab extends ConsumerWidget {
               return _TableListItem(
                 table: table,
                 isDark: isDark,
+                transferMode: transferMode,
               );
             },
           );
@@ -492,13 +602,37 @@ class _AvailableTablesTab extends ConsumerWidget {
 }
 
 // Table Card Widget for Grid View
+/// The name of the waiter on [table], or null when nobody is.
+///
+/// Read through the order rather than the table: `area_tables` only holds an
+/// order id, and the waiter belongs to the order. Shared by the card and the
+/// list row so the two views can never disagree about who is on a table.
+String? _waiterNameForTable(WidgetRef ref, db.AreaTable table) {
+  final orderId = table.orderId;
+  if (orderId == null) return null;
+  final waiterId = ref.watch(orderWaiterIdsProvider).valueOrNull?[orderId];
+  if (waiterId == null) return null;
+  final waiters = ref.watch(waitersProvider).valueOrNull;
+  if (waiters == null) return null;
+  for (final w in waiters) {
+    if (w.id == waiterId) {
+      final name = '${w.firstName} ${w.lastName ?? ''}'.trim();
+      return name.isEmpty ? null : name;
+    }
+  }
+  return null;
+}
+
 class _TableCard extends ConsumerWidget {
   final db.AreaTable table;
   final bool isDark;
 
+  final bool transferMode;
+
   const _TableCard({
     required this.table,
     required this.isDark,
+    required this.transferMode,
   });
 
   @override
@@ -510,10 +644,11 @@ class _TableCard extends ConsumerWidget {
 
     return InkWell(
       onTap: () async {
-        await _handleTableSelection(context, ref, table);
+        await _handleTableSelection(context, ref, table,
+            transferMode: transferMode);
       },
       onLongPress: hasOrder ? () async {
-        await _handleClearTable(context, ref, table);
+        await _handleTableLongPress(context, ref, table);
       } : null,
       borderRadius: BorderRadius.circular(12),
       child: Card(
@@ -551,6 +686,23 @@ class _TableCard extends ConsumerWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
+              if (_waiterNameForTable(ref, table) case final waiterName?)
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Text(
+                    waiterName,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isDark
+                          ? Colors.orange[300]
+                          : Colors.orange[800],
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               const SizedBox(height: 2),
               if (due == null)
                 Text(
@@ -596,9 +748,12 @@ class _TableListItem extends ConsumerWidget {
   final db.AreaTable table;
   final bool isDark;
 
+  final bool transferMode;
+
   const _TableListItem({
     required this.table,
     required this.isDark,
+    required this.transferMode,
   });
 
   @override
@@ -625,10 +780,11 @@ class _TableListItem extends ConsumerWidget {
       ),
       child: ListTile(
         onTap: () async {
-          await _handleTableSelection(context, ref, table);
+          await _handleTableSelection(context, ref, table,
+              transferMode: transferMode);
         },
         onLongPress: hasOrder ? () async {
-          await _handleClearTable(context, ref, table);
+          await _handleTableLongPress(context, ref, table);
         } : null,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: CircleAvatar(
@@ -651,11 +807,16 @@ class _TableListItem extends ConsumerWidget {
           ),
         ),
         subtitle: Text(
-          due == null
-              ? '${l10n.translate('capacity')}: ${table.capacity} • ${hasOrder ? l10n.translate('has_active_order') : l10n.translate('available')}'
-              : '${due.order.code} • '
-                  '${l10n.translate('paid')} ${currency.format(due.paid)} • '
-                  '${l10n.translate('remaining')} ${currency.format(due.due)}',
+          [
+            due == null
+                ? '${l10n.translate('capacity')}: ${table.capacity} • ${hasOrder ? l10n.translate('has_active_order') : l10n.translate('available')}'
+                : '${due.order.code} • '
+                    '${l10n.translate('paid')} ${currency.format(due.paid)} • '
+                    '${l10n.translate('remaining')} ${currency.format(due.due)}',
+            // Same lookup the grid card uses, so the two views agree.
+            if (_waiterNameForTable(ref, table) case final w?)
+              '${l10n.translate('waiter')}: $w',
+          ].join(' • '),
           style: TextStyle(
             fontSize: 13,
             color: isDark ? Theme.of(context).colorScheme.outline : Theme.of(context).colorScheme.onSurfaceVariant,
@@ -684,98 +845,50 @@ class _TableListItem extends ConsumerWidget {
 }
 
 // Helper functions
-Future<void> _handleTableSelection(BuildContext context, WidgetRef ref, db.AreaTable table) async {
+Future<void> _handleTableSelection(
+    BuildContext context, WidgetRef ref, db.AreaTable table,
+    {bool transferMode = false}) async {
   // Load existing order for this table if any
   final orderRepo = ref.read(orderRepositoryProvider);
   final existingOrder = await orderRepo.getOrderByTable(table.id);
-  final currentOrder = ref.read(orderProvider);
-  final l10n = AppLocalizations.of(context)!;
+  // Everything below touches the dialog's context, and the lookup above is an
+  // await: the picker can be gone by the time it returns.
+  if (!context.mounted) return;
 
-  // Check if we're in transfer mode (saved order with existing table)
-  final isTransferMode = currentOrder.orderId != null && currentOrder.tableId != null;
-
-  if (isTransferMode) {
-    // Don't allow transferring to the same table
+  // Transfer was armed explicitly, so a tap MOVES the bill rather than
+  // opening the table. Refused onto an occupied one: the repository would
+  // refuse it anyway, and saying so here costs the cashier nothing.
+  if (transferMode) {
+    final currentOrder = ref.read(orderProvider);
+    final l10n = AppLocalizations.of(context)!;
     if (table.id == currentOrder.tableId) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('already_on_this_table')),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(l10n.translate('already_on_this_table')),
+        backgroundColor: Colors.orange,
+      ));
       return;
     }
-
-    // Target table already has an open order → don't block. Fall through to
-    // the busy-table result; main_screen will prompt the cashier to confirm
-    // discarding the panel and load that table's order. The saved order on
-    // the source table is left alone.
     if (existingOrder != null) {
-      if (context.mounted) {
-        Navigator.of(context).pop({
-          'id': table.id,
-          'name': table.name,
-          'existingOrder': existingOrder,
-        });
-      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(l10n.translate('table_has_active_order')),
+        backgroundColor: Colors.orange,
+      ));
       return;
     }
-
-    // Empty target table — offer the cashier a choice: transfer the saved
-    // order across, or just switch to that table and start fresh (the saved
-    // order stays where it is).
-    if (context.mounted) {
-      final choice = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(l10n.translate('transfer_or_switch_title')),
-          content: Text(
-            l10n
-                .translate('transfer_or_switch_body')
-                .replaceAll('{oldTable}', currentOrder.tableName ?? '')
-                .replaceAll('{newTable}', table.name),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'cancel'),
-              child: Text(l10n.translate('cancel')),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'switch'),
-              child: Text(l10n.translate('switch_table')),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, 'transfer'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
-              child: Text(l10n.translate('transfer')),
-            ),
-          ],
-        ),
-      );
-
-      if (choice == 'transfer' && context.mounted) {
-        Navigator.of(context).pop({
-          'id': table.id,
-          'name': table.name,
-          'action': 'transfer',
-          'oldTableId': currentOrder.tableId,
-        });
-      } else if (choice == 'switch' && context.mounted) {
-        Navigator.of(context).pop({
-          'id': table.id,
-          'name': table.name,
-          'action': 'switch',
-        });
-      }
-    }
+    Navigator.of(context).pop({
+      'id': table.id,
+      'name': table.name,
+      'action': 'transfer',
+      'oldTableId': currentOrder.tableId,
+    });
     return;
   }
 
+  // Picking a table just goes to that table. There is no transfer prompt and
+  // no "transfer or switch?" question: moving an order between tables is its
+  // own deliberate action, not something to be asked about every time somebody
+  // taps the floor plan. Whether the cashier's current cart survives is
+  // decided downstream, and only genuinely unsaved work stops them.
   if (context.mounted) {
     Navigator.of(context).pop({
       'id': table.id,
@@ -783,6 +896,83 @@ Future<void> _handleTableSelection(BuildContext context, WidgetRef ref, db.AreaT
       'existingOrder': existingOrder,
     });
   }
+}
+
+/// The waiter on [table], read (not watched) for use inside a callback.
+///
+/// Goes through the order for the same reason [_waiterNameForTable] does:
+/// `area_tables` holds only an order id, and the waiter belongs to the order.
+({int id, String name})? _waiterOnTable(WidgetRef ref, db.AreaTable table) {
+  final orderId = table.orderId;
+  if (orderId == null) return null;
+  final waiterId = ref.read(orderWaiterIdsProvider).valueOrNull?[orderId];
+  if (waiterId == null) return null;
+  final waiters = ref.read(waitersProvider).valueOrNull;
+  if (waiters == null) return null;
+  for (final w in waiters) {
+    if (w.id != waiterId) continue;
+    final name = '${w.firstName} ${w.lastName ?? ''}'.trim();
+    return name.isEmpty ? null : (id: w.id, name: name);
+  }
+  return null;
+}
+
+/// Long-press on an occupied table.
+///
+/// Clearing the table is what this gesture has always done, and it stays the
+/// only outcome unless calls are on AND somebody is actually assigned — a
+/// chooser offering to call nobody would be a worse gesture than the one it
+/// replaced.
+Future<void> _handleTableLongPress(
+    BuildContext context, WidgetRef ref, db.AreaTable table) async {
+  final l10n = AppLocalizations.of(context)!;
+  final waiter = ref.read(settingsProvider).waiterCallEnabled
+      ? _waiterOnTable(ref, table)
+      : null;
+
+  if (waiter == null) {
+    await _handleClearTable(context, ref, table);
+    return;
+  }
+
+  final choice = await showDialog<String>(
+    context: context,
+    builder: (ctx) => SimpleDialog(
+      title: Text(table.name),
+      children: [
+        SimpleDialogOption(
+          onPressed: () => Navigator.of(ctx).pop('call'),
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.campaign),
+            title: Text(l10n.translate('call_waiter')),
+            subtitle: Text(waiter.name),
+          ),
+        ),
+        SimpleDialogOption(
+          onPressed: () => Navigator.of(ctx).pop('clear'),
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.cleaning_services_outlined),
+            title: Text(l10n.translate('clear_table')),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  if (!context.mounted || choice == null) return;
+  if (choice == 'call') {
+    await showCallWaiterDialog(
+      context,
+      waiterId: waiter.id,
+      waiterName: waiter.name,
+      tableId: table.id,
+      tableName: table.name,
+    );
+    return;
+  }
+  await _handleClearTable(context, ref, table);
 }
 
 Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable table) async {

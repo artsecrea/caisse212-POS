@@ -34,9 +34,28 @@ class CashSessions extends Table {
   RealColumn get totalPaid => real().nullable()();
   TextColumn get details => text().nullable()();
 
-  // The Z (shift) this session belongs to (schema v25). Local FK to Zs.id; on
-  // sync the session sends the Z's `code` as `zCode`. Nullable for sessions
-  // created before Z tracking / when Z tracking is disabled.
+  // The Z this session belongs to (schema v25). Local FK to Zs.id; on sync the
+  // session sends that Z's `zDay` / `zSeq`. Null only on legacy rows.
   IntColumn get zId => integer().nullable()();
+
+  // Cash the cashier brought in at open, and cash left over from the previous
+  // session (schema v53). POS-counted; the server stores and sums them as sent.
+  RealColumn get moneyEntered => real().nullable()();
+  RealColumn get moneyCarriedOver => real().nullable()();
+
+  // Set on the session that opened its Z (`AUTO` | `MANUAL`), and the flag on
+  // the one that closed it (schema v53). Both ride the session push; the close
+  // details themselves (mode, by, at) are read from the Z row.
+  TextColumn get zOpenMode => text().nullable()();
+  BoolColumn get isClosingSession =>
+      boolean().withDefault(const Constant(false))();
+
+  // Ended by the system rather than by its cashier — a Z close sweeping up
+  // other sessions, the day rollover, a session rule (schema v54).
+  BoolColumn get autoClosed => boolean().withDefault(const Constant(false))();
+
+  // A time limit was bypassed with `pos:z:override` when this session opened
+  // its Z or closed it (schema v54). Sent so the back office can audit it.
+  BoolColumn get zOverride => boolean().withDefault(const Constant(false))();
 }
 

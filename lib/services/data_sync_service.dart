@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart' show DioException, DioExceptionType;
 import 'package:drift/drift.dart';
 import '../domain/models/serial_conflict.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -14,7 +15,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import '../domain/models/business_day_config.dart';
 import '../domain/models/session_rules.dart';
+import 'notification_outbox.dart';
+import 'z_day_resolver.dart';
 
 /// Data Sync Service for fetching data from API and storing in local database
 class DataSyncService {
@@ -1789,99 +1793,113 @@ class DataSyncService {
     return ticketsList;
   }
 
-  /// Get all ended sessions that need to be synced
-  Future<List<Map<String, dynamic>>> getSessionsForSync() async {
+  /// Every ended session not yet on the server, as push payloads.
+  Future<List<Map<String, dynamic>>> getSessionsForSync() async =>
+      (await _sessionsForSync()).map((e) => e.payload).toList();
+
+  Future<List<({Map<String, dynamic> payload, DateTime updatedAt})>>
+      _sessionsForSync() async {
     final sessions = await (_database.select(_database.cashSessions)
-      ..where((s) => s.status.equals('ended') & s.isSynced.equals(false)))
-      .get();
-    // Resolve each session's Z (shift) to its backend code.
+          ..where((s) => s.status.equals('ended') & s.isSynced.equals(false)))
+        .get();
+    final zById = await _zsFor(sessions);
+    return [
+      for (final s in sessions)
+        (payload: sessionSyncPayload(s, zById[s.zId]), updatedAt: s.updatedAt),
+    ];
+  }
+
+  /// Money rounded to the cent: floating sums (expected cash, totals) carry
+  /// noise past two decimals, and the server columns are NUMERIC(12,2).
+  static double? _money(double? v) =>
+      v == null ? null : (v * 100).roundToDouble() / 100;
+
+  Future<Map<int, Z>> _zsFor(List<CashSession> sessions) async {
     final zIds = sessions.map((s) => s.zId).whereType<int>().toSet().toList();
-    final zRows = zIds.isEmpty
-        ? const <Z>[]
-        : await (_database.select(_database.zs)..where((z) => z.id.isIn(zIds)))
-            .get();
-    final zCodeById = {for (final z in zRows) z.id: z.code};
-    return sessions.map((s) => {
+    if (zIds.isEmpty) return const {};
+    final rows = await (_database.select(_database.zs)
+          ..where((z) => z.id.isIn(zIds)))
+        .get();
+    return {for (final z in rows) z.id: z};
+  }
+
+  /// A session as the server receives it (Z contract v3).
+  ///
+  /// The Z travels on the session: `zDay` / `zSeq` label it, the session that
+  /// opened the Z adds `zOpenMode`, and the one that closed it adds
+  /// `isClosingSession` with the close mode, who and when. The server fills
+  /// those once, even on a session it already holds closed — which is how a Z
+  /// gets closed after its last session was synced.
+  static Map<String, dynamic> sessionSyncPayload(CashSession s, Z? z) {
+    final label = z == null ? null : ZService.labelOf(z);
+    final closing = s.isClosingSession && z != null && z.status == 'closed';
+    return {
       'id': s.id,
       'code': s.code,
-      'zCode': s.zId == null ? null : zCodeById[s.zId],
       'cashierId': s.cashierId,
-      'moneyAtStart': s.moneyAtStart,
-      'moneyAtEnd': s.moneyAtEnd,
-      'totalPaid': s.totalPaid,
+      'moneyAtStart': _money(s.moneyAtStart),
+      'moneyAtEnd': _money(s.moneyAtEnd),
+      if (s.moneyEntered != null) 'moneyEntered': _money(s.moneyEntered),
+      if (s.moneyCarriedOver != null)
+        'moneyCarriedOver': _money(s.moneyCarriedOver),
+      if (s.countedCash != null) 'countedCash': _money(s.countedCash),
+      'totalPaid': _money(s.totalPaid),
+      if (s.autoClosed) 'autoClosed': true,
+      if (s.zOverride) 'zOverride': true,
       'details': s.details == null ? null : jsonDecode(s.details!),
       'status': s.status,
       'startedAt': s.startedAt.toIso8601String(),
       'endedAt': s.endedAt?.toIso8601String(),
       'pausedAt': s.pausedAt?.toIso8601String(),
-    }).toList();
+      if (label != null) 'zDay': label.zDay,
+      if (label != null) 'zSeq': label.zSeq,
+      if (s.zOpenMode != null) 'zOpenMode': s.zOpenMode,
+      if (closing) ...{
+        'isClosingSession': true,
+        'zCloseMode': z.closeMode ?? ZService.closeManual,
+        if (z.endedBy != null) 'zClosedBy': z.endedBy,
+        if (z.endedAt != null) 'zClosedAt': z.endedAt!.toIso8601String(),
+      },
+    };
   }
 
-  // ── Z (shift) sync — pushed BEFORE sessions (sessions reference z code) ──
+  /// How many consecutive network failures end a batch early.
+  ///
+  /// Not a retry limit — the orders are untouched and go again next cycle.
+  /// It only stops the till spending its entire life in connect timeouts: the
+  /// per-order fallbacks below walk a batch of up to 50, and against an
+  /// unreachable endpoint each one burns the full connect timeout before
+  /// failing identically. That is ~17 minutes of a 5-minute cycle doing
+  /// nothing, and it is what filled the field logs with thousands of
+  /// "Error syncing single order" lines.
+  static const int _networkFailureStreakLimit = 3;
 
-  /// Unsynced Z rows (open OR closed) so the server tracks the currently-open Z
-  /// for uniqueness and receives the final aggregate at close. Stamps `posId`.
-  Future<List<Map<String, dynamic>>> getZsForSync() async {
-    final posId = _apiService.getPosId();
-    final zs = await (_database.select(_database.zs)
-          ..where((z) => z.isSynced.equals(false)))
-        .get();
-    return zs.map((z) => {
-          'id': z.id,
-          'code': z.code,
-          'posId': z.posId ?? posId,
-          'createdBy': z.createdBy,
-          'startedAt': z.startedAt.toIso8601String(),
-          'endedAt': z.endedAt?.toIso8601String(),
-          'endedBy': z.endedBy,
-          'status': z.status,
-          'totalPaid': z.totalPaid,
-          'details': z.details == null ? null : jsonDecode(z.details!),
-        }).toList();
-  }
+  /// Set by [syncSingleOrder] when its failure was the network giving up
+  /// rather than the backend refusing the payload. The batch fallbacks read it
+  /// to tell "this endpoint is down" from "this one order is bad" — a serial
+  /// rejection must not stop the queue, an unreachable host should.
+  bool _lastFailureWasNetwork = false;
 
-  Future<void> markZsAsSynced(List<int> zIds) async {
-    if (zIds.isEmpty) return;
-    await (_database.update(_database.zs)..where((z) => z.id.isIn(zIds)))
-        .write(const ZsCompanion(isSynced: Value(true)));
-  }
-
-  /// Push unsynced Z rows (bulk-first, per-item fallback) — mirror of
-  /// [syncSessionsBulk].
-  Future<int> syncZsBulk({int batchSize = 50}) async {
-    try {
-      final zs = await getZsForSync();
-      if (zs.isEmpty) return 0;
-      final batch = zs.take(batchSize).toList();
-      try {
-        await _apiService.syncZs(batch);
-        await markZsAsSynced(batch.map((z) => z['id'] as int).toList());
-        return batch.length;
-      } on ZAlreadyOpenException catch (conflict) {
-        await _adoptServerOpenZ(conflict);
-        return 0;
-      } catch (bulkError) {
-        _logger.warning('Bulk Z sync failed, falling back to individual: $bulkError');
-        int ok = 0;
-        for (final z in batch) {
-          try {
-            await _apiService.syncSingleZ(z['code'] as String, z);
-            await markZsAsSynced([z['id'] as int]);
-            ok++;
-          } on ZAlreadyOpenException catch (conflict) {
-            await _adoptServerOpenZ(conflict);
-            // Every remaining open Z in this batch would hit the same wall.
-            break;
-          } catch (e) {
-            _logger.error('Individual Z sync failed for #${z['id']}: $e');
-          }
-        }
-        return ok;
-      }
-    } catch (e) {
-      _logger.error('Error syncing Zs bulk: $e');
-      return 0;
+  /// Whether [error] is the connection failing rather than the server
+  /// answering. Public so the classification can be tested directly: it
+  /// decides whether a batch keeps going, and getting it wrong in either
+  /// direction is expensive.
+  static bool isNetworkFailure(Object error) {
+    if (error is DioException) {
+      return error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.connectionError;
     }
+    // syncSingleOrder rewraps Dio's error in a plain Exception, so by the time
+    // a batch loop sees it the type is gone and only the message survives.
+    final m = error.toString().toLowerCase();
+    return m.contains('took longer than') ||
+        m.contains('socketexception') ||
+        m.contains('connection refused') ||
+        m.contains('connection closed') ||
+        m.contains('network is unreachable') ||
+        m.contains('failed host lookup');
   }
 
   /// Push unsynced refunds. POST /pos/refunds/bulk.
@@ -1892,6 +1910,46 @@ class DataSyncService {
   /// them onto `order_products.serverId`. A refund whose ids still can't be
   /// resolved is left unsynced and retried on the next cycle rather than sent
   /// with wrong ids.
+  /// One refund as the bulk endpoint wants it.
+  ///
+  /// Extracted so a test can assert what actually goes on the wire — the
+  /// `zDay` below especially, which is the difference between a refund landing
+  /// in the shift that gave the money back and landing in whatever day its
+  /// timestamp happens to fall in.
+  @visibleForTesting
+  Future<Map<String, dynamic>> buildRefundPayload(
+    Refund refund,
+    List<Map<String, dynamic>> lineMaps,
+    ZDayResolver zDayResolver,
+  ) async {
+    // The shift the money went back out on. Without it the server has only
+    // `refundedAt` to derive a day from, so a refund given at 00:30 during a
+    // shift that opened at 20:00 was booked to the next day — the same fault
+    // the orders carried, and worse here, because a refund reported on a day
+    // its own sale is not makes both days wrong.
+    //
+    // Resolved through the session when the column itself is null (rows
+    // written before it existed), so what goes up is the shift's day either
+    // way. Omitted, never null, when even that comes up empty: a missing field
+    // leaves the server deriving its own, which is exactly the old behaviour
+    // and better than asserting a guess.
+    final refundZDay =
+        refund.zDay ?? await zDayResolver.forSession(refund.sessionId);
+
+    return {
+      'code': refund.code,
+      'orderCode': refund.orderCode,
+      'method': refund.method,
+      if (refund.reason != null) 'reason': refund.reason,
+      'refundedBy': refund.refundedBy,
+      'refundedAt': refund.refundedAt.toUtc().toIso8601String(),
+      // Same shape the order and ticket pushes use for this field, so the
+      // backend parses one `zDay` format across every entity.
+      if (refundZDay != null) 'zDay': refundZDay.toIso8601String(),
+      'lines': lineMaps,
+    };
+  }
+
   Future<int> syncRefundsBulk({int batchSize = 50}) async {
     try {
       // Previously-refused refunds are included, deliberately.
@@ -1914,6 +1972,7 @@ class DataSyncService {
 
       final payload = <Map<String, dynamic>>[];
       final sentIds = <int>[];
+      final zDayResolver = ZDayResolver(_database);
 
       for (final refund in pending) {
         final order = await (_database.select(_database.orders)
@@ -1970,15 +2029,7 @@ class DataSyncService {
           continue;
         }
 
-        payload.add({
-          'code': refund.code,
-          'orderCode': refund.orderCode,
-          'method': refund.method,
-          if (refund.reason != null) 'reason': refund.reason,
-          'refundedBy': refund.refundedBy,
-          'refundedAt': refund.refundedAt.toUtc().toIso8601String(),
-          'lines': lineMaps,
-        });
+        payload.add(await buildRefundPayload(refund, lineMaps, zDayResolver));
         sentIds.add(refund.id);
       }
 
@@ -2180,39 +2231,6 @@ class DataSyncService {
     }
   }
 
-  /// Resolve a Z open-conflict by adopting the server's Z.
-  ///
-  /// The contract allows exactly one open Z per terminal, and a 409 carries the
-  /// one the server already has. Retrying can only conflict again, so we insert
-  /// the server's Z locally (marked synced) and close whatever *other* local Z
-  /// was still open, so both sides agree on which shift is live. The adopted
-  /// row keeps the server's code, which is what subsequent session syncs
-  /// reference.
-  Future<void> _adoptServerOpenZ(ZAlreadyOpenException conflict) async {
-    try {
-      final posId = _apiService.getPosId();
-      final zService = ZService(_database);
-      final adopted = await zService.adoptServerZ(conflict.openZ, posId: posId);
-
-      // Any other still-open local Z is a duplicate of the shift we just
-      // adopted — mark it closed and synced so it stops being retried forever.
-      await (_database.update(_database.zs)
-            ..where((z) =>
-                z.status.equals('open') & z.id.isNotValue(adopted.id)))
-          .write(ZsCompanion(
-        status: const Value('closed'),
-        endedAt: Value(DateTime.now()),
-        isSynced: const Value(true),
-        updatedAt: Value(DateTime.now()),
-      ));
-
-      _logger.warning(
-          'Adopted server open Z ${adopted.code} after 409; local duplicates closed.');
-    } catch (e) {
-      _logger.error('Failed to adopt server Z on 409: $e');
-    }
-  }
-
   /// Get all new customers that need to be synced
   Future<List<Map<String, dynamic>>> getCustomersForSync() async {
     final customers = await (_database.select(_database.customers)
@@ -2237,12 +2255,80 @@ class DataSyncService {
       .write(const OrdersCompanion(isSynced: Value(true)));
   }
 
+  /// Mark orders synced ONLY if they have not been written to since the
+  /// snapshot that was actually pushed.
+  ///
+  /// Every push reads a snapshot at T0 and is confirmed at T2. A write in
+  /// between — the waiter app appending a line over the LAN, a cashier edit —
+  /// sets `isSynced = false` to request a re-push, and an unconditional mark
+  /// here erases that request: the new line is never sent, and the backend's
+  /// snapshot stays short by one line for good. That is the "item printed but
+  /// vanished" path, since the pull then treats the extra local line as a
+  /// remote removal.
+  ///
+  /// Compared as instants (`isAtSameMomentAs`) rather than by serialized text:
+  /// datetimes are stored as TEXT in this schema and have been seen in mixed
+  /// UTC/local encodings, which a string or SQL equality would read as
+  /// "changed" on every row.
+  ///
+  /// Asymmetric on purpose. A false negative costs one redundant re-push on the
+  /// next cycle; a false positive silently loses a line.
+  Future<void> markOrdersAsSyncedIfUnchanged(
+      Map<int, DateTime> pushedUpdatedAt) async {
+    if (pushedUpdatedAt.isEmpty) return;
+    final rows = await (_database.select(_database.orders)
+          ..where((o) => o.id.isIn(pushedUpdatedAt.keys.toList())))
+        .get();
+
+    final stillClean = <int>[];
+    for (final row in rows) {
+      final pushed = pushedUpdatedAt[row.id];
+      if (pushed == null) continue;
+      if (row.updatedAt.isAtSameMomentAs(pushed)) {
+        stillClean.add(row.id);
+      } else {
+        _logger.info(
+            'markOrdersAsSynced: order #${row.id} changed mid-push '
+            '(pushed=$pushed now=${row.updatedAt}) — left unsynced so the '
+            'next cycle pushes the newer lines');
+      }
+    }
+    await markOrdersAsSynced(stillClean);
+  }
+
+  /// `id → updatedAt` for the order maps that were just pushed, so
+  /// [markOrdersAsSyncedIfUnchanged] can tell a confirmed snapshot from a
+  /// superseded one. Orders missing either field are skipped rather than
+  /// marked blind.
+  Map<int, DateTime> _pushedUpdatedAtById(List<Map<String, dynamic>> orders) {
+    final out = <int, DateTime>{};
+    for (final o in orders) {
+      final id = o['id'];
+      final raw = o['updatedAt'];
+      if (id is! int || raw is! String) continue;
+      final parsed = DateTime.tryParse(raw);
+      if (parsed != null) out[id] = parsed;
+    }
+    return out;
+  }
+
   /// Mark tickets as synced
   Future<void> markTicketsAsSynced(List<int> ticketIds) async {
     if (ticketIds.isEmpty) return;
     await (_database.update(_database.tickets)
       ..where((t) => t.id.isIn(ticketIds)))
       .write(const TicketsCompanion(isSynced: Value(true)));
+  }
+
+  /// Mark sessions synced only if nothing touched them since they were read.
+  /// A Z close flags its last session while a push may be in flight; marking
+  /// that row synced would drop the close fields for good.
+  Future<void> _markSessionsSyncedIfUnchanged(Map<int, DateTime> pushed) async {
+    for (final e in pushed.entries) {
+      await (_database.update(_database.cashSessions)
+            ..where((s) => s.id.equals(e.key) & s.updatedAt.equals(e.value)))
+          .write(const CashSessionsCompanion(isSynced: Value(true)));
+    }
   }
 
   /// Mark sessions as synced
@@ -2392,6 +2478,8 @@ class DataSyncService {
   Future<void> syncUpload({int batchSize = 50}) async {
     await syncPendingOperations();
     await syncSessionsBulk(batchSize: batchSize);
+    await syncCashMovementsBulk(batchSize: batchSize);
+    await syncPendingNotifications();
     await syncOrdersBulk(batchSize: batchSize);
     await syncTicketsBulk(batchSize: batchSize * 2);
     await syncCustomersBulk(batchSize: batchSize);
@@ -2427,8 +2515,9 @@ class DataSyncService {
     try {
       final orders = await getOrdersForSync();
       if (orders.isNotEmpty) {
+        final pushedAt = _pushedUpdatedAtById(orders);
         await _applySerialConflicts(await _apiService.syncOrders(orders));
-        await markOrdersAsSynced(orders.map((o) => o['id'] as int).toList());
+        await markOrdersAsSyncedIfUnchanged(pushedAt);
       }
     } catch (e) {
       _logger.error('uploadLocalData: orders sync failed – will retry later: $e');
@@ -2464,35 +2553,17 @@ class DataSyncService {
         return true;
       }
 
-      // Resolve the session's Z (shift) code.
-      String? zCode;
-      if (session.zId != null) {
-        final z = await (_database.select(_database.zs)
-              ..where((t) => t.id.equals(session.zId!)))
-            .getSingleOrNull();
-        zCode = z?.code;
-      }
-
-      // Build session data
-      final sessionData = {
-        'code': session.code,
-        'zCode': zCode,
-        'cashierId': session.cashierId,
-        'moneyAtStart': session.moneyAtStart,
-        'moneyAtEnd': session.moneyAtEnd,
-        'totalPaid': session.totalPaid,
-        'details': session.details == null ? null : jsonDecode(session.details!),
-        'status': session.status,
-        'startedAt': session.startedAt.toIso8601String(),
-        'endedAt': session.endedAt?.toIso8601String(),
-        'pausedAt': session.pausedAt?.toIso8601String(),
-      };
+      final z = session.zId == null
+          ? null
+          : await (_database.select(_database.zs)
+                ..where((t) => t.id.equals(session.zId!)))
+              .getSingleOrNull();
+      final sessionData = sessionSyncPayload(session, z)..remove('id');
 
       // Sync to server using single session endpoint (PUT to create/update)
       await _apiService.syncSingleSession(session.code, sessionData);
 
-      // Mark as synced
-      await markSessionsAsSynced([sessionId]);
+      await _markSessionsSyncedIfUnchanged({sessionId: session.updatedAt});
 
       _logger.info('Successfully synced session code=${session.code}');
       return true;
@@ -2516,6 +2587,116 @@ class DataSyncService {
     } catch (e) {
       _logger.warning('syncSessionRules: $e');
       return null;
+    }
+  }
+
+  /// Deliver notifications queued while the network was down.
+  Future<int> syncPendingNotifications() async {
+    try {
+      return await NotificationOutbox(_database, _apiService).flush();
+    } catch (e) {
+      _logger.warning('Notification outbox flush failed: $e');
+      return 0;
+    }
+  }
+
+  /// The tenant's business-day definition from `GET /pos/identity`
+  /// (`timezone`, `businessDayStartHour`). Null on any failure, so the cached
+  /// copy stands.
+  Future<BusinessDayConfig?> syncBusinessDayConfig() async {
+    try {
+      final identity = await _apiService.fetchPosIdentity();
+      if (identity == null || !identity.containsKey('businessDayStartHour')) {
+        return null;
+      }
+      return BusinessDayConfig.fromJson(identity);
+    } catch (e) {
+      _logger.warning('syncBusinessDayConfig: $e');
+      return null;
+    }
+  }
+
+  // ── Cash movements (drawer pay-in / pay-out) ──────────────────────────────
+
+  /// Unsynced movements as push payloads. Attached to their session by
+  /// `sessionCode`; the server links them to the Z itself.
+  Future<List<({int id, String code, Map<String, dynamic> payload})>>
+      getCashMovementsForSync() async {
+    final rows = await (_database.select(_database.cashMovements)
+          ..where((m) => m.isSynced.equals(false)))
+        .get();
+    if (rows.isEmpty) return const [];
+    final sessionIds = rows.map((m) => m.sessionId).whereType<int>().toSet();
+    final sessions = sessionIds.isEmpty
+        ? const <CashSession>[]
+        : await (_database.select(_database.cashSessions)
+              ..where((s) => s.id.isIn(sessionIds)))
+            .get();
+    final codeBySession = {for (final s in sessions) s.id: s.code};
+    return [
+      for (final m in rows)
+        if (m.code != null)
+          (
+            id: m.id,
+            code: m.code!,
+            payload: cashMovementSyncPayload(
+                m, m.sessionId == null ? null : codeBySession[m.sessionId]),
+          ),
+    ];
+  }
+
+  static Map<String, dynamic> cashMovementSyncPayload(
+      CashMovement m, String? sessionCode) {
+    final zDay = m.zDay;
+    return {
+      'code': m.code,
+      'type': m.direction == 'IN' ? 'PAY_IN' : 'PAY_OUT',
+      'amount': m.amount.abs(),
+      'reason': m.reason,
+      if (m.reference != null) 'reference': m.reference,
+      'sessionCode': sessionCode,
+      'userId': m.createdBy,
+      'occurredAt': m.createdAt.toIso8601String(),
+      if (zDay != null)
+        'zDay': '${zDay.year.toString().padLeft(4, '0')}-'
+            '${zDay.month.toString().padLeft(2, '0')}-'
+            '${zDay.day.toString().padLeft(2, '0')}',
+    };
+  }
+
+  /// Push unsynced cash movements (bulk first, one by one on failure).
+  Future<int> syncCashMovementsBulk({int batchSize = 50}) async {
+    try {
+      final pending = await getCashMovementsForSync();
+      if (pending.isEmpty) return 0;
+      final batch = pending.take(batchSize).toList();
+      Future<void> mark(List<int> ids) =>
+          (_database.update(_database.cashMovements)
+                ..where((m) => m.id.isIn(ids)))
+              .write(const CashMovementsCompanion(isSynced: Value(true)));
+      try {
+        await _apiService
+            .syncCashMovements(batch.map((m) => m.payload).toList());
+        await mark(batch.map((m) => m.id).toList());
+        return batch.length;
+      } catch (bulkError) {
+        _logger.warning('Bulk cash movement sync failed: $bulkError');
+        var ok = 0;
+        for (final m in batch) {
+          try {
+            await _apiService.syncSingleCashMovement(m.code, m.payload);
+            await mark([m.id]);
+            ok++;
+          } catch (e) {
+            _logger.error('Cash movement ${m.code} sync failed: $e');
+            if (isNetworkFailure(e)) break;
+          }
+        }
+        return ok;
+      }
+    } catch (e) {
+      _logger.error('Error syncing cash movements: $e');
+      return 0;
     }
   }
 
@@ -2610,12 +2791,16 @@ class DataSyncService {
       await _applySerialConflicts(
           await (deadline == null ? push : push.timeout(deadline)));
 
-      // Mark as synced
-      await markOrdersAsSynced([orderId]);
+      // Mark as synced — but only if nothing was appended to the order while
+      // this push was in flight. The waiter routes write over the LAN while
+      // this runs unawaited, so an unconditional mark here strands their line.
+      await markOrdersAsSyncedIfUnchanged({orderId: order.updatedAt});
 
       _logger.info('Successfully synced order code=${order.code}');
+      _lastFailureWasNetwork = false;
       return true;
     } catch (e) {
+      _lastFailureWasNetwork = isNetworkFailure(e);
       _logger.error('Error syncing single order: $e');
       // Stale unit cache: refresh it so the next attempt (or the cashier's next
       // pick) is made against server truth rather than repeating the failure.
@@ -2814,23 +2999,48 @@ class DataSyncService {
 
       // Try bulk sync first
       try {
+        final pushedAt = _pushedUpdatedAtById(batch);
         await _applySerialConflicts(await _apiService.syncOrders(batch));
-        // Bulk succeeded – mark all as synced
-        final syncedIds = batch.map((o) => o['id'] as int).toList();
-        await markOrdersAsSynced(syncedIds);
+        // Bulk succeeded – mark as synced, minus any order written to while
+        // the batch was in flight (that one re-pushes on the next cycle).
+        await markOrdersAsSyncedIfUnchanged(pushedAt);
         return batch.length;
       } catch (bulkError) {
         // Bulk failed – fall back to individual sync so only confirmed
         // orders get marked as synced (prevents phantom synced orders)
         _logger.warning('Bulk order sync failed, falling back to individual sync: $bulkError');
         int successCount = 0;
+        var networkFailures = 0;
         for (final orderMap in batch) {
           try {
             final orderId = orderMap['id'] as int;
             final success = await syncSingleOrder(orderId);
-            if (success) successCount++;
+            if (success) {
+              successCount++;
+              networkFailures = 0;
+            } else if (_lastFailureWasNetwork) {
+              networkFailures++;
+            } else {
+              // The server answered and refused this particular order. That
+              // says nothing about the next one, so keep going.
+              networkFailures = 0;
+            }
           } catch (e) {
             _logger.error('Individual order sync failed for order #${orderMap['id']}: $e');
+            if (isNetworkFailure(e)) {
+              networkFailures++;
+            } else {
+              networkFailures = 0;
+            }
+          }
+          if (networkFailures >= _networkFailureStreakLimit) {
+            _logger.warning(
+              'Order sync: $networkFailures consecutive network failures — '
+              'abandoning the remaining ${batch.length - batch.indexOf(orderMap) - 1} '
+              'order(s) this cycle. Nothing is lost; they stay unsynced and go '
+              'again next cycle.',
+            );
+            break;
           }
         }
         return successCount;
@@ -2939,33 +3149,29 @@ class DataSyncService {
   /// If the bulk call fails, falls back to individual session sync.
   Future<int> syncSessionsBulk({int batchSize = 50}) async {
     try {
-      // Get sessions for sync
-      final sessions = await getSessionsForSync();
-
+      final sessions = await _sessionsForSync();
       if (sessions.isEmpty) {
         return 0;
       }
 
-      // Take only the specified batch size
       final batch = sessions.take(batchSize).toList();
 
       try {
-        // Sync the batch
-        await _apiService.syncSessions(batch);
-
-        // Mark as synced only after confirmed success
-        final syncedIds = batch.map((s) => s['id'] as int).toList();
-        await markSessionsAsSynced(syncedIds);
-
+        await _apiService.syncSessions(batch.map((e) => e.payload).toList());
+        await _markSessionsSyncedIfUnchanged({
+          for (final e in batch) e.payload['id'] as int: e.updatedAt,
+        });
         return batch.length;
       } catch (bulkError) {
         _logger.warning('Bulk session sync failed, falling back to individual sync: $bulkError');
         int successCount = 0;
-        for (final session in batch) {
+        for (final e in batch) {
+          final session = e.payload;
           try {
             final sessionCode = session['code'] as String;
             await _apiService.syncSingleSession(sessionCode, session);
-            await markSessionsAsSynced([session['id'] as int]);
+            await _markSessionsSyncedIfUnchanged(
+                {session['id'] as int: e.updatedAt});
             successCount++;
           } catch (e) {
             _logger.error('Individual session sync failed for #${session['id']}: $e');
@@ -3511,6 +3717,12 @@ class DataSyncService {
     await pullPaymentDeltas(prefs);
   }
 
+  /// Test seam for the delta reconciler — specifically which local lines a
+  /// server snapshot is allowed to remove. Pure database work, no network.
+  @visibleForTesting
+  Future<void> applyOrderDeltaForTesting(Map<String, dynamic> item) =>
+      _applyOrderDelta(item);
+
   Future<void> _applyOrderDelta(Map<String, dynamic> item) async {
     final code = item['code'] as String;
 
@@ -3523,6 +3735,18 @@ class DataSyncService {
           ..where((o) => o.code.equals(code)))
         .getSingleOrNull();
 
+    // Resolved out here because the companion builder is synchronous. Used
+    // only when neither the server nor the local row supplies a z_day — see
+    // [_orderCompanionFromDelta].
+    //
+    // Deliberately an EXACT session lookup, with no fall-through to whatever
+    // session is open now: a delta carries orders from other terminals and,
+    // after a cursor reset, orders from months ago. Stamping those with this
+    // terminal's current shift would drop a backfill straight into today's Z.
+    final sessionZDay = await ZDayResolver(_database).forSession(
+        existing?.sessionId ??
+            ((item['sessionId'] ?? item['session_id']) as num?)?.toInt());
+
     // Header upsert, product snapshot, and delete/re-insert all commit together.
     // Previously the header was written outside the products transaction, so a
     // crash between them left the header updated with stale or missing products.
@@ -3531,12 +3755,12 @@ class DataSyncService {
     if (existing != null) {
       await (_database.update(_database.orders)
             ..where((o) => o.id.equals(existing.id)))
-          .write(_orderCompanionFromDelta(item, existing));
+          .write(_orderCompanionFromDelta(item, existing, sessionZDay));
       orderId = existing.id;
     } else {
       orderId = await _database
           .into(_database.orders)
-          .insert(_orderCompanionFromDelta(item, null));
+          .insert(_orderCompanionFromDelta(item, null, sessionZDay));
     }
 
     // Load existing lines and index them by (productId, variantId) so each
@@ -3550,21 +3774,79 @@ class DataSyncService {
           ..where((op) => op.orderId.equals(orderId)))
         .get();
     final existingByKey = <(int, int?), List<OrderProduct>>{};
+    final existingByServerId = <int, OrderProduct>{};
     for (final op in existingProductsList) {
       existingByKey.putIfAbsent((op.productId, op.variantId), () => []).add(op);
+      if (op.serverId != null) existingByServerId[op.serverId!] = op;
     }
+    // Rows a server line has already taken. Tracked instead of draining the
+    // queues so an unclaimed row stays visible to the leftover pass below.
+    final claimedRowIds = <int>{};
 
-    final products =
-        ((item['products'] as List?) ?? []).cast<Map<String, dynamic>>();
+    // A delta that carries no `products` key at all is a HEADER-only change
+    // (status, table move, tip). Treating its absent list as "zero lines" would
+    // reconcile every local line away — the same guard the components block
+    // below already applies. Only an explicitly sent list reconciles lines.
+    final rawProducts = item['products'];
+    final hasProductsPayload = rawProducts is List;
+    final products = hasProductsPayload
+        ? rawProducts.cast<Map<String, dynamic>>()
+        : const <Map<String, dynamic>>[];
+
+    // Every server line id this snapshot mentions. A local row whose serverId
+    // is NOT in here has been orphaned: the backend no longer has the line
+    // that id names, so the row was re-keyed rather than duplicated, and it is
+    // free to be re-matched. Without this the re-keyed line could not bind to
+    // anything, so it was INSERTED — and an inserted line starts with empty
+    // client-only fields, i.e. kdsPrintedQuantity 0. The panel then showed the
+    // same food twice: the original under "already sent", the phantom above it
+    // as though the kitchen still owed it.
+    final snapshotServerIds = <int>{
+      for (final p in products)
+        if ((p['id'] as num?) != null) (p['id'] as num).toInt(),
+    };
     for (final p in products) {
       final productId = ((p['productId'] ?? p['product_id']) as num).toInt();
       final variantId = ((p['variantId'] ?? p['variant_id']) as num?)?.toInt();
       final key = (productId, variantId);
 
-      // Match to an existing local row (oldest unmatched of this product/variant).
-      final queue = existingByKey[key];
-      final existingRow =
-          (queue != null && queue.isNotEmpty) ? queue.removeAt(0) : null;
+      // The server's own line id, read up here because matching needs it.
+      final lineServerId = (p['id'] as num?)?.toInt();
+
+      // Identity first, product key second.
+      //
+      // This used to match purely by position within (productId, variantId),
+      // which quietly went wrong whenever an order held two lines of the same
+      // product — routine, since the waiter app's add-product route never
+      // merges into an existing line. The server line would bind to whichever
+      // row happened to be first, stamp ITS server id onto that row, and leave
+      // the row the id actually belonged to unmatched — i.e. a leftover, to be
+      // deleted. A line that was rung up and sent to the kitchen vanished, and
+      // nothing said so.
+      OrderProduct? existingRow;
+      if (lineServerId != null) {
+        final byServerId = existingByServerId[lineServerId];
+        if (byServerId != null && !claimedRowIds.contains(byServerId.id)) {
+          existingRow = byServerId;
+        }
+      }
+      if (existingRow == null) {
+        for (final candidate in existingByKey[key] ?? const <OrderProduct>[]) {
+          if (claimedRowIds.contains(candidate.id)) continue;
+          // A row is free unless THIS snapshot still names its server line —
+          // in which case that line will come along and claim it, and taking
+          // it now would be theft. A row whose id the snapshot never mentions
+          // is orphaned and re-keyable (see [snapshotServerIds]).
+          if (candidate.serverId != null &&
+              candidate.serverId != lineServerId &&
+              snapshotServerIds.contains(candidate.serverId)) {
+            continue;
+          }
+          existingRow = candidate;
+          break;
+        }
+      }
+      if (existingRow != null) claimedRowIds.add(existingRow.id);
 
       // ── Resolve server-owned fields, falling back to the matched local row
       //    when the server omits/zeros a value (same rules as before). ──
@@ -3636,12 +3918,42 @@ class DataSyncService {
           ((p['planWaiterId'] ?? p['plan_waiter_id']) as num?)?.toInt();
       final planResourceId =
           ((p['planResourceId'] ?? p['plan_resource_id']) as num?)?.toInt();
-      // The server's own line id. Refunds must reference it, and this delta is
-      // one of only two places we ever learn it (the other is an explicit
-      // GET /pos/orders/{code}). Absent → keep whatever we already had.
-      final lineServerId = (p['id'] as num?)?.toInt();
+      // (`lineServerId` is parsed at the top of this loop — refunds reference
+      // it, and this delta is one of only two places we ever learn it, the
+      // other being an explicit GET /pos/orders/{code}.)
       final saleUomId =
           ((p['saleUomId'] ?? p['sale_uom_id']) as num?)?.toInt();
+
+      // An EXPLICIT removal, which is the only kind there is. The server
+      // stamps `deletedAt` on the line itself — it has always been in the
+      // payload (`..., options: [...], deletedAt: null`) and was never read.
+      // Nothing to do when the line was never here; never insert one that
+      // arrives already deleted.
+      if ((p['deletedAt'] ?? p['deleted_at']) != null) {
+        if (existingRow != null) {
+          if (existingRow.ticketId != null) {
+            _logger.warning(
+              'pullOrderDelta[$code] server deleted line serverId=$lineServerId '
+              '(id=${existingRow.id} productId=$productId) but it is PAID on '
+              'ticket ${existingRow.ticketId} — keeping it; a reported Z must '
+              'not be rewritten by a pull',
+            );
+          } else {
+            _logger.info(
+              'pullOrderDelta[$code] server deleted line serverId=$lineServerId '
+              '(id=${existingRow.id} productId=$productId '
+              'kdsPrinted=${existingRow.kdsPrintedQuantity})',
+            );
+            await (_database.delete(_database.orderProductComponents)
+                  ..where((c) => c.orderProductId.equals(existingRow!.id)))
+                .go();
+            await (_database.delete(_database.orderProducts)
+                  ..where((op) => op.id.equals(existingRow!.id)))
+                .go();
+          }
+        }
+        continue;
+      }
 
       final int opId;
       if (existingRow != null) {
@@ -3678,6 +3990,24 @@ class DataSyncService {
       } else {
         // No local match → a line added on the server. Client-only fields start
         // empty (never printed, no ticket).
+        //
+        // If the order already holds this product and the kitchen has been told
+        // about it, say so: the insert is about to put a second, unprinted copy
+        // of the same food on the panel, which reads as "the kitchen still owes
+        // this" when it does not. That is a real state — the backend can hold
+        // genuine duplicates, e.g. from a push that timed out client-side after
+        // the server had already applied it — but it is worth seeing rather
+        // than discovering on a ticket.
+        final printedTwin = (existingByKey[key] ?? const <OrderProduct>[])
+            .where((r) => r.kdsPrintedQuantity > 0);
+        if (printedTwin.isNotEmpty) {
+          _logger.warning(
+            'pullOrderDelta[$code] inserting server line $lineServerId '
+            '(productId=$productId) while ${printedTwin.length} already-sent '
+            'local line(s) of the same product exist — the panel will show it '
+            'twice. Check the backend for duplicate lines on this order.',
+          );
+        }
         opId = await _database.into(_database.orderProducts).insert(
               OrderProductsCompanion(
                 orderId: Value(orderId),
@@ -3744,17 +4074,49 @@ class DataSyncService {
     // Any local lines the server no longer lists were removed remotely — drop
     // them and their components. Server order snapshots are complete, so an
     // unmatched local line means a genuine remote removal.
-    final leftoverIds = [
-      for (final q in existingByKey.values)
-        for (final op in q) op.id,
-    ];
-    if (leftoverIds.isNotEmpty) {
-      await (_database.delete(_database.orderProductComponents)
-            ..where((c) => c.orderProductId.isIn(leftoverIds)))
-          .go();
-      await (_database.delete(_database.orderProducts)
-            ..where((op) => op.id.isIn(leftoverIds)))
-          .go();
+    //
+    // Two things are NOT a remote removal, and deleting them loses food a
+    // customer already ordered (and that the kitchen has already printed):
+    //
+    //   * a header-only delta ([hasProductsPayload] false) — the server sent
+    //     no line list at all, so it cannot be asserting an empty one;
+    //   * a line with `serverId == null` — the backend has never seen it, so
+    //     it cannot have deleted it. That is every line added locally since
+    //     the last successful push: the waiter app's add-product route, an
+    //     offline POS edit, anything queued. Those must wait for their push,
+    //     not be reconciled away by the pull that overtakes it.
+    final unmatchedRows = !hasProductsPayload
+        ? const <OrderProduct>[]
+        : [
+            for (final op in existingProductsList)
+              if (!claimedRowIds.contains(op.id) && op.serverId != null) op,
+          ];
+
+    // Absence from a snapshot is NOT a removal, and a pull never subtracts on
+    // its own inference.
+    //
+    // Orders are validated on this till and the backend receives them; it is
+    // not an authority that can take away a line the POS may not even have
+    // managed to send up yet. Deletion is something the server states
+    // explicitly — `deletedAt` on the line (handled in the loop above) or on
+    // the order ([_applyOrderTombstone]) — and that flag has been in the
+    // payload all along. Inferring it from "missing from the list" instead is
+    // what made a till whose push had timed out delete food the kitchen was
+    // already cooking, silently, on the very next pull.
+    //
+    // So these rows are reported and kept. On a healthy till the list is empty;
+    // anything here means the backend is behind this POS, which is a sync
+    // problem to go and look at, not a licence to drop a line.
+    if (unmatchedRows.isNotEmpty) {
+      _logger.info(
+        'pullOrderDelta[$code] keeping ${unmatchedRows.length} local line(s) '
+        'the server did not list (absence is not a deletion): '
+        '${[for (final op in unmatchedRows) '(id=${op.id} serverId=${op.serverId} '
+            'productId=${op.productId} variantId=${op.variantId} '
+            'qty=${op.quantity} kdsPrinted=${op.kdsPrintedQuantity} '
+            'ticketId=${op.ticketId})'].join(', ')} '
+        '— server sent ${products.length} line(s)',
+      );
     }
     }); // end transaction
 
@@ -3778,7 +4140,7 @@ class DataSyncService {
   }
 
   OrdersCompanion _orderCompanionFromDelta(
-      Map<String, dynamic> item, Order? existing) {
+      Map<String, dynamic> item, Order? existing, DateTime? sessionZDay) {
     final now = DateTime.now();
     return OrdersCompanion(
       code: Value(item['code'] as String),
@@ -3862,13 +4224,34 @@ class DataSyncService {
           ((item['sessionId'] ?? item['session_id']) as num?)?.toInt()
           ?? existing?.sessionId),
       zDay: Value(() {
-        // Prefer the server-sent zDay; fall back to deriving from the order date.
+        // Precedence:
+        //  1. the server's zDay, when it echoes one;
+        //  2. the z_day already on the local row;
+        //  3. the order's own SESSION;
+        //  4. the order's date, as a last resort for a remote order that
+        //     names no session we know.
+        //
+        // (2) is the one that matters and the one that was missing. Every
+        // neighbouring field here falls back to `existing` — this did not, so
+        // on a server that does not echo zDay (it is in no response contract
+        // we publish) the branch below ran on every delta and overwrote a
+        // correct z_day with the CALENDAR day of the order's date. An order
+        // rung up at 00:30 inside a 20:00 shift was stamped correctly at
+        // save, pushed correctly once, then silently moved to the next day by
+        // the first pull that touched it — and re-pushed there, which is how
+        // an order ends up reported on the day after its own shift.
+        //
+        // The order's date is no longer reachable for anything we already
+        // hold — it is the moment the order was typed, which is precisely
+        // what a z_day must not be.
         final raw = item['zDay'] ?? item['z_day'];
         if (raw != null) return _parseDateTime(raw);
+        final known = existing?.zDay ?? sessionZDay;
+        if (known != null) return known;
         final orderDate = _parseDateTime(item['date'] ?? item['createdAt']) ??
             existing?.date ??
             now;
-        return DateTime(orderDate.year, orderDate.month, orderDate.day);
+        return ZDayResolver.dayOf(orderDate);
       }()),
       createdAt: Value(
           _parseDateTime(item['createdAt'] ?? item['created_at']) ??

@@ -17,7 +17,10 @@ import '../utils/order_code.dart';
 import 'database_providers.dart';
 import 'network_provider.dart';
 import 'settings_provider.dart';
+import '../services/waiter_kitchen_events.dart';
 import '../services/product_cost_resolver.dart';
+import '../services/z_day_resolver.dart';
+import '../services/pos_notifications.dart';
 
 // Current Order State Provider
 /// What an order contains, condensed for a pick-list row.
@@ -299,6 +302,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = CurrentOrder(
       orderId: state.orderId,
       orderCode: state.orderCode,
+      sessionOrderNo: state.sessionOrderNo,
       items: state.items,
       tableId: state.tableId,
       tableName: state.tableName,
@@ -328,6 +332,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = CurrentOrder(
       orderId: state.orderId,
       orderCode: state.orderCode,
+      sessionOrderNo: state.sessionOrderNo,
       items: state.items,
       tableId: state.tableId,
       tableName: state.tableName,
@@ -356,6 +361,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
     state = CurrentOrder(
       orderId: state.orderId,
       orderCode: state.orderCode,
+      sessionOrderNo: state.sessionOrderNo,
       items: state.items,
       tableId: state.tableId,
       tableName: state.tableName,
@@ -388,6 +394,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
         ? CurrentOrder(
             orderId: state.orderId,
             orderCode: state.orderCode,
+            sessionOrderNo: state.sessionOrderNo,
             items: state.items,
             tableId: state.tableId,
             tableName: state.tableName,
@@ -579,27 +586,12 @@ class OrderRepository {
 
   // Returns z_day derived from a SPECIFIC session (the one the order belongs
   // to), so a saved order's z_day matches its own session rather than merely
-  // the currently-open one. Falls back to the current/today z_day when the
-  // session id is null or the row can't be found.
-  Future<DateTime> _zDayForSessionId(int? sessionId) async {
-    if (sessionId != null) {
-      final s = await (_database.select(_database.cashSessions)
-            ..where((t) => t.id.equals(sessionId)))
-          .getSingleOrNull();
-      if (s != null) {
-        // Prefer the session's Z opening day (all sessions in a Z share it);
-        // fall back to the session's own opening day for pre-Z / disabled rows.
-        if (s.zId != null) {
-          final z = await (_database.select(_database.zs)
-                ..where((t) => t.id.equals(s.zId!)))
-              .getSingleOrNull();
-          if (z != null) return zDayForZ(z);
-        }
-        return zDayForSession(s);
-      }
-    }
-    return _currentZDay();
-  }
+  // the currently-open one. Falls back to the session open now, and only then
+  // to today — see [ZDayResolver] for why the fallback reads the DB rather
+  // than the in-memory session.
+  Future<DateTime> _zDayForSessionId(int? sessionId) async =>
+      await ZDayResolver(_database).forSessionOrCurrent(sessionId) ??
+      _currentZDay();
 
   /// Settle one order fully as cash: insert a CASH ticket covering the
   /// remaining [due], mark every still-unpaid line PAID + attach the ticket
@@ -777,6 +769,9 @@ class OrderRepository {
           clientId: Value(order.customerId),
           commercialId: Value(order.commercialId),
           sessionId: Value(sessionId),
+          sessionOrderNo: Value(await _database.nextSessionOrderNo(sessionId,
+              mode: _ref?.read(settingsProvider).orderNumberResetMode ??
+                  'session')),
           zDay: Value(zDay),
           date: Value(DateTime.now()),
           createdAt: Value(DateTime.now()),
@@ -847,6 +842,10 @@ class OrderRepository {
     // Log order creation
     await _logService.logOrderCreated(orderId, 'Order created with code $orderCode, status $status');
     _audit((log, uid, uname) => log.logOrderCreated(orderCode, userId: uid, username: uname));
+    final reader = _ref;
+    if (reader != null) {
+      notifyDiscounts(reader.read, orderCode: orderCode, order: order);
+    }
 
     // Auto-sync if network is available. Detached: the order is already
     // durable (committed above with isSynced = false), so the cashier must not
@@ -926,7 +925,20 @@ class OrderRepository {
     return orderId;
   }
 
-  Future<void> updateOrder(CurrentOrder order, {bool queueSyncOperation = true}) async {
+  /// Persist [order].
+  ///
+  /// [headerOnly] writes the order's own fields — discount, note, covers, tip,
+  /// table, customer — and leaves `order_products` completely alone.
+  ///
+  /// That is the shape a cashier is allowed on a WAITER's order: the remise and
+  /// the note are the cashier's business, the lines are the waiter's. It is
+  /// enforced here rather than by refusing to save at all, because refusing
+  /// meant a cashier could apply a remise, hit Print, and watch it silently not
+  /// stick. Doing it in the repository also means the guarantee does not depend
+  /// on the panel having disabled the right buttons: even a cart whose items
+  /// were somehow altered cannot write a line through this path.
+  Future<void> updateOrder(CurrentOrder order,
+      {bool queueSyncOperation = true, bool headerOnly = false}) async {
     int orderId = order.orderId!;
 
     final existingOrder = await (_database.select(_database.orders)
@@ -962,7 +974,12 @@ class OrderRepository {
     // exception is an order just re-homed out of a closed shift: its lines
     // belong to the Z-day now collecting them, not to the one that already
     // reported without them.
-    final orderZDay = rehomedZDay ?? existingOrder?.zDay ?? _currentZDay();
+    // Last resort resolves through the order's OWN session, not the clock: an
+    // order with no z_day yet still knows which shift it belongs to, and that
+    // shift is the answer even when the save happens after midnight.
+    final orderZDay = rehomedZDay ??
+        existingOrder?.zDay ??
+        await _zDayForSessionId(existingOrder?.sessionId);
 
     // Count unpaid items to be updated
     final unpaidItems = order.items.where((item) => item.ticketId == null).toList();
@@ -982,6 +999,17 @@ class OrderRepository {
     // variant collapse into one entry whose value is the summed quantity, so
     // a partial reduction (e.g. removing one of two Pizzas) still surfaces.
     final removedSnapshot = <String, double>{};
+
+    // Unit price per key, captured with the snapshot so an annulment can be
+    // valued after the row it describes has been deleted. Last writer wins —
+    // two lines of the same product+variant at different prices are already
+    // collapsed into one snapshot entry, and the report wants an order of
+    // magnitude, not a per-line audit.
+    final removedPrices = <String, double>{};
+
+    // Per-unit manual discount each line carried before this save, so a remise
+    // added now is told apart from one already reported.
+    final previousLineDiscount = <String, double>{};
 
     // Per product+variant, how much of it the kitchen has been asked to cook.
     // Compared against what survives this save to work out what somebody is
@@ -1015,18 +1043,77 @@ class OrderRepository {
         note: Value(order.note),
         discountReason: Value(order.discountReason),
         address: Value(order.deliveryAddress),
+        // The header's z_day was computed above but only ever written onto the
+        // lines, so an order that arrived without one (a delivery-queue order,
+        // a legacy row) kept a null header z_day while its lines carried the
+        // right day — and the header is what the order push sends. Written
+        // only when it actually moves: re-homing out of a closed shift, or
+        // filling in a null. An order already sitting on its own day is left
+        // exactly where it is.
+        zDay: rehomedZDay != null || existingOrder?.zDay == null
+            ? Value(orderZDay)
+            : const Value<DateTime?>.absent(),
         updatedAt: Value(DateTime.now()),
 
         // Mark as not synced if changes were made to a previously synced order
         isSynced: Value(wasAlreadySynced ? false : existingOrder?.isSynced ?? false),
       ));
 
-      final existingUnpaidRows = await (_database.select(_database.orderProducts)
+      // Header written, lines untouched — see [headerOnly].
+      if (headerOnly) return;
+
+      final allUnpaidRows = await (_database.select(_database.orderProducts)
             ..where((t) => t.orderId.equals(orderId) & t.ticketId.isNull()))
           .get();
+
+      // Lines this cart never saw: written into the order AFTER it was loaded,
+      // by something that is not this screen — the waiter app's add-product
+      // route inserts straight into `order_products` over the LAN, and the
+      // cashier's panel is never told.
+      //
+      // The save below wipes every unpaid row and re-inserts `order.items`.
+      // That is correct for a line the cart loaded and the cashier then
+      // dropped (a genuine removal), and catastrophic for one the cart never
+      // held: it cannot be asserting the removal of something it does not know
+      // exists. Both look the same by id — absent from `order.items` — so the
+      // load watermark breaks the tie. Without this, every waiter item added
+      // while the cashier had the table open vanished on the next save, after
+      // the kitchen had already cooked it.
+      //
+      // No watermark (a cart that was never loaded from the database) means no
+      // foreign rows, which is exactly the old behaviour.
+      final cartRowIds = {
+        for (final item in order.items)
+          if (item.ticketId == null && item.id != null) item.id!,
+      };
+      final loadedAt = order.loadedAt;
+      final foreignRows = <OrderProduct>[];
+      final existingUnpaidRows = <OrderProduct>[];
+      for (final row in allUnpaidRows) {
+        // `>=`, not `>`: Windows hands out the same `DateTime.now()` for calls
+        // milliseconds apart (measured: two ticks in five collide), so a
+        // strict comparison threw away the line it was written to save. A row
+        // the cart genuinely loaded existed before the read that loaded it and
+        // is excluded by id above, so the tie can only be a row written in the
+        // same tick — and keeping food nobody cancelled is the safe way to be
+        // wrong.
+        final isForeign = loadedAt != null &&
+            !cartRowIds.contains(row.id) &&
+            !row.updatedAt.isBefore(loadedAt);
+        (isForeign ? foreignRows : existingUnpaidRows).add(row);
+      }
+      final foreignIds = [for (final row in foreignRows) row.id];
+      if (foreignIds.isNotEmpty) {
+        _logger.info(
+            'updateOrder: preserving ${foreignIds.length} line(s) added to '
+            'order $orderId since the cart was loaded');
+      }
+
       for (final row in existingUnpaidRows) {
         final key = '${row.productId}:${row.variantId ?? -1}';
         removedSnapshot[key] = (removedSnapshot[key] ?? 0) + row.quantity;
+        removedPrices[key] = row.unitaryPrice;
+        previousLineDiscount[key] = row.manualDiscount;
         // What the KITCHEN was told, which is a different question from what
         // the bill said: a line can be rung up and pulled before it is ever
         // sent, and that needs no cancellation ticket.
@@ -1054,8 +1141,15 @@ class OrderRepository {
       // is correct: it joins the first ticket as a leftover.
       final rowIdRemap = <int, int>{};
 
-      // Delete existing unpaid order products (keep paid ones)
-      await (_database.delete(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))..where((tbl) => tbl.ticketId.isNull())).go();
+      // Delete existing unpaid order products (keep paid ones, and keep the
+      // lines added behind this cart's back — see `foreignRows` above).
+      final wipe = _database.delete(_database.orderProducts)
+        ..where((tbl) => tbl.orderId.equals(orderId))
+        ..where((tbl) => tbl.ticketId.isNull());
+      if (foreignIds.isNotEmpty) {
+        wipe.where((tbl) => tbl.id.isNotIn(foreignIds));
+      }
+      await wipe.go();
 
       // Insert new order products
       final costResolver = ProductCostResolver(_database);
@@ -1080,6 +1174,9 @@ class OrderRepository {
             note: Value(item.note),
             unitaryTva: Value(item.tva),
             state: Value('PENDING'),
+            // The row is being re-created, not re-sold: hand back the id the
+            // backend knows it by, or the next push invents a second line.
+            serverId: Value(item.serverId),
             zDay: Value(orderZDay),
             planStartAt: Value(item.planStartAt),
             planEndAt: Value(item.planEndAt),
@@ -1131,6 +1228,14 @@ class OrderRepository {
           survivingByKey[key] = (survivingByKey[key] ?? 0) + item.quantity;
           itemByKey.putIfAbsent(key, () => item);
         }
+        // Preserved lines are still on the order, so the kitchen is not
+        // cooking them for nothing. Counting them here stops the block below
+        // firing a cancellation ticket for food that is very much still
+        // wanted, and stops it clawing back their printed-quantity cursor.
+        for (final row in foreignRows) {
+          final key = '${row.productId}:${row.variantId ?? -1}';
+          survivingByKey[key] = (survivingByKey[key] ?? 0) + row.quantity;
+        }
         for (final entry in kitchenSent.entries) {
           final gone = cancelledQuantity(
             sent: entry.value,
@@ -1153,16 +1258,21 @@ class OrderRepository {
           final parts = key.split(':');
           final productId = int.parse(parts[0]);
           final variantId = int.parse(parts[1]);
-          await (_database.update(_database.orderProducts)
-                ..where((t) =>
-                    t.orderId.equals(orderId) &
-                    t.ticketId.isNull() &
-                    t.productId.equals(productId) &
-                    (variantId == -1
-                        ? t.variantId.isNull()
-                        : t.variantId.equals(variantId)) &
-                    t.kdsPrintedQuantity.isBiggerThanValue(remaining)))
-              .write(OrderProductsCompanion(
+          final clamp = _database.update(_database.orderProducts)
+            ..where((t) =>
+                t.orderId.equals(orderId) &
+                t.ticketId.isNull() &
+                t.productId.equals(productId) &
+                (variantId == -1
+                    ? t.variantId.isNull()
+                    : t.variantId.equals(variantId)) &
+                t.kdsPrintedQuantity.isBiggerThanValue(remaining));
+          // This cart never held the preserved lines, so it has no business
+          // rewriting what the kitchen was told about them.
+          if (foreignIds.isNotEmpty) {
+            clamp.where((t) => t.id.isNotIn(foreignIds));
+          }
+          await clamp.write(OrderProductsCompanion(
             kdsPrintedQuantity: Value(remaining),
           ));
         }
@@ -1241,6 +1351,16 @@ class OrderRepository {
     // Log order update
     await _logService.logOrderUpdated(orderId, 'Order updated: code=$orderCode');
     _audit((log, uid, uname) => log.logOrderUpdated(orderCode, userId: uid, username: uname));
+    final reader = _ref;
+    if (reader != null) {
+      notifyDiscounts(
+        reader.read,
+        orderCode: orderCode,
+        order: order,
+        previousPercent: existingOrder?.discountPercentage ?? 0,
+        previousLineDiscount: previousLineDiscount,
+      );
+    }
 
     // Subtract the new state from the snapshot — anything left is what got
     // removed (whole line dropped OR quantity reduced). We do this AFTER the
@@ -1256,7 +1376,8 @@ class OrderRepository {
       }
     }
     if (removedSnapshot.isNotEmpty) {
-      await _logRemovedItems(orderId, orderCode, removedSnapshot);
+      await _logRemovedItems(orderId, orderCode, removedSnapshot,
+          prices: removedPrices, kitchenSent: kitchenSent);
     }
   }
 
@@ -1264,7 +1385,9 @@ class OrderRepository {
   /// writes both the technical (`OrderLogs`) and audit (`ActivityLogs`) lines.
   /// Wrapped in try/catch — a logging failure must never abort an order save.
   Future<void> _logRemovedItems(
-      int orderId, String orderCode, Map<String, double> removed) async {
+      int orderId, String orderCode, Map<String, double> removed,
+      {Map<String, double> prices = const {},
+      Map<String, double> kitchenSent = const {}}) async {
     try {
       final productIds = <int>{};
       final variantIds = <int>{};
@@ -1310,8 +1433,80 @@ class OrderRepository {
       await _logService.logOrderUpdated(orderId, 'Items removed: $summary');
       _audit((log, uid, uname) =>
           log.logOrderItemsRemoved(orderCode, summary, userId: uid, username: uname));
+
+      // Structured tombstones for the Z. The sentence above is for a human to
+      // read; these are what the report totals.
+      final orderRow = await (_database.select(_database.orders)
+            ..where((o) => o.id.equals(orderId)))
+          .getSingleOrNull();
+      final actor = _ref?.read(currentUserProvider);
+      await recordRemovedItems([
+        for (final entry in removed.entries)
+          () {
+            final split = entry.key.split(':');
+            final pid = int.parse(split[0]);
+            final vid = int.parse(split[1]);
+            final price = prices[entry.key] ?? 0.0;
+            final productName = productsById[pid]?.name ?? 'item #$pid';
+            return RemovedOrderItemsCompanion.insert(
+              orderId: orderId,
+              orderCode: Value(orderCode),
+              sessionId: Value(orderRow?.sessionId),
+              zDay: Value(orderRow?.zDay),
+              productId: pid,
+              variantId: Value(vid == -1 ? null : vid),
+              productName: productName,
+              variantName:
+                  Value(vid != -1 ? variantsById[vid]?.name : null),
+              quantity: entry.value,
+              unitaryPrice: Value(price),
+              amount: Value(entry.value * price),
+              wasSentToKitchen: Value((kitchenSent[entry.key] ?? 0) > 0),
+              source: const Value('POS'),
+              removedBy: Value(actor?.id),
+              removedByName: Value(actor?.effectiveDisplayName),
+            );
+          }(),
+      ]);
+
+      // ignore: unawaited_futures
+      _ref?.read(waiterKitchenEventServiceProvider).linesCanceled(
+            orderId: orderId,
+            lines: [
+              for (final entry in removed.entries)
+                () {
+                  final split = entry.key.split(':');
+                  final pid = int.parse(split[0]);
+                  final vid = int.parse(split[1]);
+                  final productName = productsById[pid]?.name ?? 'item #$pid';
+                  final variantName =
+                      vid != -1 ? variantsById[vid]?.name : null;
+                  return CanceledLine(
+                    name: variantName != null
+                        ? '$productName ($variantName)'
+                        : productName,
+                    quantity: entry.value,
+                  );
+                }(),
+            ],
+          );
     } catch (e) {
       _logger.error('Failed to log removed items for order $orderCode: $e');
+    }
+  }
+
+  /// Persist annulment tombstones. Best-effort by design: a failure here must
+  /// never abort the save that produced it, and a missing Z line is a smaller
+  /// problem than a lost order edit.
+  Future<void> recordRemovedItems(
+      List<RemovedOrderItemsCompanion> rows) async {
+    if (rows.isEmpty) return;
+    final reader = _ref;
+    if (reader != null) notifyRemovedItems(reader.read, rows);
+    try {
+      await _database.batch((b) => b.insertAll(_database.removedOrderItems, rows));
+    } catch (e) {
+      _logger.error('Failed to record removed-item tombstones: $e');
     }
   }
 
@@ -1561,6 +1756,9 @@ class OrderRepository {
           // number is looked up below rather than stored on the line.
           serialId: orderProduct.serialId,
           serialNumber: serialNumberById[orderProduct.serialId],
+          // Round-trips through the delete-and-reinsert in [updateOrder] —
+          // see the field's own doc comment for what dropping it costs.
+          serverId: orderProduct.serverId,
         ));
       }
     }
@@ -1602,6 +1800,7 @@ class OrderRepository {
     return CurrentOrder(
       orderId: order.id,
       orderCode: order.code,
+      sessionOrderNo: order.sessionOrderNo,
       items: items,
       numberOfPersons: numberOfPersons,
 
@@ -1627,6 +1826,10 @@ class OrderRepository {
       // raised this" from waiterId — a cashier can attach a waiter to their
       // own order. See `isWaiterRaisedOrder`.
       source: order.source,
+      // Stamped on the way out so [updateOrder] can tell lines this cart has
+      // seen from lines written into the order behind its back (the waiter
+      // app's add-product route). See [CurrentOrder.loadedAt].
+      loadedAt: DateTime.now(),
     );
   }
 
@@ -1755,6 +1958,17 @@ class OrderRepository {
         ? Value(sessionId)
         : const Value<int?>.absent();
 
+    // z_day follows the session onto the order, always. Stamping one without
+    // the other left confirmed orders (an ONHOLD cart, a delivery-queue order)
+    // sitting in a session with a null z_day, and a null z_day is what makes
+    // the backend fall back to `createdAt` — which for anything confirmed
+    // after midnight, or ingested from a platform that timestamped it
+    // yesterday, is the wrong day.
+    final zDayToStamp = sessionIdToStamp.present || currentOrder?.zDay == null
+        ? Value(await _zDayForSessionId(
+            sessionIdToStamp.present ? sessionId : currentOrder?.sessionId))
+        : const Value<DateTime?>.absent();
+
     // On confirmation (ONHOLD → anything else), stamp the confirming user + optional waiter
     final isConfirming = oldStatus == 'ONHOLD' && status != 'ONHOLD';
 
@@ -1767,6 +1981,7 @@ class OrderRepository {
       // Set cancellation reason when cancelled, clear it otherwise
       cancellationReason: Value(status == 'CANCELED' ? cancellationReason : null),
       sessionId: sessionIdToStamp,
+      zDay: zDayToStamp,
       createdBy: isConfirming && userId != null
           ? Value(userId)
           : const Value<int?>.absent(),
@@ -1779,6 +1994,24 @@ class OrderRepository {
     );
 
     await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(updateCompanion);
+
+    final reader = _ref;
+    if (reader != null && status == 'CANCELED' && oldStatus != 'CANCELED') {
+      try {
+        final amount = (await getOrderTotals([orderId]))[orderId] ?? 0.0;
+        final actor = reader.read(currentUserProvider);
+        notifyOrderCancelled(
+          reader.read,
+          orderCode: orderCode,
+          amount: amount,
+          reason: cancellationReason,
+          byName: actor?.effectiveDisplayName,
+          byId: actor?.id ?? userId,
+        );
+      } catch (e) {
+        _logger.warning('Cancel notification skipped: $e');
+      }
+    }
 
     // Cancellation has to reach the tickets, or the money stays in the books.
     //
@@ -1880,6 +2113,28 @@ class OrderRepository {
     // The kitchen keeps cooking until somebody says otherwise.
     if (cancelledWhole.isNotEmpty) {
       await _printKitchenCancellation(orderId, cancelledWhole);
+    }
+
+    if (status == 'CANCELED' &&
+        currentOrder != null &&
+        currentOrder.status != 'CANCELED') {
+      // ignore: unawaited_futures
+      _ref?.read(waiterKitchenEventServiceProvider).linesCanceled(
+            orderId: orderId,
+            wholeOrder: true,
+            reason: cancellationReason,
+            lines: [
+              for (final i in cancelledWhole)
+                CanceledLine(
+                  lineId: i.id,
+                  name: i.variantName != null
+                      ? '${i.productName} (${i.variantName})'
+                      : i.productName,
+                  quantity: i.quantity,
+                  courseNo: i.courseNo,
+                ),
+            ],
+          );
     }
   }
 
@@ -2361,6 +2616,16 @@ class OrderRepository {
       CustomExpression<bool>("substr(${col.name}, 1, 10) <= '${_dayStr(day)}'");
 
   // Get paginated orders with full details - real database-level pagination
+  /// The per-session order number a search box query asks for ("12" or
+  /// "#12"), or null when it is not one or the feature is switched off.
+  int? _searchedOrderNo(String query) {
+    if (_ref?.read(settingsProvider).showOrderNumberInLists != true) {
+      return null;
+    }
+    final q = query.trim();
+    return int.tryParse(q.startsWith('#') ? q.substring(1) : q);
+  }
+
   Future<PaginatedOrders> getPaginatedOrdersWithFullDetails({
     required int page,
     required int pageSize,
@@ -2429,9 +2694,11 @@ class OrderRepository {
       List<Order> postSqlOrders = allOrders;
       if (searchQuery != null && searchQuery.isNotEmpty) {
         final searchLower = searchQuery.toLowerCase();
+        final searchNo = _searchedOrderNo(searchQuery);
         final filteredOrders = <Order>[];
         for (final order in allOrders) {
-          if (order.code.toLowerCase().contains(searchLower)) {
+          if (order.code.toLowerCase().contains(searchLower) ||
+              (searchNo != null && order.sessionOrderNo == searchNo)) {
             filteredOrders.add(order);
             continue;
           }
@@ -2548,9 +2815,11 @@ class OrderRepository {
     List<Order> ordersToProcess;
     if (searchQuery != null && searchQuery.isNotEmpty) {
       final searchLower = searchQuery.toLowerCase();
+      final searchNo = _searchedOrderNo(searchQuery);
       ordersToProcess = [];
       for (final order in allFilteredOrders) {
-        if (order.code.toLowerCase().contains(searchLower)) {
+        if (order.code.toLowerCase().contains(searchLower) ||
+            (searchNo != null && order.sessionOrderNo == searchNo)) {
           ordersToProcess.add(order);
           continue;
         }
@@ -2991,6 +3260,7 @@ class OrderRepository {
       totalTva: totalTva,
       total: total,
       totalPaid: totalPaid,
+      deliveryFee: order.deliveryFee ?? 0.0,
       items: itemDetails,
       isZLocked: isZLocked,
     );

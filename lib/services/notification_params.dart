@@ -1,3 +1,4 @@
+import 'cash_report_sections.dart';
 import 'daily_summary_service.dart';
 
 /// Builders for `POST /api/pos/notify` `params` payloads.
@@ -64,12 +65,19 @@ class NotificationParams {
   /// Variance 0.00" in green. Keeping the two in step matters more than matching
   /// the older formula, and it agrees with the session email-report contract,
   /// which defines moneyAtEnd as "open + cash sales − refunds − payouts".
+  ///
+  /// [sections] (the session's banded report) and [zDay] / [zSeq] add the
+  /// detail keys; each is omitted when its source is unavailable.
   static Map<String, String> sessionClosed({
     required String terminalName,
     required SessionSummaryReport report,
     required DateTime closedAt,
     required double expectedCash,
     required String currency,
+    CashReportSections? sections,
+    String? zDay,
+    int? zSeq,
+    bool autoClosed = false,
   }) {
     final s = report;
     // Whole minutes, never negative — a clock adjustment mid-shift must not
@@ -102,8 +110,186 @@ class NotificationParams {
       if (s.variance != null) 'variance': _money(s.variance!),
       if (s.countNotes != null && s.countNotes!.trim().isNotEmpty)
         'countNotes': s.countNotes!.trim(),
+      'cancelledCount': s.cancelledTickets.toString(),
+      'unpaidOrders': s.unpaidOrders.toString(),
+      'refundsTotal': _money(s.refundsTotal),
+      'refundsCash': _money(s.refundsCash),
+      'cashPaidIn': _money(s.cashPaidIn),
+      'cashPaidOut': _money(s.cashPaidOut),
+      'deliveryFees': _money(s.deliveryFees),
+      if (zDay != null) 'zDay': zDay,
+      if (zSeq != null) 'zSeq': zSeq.toString(),
+      if (autoClosed) 'autoClosed': 'true',
+      ..._sectionKeys(sections),
     };
   }
+
+  /// Detail keys shared by the session and Z close cards, from the banded
+  /// report: sales before and after discounts, tax, covers, and what was
+  /// struck off saved orders.
+  static Map<String, String> _sectionKeys(CashReportSections? sections) {
+    if (sections == null) return const {};
+    final g = sections.general;
+    final i = sections.indicators;
+    final removed = sections.removedItems;
+    return {
+      'grossSales': _money(g.grossSales),
+      'discountsTotal': _money(g.discounts),
+      'netSales': _money(i.netSales),
+      'vatTotal': _money(sections.vatTotalVat),
+      'covers': i.covers.toString(),
+      'averageTicket': _money(i.averageTicket),
+      'voidedLinesCount': removed.lineCount.toString(),
+      'voidedLinesAmount': _money(removed.amount),
+    };
+  }
+
+  /// `POS_Z_CLOSED` — the day close, summed over every session of the Z.
+  /// Envelope `refId` is `"<zDay>#<zSeq>"`.
+  static Map<String, String> zClosed({
+    required String terminalName,
+    required String zDay,
+    required int zSeq,
+    required String closeMode,
+    String? closedByName,
+    required DateTime openedAt,
+    required DateTime closedAt,
+    required DailySummaryReport report,
+    required String currency,
+    int autoClosedSessions = 0,
+    bool overridden = false,
+  }) {
+    final r = report;
+    double? counted;
+    double? variance;
+    var refunds = 0.0, paidIn = 0.0, paidOut = 0.0;
+    for (final s in r.sessions) {
+      if (s.countedCash != null) counted = (counted ?? 0) + s.countedCash!;
+      if (s.variance != null) variance = (variance ?? 0) + s.variance!;
+      refunds += s.refundsTotal;
+      paidIn += s.cashPaidIn;
+      paidOut += s.cashPaidOut;
+    }
+    final minutes = closedAt.difference(openedAt).inMinutes;
+    final total = r.totalPaidByCash +
+        r.totalPaidByCard +
+        r.totalPaidByPhone +
+        r.totalPaidByOther;
+    return {
+      'v': version,
+      'terminalName': terminalName,
+      'zDay': zDay,
+      'zSeq': zSeq.toString(),
+      'closeMode': closeMode,
+      if (closedByName != null && closedByName.trim().isNotEmpty)
+        'closedByName': closedByName.trim(),
+      'openedAt': _localIso(openedAt),
+      'closedAt': _localIso(closedAt),
+      'durationMinutes': (minutes < 0 ? 0 : minutes).toString(),
+      'currency': currency,
+      'sessionsCount': r.totalSessions.toString(),
+      if (autoClosedSessions > 0)
+        'autoClosedSessions': autoClosedSessions.toString(),
+      if (overridden) 'overridden': 'true',
+      'totalAmount': _money(total),
+      'totalCash': _money(r.totalPaidByCash),
+      'totalCard': _money(r.totalPaidByCard),
+      'totalPhone': _money(r.totalPaidByPhone),
+      'totalOther': _money(r.totalPaidByOther),
+      'ordersCount': r.totalOrders.toString(),
+      'ticketsCount': r.totalTickets.toString(),
+      'unpaidOrders': r.totalUnpaidOrders.toString(),
+      'unpaidAmount': _money(r.totalUnpaidAmount),
+      'cancelledCount': r.totalCancelledTickets.toString(),
+      'cancelledAmount': _money(r.totalCancelledAmount),
+      'refundsTotal': _money(refunds),
+      'cashPaidIn': _money(paidIn),
+      'cashPaidOut': _money(paidOut),
+      'deliveryFees': _money(r.totalDeliveryFees),
+      if (counted != null) 'countedCash': _money(counted),
+      if (variance != null) 'variance': _money(variance),
+      ..._sectionKeys(r.sections),
+    };
+  }
+
+  /// `POS_DISCOUNT_APPLIED` — a remise given on a whole order or on one line.
+  /// [scope] is `ORDER` or `LINE`; [percent] only for a percentage discount.
+  /// Envelope `refId` is the order code.
+  static Map<String, String> discountApplied({
+    required String terminalName,
+    required String scope,
+    required String orderCode,
+    required double amount,
+    double? percent,
+    String? productName,
+    double? quantity,
+    double? totalBefore,
+    double? totalAfter,
+    String? reason,
+    String? cashierName,
+    int? cashierId,
+    required DateTime at,
+    required String currency,
+  }) =>
+      {
+        'v': version,
+        'terminalName': terminalName,
+        'scope': scope,
+        'orderCode': orderCode,
+        'amount': _money(amount),
+        if (percent != null && percent > 0) 'percent': _money(percent),
+        if (productName != null && productName.isNotEmpty)
+          'productName': productName,
+        if (quantity != null) 'quantity': _qty(quantity),
+        if (totalBefore != null) 'totalBefore': _money(totalBefore),
+        if (totalAfter != null) 'totalAfter': _money(totalAfter),
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+        if (cashierName != null && cashierName.trim().isNotEmpty)
+          'cashierName': cashierName.trim(),
+        if (cashierId != null) 'cashierId': cashierId.toString(),
+        'at': _localIso(at),
+        'currency': currency,
+      };
+
+  /// `POS_CANCELLATION` — money taken off after the fact. [kind] is `ORDER`
+  /// (a whole order voided), `LINE` (a line removed from a saved order) or
+  /// `REFUND`. [afterKitchen] marks food the kitchen had already been told to
+  /// make. Envelope `refId` is the order code.
+  static Map<String, String> cancellation({
+    required String terminalName,
+    required String kind,
+    required String orderCode,
+    required double amount,
+    String? productName,
+    double? quantity,
+    bool afterKitchen = false,
+    String? reason,
+    String? cashierName,
+    int? cashierId,
+    required DateTime at,
+    required String currency,
+  }) =>
+      {
+        'v': version,
+        'terminalName': terminalName,
+        'kind': kind,
+        'orderCode': orderCode,
+        'amount': _money(amount),
+        if (productName != null && productName.isNotEmpty)
+          'productName': productName,
+        if (quantity != null) 'quantity': _qty(quantity),
+        if (afterKitchen) 'afterKitchen': 'true',
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+        if (cashierName != null && cashierName.trim().isNotEmpty)
+          'cashierName': cashierName.trim(),
+        if (cashierId != null) 'cashierId': cashierId.toString(),
+        'at': _localIso(at),
+        'currency': currency,
+      };
+
+  /// Whole quantities bare, weighed ones to 3 decimals.
+  static String _qty(double q) =>
+      q == q.roundToDouble() ? q.toStringAsFixed(0) : q.toStringAsFixed(3);
 
   /// Max lengths the contract states for `GENERAL`. Enforced client-side so a
   /// long message is truncated into a usable push rather than silently rejected

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../providers/database_providers.dart';
 import '../providers/settings_provider.dart';
+import '../providers/business_day_provider.dart';
 import '../providers/session_rules_provider.dart';
 import '../services/api_service.dart';
 import '../services/data_sync_service.dart';
@@ -348,6 +349,10 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
     final rules = await syncService.syncSessionRules();
     if (rules != null) {
       ref.read(sessionRulesProvider.notifier).updateRules(rules);
+    }
+    final businessDay = await syncService.syncBusinessDayConfig();
+    if (businessDay != null) {
+      await ref.read(businessDayProvider.notifier).update(businessDay);
     }
 
     state = state.copyWith(lastFullSyncTime: DateTime.now());

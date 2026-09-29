@@ -28,6 +28,80 @@ class SseEvent {
   const SseEvent(this.type, this.data);
 }
 
+/// What the SSE pipe is doing right now.
+///
+/// Exists because "is the backend push working?" was previously answerable
+/// only by reading the log file: the service reconnects silently, so a till
+/// that had not received an order in hours looked identical to a quiet one.
+enum SseConnectionState {
+  /// Not running — no user, or the admin switch is off.
+  stopped,
+
+  /// A connect attempt is in flight.
+  connecting,
+
+  /// Connected and the stream is open.
+  live,
+
+  /// Dropped, waiting on the backoff timer to try again.
+  retrying,
+
+  /// The server answered, but not with a usable stream (non-200, or a
+  /// content-type that is not `text/event-stream`). Distinct from [retrying]
+  /// because this one will not fix itself — it is a config or auth fault.
+  rejected,
+}
+
+/// A snapshot of the SSE connection for display.
+///
+/// [lastFrameAt] is any frame including heartbeats, which is the honest
+/// liveness signal: the server sends one every 25s, so a `live` status whose
+/// last frame is minutes old means the pipe is dead but not yet timed out.
+@immutable
+class SseStatus {
+  final SseConnectionState state;
+  final DateTime? connectedAt;
+  final DateTime? lastFrameAt;
+
+  /// Business events delivered this run — heartbeats excluded, because a
+  /// count that ticks up on its own tells the operator nothing.
+  final int eventCount;
+
+  /// Connect attempts this run. Climbing while never reaching [live] is the
+  /// signature of the connect→reconnect loop.
+  final int attempts;
+
+  /// Why it is not live, when it is not. Shown verbatim.
+  final String? detail;
+
+  const SseStatus({
+    this.state = SseConnectionState.stopped,
+    this.connectedAt,
+    this.lastFrameAt,
+    this.eventCount = 0,
+    this.attempts = 0,
+    this.detail,
+  });
+
+  SseStatus copyWith({
+    SseConnectionState? state,
+    DateTime? connectedAt,
+    DateTime? lastFrameAt,
+    int? eventCount,
+    int? attempts,
+    String? detail,
+    bool clearDetail = false,
+  }) =>
+      SseStatus(
+        state: state ?? this.state,
+        connectedAt: connectedAt ?? this.connectedAt,
+        lastFrameAt: lastFrameAt ?? this.lastFrameAt,
+        eventCount: eventCount ?? this.eventCount,
+        attempts: attempts ?? this.attempts,
+        detail: clearDetail ? null : (detail ?? this.detail),
+      );
+}
+
 /// SSE client for /api/pos/queue/subscribe.
 /// Call [start] after login, [stop] on logout.
 /// Emits typed events via [events] stream.
@@ -53,6 +127,17 @@ class SseService {
   static const Duration _livenessTimeout = Duration(seconds: 60);
   int _connectCount = 0; // total connect attempts this run (for correlating logs)
 
+  /// Live connection status, for the diagnostic in Settings. A plain
+  /// [ValueNotifier] rather than a stream: the UI wants the CURRENT value the
+  /// moment it builds, and a broadcast stream has no current value to give it.
+  final ValueNotifier<SseStatus> status =
+      ValueNotifier<SseStatus>(const SseStatus());
+
+  void _setState(SseConnectionState s, {String? detail, bool clearDetail = false}) {
+    status.value = status.value
+        .copyWith(state: s, detail: detail, clearDetail: clearDetail);
+  }
+
   SseService(this._api);
 
   Stream<SseEvent> get events => _controller.stream;
@@ -60,11 +145,13 @@ class SseService {
   void start() {
     if (_shouldRun) return;
     _shouldRun = true;
+    _setState(SseConnectionState.connecting, clearDetail: true);
     _connect();
   }
 
   /// Restart the silence countdown. Called on every frame received.
   void _markAlive() {
+    status.value = status.value.copyWith(lastFrameAt: DateTime.now());
     _livenessTimer?.cancel();
     if (!_shouldRun) return;
     _livenessTimer = Timer(_livenessTimeout, () {
@@ -77,6 +164,8 @@ class SseService {
       _client?.close(force: true);
       _client = null;
       _connecting = false;
+      _setState(SseConnectionState.retrying,
+          detail: 'No frame for ${_livenessTimeout.inSeconds}s');
       _scheduleReconnect();
     });
   }
@@ -90,11 +179,13 @@ class SseService {
     _client?.close(force: true);
     _client = null;
     _connecting = false;
+    _setState(SseConnectionState.stopped, clearDetail: true);
     Logger.instance.info('SseService: stopped');
   }
 
   void dispose() {
     stop();
+    status.dispose();
     _controller.close();
   }
 
@@ -105,11 +196,15 @@ class SseService {
     final baseUrl = _api.getBaseUrl();
     if (token == null || baseUrl == null) {
       Logger.instance.info('SseService: no token/baseUrl, skipping connect');
+      _setState(SseConnectionState.rejected,
+          detail: token == null ? 'Not signed in' : 'No server URL');
       return;
     }
 
     _connecting = true;
     final attempt = ++_connectCount;
+    status.value = status.value.copyWith(
+        state: SseConnectionState.connecting, attempts: attempt);
 
     try {
       // Double `/api` is intentional: stored base ends in `/api` and the backend
@@ -134,6 +229,8 @@ class SseService {
           'X-POS-Name="$posName"  X-Business-Id=${businessId ?? '(MISSING!)'}  '
           'token=$maskedToken');
       if (businessId == null) {
+        _setState(SseConnectionState.rejected,
+            detail: 'No business id stored - the server will reject this');
         Logger.instance.warning(
             'SseService: no businessId stored — the server will reject the '
             'subscription (empty 200). Ensure login persisted business_id.');
@@ -174,19 +271,32 @@ class SseService {
           'content-length=${response.contentLength}');
 
       if (response.statusCode != 200) {
+        _setState(SseConnectionState.rejected,
+            detail: 'HTTP ${response.statusCode} from the server');
         Logger.instance.error(
             'SseService: non-200 status ${response.statusCode} — server rejected the subscription. '
             'Check auth token / X-POS-Name / route.');
       } else if (!ct.contains('event-stream')) {
+        _setState(SseConnectionState.rejected,
+            detail: 'Wrong content-type: $ct');
         Logger.instance.warning(
             'SseService: content-type is "$ct" (expected text/event-stream). '
             'A proxy or wrong route is likely buffering/closing the response — '
             'the stream will end right away and reconnect.');
       }
 
+      if (response.statusCode == 200 && ct.contains('event-stream')) {
+        status.value = status.value.copyWith(
+          state: SseConnectionState.live,
+          connectedAt: DateTime.now(),
+          clearDetail: true,
+        );
+      }
+
       await _readStream(response, attempt);
     } catch (e, st) {
       _connecting = false;
+      _setState(SseConnectionState.retrying, detail: '$e');
       Logger.instance.error('SseService: connect error (attempt #$attempt): $e');
       Logger.instance.debug('SseService: connect stacktrace: $st');
       _scheduleReconnect();
@@ -275,7 +385,15 @@ class SseService {
       Logger.instance.info(logline);
     }
 
-    if (_shouldRun) _scheduleReconnect();
+    if (_shouldRun) {
+      _setState(SseConnectionState.retrying,
+          detail: endError != null
+              ? '$endError'
+              : (chunkCount == 0
+                  ? 'Server closed the stream without sending anything'
+                  : 'Server closed the stream'));
+      _scheduleReconnect();
+    }
   }
 
   void _dispatch(String name, String raw) {
@@ -289,6 +407,8 @@ class SseService {
       Logger.instance.info('SseService: event $name');
       // ANY frame proves the pipe is alive, not just a heartbeat.
       _markAlive();
+      status.value =
+          status.value.copyWith(eventCount: status.value.eventCount + 1);
       _controller.add(SseEvent(type, data));
     } catch (e) {
       Logger.instance.error('SseService: parse error event=$name: $e');

@@ -1,4 +1,3 @@
-import 'dart:convert';
 
 import 'package:drift/drift.dart';
 
@@ -10,6 +9,7 @@ import '../utils/user_display.dart';
 import 'cash_movement_service.dart';
 import 'refund_service.dart';
 import 'session_service.dart' show PaymentBreakdown;
+import 'z_service.dart' show ZService;
 
 /// Per-waiter rollup inside a session or across a full report.
 ///
@@ -221,6 +221,33 @@ class ProductSummaryEntry {
 }
 
 /// The "products summary" ticket: what was actually sold, busiest first.
+/// How a products report is ordered. Also orders the category sections when
+/// the report is grouped: by their total quantity, total amount, or name.
+enum ProductsSort { quantity, amount, name }
+
+/// [rows] in [sort] order. Ties fall back to name so the paper is stable.
+List<ProductSummaryEntry> sortProductRows(
+    List<ProductSummaryEntry> rows, ProductsSort sort) {
+  int byName(ProductSummaryEntry a, ProductSummaryEntry b) =>
+      a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  final out = [...rows];
+  switch (sort) {
+    case ProductsSort.quantity:
+      out.sort((a, b) {
+        final c = b.quantity.compareTo(a.quantity);
+        return c != 0 ? c : byName(a, b);
+      });
+    case ProductsSort.amount:
+      out.sort((a, b) {
+        final c = b.net.compareTo(a.net);
+        return c != 0 ? c : byName(a, b);
+      });
+    case ProductsSort.name:
+      out.sort(byName);
+  }
+  return out;
+}
+
 class ProductsSummaryReport {
   final String scopeLabel;
   final DateTime start;
@@ -811,21 +838,14 @@ class DailySummaryService {
     return rows.map((s) => s.id).toList();
   }
 
-  /// Resolves the Z's code + number for the ticket header.
+  /// Resolves the Z's printed name + sequence for the ticket header.
   Future<({String? code, int? number, List<int> sessionIds})> _zScope(
       int zId) async {
     final z = await (_db.select(_db.zs)..where((t) => t.id.equals(zId)))
         .getSingleOrNull();
-    int? number;
-    if (z?.details != null) {
-      try {
-        final decoded = jsonDecode(z!.details!);
-        if (decoded is Map) number = (decoded['number'] as num?)?.toInt();
-      } catch (_) {}
-    }
     return (
-      code: z?.code,
-      number: number,
+      code: z == null ? null : ZService.displayName(z),
+      number: z?.zSeq,
       sessionIds: await _sessionIdsForZ(zId),
     );
   }
@@ -996,6 +1016,29 @@ class DailySummaryService {
 
   /// Quantity/revenue per product for the "products summary" ticket.
   /// Cancelled orders are excluded — they never left the kitchen.
+  /// The cash sessions whose business day falls in [from]..[to] (whole days,
+  /// inclusive). The business day is the session's Z day, or the day it
+  /// started when it has no Z — the same rule the Z report's day list uses.
+  /// Open sessions count: a period report is read mid-day as often as not.
+  Future<List<int>> sessionIdsForPeriod(DateTime from, DateTime to) async {
+    final first = DateTime(from.year, from.month, from.day);
+    final last = DateTime(to.year, to.month, to.day);
+    final sessions = await _db.select(_db.cashSessions).get();
+    final zs = await _db.select(_db.zs).get();
+    final zById = {for (final z in zs) z.id: z};
+    return [
+      for (final s in sessions)
+        if (() {
+          final z = s.zId == null ? null : zById[s.zId];
+          final d = z != null
+              ? ZService.zDayOf(z)
+              : DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day);
+          return !d.isBefore(first) && !d.isAfter(last);
+        }())
+          s.id,
+    ];
+  }
+
   Future<ProductsSummaryReport> generateProductsSummary({
     required List<int> sessionIds,
     required String scopeLabel,

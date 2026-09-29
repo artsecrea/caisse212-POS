@@ -2204,6 +2204,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             amount: ticket.total,
             deliveryFee: deliveryFee > 0 ? deliveryFee : null,
             tvaAmount: ticket.totalTva,
+            // Same two parts TicketData.total already subtracts, so the row
+            // reconciles with the total printed under it.
+            discountAmount: ticket.itemDiscount + ticket.manualDiscountAmount,
+            discountReason: widget.order.discountReason,
             amountGiven: amountGiven,
             changeDue: changeDue,
             paymentMethod: ticket.paymentMethod.value,
@@ -3149,6 +3153,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         // once, on the ticket that settled first (the lowest ticket id).
         deliveryFee: _reprintDeliveryFee(ticket),
         tvaAmount: ticket.totalTva,
+        // Per-line reductions plus the order-level remise — the same two parts
+        // TicketData.total already subtracts, so the row always reconciles
+        // with the figure printed beneath it.
+        discountAmount: ticket.itemDiscount + ticket.manualDiscountAmount,
+        discountReason: widget.order.discountReason,
         paymentMethod: ticket.paymentMethod.value,
         createdAt: DateTime.now(),
         items: itemsForPrint,

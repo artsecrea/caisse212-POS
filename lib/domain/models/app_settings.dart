@@ -34,6 +34,21 @@ enum PayButtonAction {
 }
 
 // App Settings Model
+/// Read a per-ticket-type text map back out of stored JSON.
+///
+/// Tolerant on purpose: this is round-tripped through SharedPreferences and
+/// through whatever an older build wrote, so anything that is not a
+/// string-to-string map simply reads as "no overrides" rather than throwing on
+/// startup and taking the till with it.
+Map<String, String> parseTicketTexts(Object? raw) {
+  if (raw is! Map) return const {};
+  final out = <String, String>{};
+  raw.forEach((k, v) {
+    if (k is String && v is String && v.isNotEmpty) out[k] = v;
+  });
+  return out;
+}
+
 class AppSettings {
   final bool isDarkMode;
   final String language; // 'en', 'ar', 'fr'
@@ -60,6 +75,28 @@ class AppSettings {
   /// Explicit reprints via `POST /waiters/orders/<code>/print` still work.
   /// Default true (current behavior preserved).
   final bool printWaiterPaper;
+
+  /// How long the POS waits, after a waiter adds a product to an OPEN order,
+  /// for more products before it prints the kitchen ticket. Each further add
+  /// restarts the wait, so a run of them lands on one ticket.
+  ///
+  /// The waiter app has no cart when adding to an existing table: its
+  /// add-product screen sends one product and navigates straight back to the
+  /// menu, so three items are three separate calls and used to be three
+  /// separate tickets. Nothing on the wire says "that was the last one", so
+  /// the only way to group them is to wait a moment.
+  ///
+  /// Trade-off, and the reason it is a setting: the wait delays the kitchen by
+  /// exactly this long. 0 disables grouping and prints immediately, which is
+  /// the behaviour before this existed.
+  ///
+  /// It also decides whether a LOOPED round can carry course sections, which is
+  /// easy to miss: sections need two or more lines on one ticket, so a run of
+  /// single adds sections only while the window swallows the whole run. At 0
+  /// every ticket holds one line and a round after the order's first can never
+  /// section. Do not set 0 until the waiter tablets batch (`add-products`).
+  final int waiterKdsBatchSeconds;
+
   final String paidOrderDefaultStatus; // Default status for paid orders: 'COMPLETED', 'DELIVERED', etc.
   final CategoryDisplayMode categoryDisplayMode; // How to display categories
   /// How option groups are laid out in the product modification dialog.
@@ -115,6 +152,39 @@ class AppSettings {
   /// response so the waiter app can't display amounts owed/collected.
   /// Defaults to true (current behavior preserved).
   final bool waiterDashboardShowOwed;
+
+  /// Master switch for calling a waiter's phone from the till.
+  ///
+  /// Off by default: it only does anything once the waiters are running an app
+  /// build that listens on `/waiters/events`, and a "call" option that rings
+  /// nothing is worse than no option at all. When off, the long-press entries
+  /// disappear and [WaiterCallService.call] refuses outright — the switch has
+  /// to hold at the service, not only in the widget that happens to be the
+  /// entry point today.
+  final bool waiterCallEnabled;
+
+  /// Whether a called phone rings until the waiter dismisses it, or chimes
+  /// once and goes quiet. Sent to the app in the call payload rather than
+  /// configured on each device, so the floor behaves one way and the owner
+  /// changes it in one place.
+  final bool waiterCallRingUntilDismissed;
+
+  /// Waiter "view order" shows each line's kitchen state (PENDING / PREPARING /
+  /// READY / CANCELED). Off = the fields are OMITTED from the payload, not
+  /// defaulted, so the app can't mistake "not told" for "not started".
+  final bool waiterShowKitchenStatus;
+
+  /// Push `kitchen-ready` to the order's waiter when the KDS bumps lines.
+  final bool waiterNotifyReady;
+
+  /// Push `kitchen-canceled` to the order's waiter when the POS pulls a line or
+  /// cancels the order. The waiter's own removals are never echoed back.
+  final bool waiterNotifyCanceled;
+
+  /// Push `product-availability` to every waiter when the POS toggles a
+  /// product EN RUPTURE (or back).
+  final bool waiterNotifyRupture;
+
   /// Master switch for the client-side SSE listener (real-time push from the
   /// remote server: new-order, order-state-changed, POS commands). Admin-only;
   /// defaults to false so the connection stays off unless explicitly enabled.
@@ -142,12 +212,6 @@ class AppSettings {
   /// When enabled, the table assignment is cleared as soon as every product
   /// on the order is marked PAID. Default OFF.
   final bool autoClearTableAfterPaying;
-  // Z (shift) tracking.
-  final bool zTrackingEnabled; // master switch; off = today's session-only behavior
-  final String zOpenMode; // 'auto' = open with first session, 'manager' = manager must open
-  final bool zCloseRequireManager; // in-app Close Z requires an admin/manager credential
-  final String zCodePrefix; // prefix for generated Z codes (default 'Z')
-  final int zMaxHours; // warn when a Z has been open longer than this (0 = no limit)
   /// Print a cancellation ticket when food the kitchen was already told to
   /// make is pulled off an order, or the whole order is voided.
   ///
@@ -189,6 +253,9 @@ class AppSettings {
   /// the other.
   final bool requireAdminToCloseUnbalanced;
 
+
+
+
   /// Remembered ticks for the report documents offered on session close and
   /// in the Z dialog. Same rule as the older extras beside them: a shop that
   /// always wants a document ticks it once.
@@ -203,17 +270,6 @@ class AppSettings {
   /// Remembered state of the "Print X report" checkbox on the session-close
   /// confirmation dialog. Persisted so the cashier's last choice sticks.
   final bool printXOnSessionClose;
-  /// When Z tracking is OFF, append a compact "Z-DAY TOTAL" block after the
-  /// per-session Z on close — a rollup of every session that shares the closing
-  /// session's z-day (its opening day). Remembered from the close dialog.
-  final bool printZDayTotalOnClose;
-  /// Z mode day lock. When on, closing the day blocks every non-admin login
-  /// until the next business day, at which point the Z number increments.
-  /// Opt-in so enabling Z tracking alone can never lock a client out.
-  final bool zDayLockEnabled;
-  /// Hour the trading day starts (0 = calendar midnight). A bar closing at 3am
-  /// sets 5, so the 3am close still counts as the previous business day.
-  final int zDayStartHour;
   /// Remembered "Print orders list" checkbox on the session-close dialog.
   final bool printOrdersListOnClose;
 
@@ -315,6 +371,47 @@ class AppSettings {
   final String ticketHeader; // Header text to print at top of ticket
   final String ticketFooter; // Footer text to print at bottom of ticket
 
+  /// Per-ticket-type overrides for the header and footer, keyed by ticket type
+  /// ('order', 'customer', 'store').
+  ///
+  /// One shared header across every document is wrong the moment the texts
+  /// have different jobs: the customer copy wants a thank-you and a returns
+  /// policy, the store copy wants a signature line, and the order ticket wants
+  /// neither. An absent or blank entry falls back to [ticketHeader] /
+  /// [ticketFooter], so a till that only ever set the shared text keeps
+  /// printing exactly what it printed yesterday.
+  final Map<String, String> ticketHeaders;
+  final Map<String, String> ticketFooters;
+
+  /// Print the reason beside a reduction ("remise commerciale", "geste").
+  ///
+  /// On by default: a discount with no stated reason is the line an auditor
+  /// asks about, and the reason is already captured when the cashier applies
+  /// it. Prints nothing when no reason was given, so it costs an
+  /// undiscounted — or unexplained — ticket nothing.
+  final bool printDiscountReason;
+
+  /// Show the per-session order number (#1, #2…) in the orders and tickets
+  /// screens, and let their search match it. Off by default. Printing it is
+  /// a per-ticket field switch in the printer settings, not this flag.
+  final bool showOrderNumberInLists;
+
+  /// Send the per-session order number to the KDS screens. Off by default.
+  final bool showOrderNumberOnKds;
+
+  /// Send the per-session order number to the waiter app. Off by default.
+  final bool showOrderNumberOnWaiter;
+
+  /// When the order number goes back to #1: `session` (every cash session,
+  /// the default), `z` (every Z) or `manual` (only when an admin resets it).
+  final String orderNumberResetMode;
+
+  /// Whether the orders and tickets screens show totals with the delivery
+  /// fee added (what the customer paid) or the products total alone. Display
+  /// only — no sales/Z figure reads it. On by default: that is what the
+  /// orders list already showed.
+  final bool totalsIncludeDeliveryFee;
+
   // Favorites & sort
   final bool showFavoritesCategory; // Show a ★ Favorites virtual category chip
   final bool sortByLastUsed; // Sort product grid by last-used recency (RAM only)
@@ -345,6 +442,7 @@ class AppSettings {
     this.defaultKdsState = 'PENDING',
     this.printWaiterOrderTicket = true,
     this.printWaiterPaper = true,
+    this.waiterKdsBatchSeconds = 12,
     this.paidOrderDefaultStatus = 'COMPLETED',
     this.categoryDisplayMode = CategoryDisplayMode.topBar,
     this.componentGroupDisplayMode = ComponentGroupDisplayMode.list,
@@ -394,6 +492,12 @@ class AppSettings {
     this.autoStartServer = true,
     this.openOnStartup = true,
     this.waiterDashboardShowOwed = true,
+    this.waiterCallEnabled = false,
+    this.waiterCallRingUntilDismissed = true,
+    this.waiterShowKitchenStatus = false,
+    this.waiterNotifyReady = false,
+    this.waiterNotifyCanceled = false,
+    this.waiterNotifyRupture = false,
     this.sseEnabled = false,
     this.enableSnackBars = false,
     this.enableCustomerDisplay = false,
@@ -403,11 +507,6 @@ class AppSettings {
     this.requireCustomerForDelivery = false,
     this.requireDeliveryAddress = false,
     this.autoClearTableAfterPaying = false,
-    this.zTrackingEnabled = false,
-    this.zOpenMode = 'auto',
-    this.zCloseRequireManager = false,
-    this.zCodePrefix = 'Z',
-    this.zMaxHours = 0,
     this.coursesEnabled = false,
     this.printKitchenCancellations = true,
     this.printProductsByCategoryOnClose = true,
@@ -416,9 +515,6 @@ class AppSettings {
     this.printSalesByCashierOnClose = false,
     this.requireAdminToCloseUnbalanced = false,
     this.printXOnSessionClose = true,
-    this.printZDayTotalOnClose = false,
-    this.zDayLockEnabled = false,
-    this.zDayStartHour = 0,
     this.printOrdersListOnClose = false,
     this.printDiscountsOnClose = false,
     this.printProductSummaryOnClose = false,
@@ -441,6 +537,14 @@ class AppSettings {
     this.showBackTileInProductGrid = false,
     this.ticketHeader = '',
     this.ticketFooter = '',
+    this.ticketHeaders = const {},
+    this.ticketFooters = const {},
+    this.printDiscountReason = true,
+    this.showOrderNumberInLists = false,
+    this.showOrderNumberOnKds = false,
+    this.showOrderNumberOnWaiter = false,
+    this.orderNumberResetMode = 'session',
+    this.totalsIncludeDeliveryFee = true,
     this.showFavoritesCategory = false,
     this.sortByLastUsed = false,
     this.settingsLockEnabled = false,
@@ -459,6 +563,7 @@ class AppSettings {
     String? defaultKdsState,
     bool? printWaiterOrderTicket,
     bool? printWaiterPaper,
+    int? waiterKdsBatchSeconds,
     String? paidOrderDefaultStatus,
     CategoryDisplayMode? categoryDisplayMode,
     ComponentGroupDisplayMode? componentGroupDisplayMode,
@@ -492,6 +597,12 @@ class AppSettings {
     bool? autoStartServer,
     bool? openOnStartup,
     bool? waiterDashboardShowOwed,
+    bool? waiterCallEnabled,
+    bool? waiterCallRingUntilDismissed,
+    bool? waiterShowKitchenStatus,
+    bool? waiterNotifyReady,
+    bool? waiterNotifyCanceled,
+    bool? waiterNotifyRupture,
     bool? sseEnabled,
     bool? enableSnackBars,
     bool? enableCustomerDisplay,
@@ -501,11 +612,6 @@ class AppSettings {
     bool? requireCustomerForDelivery,
     bool? requireDeliveryAddress,
     bool? autoClearTableAfterPaying,
-    bool? zTrackingEnabled,
-    String? zOpenMode,
-    bool? zCloseRequireManager,
-    String? zCodePrefix,
-    int? zMaxHours,
     bool? coursesEnabled,
     bool? printKitchenCancellations,
     bool? printProductsByCategoryOnClose,
@@ -514,9 +620,6 @@ class AppSettings {
     bool? printSalesByCashierOnClose,
     bool? requireAdminToCloseUnbalanced,
     bool? printXOnSessionClose,
-    bool? printZDayTotalOnClose,
-    bool? zDayLockEnabled,
-    int? zDayStartHour,
     bool? printOrdersListOnClose,
     bool? printDiscountsOnClose,
     bool? printProductSummaryOnClose,
@@ -539,6 +642,14 @@ class AppSettings {
     bool? showBackTileInProductGrid,
     String? ticketHeader,
     String? ticketFooter,
+    Map<String, String>? ticketHeaders,
+    Map<String, String>? ticketFooters,
+    bool? printDiscountReason,
+    bool? showOrderNumberInLists,
+    bool? showOrderNumberOnKds,
+    bool? showOrderNumberOnWaiter,
+    String? orderNumberResetMode,
+    bool? totalsIncludeDeliveryFee,
     bool? showFavoritesCategory,
     bool? sortByLastUsed,
     bool? settingsLockEnabled,
@@ -558,6 +669,8 @@ class AppSettings {
       printWaiterOrderTicket:
           printWaiterOrderTicket ?? this.printWaiterOrderTicket,
       printWaiterPaper: printWaiterPaper ?? this.printWaiterPaper,
+      waiterKdsBatchSeconds:
+          waiterKdsBatchSeconds ?? this.waiterKdsBatchSeconds,
       paidOrderDefaultStatus: paidOrderDefaultStatus ?? this.paidOrderDefaultStatus,
       categoryDisplayMode: categoryDisplayMode ?? this.categoryDisplayMode,
       componentGroupDisplayMode:
@@ -595,6 +708,13 @@ class AppSettings {
       openOnStartup: openOnStartup ?? this.openOnStartup,
       waiterDashboardShowOwed:
           waiterDashboardShowOwed ?? this.waiterDashboardShowOwed,
+      waiterCallEnabled: waiterCallEnabled ?? this.waiterCallEnabled,
+      waiterCallRingUntilDismissed:
+          waiterCallRingUntilDismissed ?? this.waiterCallRingUntilDismissed,
+      waiterShowKitchenStatus: waiterShowKitchenStatus ?? this.waiterShowKitchenStatus,
+      waiterNotifyReady: waiterNotifyReady ?? this.waiterNotifyReady,
+      waiterNotifyCanceled: waiterNotifyCanceled ?? this.waiterNotifyCanceled,
+      waiterNotifyRupture: waiterNotifyRupture ?? this.waiterNotifyRupture,
       sseEnabled: sseEnabled ?? this.sseEnabled,
       enableSnackBars: enableSnackBars ?? this.enableSnackBars,
       enableCustomerDisplay: enableCustomerDisplay ?? this.enableCustomerDisplay,
@@ -609,11 +729,6 @@ class AppSettings {
           requireDeliveryAddress ?? this.requireDeliveryAddress,
       autoClearTableAfterPaying:
           autoClearTableAfterPaying ?? this.autoClearTableAfterPaying,
-      zTrackingEnabled: zTrackingEnabled ?? this.zTrackingEnabled,
-      zOpenMode: zOpenMode ?? this.zOpenMode,
-      zCloseRequireManager: zCloseRequireManager ?? this.zCloseRequireManager,
-      zCodePrefix: zCodePrefix ?? this.zCodePrefix,
-      zMaxHours: zMaxHours ?? this.zMaxHours,
       coursesEnabled: coursesEnabled ?? this.coursesEnabled,
       printKitchenCancellations:
           printKitchenCancellations ?? this.printKitchenCancellations,
@@ -627,10 +742,6 @@ class AppSettings {
       requireAdminToCloseUnbalanced:
           requireAdminToCloseUnbalanced ?? this.requireAdminToCloseUnbalanced,
       printXOnSessionClose: printXOnSessionClose ?? this.printXOnSessionClose,
-      printZDayTotalOnClose:
-          printZDayTotalOnClose ?? this.printZDayTotalOnClose,
-      zDayLockEnabled: zDayLockEnabled ?? this.zDayLockEnabled,
-      zDayStartHour: zDayStartHour ?? this.zDayStartHour,
       printOrdersListOnClose:
           printOrdersListOnClose ?? this.printOrdersListOnClose,
       printDiscountsOnClose:
@@ -658,6 +769,17 @@ class AppSettings {
           showBackTileInProductGrid ?? this.showBackTileInProductGrid,
       ticketHeader: ticketHeader ?? this.ticketHeader,
       ticketFooter: ticketFooter ?? this.ticketFooter,
+      ticketHeaders: ticketHeaders ?? this.ticketHeaders,
+      ticketFooters: ticketFooters ?? this.ticketFooters,
+      printDiscountReason: printDiscountReason ?? this.printDiscountReason,
+      showOrderNumberInLists:
+          showOrderNumberInLists ?? this.showOrderNumberInLists,
+      showOrderNumberOnKds: showOrderNumberOnKds ?? this.showOrderNumberOnKds,
+      showOrderNumberOnWaiter:
+          showOrderNumberOnWaiter ?? this.showOrderNumberOnWaiter,
+      orderNumberResetMode: orderNumberResetMode ?? this.orderNumberResetMode,
+      totalsIncludeDeliveryFee:
+          totalsIncludeDeliveryFee ?? this.totalsIncludeDeliveryFee,
       showFavoritesCategory: showFavoritesCategory ?? this.showFavoritesCategory,
       sortByLastUsed: sortByLastUsed ?? this.sortByLastUsed,
       settingsLockEnabled: settingsLockEnabled ?? this.settingsLockEnabled,
@@ -679,6 +801,7 @@ class AppSettings {
       'defaultKdsState': defaultKdsState,
       'printWaiterOrderTicket': printWaiterOrderTicket,
       'printWaiterPaper': printWaiterPaper,
+      'waiterKdsBatchSeconds': waiterKdsBatchSeconds,
       'paidOrderDefaultStatus': paidOrderDefaultStatus,
       'categoryDisplayMode': categoryDisplayMode.name,
       'componentGroupDisplayMode': componentGroupDisplayMode.name,
@@ -712,6 +835,12 @@ class AppSettings {
       'autoStartServer': autoStartServer,
       'openOnStartup': openOnStartup,
       'waiterDashboardShowOwed': waiterDashboardShowOwed,
+      'waiterCallEnabled': waiterCallEnabled,
+      'waiterCallRingUntilDismissed': waiterCallRingUntilDismissed,
+      'waiterShowKitchenStatus': waiterShowKitchenStatus,
+      'waiterNotifyReady': waiterNotifyReady,
+      'waiterNotifyCanceled': waiterNotifyCanceled,
+      'waiterNotifyRupture': waiterNotifyRupture,
       'sseEnabled': sseEnabled,
       'enableSnackBars': enableSnackBars,
       'enableCustomerDisplay': enableCustomerDisplay,
@@ -721,11 +850,6 @@ class AppSettings {
       'requireCustomerForDelivery': requireCustomerForDelivery,
       'requireDeliveryAddress': requireDeliveryAddress,
       'autoClearTableAfterPaying': autoClearTableAfterPaying,
-      'zTrackingEnabled': zTrackingEnabled,
-      'zOpenMode': zOpenMode,
-      'zCloseRequireManager': zCloseRequireManager,
-      'zCodePrefix': zCodePrefix,
-      'zMaxHours': zMaxHours,
       'coursesEnabled': coursesEnabled,
       'printKitchenCancellations': printKitchenCancellations,
       'printProductsByCategoryOnClose': printProductsByCategoryOnClose,
@@ -734,9 +858,6 @@ class AppSettings {
       'printSalesByCashierOnClose': printSalesByCashierOnClose,
       'requireAdminToCloseUnbalanced': requireAdminToCloseUnbalanced,
       'printXOnSessionClose': printXOnSessionClose,
-      'printZDayTotalOnClose': printZDayTotalOnClose,
-      'zDayLockEnabled': zDayLockEnabled,
-      'zDayStartHour': zDayStartHour,
       'printOrdersListOnClose': printOrdersListOnClose,
       'printDiscountsOnClose': printDiscountsOnClose,
       'printProductSummaryOnClose': printProductSummaryOnClose,
@@ -759,6 +880,14 @@ class AppSettings {
       'showBackTileInProductGrid': showBackTileInProductGrid,
       'ticketHeader': ticketHeader,
       'ticketFooter': ticketFooter,
+      'ticketHeaders': ticketHeaders,
+      'ticketFooters': ticketFooters,
+      'printDiscountReason': printDiscountReason,
+      'showOrderNumberInLists': showOrderNumberInLists,
+      'showOrderNumberOnKds': showOrderNumberOnKds,
+      'showOrderNumberOnWaiter': showOrderNumberOnWaiter,
+      'orderNumberResetMode': orderNumberResetMode,
+      'totalsIncludeDeliveryFee': totalsIncludeDeliveryFee,
       'showFavoritesCategory': showFavoritesCategory,
       'sortByLastUsed': sortByLastUsed,
       'settingsLockEnabled': settingsLockEnabled,
@@ -782,6 +911,8 @@ class AppSettings {
       defaultKdsState: json['defaultKdsState'] as String? ?? 'PENDING',
       printWaiterOrderTicket: json['printWaiterOrderTicket'] as bool? ?? true,
       printWaiterPaper: json['printWaiterPaper'] as bool? ?? true,
+      waiterKdsBatchSeconds:
+          (json['waiterKdsBatchSeconds'] as num?)?.toInt() ?? 12,
       paidOrderDefaultStatus: json['paidOrderDefaultStatus'] as String? ?? 'COMPLETED',
       categoryDisplayMode: CategoryDisplayMode.values.firstWhere(
         (e) => e.name == json['categoryDisplayMode'],
@@ -841,6 +972,13 @@ class AppSettings {
       openOnStartup: json['openOnStartup'] as bool? ?? true,
       waiterDashboardShowOwed:
           json['waiterDashboardShowOwed'] as bool? ?? true,
+      waiterCallEnabled: json['waiterCallEnabled'] as bool? ?? false,
+      waiterCallRingUntilDismissed:
+          json['waiterCallRingUntilDismissed'] as bool? ?? true,
+      waiterShowKitchenStatus: json['waiterShowKitchenStatus'] as bool? ?? false,
+      waiterNotifyReady: json['waiterNotifyReady'] as bool? ?? false,
+      waiterNotifyCanceled: json['waiterNotifyCanceled'] as bool? ?? false,
+      waiterNotifyRupture: json['waiterNotifyRupture'] as bool? ?? false,
       sseEnabled: json['sseEnabled'] as bool? ?? false,
       enableSnackBars: json['enableSnackBars'] as bool? ?? true,
       enableCustomerDisplay: json['enableCustomerDisplay'] as bool? ?? false,
@@ -855,11 +993,6 @@ class AppSettings {
           json['requireDeliveryAddress'] as bool? ?? false,
       autoClearTableAfterPaying:
           json['autoClearTableAfterPaying'] as bool? ?? false,
-      zTrackingEnabled: json['zTrackingEnabled'] as bool? ?? false,
-      zOpenMode: json['zOpenMode'] as String? ?? 'auto',
-      zCloseRequireManager: json['zCloseRequireManager'] as bool? ?? false,
-      zCodePrefix: json['zCodePrefix'] as String? ?? 'Z',
-      zMaxHours: (json['zMaxHours'] as num?)?.toInt() ?? 0,
       coursesEnabled: json['coursesEnabled'] as bool? ?? false,
       printKitchenCancellations:
           json['printKitchenCancellations'] as bool? ?? true,
@@ -873,10 +1006,6 @@ class AppSettings {
       requireAdminToCloseUnbalanced:
           json['requireAdminToCloseUnbalanced'] as bool? ?? false,
       printXOnSessionClose: json['printXOnSessionClose'] as bool? ?? true,
-      printZDayTotalOnClose:
-          json['printZDayTotalOnClose'] as bool? ?? false,
-      zDayLockEnabled: json['zDayLockEnabled'] as bool? ?? false,
-      zDayStartHour: (json['zDayStartHour'] as num?)?.toInt() ?? 0,
       printOrdersListOnClose:
           json['printOrdersListOnClose'] as bool? ?? false,
       printDiscountsOnClose:
@@ -918,6 +1047,18 @@ class AppSettings {
           json['showBackTileInProductGrid'] as bool? ?? false,
       ticketHeader: json['ticketHeader'] as String? ?? '',
       ticketFooter: json['ticketFooter'] as String? ?? '',
+      ticketHeaders: parseTicketTexts(json['ticketHeaders']),
+      ticketFooters: parseTicketTexts(json['ticketFooters']),
+      printDiscountReason: json['printDiscountReason'] as bool? ?? true,
+      showOrderNumberInLists:
+          json['showOrderNumberInLists'] as bool? ?? false,
+      showOrderNumberOnKds: json['showOrderNumberOnKds'] as bool? ?? false,
+      showOrderNumberOnWaiter:
+          json['showOrderNumberOnWaiter'] as bool? ?? false,
+      orderNumberResetMode:
+          json['orderNumberResetMode'] as String? ?? 'session',
+      totalsIncludeDeliveryFee:
+          json['totalsIncludeDeliveryFee'] as bool? ?? true,
       showFavoritesCategory: json['showFavoritesCategory'] as bool? ?? false,
       sortByLastUsed: json['sortByLastUsed'] as bool? ?? false,
       settingsLockEnabled: json['settingsLockEnabled'] as bool? ?? false,

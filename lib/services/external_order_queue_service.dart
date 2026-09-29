@@ -7,6 +7,7 @@ import 'api_service.dart';
 import 'customer_repository.dart';
 import 'product_cost_resolver.dart';
 import 'external_item_resolver.dart';
+import 'z_day_resolver.dart';
 
 /// Handles the external order queue.
 ///
@@ -22,8 +23,10 @@ import 'external_item_resolver.dart';
 class ExternalOrderQueueService {
   final ApiService _api;
   final AppDatabase _db;
+  // Read on each confirm so a settings change applies without a rebuild.
+  final String Function()? _orderNumberMode;
 
-  ExternalOrderQueueService(this._api, this._db);
+  ExternalOrderQueueService(this._api, this._db, [this._orderNumberMode]);
 
   late final _resolver = ExternalItemResolver(_db);
 
@@ -209,6 +212,20 @@ class ExternalOrderQueueService {
     bool skipCustomerUpsert = false,
     String? cancellationReason,
   }) async {
+    // The shift taking the order in. A delivery-platform order is a sale on
+    // whichever session is open when the cashier accepts it, so it is bound
+    // to that session exactly like a walk-in — previously it was bound to
+    // nothing, and an order with no session and no z_day left the backend to
+    // fall back to `createdAt`, which here is the PLATFORM's timestamp: an
+    // order placed at 23:50 and accepted at 00:10 was booked to the wrong day
+    // in one direction, and yesterday's backlog to the wrong day in the other.
+    //
+    // Resolved before the transaction: it only reads, and the drift
+    // connection is single-threaded.
+    final zResolver = ZDayResolver(_db);
+    final activeSession = await zResolver.activeSession();
+    final externalZDay = await zResolver.forSession(activeSession?.id);
+
     late int localOrderId;
     await _db.transaction(() async {
       // 1. Resolve / upsert the local customer id.
@@ -276,6 +293,12 @@ class ExternalOrderQueueService {
               priority: const Value(0),
               discountPercentage: const Value(0.0),
               createdBy: Value(confirmedByUserId),
+              // Bound to the shift that accepted it — see [externalZDay].
+              sessionId: Value(activeSession?.id),
+              sessionOrderNo: Value(await _db.nextSessionOrderNo(
+                  activeSession?.id,
+                  mode: _orderNumberMode?.call() ?? 'session')),
+              zDay: Value(externalZDay),
               createdAt: Value(item.createdAt),
               updatedAt: Value(DateTime.now()),
             ),
@@ -306,6 +329,7 @@ class ExternalOrderQueueService {
                     unitaryTva: Value(tva),
                     note: Value(qItem.note),
                     state: const Value('PENDING'),
+                    zDay: Value(externalZDay),
                   ),
                 );
 
