@@ -8,6 +8,7 @@ import '../services/api_service.dart';
 import '../services/data_sync_service.dart';
 import 'admin_auth.dart';
 import 'app_localizations.dart';
+import 'snackbar_helper.dart';
 
 /// Disconnect the terminal from its tenant and wipe the local database.
 ///
@@ -95,13 +96,8 @@ Future<bool> runFullLogout(BuildContext context, WidgetRef ref) async {
     await syncService.clearAllData();
 
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(localizations?.translate('full_logout_done') ??
-              'Logged out completely. All data cleared.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      SnackBarHelper.showToast(localizations?.translate('full_logout_done') ??
+              'Logged out completely. All data cleared.', kind: ToastKind.warning);
       // Unfocus first to prevent AnimatedDefaultTextStyle
       // dirty-widget-in-wrong-scope errors during the route swap.
       FocusManager.instance.primaryFocus?.unfocus();
@@ -115,12 +111,7 @@ Future<bool> runFullLogout(BuildContext context, WidgetRef ref) async {
     return true;
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${localizations?.translate('error') ?? 'Error'}: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      SnackBarHelper.showToast('${localizations?.translate('error') ?? 'Error'}: $e', kind: ToastKind.error);
     }
     return false;
   }

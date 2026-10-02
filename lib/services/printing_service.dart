@@ -301,20 +301,23 @@ class PrinterConfig {
   /// print gating and the settings UI. List order is the display order.
   static const Map<String, List<String>> fieldCatalog = {
     'order': [
-      'storeAddress', 'storePhone', 'orderCode', 'orderNumber', 'date',
+      'storeAddress', 'storePhone', 'storeIce', 'orderCode', 'orderNumber',
+      'date',
       'cashier', 'waiter',
       'orderType', 'table', 'persons', 'customerName', 'customerPhone',
       'deliveryAddress', 'subtotal', 'discount', 'tva', 'barcode',
     ],
     'customer': [
-      'storeAddress', 'storePhone', 'orderCode', 'orderNumber', 'date',
+      'storeAddress', 'storePhone', 'storeIce', 'orderCode', 'orderNumber',
+      'date',
       'cashier', 'waiter',
       'orderType', 'table', 'persons', 'customerName', 'customerPhone',
       'deliveryAddress', 'paymentMethod', 'discount', 'tva', 'amountGiven',
       'change', 'barcode',
     ],
     'store': [
-      'storeAddress', 'storePhone', 'orderCode', 'orderNumber', 'date',
+      'storeAddress', 'storePhone', 'storeIce', 'orderCode', 'orderNumber',
+      'date',
       'cashier', 'waiter',
       'orderType', 'table', 'persons', 'customerName', 'customerPhone',
       'deliveryAddress', 'paymentMethod', 'discount', 'tva', 'amountGiven',
@@ -352,6 +355,7 @@ class PrinterConfig {
   static const Map<String, String> fieldZone = {
     'storeAddress': 'header',
     'storePhone': 'header',
+    'storeIce': 'header',
     'orderCode': 'info',
     'orderNumber': 'info',
     'date': 'info',
@@ -2890,6 +2894,51 @@ class PrintingService {
     return bytes;
   }
 
+  /// Split [text] into lines of at most [maxChars], breaking at spaces.
+  ///
+  /// Left to itself the printer wraps at the exact column, so a long address
+  /// lost its last letter to the next line ("Casablanc" / "a"). A single word
+  /// longer than a whole line is the only thing still cut mid-word.
+  @visibleForTesting
+  static List<String> wordWrap(String text, int maxChars) {
+    if (maxChars <= 0) return [text];
+    final lines = <String>[];
+    var current = '';
+    for (var word in text.trim().split(RegExp(r'\s+'))) {
+      if (word.isEmpty) continue;
+      while (word.length > maxChars) {
+        if (current.isNotEmpty) {
+          lines.add(current);
+          current = '';
+        }
+        lines.add(word.substring(0, maxChars));
+        word = word.substring(maxChars);
+      }
+      if (current.isEmpty) {
+        current = word;
+      } else if (current.length + 1 + word.length <= maxChars) {
+        current = '$current $word';
+      } else {
+        lines.add(current);
+        current = word;
+      }
+    }
+    if (current.isNotEmpty) lines.add(current);
+    return lines;
+  }
+
+  /// [generator.text] with word wrapping computed for the paper width and
+  /// the text's width multiplier (font A: 48 columns on 80mm, 32 on 58mm).
+  List<int> _wrappedText(Generator generator, String text, PosStyles styles) {
+    final columns = _config.paperSize == PaperSize.mm58 ? 32 : 48;
+    final maxChars = columns ~/ styles.width.value;
+    var bytes = <int>[];
+    for (final line in wordWrap(text, maxChars)) {
+      bytes += generator.text(line, styles: styles);
+    }
+    return bytes;
+  }
+
   /// Whether [field] should print on the given [ticket] type ('customer' |
   /// 'store' | 'kds'). A missing entry falls back to
   /// [PrinterConfig.fieldDefaultOn] — visible for everything except the
@@ -3482,6 +3531,7 @@ class PrintingService {
     storeName = _storeField(storeName, 'business_name');
     storeAddress = _storeField(storeAddress, 'business_address');
     storePhone = _storeField(storePhone, 'business_phone');
+    final storeIce = _storeField(null, 'business_ice');
     final platform = await _platformIdentity(
       fullOrder,
       source: source,
@@ -3541,12 +3591,24 @@ class PrintingService {
       bytes += _emitZone('order', 'header', {
         'storeAddress': () => storeAddress == null
             ? const <int>[]
-            : generator.text(
+            : _wrappedText(
+                generator,
                 _safe(storeAddress),
-                styles: PosStyles(
+                PosStyles(
                   align: PosAlign.center,
                   height: _resolveFieldHeight('order', 'storeAddress'),
                   width: _resolveFieldSize('order', 'storeAddress'),
+                ),
+              ),
+        'storeIce': () => storeIce == null
+            ? const <int>[]
+            : _wrappedText(
+                generator,
+                'ICE : ${_safe(storeIce)}',
+                PosStyles(
+                  align: PosAlign.center,
+                  height: _resolveFieldHeight('order', 'storeIce'),
+                  width: _resolveFieldSize('order', 'storeIce'),
                 ),
               ),
         'storePhone': () => storePhone == null
@@ -3668,9 +3730,10 @@ class PrintingService {
                 order.deliveryAddress == null ||
                 order.deliveryAddress!.trim().isEmpty)
             ? const <int>[]
-            : generator.text(
+            : _wrappedText(
+                generator,
                 '${_text('delivery_address', fallback: 'Delivery address')}: ${_safe(order.deliveryAddress)}',
-                styles: PosStyles(
+                PosStyles(
                   align: PosAlign.left,
                   bold: true,
                   height: _resolveFieldHeight('order', 'deliveryAddress'),
@@ -4061,6 +4124,12 @@ class PrintingService {
     /// nothing is marked printed, and the layout says plainly that this is
     /// food to stop making.
     KdsPrintPurpose purpose = KdsPrintPurpose.send,
+    /// Line ids the caller knows were unpaid when it fired this ticket. The
+    /// job runs later, off the queue, and by then a payment may have stamped
+    /// them with a ticket — which modificationsOnly would otherwise read as
+    /// "settled, not a modification" and drop, leaving the kitchen with no
+    /// ticket for an order paid straight from the till.
+    Set<int> paidLinesStillOwed = const {},
   }) => _enqueue(() async {
     final isVoid = purpose == KdsPrintPurpose.cancel;
     if (!_config.kdsEnabled) {
@@ -4099,7 +4168,8 @@ class PrintingService {
             ? order.items
             : await _withDbPrintedQuantities(
                 _ref!.read(databaseProvider), order.items);
-        final itemsToPrint = _filterItemsByMode(sourceItems, resolvedMode);
+        final itemsToPrint = _filterItemsByMode(sourceItems, resolvedMode,
+            paidLinesStillOwed: paidLinesStillOwed);
         if (itemsToPrint.isEmpty) {
           debugPrint('No items to print for mode: $resolvedMode');
           _isPrintingInProgress = false;
@@ -4139,7 +4209,8 @@ class PrintingService {
       if (_ref == null) {
         debugPrint('Warning: _ref is null, cannot group by stations');
         // Fall back to single ticket printing
-        final itemsToPrint = _filterItemsByMode(order.items, resolvedMode);
+        final itemsToPrint = _filterItemsByMode(order.items, resolvedMode,
+            paidLinesStillOwed: paidLinesStillOwed);
         if (itemsToPrint.isEmpty) {
           debugPrint('No items to print for mode: $resolvedMode');
           _isPrintingInProgress = false;
@@ -4171,6 +4242,7 @@ class PrintingService {
             ? order.items
             : await _withDbPrintedQuantities(database, order.items),
         resolvedMode,
+        paidLinesStillOwed: paidLinesStillOwed,
       );
 
       if (itemsToPrint.isEmpty) {
@@ -4688,7 +4760,11 @@ class PrintingService {
   });
 
   /// Filter items based on KDS print mode
-  List<OrderItem> _filterItemsByMode(List<OrderItem> items, KdsPrintMode mode) {
+  List<OrderItem> _filterItemsByMode(
+    List<OrderItem> items,
+    KdsPrintMode mode, {
+    Set<int> paidLinesStillOwed = const {},
+  }) {
     switch (mode) {
       case KdsPrintMode.full:
         // Return all items
@@ -4706,7 +4782,10 @@ class PrintingService {
         // uses it while quantity stays the true total for the printed-mark.
         final out = <OrderItem>[];
         for (final item in items) {
-          if (item.ticketId != null) continue;
+          if (item.ticketId != null &&
+              !(item.id != null && paidLinesStillOwed.contains(item.id))) {
+            continue;
+          }
           final delta = item.quantity - item.kdsPrintedQuantity;
           if (delta > 0.0001) {
             out.add(item.copyWith(kdsPrintQuantity: delta));
@@ -4831,9 +4910,11 @@ class PrintingService {
   /// half worth pinning, since the ESC/POS layout around it needs a printer.
   @visibleForTesting
   Future<List<OrderItem>> kdsLinesForTesting(
-          AppDatabase database, CurrentOrder order, KdsPrintMode mode) async =>
+          AppDatabase database, CurrentOrder order, KdsPrintMode mode,
+          {Set<int> paidLinesStillOwed = const {}}) async =>
       _filterItemsByMode(
-          await _withDbPrintedQuantities(database, order.items), mode);
+          await _withDbPrintedQuantities(database, order.items), mode,
+          paidLinesStillOwed: paidLinesStillOwed);
 
   Future<void> _markItemsAsPrinted(AppDatabase database, List<OrderItem> items) async {
     final now = DateTime.now();
@@ -5484,6 +5565,12 @@ class PrintingService {
       return false;
     }
 
+    // Same identity resolution as printOrderReceipt — see [_storeField].
+    storeName = _storeField(storeName, 'business_name');
+    storeAddress = _storeField(storeAddress, 'business_address');
+    storePhone = _storeField(storePhone, 'business_phone');
+    final storeIce = _storeField(null, 'business_ice');
+
     _isPrintingInProgress = true;
     _printingStatusController.add(_translate('printing', fallback: 'Printing...'));
 
@@ -5518,17 +5605,29 @@ class PrintingService {
       }
       bytes += _emitZone(tkt, 'header', {
         'storeAddress': () =>
-            (storeAddress == null || storeAddress.trim().isEmpty)
+            storeAddress == null
                 ? const <int>[]
-                : generator.text(
+                : _wrappedText(
+                    generator,
                     _safe(storeAddress),
-                    styles: PosStyles(
+                    PosStyles(
                       align: PosAlign.center,
                       height: _resolveFieldHeight(tkt, 'storeAddress'),
                       width: _resolveFieldSize(tkt, 'storeAddress'),
                     ),
                   ),
-        'storePhone': () => (storePhone == null || storePhone.trim().isEmpty)
+        'storeIce': () => storeIce == null
+            ? const <int>[]
+            : _wrappedText(
+                generator,
+                'ICE : ${_safe(storeIce)}',
+                PosStyles(
+                  align: PosAlign.center,
+                  height: _resolveFieldHeight(tkt, 'storeIce'),
+                  width: _resolveFieldSize(tkt, 'storeIce'),
+                ),
+              ),
+        'storePhone': () => storePhone == null
             ? const <int>[]
             : generator.text(
                 '${_text('tel', fallback: 'Tel')}: ${_safe(storePhone)}',
@@ -5697,9 +5796,10 @@ class PrintingService {
         'deliveryAddress': () =>
             (deliveryAddress == null || deliveryAddress.trim().isEmpty)
                 ? const <int>[]
-                : generator.text(
+                : _wrappedText(
+                    generator,
                     '${_text('delivery_address', fallback: 'Delivery address')}: ${_safe(deliveryAddress)}',
-                    styles: PosStyles(
+                    PosStyles(
                       align: PosAlign.left,
                       bold: true,
                       height: _resolveFieldHeight(tkt, 'deliveryAddress'),
@@ -6246,8 +6346,8 @@ class PrintingService {
       final storeTel = _prefs?.getString('business_phone');
       final storeIce = _prefs?.getString('business_ice');
       if (storeAddr != null) {
-        bytes += generator.text(_safe(storeAddr),
-            styles: const PosStyles(align: PosAlign.center));
+        bytes += _wrappedText(generator, _safe(storeAddr),
+            const PosStyles(align: PosAlign.center));
       }
       if (storeIce != null) {
         bytes += generator.text('ICE : ${_safe(storeIce)}',

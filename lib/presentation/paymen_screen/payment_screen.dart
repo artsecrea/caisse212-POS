@@ -22,6 +22,7 @@ import '../../services/activity_log_service.dart';
 import '../widgets/print_status_indicator.dart';
 import '../widgets/cash_pad.dart';
 import '../widgets/print_options_dialog.dart';
+import '../../utils/snackbar_helper.dart';
 
 /// The delivery fee a ticket still has to collect.
 ///
@@ -379,10 +380,19 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   /// to a customer twice is a real-world mess, not just a wasted job.
   bool _isPrintingDraft = false;
 
+  static const _ticketsViewPrefKey = 'payment_tickets_view_mode';
+
+  /// Tickets as one-per-row cards (default) or as a grid of tiles. Remembered
+  /// per till in SharedPreferences.
+  bool _ticketsGridView = false;
+
   @override
   void initState() {
     super.initState();
     if (widget.forceSplitOpen) _splitPanelOverride = true;
+    _ticketsGridView =
+        ref.read(sharedPreferencesProvider).getString(_ticketsViewPrefKey) ==
+            'grid';
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeTickets();
     });
@@ -392,6 +402,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   void dispose() {
     _ticketsScrollController.dispose();
     super.dispose();
+  }
+
+  void _toggleTicketsView() {
+    setState(() => _ticketsGridView = !_ticketsGridView);
+    ref
+        .read(sharedPreferencesProvider)
+        .setString(_ticketsViewPrefKey, _ticketsGridView ? 'grid' : 'list');
   }
 
   /// Auto-scroll the tickets list while a ticket line is being dragged near
@@ -884,6 +901,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 ),
               ),
               const Spacer(),
+              IconButton(
+                onPressed: _toggleTicketsView,
+                icon: Icon(_ticketsGridView
+                    ? Icons.view_agenda_rounded
+                    : Icons.grid_view_rounded),
+                tooltip: l10n.translate(_ticketsGridView
+                    ? 'tickets_list_view'
+                    : 'tickets_grid_view'),
+              ),
+              const SizedBox(width: 4),
               // Pay All button - always visible
               ElevatedButton.icon(
                 onPressed: hasUnpaidTicketsWithItems ? _payAllTickets : null,
@@ -993,6 +1020,23 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         Expanded(
           child: tickets.isEmpty
               ? Center(child: Text(l10n.translate('no_tickets')))
+              : _ticketsGridView
+              ? GridView.builder(
+                  key: _ticketsListKey,
+                  controller: _ticketsScrollController,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  gridDelegate:
+                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 300,
+                    mainAxisExtent: 320,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                  ),
+                  itemCount: tickets.length,
+                  itemBuilder: (context, index) =>
+                      _buildTicketCard(index, tickets[index], grid: true),
+                )
               : ListView.separated(
                   key: _ticketsListKey,
                   controller: _ticketsScrollController,
@@ -1015,7 +1059,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   /// ticket holding nine are the same size in the list — the eye can then
   /// scan down the totals column instead of re-finding it on every card. The
   /// lines scroll inside the row when there are more than fit.
-  Widget _buildTicketCard(int index, TicketData ticket) {
+  Widget _buildTicketCard(int index, TicketData ticket, {bool grid = false}) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final selectedIndex = ref.watch(selectedTicketProvider);
@@ -1041,7 +1085,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         return GestureDetector(
           onTap: () => _selectTicket(index),
           child: Container(
-            height: 172,
+            height: grid ? null : 172,
             decoration: BoxDecoration(
               color: ticket.isPaid
                   ? (isDark
@@ -1062,7 +1106,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 width: isDraggingOver ? 3 : (isSelected ? 2 : 1),
               ),
             ),
-            child: Row(
+            child: grid
+                ? _buildTicketTileBody(index, ticket, accent)
+                : Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // ── Identity
@@ -1176,6 +1222,119 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// Grid-mode layout of a ticket: identity on top, lines in the middle,
+  /// total and tender at the bottom. Same pieces as the list row, stacked.
+  Widget _buildTicketTileBody(int index, TicketData ticket, Color accent) {
+    final theme = Theme.of(context);
+    final currencyFormatter = ref.watch(currencyFormatterProvider);
+    final tickets = ref.watch(ticketsProvider);
+    final l10n = AppLocalizations.of(context)!;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 6, 4),
+          child: Row(
+            children: [
+              Icon(
+                ticket.isPaid
+                    ? Icons.check_circle_rounded
+                    : Icons.receipt_rounded,
+                size: 18,
+                color: accent,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  ticket.ticketNum != null
+                      ? '#${ticket.ticketNum}'
+                      : '${index + 1}',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: ticket.isPaid ? accent : null,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                '${ticket.items.length} ${l10n.translate('items')}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
+              if (!ticket.isPaid && tickets.length > 1)
+                IconButton(
+                  onPressed: () => _removeTicket(index),
+                  icon: const Icon(Icons.close_rounded, size: 16),
+                  tooltip: l10n.translate('remove_ticket'),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 26, minHeight: 26),
+                ),
+            ],
+          ),
+        ),
+        Divider(height: 1, color: theme.dividerColor),
+        Expanded(
+          child: ticket.items.isEmpty
+              ? Center(
+                  child: Text(
+                    l10n.translate('drag_items_here'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                      fontSize: 13,
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  itemCount: ticket.items.length,
+                  itemBuilder: (context, i) => _buildDraggableTicketItem(
+                      index, i, ticket.items[i], ticket.isPaid),
+                ),
+        ),
+        Divider(height: 1, color: theme.dividerColor),
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      currencyFormatter.format(ticket.total),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: accent,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (!ticket.isPaid && ticket.items.isNotEmpty)
+                    SizedBox(
+                      width: 110,
+                      child: _buildTicketPrintButton(ticket),
+                    ),
+                ],
+              ),
+              if (!ticket.isPaid) ...[
+                const SizedBox(height: 6),
+                _buildPaymentMethodButtons(index, ticket),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1614,6 +1773,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   Widget _buildActivePaymentPanel(int ticketIndex, TicketData ticket) {
+    return LayoutBuilder(
+      // Below this height the stacked actions squeeze the keypad into slivers.
+      builder: (context, constraints) => _buildActivePaymentPanelBody(
+          ticketIndex, ticket,
+          compact: constraints.maxHeight < 700),
+    );
+  }
+
+  Widget _buildActivePaymentPanelBody(int ticketIndex, TicketData ticket,
+      {required bool compact}) {
     final calcState = ref.watch(calculatorProvider);
     final allTickets = ref.watch(ticketsProvider);
     final theme = Theme.of(context);
@@ -1735,7 +1904,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         // selected ticket it works the same undivided or split ten ways.
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            padding: EdgeInsets.fromLTRB(12, compact ? 6 : 8, 12, 0),
             child: CashPad(
               amountDue: payable,
               entered: calcState.enteredAmount,
@@ -1745,70 +1914,128 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
         ),
 
-        const SizedBox(height: 6),
+        SizedBox(height: compact ? 4 : 6),
 
         // Action buttons
         Container(
-          padding: const EdgeInsets.all(12),
+          padding: EdgeInsets.all(compact ? 8 : 12),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
             border: Border(top: BorderSide(color: theme.dividerColor)),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: _buildPaymentActions(theme, l10n, ticketIndex, ticket,
+              canPay: canPay, compact: compact),
+        ),
+      ],
+    );
+  }
+
+  /// Pay, save-and-leave and clear.
+  ///
+  /// Stacked three high these ate ~170px, which on a short till screen came
+  /// straight out of the keypad. Now Pay keeps its own full-width row and the
+  /// two secondary actions share one; on a short panel all three share a row.
+  Widget _buildPaymentActions(
+    ThemeData theme,
+    AppLocalizations l10n,
+    int ticketIndex,
+    TicketData ticket, {
+    required bool canPay,
+    required bool compact,
+  }) {
+    final pay = ElevatedButton.icon(
+      onPressed: canPay ? () => _processPayment(ticketIndex, ticket) : null,
+      icon: _isProcessing
+          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+          : const Icon(Icons.check_circle_rounded, size: 22),
+      label: Text(
+        l10n.translate('complete_payment'),
+        style: const TextStyle(fontSize: 16),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.green.shade600,
+        foregroundColor: Colors.white,
+        disabledBackgroundColor: theme.colorScheme.surfaceContainerHighest,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+
+    // Leave with the division saved and nothing paid — the explicit
+    // counterpart to Complete Payment. The header X does the same thing, but
+    // an X reads as "cancel": a cashier dividing a bill to collect later
+    // needs to see that finishing without taking money is a real action.
+    final save = FilledButton.tonalIcon(
+      onPressed:
+          _isProcessing ? null : () => _closeKeepingDivision(freeTheTill: true),
+      icon: const Icon(Icons.save_outlined, size: 20),
+      label: Text(
+        l10n.translate('save_division_continue'),
+        style: const TextStyle(fontSize: 14),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+
+    final clearStyle = OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    );
+
+    if (compact) {
+      return SizedBox(
+        height: 52,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Tooltip(
+              message: l10n.translate('clear'),
+              child: OutlinedButton(
+                onPressed: _clearCalculator,
+                style: clearStyle,
+                child: const Icon(Icons.clear_rounded, size: 20),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(flex: 2, child: save),
+            const SizedBox(width: 6),
+            Expanded(flex: 3, child: pay),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(height: 52, child: pay),
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 44,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: canPay ? () => _processPayment(ticketIndex, ticket) : null,
-                  icon: _isProcessing
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.check_circle_rounded, size: 22),
-                  label: Text(l10n.translate('complete_payment'), style: const TextStyle(fontSize: 16)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade600,
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: theme.colorScheme.surfaceContainerHighest,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              // Leave with the division saved and nothing paid — the
-              // explicit counterpart to Complete Payment above. The header X
-              // does the same thing, but an X reads as "cancel": a cashier
-              // dividing a bill to collect later needs to see that finishing
-              // without taking money is a real, intended action.
-              SizedBox(
-                width: double.infinity,
-                height: 46,
-                child: FilledButton.tonalIcon(
-                  onPressed: _isProcessing
-                      ? null
-                      : () => _closeKeepingDivision(freeTheTill: true),
-                  icon: const Icon(Icons.save_outlined, size: 20),
-                  label: Text(
-                    l10n.translate('save_division_continue'),
-                    style: const TextStyle(fontSize: 15),
-                  ),
-                  style: FilledButton.styleFrom(
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              SizedBox(
-                width: double.infinity,
-                height: 42,
+              Expanded(flex: 3, child: save),
+              const SizedBox(width: 6),
+              Expanded(
+                flex: 2,
                 child: OutlinedButton.icon(
                   onPressed: _clearCalculator,
                   icon: const Icon(Icons.clear_rounded, size: 18),
-                  label: Text(l10n.translate('clear'), style: const TextStyle(fontSize: 14)),
-                  style: OutlinedButton.styleFrom(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  label: Text(
+                    l10n.translate('clear'),
+                    style: const TextStyle(fontSize: 14),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
+                  style: clearStyle,
                 ),
               ),
             ],
@@ -1866,12 +2093,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final blockReason = _blockNewTicketReason(l10n);
 
     if (blockReason != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(blockReason),
-          backgroundColor: Colors.orange.shade700,
-        ),
-      );
+      SnackBarHelper.showToast(blockReason, kind: ToastKind.warning);
       return;
     }
 
@@ -1894,16 +2116,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final l10n = AppLocalizations.of(context)!;
 
     if (tickets.length <= 1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.translate('cannot_remove_last_ticket'))),
-      );
+      SnackBarHelper.showToast(l10n.translate('cannot_remove_last_ticket'), kind: ToastKind.error);
       return;
     }
 
     if (tickets[index].isPaid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.translate('cannot_remove_paid_ticket'))),
-      );
+      SnackBarHelper.showToast(l10n.translate('cannot_remove_paid_ticket'), kind: ToastKind.error);
       return;
     }
 
@@ -2041,12 +2259,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     if (_isProcessing) return;
     if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ticketsCreate)) {
       final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translate('no_permission')),
-          backgroundColor: Colors.red,
-        ),
-      );
+      SnackBarHelper.showToast(l10n.translate('no_permission'), kind: ToastKind.error);
       return;
     }
     setState(() => _isProcessing = true);
@@ -2072,12 +2285,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     if (session == null) {
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('no_active_session')),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        SnackBarHelper.showToast(l10n.translate('no_active_session'), kind: ToastKind.warning);
       }
       setState(() => _isProcessing = false);
       return;
@@ -2158,12 +2366,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
         if (mounted) {
           final l10n = AppLocalizations.of(context)!;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(l10n.translate('ticket_paid_successfully').replaceAll('{0}', ticketNumStr)),
-              backgroundColor: Colors.green.shade700,
-            ),
-          );
+          SnackBarHelper.showToast(l10n.translate('ticket_paid_successfully').replaceAll('{0}', ticketNumStr), kind: ToastKind.success);
         }
       }
 
@@ -2173,7 +2376,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       // also means each ticket's paperwork queues in order while the next
       // ticket is already being settled.
       final prefs = ref.read(sharedPreferencesProvider);
-      final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
+      final businessName = prefs.getString('business_name');
       final storeAddress = prefs.getString('business_address');
       final storePhone = prefs.getString('business_phone');
 
@@ -2251,14 +2454,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       _logger.error('Payment failed: $e');
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n
+        SnackBarHelper.showToast(l10n
                 .translate('payment_failed')
-                .replaceAll('{0}', errorText(e, l10n))),
-            backgroundColor: Colors.red,
-          ),
-        );
+                .replaceAll('{0}', errorText(e, l10n)), kind: ToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2389,12 +2587,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   Future<void> _payAllTickets() async {
     if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ticketsCreate)) {
       final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translate('no_permission')),
-          backgroundColor: Colors.red,
-        ),
-      );
+      SnackBarHelper.showToast(l10n.translate('no_permission'), kind: ToastKind.error);
       return;
     }
     // Snapshot the count once; iterate by re-reading state each time so we always
@@ -2412,12 +2605,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     if (mounted) {
       final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translate('all_tickets_paid_successfully')),
-          backgroundColor: Colors.green,
-        ),
-      );
+      SnackBarHelper.showToast(l10n.translate('all_tickets_paid_successfully'), kind: ToastKind.success);
     }
   }
 
@@ -2521,21 +2709,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     _commitAndPrune(updatedTickets, sourceTicketIndex, targetTicketIndex);
 
     final mergedQty = target.item.quantity + source.item.quantity;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.merge_rounded, color: Colors.white, size: 18),
-            const SizedBox(width: 8),
-            Text('${source.item.displayName} → ${formatQty(mergedQty)}x'),
-          ],
-        ),
-        backgroundColor: Colors.green.shade700,
-        duration: const Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-      ),
-    );
+    SnackBarHelper.showToast('${source.item.displayName} → ${formatQty(mergedQty)}x', kind: ToastKind.success, duration: const Duration(seconds: 1));
   }
 
   /// Divide dialog with slider and constraints, opened by tapping a line.
@@ -2779,14 +2953,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final emptyIdx = tickets.indexWhere((t) => !t.isPaid && t.items.isEmpty);
     if (emptyIdx == -1 && tickets.length >= _maxTickets) {
       final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n
+      SnackBarHelper.showToast(l10n
               .translate('max_tickets_reached')
-              .replaceAll('{0}', '$_maxTickets')),
-          backgroundColor: Colors.orange.shade700,
-        ),
-      );
+              .replaceAll('{0}', '$_maxTickets'), kind: ToastKind.warning);
       return;
     }
 
@@ -2815,22 +2984,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     _setTickets(updatedTickets);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.call_split_rounded, color: Colors.white, size: 18),
-            const SizedBox(width: 8),
-            Text('${line.item.displayName}: '
-                '${formatQty(kept.item.quantity)} + ${formatQty(taken.item.quantity)}'),
-          ],
-        ),
-        backgroundColor: Colors.blue.shade700,
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-      ),
-    );
+    SnackBarHelper.showToast('${line.item.displayName}: '
+                '${formatQty(kept.item.quantity)} + ${formatQty(taken.item.quantity)}', kind: ToastKind.info, duration: const Duration(seconds: 2));
   }
 
   /// The delivery fee a reprint of [ticket] should show, or null. Mirrors
@@ -3020,10 +3175,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         .hasPermission(Permissions.ticketsPrint)) {
       return true;
     }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(l10n.translate('no_permission')),
-      backgroundColor: Colors.red,
-    ));
+    SnackBarHelper.showToast(l10n.translate('no_permission'), kind: ToastKind.error);
     return false;
   }
 
@@ -3040,18 +3192,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       // Silent on success — the paper is the confirmation. Only a failure
       // needs saying, because nothing came out to say it.
       if (!ok) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('print_failed')),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast(l10n.translate('print_failed'), kind: ToastKind.error);
       }
     } catch (e) {
       _logger.error('Draft ticket print failed: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(errorText(e, l10n)),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast(errorText(e, l10n), kind: ToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _isPrintingDraft = false);
@@ -3092,21 +3238,15 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       // Nothing to say when every slip came out. A printer that quit after
       // two of five must not look like it did all five, though.
       if (printed != pending.length) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n
+        SnackBarHelper.showToast(l10n
               .translate('draft_tickets_printed_count')
               .replaceAll('{0}', '$printed')
-              .replaceAll('{1}', '${pending.length}')),
-          backgroundColor: Colors.red,
-        ));
+              .replaceAll('{1}', '${pending.length}'), kind: ToastKind.error);
       }
     } catch (e) {
       _logger.error('Print all draft tickets failed: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(errorText(e, l10n)),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast(errorText(e, l10n), kind: ToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _isPrintingDraft = false);
@@ -3117,12 +3257,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     if (ticket.ticketId == null) return;
     if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ticketsPrint)) {
       final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translate('no_permission')),
-          backgroundColor: Colors.red,
-        ),
-      );
+      SnackBarHelper.showToast(l10n.translate('no_permission'), kind: ToastKind.error);
       return;
     }
     final printingService = ref.read(printingServiceProvider);
@@ -3130,7 +3265,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final prefs = ref.read(sharedPreferencesProvider);
 
     try {
-      final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
+      final businessName = prefs.getString('business_name');
       final itemsForPrint = ticket.items.map((line) => {
         'name': line.item.displayName,
         'quantity': line.item.quantity,
@@ -3183,9 +3318,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     } catch (e) {
       _logger.error('Reprint failed: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Print failed: $e'), backgroundColor: Colors.red),
-        );
+        SnackBarHelper.showToast('Print failed: $e', kind: ToastKind.error);
       }
     }
   }

@@ -8,6 +8,7 @@ import '../../providers/database_providers.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
 import '../widgets/adaptive_text_field.dart';
+import '../../utils/snackbar_helper.dart';
 
 /// Profile dialog showing user info and allowing password change.
 /// The custom password is stored in SharedPreferences (per user).
@@ -145,12 +146,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
         _newPasswordController.clear();
         _confirmPasswordController.clear();
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('password_changed_successfully')),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast(l10n.translate('password_changed_successfully'), kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
@@ -540,12 +536,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                                 await prefs.remove('custom_password_${currentUser.id}');
                                 if (mounted) {
                                   setState(() {});
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(l10n.translate('custom_password_removed')),
-                                      backgroundColor: Colors.orange,
-                                    ),
-                                  );
+                                  SnackBarHelper.showToast(l10n.translate('custom_password_removed'), kind: ToastKind.warning);
                                 }
                               }
                             },

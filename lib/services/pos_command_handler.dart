@@ -3,7 +3,6 @@ import 'package:loggecrea/loggecrea.dart';
 
 import '../providers/admin_elevation_provider.dart';
 import '../providers/database_providers.dart';
-import '../providers/settings_provider.dart';
 import 'activity_log_service.dart';
 import 'data_sync_service.dart';
 import 'session_service.dart';
@@ -180,12 +179,8 @@ class PosCommandHandler {
     }
   }
 
-  Future<void> _syncAll() => _run('sync_all', () async {
-        final settings = _ref.read(settingsProvider);
-        await _dataSyncService.syncAllData(
-          dataRetentionDays: settings.dataRetentionDays,
-        );
-      });
+  Future<void> _syncAll() =>
+      _run('sync_all', () => _dataSyncService.syncAllData());
 
   Future<void> _closeCurrentSession() async {
     await _run('close_current_session', () async {

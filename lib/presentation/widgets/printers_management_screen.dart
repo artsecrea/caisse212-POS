@@ -19,6 +19,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/escpos_parser.dart';
 import './adaptive_text_field.dart';
 import 'settings_lock_dialog.dart';
+import '../../utils/snackbar_helper.dart';
 
 class PrintersManagementScreen extends ConsumerStatefulWidget {
   const PrintersManagementScreen({super.key});
@@ -168,13 +169,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     final l10n = AppLocalizations.of(context)!;
     void save() {
       _saveIdentityField(prefsKey, controller.text.trim());
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translate('success')),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+      SnackBarHelper.showToast(l10n.translate('success'), kind: ToastKind.success, duration: const Duration(seconds: 2));
     }
 
     return TextField(
@@ -228,13 +223,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
           setState(() {
             _logoBytes = bytes;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(AppLocalizations.of(context)!.translate('success')),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 2),
-            ),
-          );
+          SnackBarHelper.showToast(AppLocalizations.of(context)!.translate('success'), kind: ToastKind.success, duration: const Duration(seconds: 2));
         }
       }
     }
@@ -332,13 +321,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         ? l10n.translate('receipt_printer')
         : l10n.translate('kds_printer');
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$printerType: ${printer.name}'),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      SnackBarHelper.showToast('$printerType: ${printer.name}', kind: ToastKind.success, duration: const Duration(seconds: 3));
     }
   }
 
@@ -354,13 +337,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         ? l10n.translate('receipt_printer')
         : l10n.translate('kds_printer');
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${l10n.translate('remove')}: $printerType'),
-          backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      SnackBarHelper.showToast('${l10n.translate('remove')}: $printerType', kind: ToastKind.warning, duration: const Duration(seconds: 3));
     }
   }
 
@@ -432,15 +409,9 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     final printingService = ref.read(printingServiceProvider);
     final success = await printingService.printTestPage(purpose);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(success
+      SnackBarHelper.showToast(success
               ? l10n.translate('test_print_success')
-              : l10n.translate('test_print_failed')),
-          backgroundColor: success ? Colors.green : Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+              : l10n.translate('test_print_failed'), kind: (success) ? ToastKind.success : ToastKind.error, duration: const Duration(seconds: 3));
     }
   }
 
@@ -449,14 +420,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     final l10n = AppLocalizations.of(context)!;
     final ok = await ref.read(printingServiceProvider).testPoolPrinter(p);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-              '${p.label}: ${ok ? l10n.translate('test_print_success') : l10n.translate('test_print_failed')}'),
-          backgroundColor: ok ? Colors.green : Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      SnackBarHelper.showToast('${p.label}: ${ok ? l10n.translate('test_print_success') : l10n.translate('test_print_failed')}', kind: (ok) ? ToastKind.success : ToastKind.error, duration: const Duration(seconds: 3));
     }
   }
 
@@ -830,13 +794,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                           tooltip: l10n.translate('save'),
                           onPressed: () {
                             _saveBusinessName(_businessNameController.text.trim());
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(l10n.translate('success')),
-                                backgroundColor: Colors.green,
-                                duration: const Duration(seconds: 2),
-                              ),
-                            );
+                            SnackBarHelper.showToast(l10n.translate('success'), kind: ToastKind.success, duration: const Duration(seconds: 2));
                           },
                         ),
                       ),
@@ -1547,14 +1505,11 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     final ok = await ref.read(printingServiceProvider).kickCashDrawer();
     if (!mounted) return;
     setState(() => _openingDrawer = false);
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(ok
+    SnackBarHelper.showToast(
+        ok
             ? l10n.translate('drawer_opened')
-            : l10n.translate('drawer_open_failed')),
-        backgroundColor: ok ? null : Theme.of(context).colorScheme.error,
-      ));
+            : l10n.translate('drawer_open_failed'),
+        kind: ok ? ToastKind.success : ToastKind.error);
   }
 
   Widget _buildCashDrawerCard(AppLocalizations l10n) {
@@ -1684,6 +1639,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     'storeName': 'Store name',
     'storeAddress': 'Store address',
     'storePhone': 'Store phone',
+    'storeIce': 'ICE (tax ID)',
     'stationName': 'Station name',
     'orderCode': 'Order code',
     'orderNumber': 'Order number (per session)',
@@ -1713,6 +1669,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   // saying next to the switch — otherwise "I turned it on and nothing
   // changed" on a card payment reads as a bug.
   static const _ticketFieldHints = {
+    'storeIce': 'Only prints when the ICE is filled in above',
     'waiter': 'Only prints when a waiter is attached to the order',
     'orderNumber': 'Short #1, #2… — when it restarts is set in Settings › Order defaults',
     'tva': 'Prints the VAT already included in the total',
@@ -2369,12 +2326,9 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                   .testNetworkReachable(fullAddress());
               setLocal(() => testing = false);
               if (!ctx.mounted) return;
-              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                backgroundColor: ok ? Colors.green : Colors.red,
-                content: Text(ok
+              SnackBarHelper.showToast(ok
                     ? l10n.translate('connection_ok')
-                    : l10n.translate('connection_failed')),
-              ));
+                    : l10n.translate('connection_failed'), kind: (ok) ? ToastKind.success : ToastKind.error);
             }
 
             Future<void> doSave() async {
@@ -2501,9 +2455,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
       },
     );
 
-    nameCtrl.dispose();
-    ipCtrl.dispose();
-    portCtrl.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
   }
 
   // ── Raw ESC/POS dialog ────────────────────────────────────────────────────
@@ -2535,12 +2487,9 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
                   .sendRawBytes(purpose, bytes);
               setLocal(() => sending = false);
               if (!ctx.mounted) return;
-              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                backgroundColor: ok ? Colors.green : Colors.red,
-                content: Text(ok
+              SnackBarHelper.showToast(ok
                     ? l10n.translate('raw_escpos_sent')
-                    : l10n.translate('raw_escpos_send_failed')),
-              ));
+                    : l10n.translate('raw_escpos_send_failed'), kind: (ok) ? ToastKind.success : ToastKind.error);
               if (ok && ctx.mounted) Navigator.of(ctx).pop();
             }
 
@@ -2614,7 +2563,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
       },
     );
 
-    inputCtrl.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
   }
 
   // ── Station printer routing ────────────────────────────────────────────────

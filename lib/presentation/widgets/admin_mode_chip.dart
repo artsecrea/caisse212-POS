@@ -6,6 +6,7 @@ import '../../providers/database_providers.dart';
 import '../../services/activity_log_service.dart';
 import '../../utils/admin_auth.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/snackbar_helper.dart';
 
 /// A small AppBar chip that lets a non-admin temporarily elevate to admin
 /// privileges by entering an admin's username + password. While elevated,
@@ -79,15 +80,8 @@ class AdminModeChip extends ConsumerWidget {
             username: actor?.effectiveDisplayName,
             adminUsername: result.adminUsername,
           );
-      messenger.showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.green.shade700,
-          content: Text(
-            l10n.translate('admin_mode_active')
-                .replaceAll('{0}', result.adminUsername),
-          ),
-        ),
-      );
+      SnackBarHelper.showToast(l10n.translate('admin_mode_active')
+                .replaceAll('{0}', result.adminUsername), kind: ToastKind.success);
     });
   }
 
@@ -101,9 +95,7 @@ class AdminModeChip extends ConsumerWidget {
             userId: actor?.id,
             username: actor?.effectiveDisplayName,
           );
-      messenger.showSnackBar(
-        SnackBar(content: Text(l10n.translate('admin_mode_revoked'))),
-      );
+      SnackBarHelper.showToast(l10n.translate('admin_mode_revoked'), kind: ToastKind.info);
     });
   }
 }

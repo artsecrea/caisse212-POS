@@ -51,16 +51,15 @@ void main() {
       expect(plan.next, const ZLabel(today, 1));
     });
 
-    test('an open Z from an earlier day is closed FORCED, never relabelled',
+    test('an open Z from an earlier day is continued, never closed by the clock',
         () {
       final plan = planZ(
         currentZDay: today,
         localOpen: const ZLabel('2026-09-24', 1),
         localLatest: const ZSnapshot(ZLabel('2026-09-24', 1), closed: false),
       );
-      expect(plan.closeStaleFirst, isTrue);
-      expect(plan.action, ZPlanAction.openNew);
-      expect(plan.next, const ZLabel(today, 1));
+      expect(plan.action, ZPlanAction.continueOpen);
+      expect(plan.next, const ZLabel('2026-09-24', 1));
     });
 
     test('after today\'s Z closed, the next one is zSeq + 1', () {
@@ -200,6 +199,33 @@ void main() {
       expect(due('AUTO_AFTER_HOUR', DateTime(2026, 9, 26, 2)), isTrue);
       expect(due(null, DateTime(2026, 9, 26, 3)), isFalse);
       expect(due('MANUAL', DateTime(2026, 9, 26, 3)), isFalse);
+    });
+
+    test('BY_SESSION closes the Z with its last open session only', () {
+      expect(
+          zClosesWithSession(closeMode: 'BY_SESSION', otherOpenSessions: 0),
+          isTrue);
+      expect(
+          zClosesWithSession(closeMode: 'by_session', otherOpenSessions: 0),
+          isTrue);
+      expect(
+          zClosesWithSession(closeMode: 'BY_SESSION', otherOpenSessions: 1),
+          isFalse);
+      expect(
+          zClosesWithSession(
+              closeMode: 'BY_SESSION', otherOpenSessions: 0, tooEarly: true),
+          isFalse);
+      expect(zClosesWithSession(closeMode: null, otherOpenSessions: 0),
+          isFalse);
+      expect(
+          zClosesWithSession(
+              closeMode: 'AUTO_AFTER_HOUR', otherOpenSessions: 0),
+          isFalse);
+    });
+
+    test('a lone session prints only the Z, several add the closing X', () {
+      expect(printSessionXWithZ(1), isFalse);
+      expect(printSessionXWithZ(2), isTrue);
     });
   });
 

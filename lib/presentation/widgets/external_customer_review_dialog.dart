@@ -7,6 +7,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/phone_normalizer.dart';
 import 'customer_selection_dialog.dart';
 import 'name_conflict_dialog.dart';
+import '../../utils/snackbar_helper.dart';
 
 /// Shown right before the cashier confirms an external order (DealUp /
 /// WhatsApp queue item). Lets them review the customer the source sent,
@@ -60,10 +61,7 @@ class _ExternalCustomerReviewDialogState
       await _saveOrModifyFlow();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast('Error: $e', kind: ToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _isOpeningChild = false);
@@ -183,10 +181,7 @@ class _ExternalCustomerReviewDialogState
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast('Error: $e', kind: ToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _isOpeningChild = false);

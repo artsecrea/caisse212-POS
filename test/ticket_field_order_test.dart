@@ -50,7 +50,7 @@ void main() {
         'customer': ['tva', 'table', 'storeAddress', 'barcode', 'orderCode'],
       });
       expect(config.orderedFields('customer', 'header'), ['storeAddress',
-        'storePhone']);
+        'storePhone', 'storeIce']);
       expect(config.orderedFields('customer', 'trailer'), ['barcode']);
       expect(config.orderedFields('customer', 'info').contains('tva'), isFalse);
       expect(config.orderedFields('customer', 'totals').first, 'tva');

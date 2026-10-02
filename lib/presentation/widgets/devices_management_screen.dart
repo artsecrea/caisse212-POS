@@ -14,6 +14,7 @@ import '../../services/socket_service.dart';
 import '../../providers/database_providers.dart';
 import '../../services/permission_service.dart';
 import '../../utils/pos_log.dart';
+import '../../utils/snackbar_helper.dart';
 
 class DevicesManagementScreen extends ConsumerStatefulWidget {
   const DevicesManagementScreen({super.key});
@@ -343,18 +344,14 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
       if (mounted) {
         //
         // if (discoveredDevices.isEmpty) {
-        //   ScaffoldMessenger.of(context).showSnackBar(
-        //     const SnackBar(content: Text('No devices found on network')),
-        //   );
+        //   SnackBarHelper.showToast('No devices found on network');
         // } else {
         //   _showDiscoveredDevicesDialog(discoveredDevices);
         // }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error scanning network: $e')),
-        );
+        SnackBarHelper.showToast('Error scanning network: $e', kind: ToastKind.error);
       }
     } finally {
       if (mounted) {
@@ -373,12 +370,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
   /// Returns true if the user has [permission]; otherwise shows a snackbar.
   bool _requirePermission(String permission) {
     if (ref.read(permissionServiceProvider).hasPermission(permission)) return true;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('You do not have permission to perform this action'),
-        backgroundColor: Colors.red,
-      ),
-    );
+    SnackBarHelper.showToast('You do not have permission to perform this action', kind: ToastKind.error);
     return false;
   }
 
@@ -432,15 +424,11 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
         await deviceRepo.deleteDevice(device.id, device.type);
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Device deleted successfully')),
-          );
+          SnackBarHelper.showToast('Device deleted successfully', kind: ToastKind.info);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error deleting device: $e')),
-          );
+          SnackBarHelper.showToast('Error deleting device: $e', kind: ToastKind.error);
         }
       }
     }
@@ -710,15 +698,11 @@ class _DeviceFormDialogState extends ConsumerState<_DeviceFormDialog> {
 
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(widget.device == null ? 'Device added successfully' : 'Device updated successfully')),
-        );
+        SnackBarHelper.showToast(widget.device == null ? 'Device added successfully' : 'Device updated successfully', kind: ToastKind.info);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving device: $e')),
-        );
+        SnackBarHelper.showToast('Error saving device: $e', kind: ToastKind.error);
       }
     }
   }
@@ -854,15 +838,11 @@ class _AddStationDialogState extends ConsumerState<_AddStationDialog> {
       if (mounted) {
         widget.onStationAdded(newId);
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Station added successfully')),
-        );
+        SnackBarHelper.showToast('Station added successfully', kind: ToastKind.info);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error adding station: $e')),
-        );
+        SnackBarHelper.showToast('Error adding station: $e', kind: ToastKind.error);
       }
     }
   }

@@ -110,10 +110,6 @@ class ZPlan {
   /// The Z to continue / adopt / open.
   final ZLabel next;
 
-  /// A local open Z from an earlier business day that must be closed FORCED
-  /// first. Never relabelled: a Z that outlives its day is closed, not moved.
-  final bool closeStaleFirst;
-
   /// The local open Z matches a label the server already has CLOSED — close
   /// it locally (no push; the server already knows) before opening [next].
   final bool closeLocalAsServerClosed;
@@ -121,13 +117,12 @@ class ZPlan {
   const ZPlan(
     this.action,
     this.next, {
-    this.closeStaleFirst = false,
     this.closeLocalAsServerClosed = false,
   });
 
   @override
   String toString() =>
-      'ZPlan($action, $next, stale=$closeStaleFirst, serverClosed=$closeLocalAsServerClosed)';
+      'ZPlan($action, $next, serverClosed=$closeLocalAsServerClosed)';
 }
 
 /// Decide which Z the next session belongs to.
@@ -160,10 +155,8 @@ ZPlan planZ({
   }
 
   if (localOpen != null) {
-    if (localOpen.zDay.compareTo(currentZDay) < 0) {
-      return ZPlan(ZPlanAction.openNew, ZLabel(currentZDay, maxSeqToday() + 1),
-          closeStaleFirst: true);
-    }
+    // An open Z is never closed by the calendar: one left open from an
+    // earlier business day is continued until a person closes it.
     final serverClosedIt =
         server != null && server.closed && server.label == localOpen;
     if (serverClosedIt) {
@@ -258,3 +251,25 @@ bool zAutoCloseDue({
   final at = ruleInstant(zDay, startHour, autoCloseAfter);
   return at != null && !now.isBefore(at);
 }
+
+/// `zCloseMode` value: the Z closes, silently, with the last of its sessions.
+const String kZCloseBySession = 'BY_SESSION';
+
+/// `zCloseMode: BY_SESSION` and no other session of the Z is still open: the
+/// session now closing takes its Z with it — no question, no sign-in. With
+/// sessions running side by side, the Z waits for the last one.
+/// [tooEarly] is `zEarliestCloseTime` not yet reached: that limit still holds,
+/// and the Z is then left for the next close or the day's FORCED sweep.
+bool zClosesWithSession({
+  required String? closeMode,
+  required int otherOpenSessions,
+  bool tooEarly = false,
+}) =>
+    (closeMode ?? '').toUpperCase() == kZCloseBySession &&
+    otherOpenSessions == 0 &&
+    !tooEarly;
+
+/// When a session closes its Z, the Z report always prints; the session's own
+/// X only when the Z had other sessions — a lone session's X would repeat
+/// the Z line for line.
+bool printSessionXWithZ(int sessionsInZ) => sessionsInZ > 1;

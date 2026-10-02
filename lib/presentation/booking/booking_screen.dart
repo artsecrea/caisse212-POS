@@ -16,6 +16,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
 import '../../utils/currency_formatter.dart';
 import '../widgets/customer_selection_dialog.dart';
+import '../../utils/snackbar_helper.dart';
 
 /// Every bookable service in the catalogue: a product marked plannable that
 /// actually carries a duration.
@@ -720,11 +721,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       );
 
   void _toast(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
-      duration: Duration(seconds: isError ? 4 : 2),
-    ));
+    SnackBarHelper.showToast(message, kind: (isError) ? ToastKind.error : ToastKind.info, duration: Duration(seconds: isError ? 4 : 2));
   }
 
   static bool _sameDay(DateTime a, DateTime b) =>

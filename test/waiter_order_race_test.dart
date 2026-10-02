@@ -185,6 +185,37 @@ void main() {
       );
     });
 
+    /// Quick-cash pay marks the lines PAID, then its detached kitchen job
+    /// re-reads them: without the owed-ids hand-off every line looked settled
+    /// and the kitchen got an empty ticket for a paid takeaway.
+    test('a line paid before its kitchen job runs still reaches the kitchen',
+        () async {
+      final orderId = await seedOrder();
+      final snapshot = (await repo.getOrderById(orderId))!;
+      final owed = {for (final i in snapshot.unpaidItems) i.id!};
+
+      final ticketId = await db.into(db.tickets).insert(TicketsCompanion.insert(
+          num: '0001', orderId: orderId, paymentMethod: 'CASH', amount: 10));
+      await (db.update(db.orderProducts)..where((t) => t.orderId.equals(orderId)))
+          .write(OrderProductsCompanion(ticketId: Value(ticketId)));
+
+      expect(await linesFor(snapshot), isEmpty,
+          reason: 'a paid line is not a modification on its own');
+      final lines = await PrintingService().kdsLinesForTesting(
+          db, snapshot, KdsPrintMode.modificationsOnly,
+          paidLinesStillOwed: owed);
+      expect(lines.map((i) => i.productId), [1]);
+
+      // Already sent before it was paid → nothing owed, no duplicate.
+      await (db.update(db.orderProducts)..where((t) => t.orderId.equals(orderId)))
+          .write(const OrderProductsCompanion(kdsPrintedQuantity: Value(1)));
+      expect(
+          await PrintingService().kdsLinesForTesting(
+              db, snapshot, KdsPrintMode.modificationsOnly,
+              paidLinesStillOwed: owed),
+          isEmpty);
+    });
+
     /// The exact pattern reported from the floor: the kitchen got the first
     /// item, then the first AND second, then the first, second AND third.
     /// Each add-product handler loaded the whole order before queuing its

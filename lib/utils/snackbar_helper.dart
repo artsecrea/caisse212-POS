@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/theme/app_theme.dart';
 import '../providers/settings_provider.dart';
 import 'app_localizations.dart';
 import 'error_text.dart';
@@ -35,7 +38,7 @@ class SnackBarHelper {
     _show(context, message,
         duration: duration,
         action: action,
-        kind: _SnackKind.error);
+        kind: ToastKind.error);
   }
 
   /// Show a success. Always visible, regardless of settings.
@@ -48,7 +51,7 @@ class SnackBarHelper {
     _show(context, message,
         duration: duration,
         action: action,
-        kind: _SnackKind.success);
+        kind: ToastKind.success);
   }
 
   /// Show an info message. Always visible, regardless of settings.
@@ -61,7 +64,7 @@ class SnackBarHelper {
     _show(context, message,
         duration: duration,
         action: action,
-        kind: _SnackKind.info);
+        kind: ToastKind.info);
   }
 
   /// Show a warning. Always visible, regardless of settings.
@@ -74,7 +77,7 @@ class SnackBarHelper {
     _show(context, message,
         duration: duration,
         action: action,
-        kind: _SnackKind.warning);
+        kind: ToastKind.warning);
   }
 
   // ── Original settings-gated API (kept for backward compat) ─────────────────
@@ -91,20 +94,10 @@ class SnackBarHelper {
   }) {
     if (!ref.read(settingsProvider).enableSnackBars) return;
 
-    if (backgroundColor != null) {
-      // Caller explicitly passed a color — honor it (legacy path).
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(message),
-        duration: duration,
-        action: action,
-        backgroundColor: backgroundColor,
-      ));
-      return;
-    }
     _show(context, message,
         duration: duration,
         action: action,
-        kind: isError ? _SnackKind.error : _SnackKind.neutral);
+        kind: isError ? ToastKind.error : ToastKind.neutral);
   }
 
   /// Show an error snack bar.
@@ -126,7 +119,7 @@ class SnackBarHelper {
     SnackBarAction? action,
   }) {
     _show(context, message,
-        duration: duration, action: action, kind: _SnackKind.error);
+        duration: duration, action: action, kind: ToastKind.error);
   }
 
   /// Show a thrown [error], translated into something a cashier can act on.
@@ -147,7 +140,7 @@ class SnackBarHelper {
       l10n == null ? '$error' : errorText(error, l10n),
       duration: duration,
       action: action,
-      kind: _SnackKind.error,
+      kind: ToastKind.error,
     );
   }
 
@@ -161,7 +154,7 @@ class SnackBarHelper {
   }) {
     if (!ref.read(settingsProvider).enableSnackBars) return;
     _show(context, message,
-        duration: duration, action: action, kind: _SnackKind.success);
+        duration: duration, action: action, kind: ToastKind.success);
   }
 
   /// Show an info snack bar if enabled in settings.
@@ -174,7 +167,7 @@ class SnackBarHelper {
   }) {
     if (!ref.read(settingsProvider).enableSnackBars) return;
     _show(context, message,
-        duration: duration, action: action, kind: _SnackKind.info);
+        duration: duration, action: action, kind: ToastKind.info);
   }
 
   /// Show a warning snack bar if enabled in settings.
@@ -187,7 +180,7 @@ class SnackBarHelper {
   }) {
     if (!ref.read(settingsProvider).enableSnackBars) return;
     _show(context, message,
-        duration: duration, action: action, kind: _SnackKind.warning);
+        duration: duration, action: action, kind: ToastKind.warning);
   }
 
   // ── Internal ───────────────────────────────────────────────────────────────
@@ -197,23 +190,269 @@ class SnackBarHelper {
     String message, {
     required Duration duration,
     required SnackBarAction? action,
-    required _SnackKind kind,
+    required ToastKind kind,
   }) {
-    final cs = Theme.of(context).colorScheme;
-    final (bg, fg) = switch (kind) {
-      _SnackKind.error => (cs.error, cs.onError),
-      _SnackKind.success => (cs.tertiary, cs.onTertiary),
-      _SnackKind.warning => (cs.tertiaryContainer, cs.onTertiaryContainer),
-      _SnackKind.info => (cs.secondary, cs.onSecondary),
-      _SnackKind.neutral => (cs.inverseSurface, cs.onInverseSurface),
-    };
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message, style: TextStyle(color: fg)),
-      duration: duration,
+    showToast(message, kind: kind, duration: duration, action: action);
+  }
+
+  // ── Toasts ─────────────────────────────────────────────────────────────────
+
+  static final ValueNotifier<List<_ToastEntry>> _toasts =
+      ValueNotifier(const []);
+  static int _nextToastId = 0;
+  static final Map<int, Timer> _toastTimers = {};
+
+  /// More than this and the oldest goes: a burst of sync errors should not
+  /// wall off the right edge of the till.
+  static const int _maxToasts = 4;
+
+  /// Show a toast in the top-right corner, under the top bar.
+  ///
+  /// Deliberately needs no [BuildContext]: plenty of call sites show a
+  /// message after an `await`, when their own context may already be gone.
+  /// Toasts are drawn by [ToastHost], which sits in the app's root builder
+  /// above every route and dialog, so a toast raised from inside a dialog is
+  /// still visible, and survives the dialog closing.
+  static void showToast(
+    String message, {
+    ToastKind kind = ToastKind.info,
+    Duration duration = const Duration(seconds: 3),
+    SnackBarAction? action,
+    String? title,
+  }) {
+    final entry = _ToastEntry(
+      id: _nextToastId++,
+      message: message,
+      title: title,
+      kind: kind,
       action: action,
-      backgroundColor: bg,
-    ));
+    );
+    var list = [..._toasts.value, entry];
+    while (list.length > _maxToasts) {
+      _toastTimers.remove(list.first.id)?.cancel();
+      list = list.sublist(1);
+    }
+    _toasts.value = list;
+    _toastTimers[entry.id] = Timer(duration, () => dismissToast(entry.id));
+  }
+
+  static void dismissToast(int id) {
+    _toastTimers.remove(id)?.cancel();
+    _toasts.value = [
+      for (final t in _toasts.value)
+        if (t.id != id) t,
+    ];
+  }
+
+  static void dismissAllToasts() {
+    for (final t in _toastTimers.values) {
+      t.cancel();
+    }
+    _toastTimers.clear();
+    _toasts.value = const [];
   }
 }
 
-enum _SnackKind { error, success, info, warning, neutral }
+/// What a toast is about — picks its accent colour and icon.
+enum ToastKind { error, success, info, warning, neutral }
+
+class _ToastEntry {
+  _ToastEntry({
+    required this.id,
+    required this.message,
+    required this.kind,
+    this.title,
+    this.action,
+  });
+
+  final int id;
+  final String message;
+  final String? title;
+  final ToastKind kind;
+  final SnackBarAction? action;
+}
+
+/// Draws the toasts raised through [SnackBarHelper]. Mounted once, in the
+/// MaterialApp builder, stacked over the app.
+class ToastHost extends StatelessWidget {
+  const ToastHost({super.key});
+
+  /// Clears the top bar, so the toasts do not sit on the buttons in it.
+  static const double _top = 64;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<_ToastEntry>>(
+      valueListenable: SnackBarHelper._toasts,
+      builder: (context, toasts, _) {
+        if (toasts.isEmpty) return const SizedBox.shrink();
+        final screenWidth = MediaQuery.sizeOf(context).width;
+        final width = (screenWidth - 32).clamp(200.0, 380.0);
+        return Positioned(
+          top: _top + MediaQuery.paddingOf(context).top,
+          right: 16,
+          width: width,
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Newest on top, where the eye already is.
+                for (final t in toasts.reversed)
+                  Padding(
+                    key: ValueKey(t.id),
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _SlideIn(child: _Toast(entry: t)),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SlideIn extends StatefulWidget {
+  const _SlideIn({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_SlideIn> createState() => _SlideInState();
+}
+
+class _SlideInState extends State<_SlideIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  )..forward();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final curve = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+    return FadeTransition(
+      opacity: curve,
+      child: SlideTransition(
+        position: Tween(begin: const Offset(0.25, 0), end: Offset.zero)
+            .animate(curve),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _Toast extends StatelessWidget {
+  const _Toast({required this.entry});
+
+  final _ToastEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final dark = cs.brightness == Brightness.dark;
+    final (MaterialColor? hue, IconData icon) = switch (entry.kind) {
+      ToastKind.error => (Colors.red, Icons.error_outline),
+      ToastKind.success => (Colors.green, Icons.check_circle_outline),
+      ToastKind.warning => (Colors.orange, Icons.warning_amber_rounded),
+      ToastKind.info => (null, Icons.info_outline),
+      ToastKind.neutral => (null, Icons.notifications_none),
+    };
+    final accent = hue == null
+        ? (entry.kind == ToastKind.info ? cs.primary : cs.onSurfaceVariant)
+        : (dark ? hue.shade300 : hue.shade700);
+    final title = entry.title;
+    final action = entry.action;
+
+    return Dismissible(
+      key: ValueKey('toast-${entry.id}'),
+      direction: DismissDirection.startToEnd,
+      onDismissed: (_) => SnackBarHelper.dismissToast(entry.id),
+      child: Container(
+        decoration: BoxDecoration(
+          color: dark ? cs.surfaceContainerHighest : cs.surface,
+          borderRadius: AppTheme.brMd,
+          border: Border.all(color: cs.outlineVariant),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: dark ? 0.45 : 0.14),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(width: 4, color: accent),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 10, 12),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Icon(icon, color: accent, size: 22),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (title != null)
+                        Text(
+                          title,
+                          style: theme.textTheme.titleSmall
+                              ?.copyWith(color: cs.onSurface),
+                        ),
+                      if (entry.message.isNotEmpty)
+                        Text(
+                          entry.message,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                              color: title == null
+                                  ? cs.onSurface
+                                  : cs.onSurfaceVariant,
+                              height: 1.3),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (action != null)
+                Center(
+                  child: TextButton(
+                    onPressed: () {
+                      SnackBarHelper.dismissToast(entry.id);
+                      action.onPressed();
+                    },
+                    child: Text(action.label),
+                  ),
+                ),
+              Align(
+                alignment: Alignment.topCenter,
+                child: IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  color: cs.onSurfaceVariant,
+                  visualDensity: VisualDensity.compact,
+                  // No tooltip: the host sits above the Navigator, so there
+                  // is no Overlay for one to open in.
+                  onPressed: () => SnackBarHelper.dismissToast(entry.id),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

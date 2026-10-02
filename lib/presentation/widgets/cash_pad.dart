@@ -63,23 +63,69 @@ class CashPad extends ConsumerWidget {
     final l10n = AppLocalizations.of(context)!;
     final formatter = ref.watch(currencyFormatterProvider);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildAmountCard(theme, l10n, formatter),
-        const SizedBox(height: 10),
-        _buildShortcuts(theme, l10n, formatter, ref),
-        const SizedBox(height: 10),
-        Expanded(child: _buildKeypad(theme)),
-      ],
-    );
+    return LayoutBuilder(builder: (context, constraints) {
+      // Stacked, the amount card and the note chips take ~200px off the top;
+      // on a short screen that left the keypad keys as thin strips. Short and
+      // wide: keypad beside the readout. Short and narrow: tighten everything
+      // and give the chips one scrolling row.
+      if (constraints.maxHeight >= 420) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildAmountCard(theme, l10n, formatter),
+            const SizedBox(height: 10),
+            _buildShortcuts(theme, l10n, formatter, ref),
+            const SizedBox(height: 10),
+            Expanded(child: _buildKeypad(theme)),
+          ],
+        );
+      }
+
+      if (constraints.maxWidth >= 440) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildAmountCard(theme, l10n, formatter, dense: true),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: _buildShortcuts(theme, l10n, formatter, ref,
+                          chipHeight: 42),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: _buildKeypad(theme)),
+          ],
+        );
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildAmountCard(theme, l10n, formatter, dense: true),
+          const SizedBox(height: 6),
+          _buildShortcuts(theme, l10n, formatter, ref,
+              chipHeight: 40, singleRow: true),
+          const SizedBox(height: 6),
+          Expanded(child: _buildKeypad(theme)),
+        ],
+      );
+    });
   }
 
   Widget _buildAmountCard(
-      ThemeData theme, AppLocalizations l10n, CurrencyFormatter formatter) {
+      ThemeData theme, AppLocalizations l10n, CurrencyFormatter formatter,
+      {bool dense = false}) {
     final short = amountDue - entered;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: dense ? 6 : 10),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(12),
@@ -99,20 +145,20 @@ class CashPad extends ConsumerWidget {
               color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
             ),
           ),
-          const SizedBox(height: 2),
+          if (!dense) const SizedBox(height: 2),
           FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(
               formatter.format(entered),
               style: TextStyle(
-                fontSize: 38,
+                fontSize: dense ? 28 : 38,
                 fontWeight: FontWeight.bold,
                 color:
                     _isEnough ? Colors.green.shade700 : theme.colorScheme.primary,
               ),
             ),
           ),
-          const Divider(height: 16),
+          Divider(height: dense ? 10 : 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -125,7 +171,7 @@ class CashPad extends ConsumerWidget {
               Text(
                 formatter.format(_isEnough ? _change : short),
                 style: TextStyle(
-                  fontSize: 21,
+                  fontSize: dense ? 18 : 21,
                   fontWeight: FontWeight.bold,
                   color: _isEnough
                       ? Colors.green.shade700
@@ -140,25 +186,38 @@ class CashPad extends ConsumerWidget {
   }
 
   Widget _buildShortcuts(ThemeData theme, AppLocalizations l10n,
-      CurrencyFormatter formatter, WidgetRef ref) {
+      CurrencyFormatter formatter, WidgetRef ref,
+      {double chipHeight = 48, bool singleRow = false}) {
     final shortcuts = _shortcuts(ref);
+    final chips = [
+      for (var i = 0; i < shortcuts.length; i++)
+        _shortcutChip(
+          theme: theme,
+          label: i == 0
+              ? l10n.translate('exact')
+              : _shortLabel(shortcuts[i], formatter),
+          sublabel: i == 0 ? formatter.format(shortcuts[i]) : null,
+          amount: shortcuts[i],
+          highlighted: i == 0,
+          height: chipHeight,
+        ),
+    ];
 
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (var i = 0; i < shortcuts.length; i++)
-          _shortcutChip(
-            theme: theme,
-            label: i == 0
-                ? l10n.translate('exact')
-                : _shortLabel(shortcuts[i], formatter),
-            sublabel: i == 0 ? formatter.format(shortcuts[i]) : null,
-            amount: shortcuts[i],
-            highlighted: i == 0,
-          ),
-      ],
-    );
+    if (singleRow) {
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < chips.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              chips[i],
+            ],
+          ],
+        ),
+      );
+    }
+
+    return Wrap(spacing: 8, runSpacing: 8, children: chips);
   }
 
   /// Whole notes lose the ".00" — a row of "200 DH / 300 DH" chips scans far
@@ -174,10 +233,11 @@ class CashPad extends ConsumerWidget {
     String? sublabel,
     required double amount,
     required bool highlighted,
+    double height = 48,
   }) {
     final selected = (entered - amount).abs() < 0.005;
     return SizedBox(
-      height: 48,
+      height: height,
       child: ElevatedButton(
         onPressed: () => onAmount(amount),
         style: ElevatedButton.styleFrom(

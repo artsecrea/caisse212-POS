@@ -19,9 +19,6 @@ class SyncJobService {
 
   // Settings keys
   static const String _autoSyncDurationKey = 'auto_sync_duration_minutes';
-  static const String _dataRetentionDaysKey = 'data_retention_days';
-  static const String _autoClearSyncedDataKey = 'auto_clear_synced_data';
-  static const String _lastDataClearDateKey = 'last_data_clear_date';
   static const String _bulkSyncSizeKey = 'bulk_sync_size';
 
   SyncJobService(this._syncService, this._prefs, this._isOnlineCallback,
@@ -88,9 +85,6 @@ class SyncJobService {
         await identityFix.ensureIdentityBackfilled();
       }
 
-      // 1. Clear old synced data if enabled and needed
-      await _clearOldDataIfNeeded();
-
       // 2. Sync pending operations (deletes, updates)
       await _syncService.syncPendingOperations();
 
@@ -142,44 +136,6 @@ class SyncJobService {
       _logger.info('Sync job completed (push-only; order pull is manual)');
     } catch (e) {
       _logger.error('Sync job failed: $e');
-    }
-  }
-
-  /// Clear old synced data if auto-clear is enabled and it's a new day
-  Future<void> _clearOldDataIfNeeded() async {
-    final autoClear = _prefs.getBool(_autoClearSyncedDataKey) ?? true;
-    if (!autoClear) return;
-
-    final lastClearDateStr = _prefs.getString(_lastDataClearDateKey);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    DateTime? lastClearDate;
-    if (lastClearDateStr != null) {
-      lastClearDate = DateTime.tryParse(lastClearDateStr);
-    }
-
-    // Check if we need to clear data today
-    bool shouldClear = false;
-    if (lastClearDate == null) {
-      shouldClear = true;
-    } else {
-      final lastClearDay = DateTime(lastClearDate.year, lastClearDate.month, lastClearDate.day);
-      shouldClear = today.isAfter(lastClearDay);
-    }
-
-    if (shouldClear) {
-      final retentionDays = _prefs.getInt(_dataRetentionDaysKey) ?? 7;
-      if (retentionDays <= 0) return; // 0 = never purge
-      _logger.info('Clearing synced data older than $retentionDays days');
-
-      try {
-        await _syncService.clearOldSyncedData(retentionDays);
-        await _prefs.setString(_lastDataClearDateKey, now.toIso8601String());
-        _logger.info('Old synced data cleared successfully');
-      } catch (e) {
-        _logger.error('Failed to clear old synced data: $e');
-      }
     }
   }
 

@@ -10,6 +10,7 @@ import '../../utils/currency_formatter.dart';
 import '../../utils/responsive_utils.dart';
 import '../../data/database/app_database.dart' as db;
 import 'call_waiter_dialog.dart';
+import '../../utils/snackbar_helper.dart';
 
 class TableSelectionDialog extends ConsumerStatefulWidget {
   const TableSelectionDialog({Key? key}) : super(key: key);
@@ -862,17 +863,11 @@ Future<void> _handleTableSelection(
     final currentOrder = ref.read(orderProvider);
     final l10n = AppLocalizations.of(context)!;
     if (table.id == currentOrder.tableId) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(l10n.translate('already_on_this_table')),
-        backgroundColor: Colors.orange,
-      ));
+      SnackBarHelper.showToast(l10n.translate('already_on_this_table'), kind: ToastKind.warning);
       return;
     }
     if (existingOrder != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(l10n.translate('table_has_active_order')),
-        backgroundColor: Colors.orange,
-      ));
+      SnackBarHelper.showToast(l10n.translate('table_has_active_order'), kind: ToastKind.warning);
       return;
     }
     Navigator.of(context).pop({
@@ -1069,24 +1064,12 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
         ref.invalidate(areaTablesProvider);
 
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${table.name} ${l10n.translate('has_been_cleared')}'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 2),
-            ),
-          );
+          SnackBarHelper.showToast('${table.name} ${l10n.translate('has_been_cleared')}', kind: ToastKind.success, duration: const Duration(seconds: 2));
         }
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${l10n.translate('error_clearing_table')}: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        SnackBarHelper.showToast('${l10n.translate('error_clearing_table')}: $e', kind: ToastKind.error, duration: const Duration(seconds: 3));
       }
     }
   }

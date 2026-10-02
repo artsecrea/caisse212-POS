@@ -15,7 +15,7 @@ import '../../services/printing_service.dart';
 import '../../services/notification_params.dart';
 import '../../services/session_service.dart';
 import '../../services/z_actions.dart';
-import '../../services/z_rules.dart' show ZRuleBlock;
+import '../../services/z_rules.dart' show ZRuleBlock, printSessionXWithZ;
 import '../../services/z_service.dart';
 import '../../data/database/app_database.dart' as db;
 import '../../data/database/tables/activity_log_table.dart';
@@ -386,7 +386,14 @@ Future<CloseSessionResult> showCloseSessionDialog({
   final openZ = sessionZ != null && sessionZ.status == 'open' ? sessionZ : null;
   // Closing the Z is never remembered: ending the trading day must be a
   // deliberate choice every time.
-  bool closeTheZ = closeZ && openZ != null;
+  // BY_SESSION: this close takes the Z with it, behind the scenes — the
+  // cashier sees a plain session close.
+  final closesZWithSession =
+      openZ != null && await zClosesWithSessionFor(ref, openZ, sessionId);
+  final sessionsInZ = closesZWithSession
+      ? (await zService.sessionsForZ(openZ.id)).length
+      : 0;
+  bool closeTheZ = closeZ && openZ != null && !closesZWithSession;
   if (!context.mounted) return CloseSessionResult.cancelled;
 
   final result = await showDialog<CloseSessionResult>(
@@ -507,7 +514,9 @@ Future<CloseSessionResult> showCloseSessionDialog({
                         report: zReport,
                         reportType: 'X',
                         outstanding: outstanding);
-              } else if (printX) {
+              } else if (closesZWithSession
+                  ? printSessionXWithZ(sessionsInZ)
+                  : printX) {
                 printed = await ref
                     .read(printingServiceProvider)
                     .printDailySummaryReport(
@@ -520,8 +529,14 @@ Future<CloseSessionResult> showCloseSessionDialog({
             // 2b. AUTO_AFTER_HOUR: past the terminal's auto-close time, ASK
             //     whether to close the Z — never silently. A "No" is not
             //     remembered; the next session close asks again.
+            //     BY_SESSION closes it without asking.
             var closeMode = ZService.closeManual;
-            if (!closeTheZ && openZ != null && zAutoCloseDueFor(ref, openZ)) {
+            if (closesZWithSession) {
+              closeTheZ = true;
+              closeMode = ZService.closeAuto;
+            } else if (!closeTheZ &&
+                openZ != null &&
+                zAutoCloseDueFor(ref, openZ)) {
               final yes = await _askCloseDay(ctx, l10n);
               if (yes && ctx.mounted) {
                 final by = await _authorizeZClose(ctx, ref, openZ);
@@ -647,7 +662,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (sessionZ != null) ...[
+                  if (sessionZ != null && !closesZWithSession) ...[
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       dense: true,
@@ -675,7 +690,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
                         () => persist(ref.read(settingsProvider.notifier))),
                   ),
                   // Close the Z with this session — the day-close gesture.
-                  if (openZ != null) ...[
+                  if (openZ != null && !closesZWithSession) ...[
                     const Divider(height: 16),
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,

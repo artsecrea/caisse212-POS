@@ -212,17 +212,7 @@ Future<void> _applyPlanCloses(WidgetRef ref, _Planned planned) async {
   final open = planned.localOpen;
   if (open == null) return;
   final zService = ref.read(zServiceProvider);
-  if (planned.plan.closeStaleFirst) {
-    // Its business day is over: close it FORCED, on its own last session.
-    await zService.closeZ(
-      zId: open.id,
-      closeMode: ZService.closeForced,
-      sessionService: ref.read(sessionServiceProvider),
-    );
-    ref.read(activityLogServiceProvider).logZClosed(ZService.displayName(open));
-    unawaited(notifyZClosed(ref.read, open.id));
-    unawaited(_pushSessions(ref));
-  } else if (planned.plan.closeLocalAsServerClosed) {
+  if (planned.plan.closeLocalAsServerClosed) {
     await zService.markClosedByServer(open.id,
         closeMode: planned.serverCloseMode);
   }
@@ -383,6 +373,18 @@ bool zAutoCloseDueFor(WidgetRef ref, db.Z z) {
     startHour: ref.read(businessDayProvider).startHour,
     closeMode: rules.zCloseMode,
     autoCloseAfter: rules.zAutoCloseAfter,
+  );
+}
+
+/// `BY_SESSION`: whether closing [sessionId] closes [z] with it.
+Future<bool> zClosesWithSessionFor(
+    WidgetRef ref, db.Z z, int sessionId) async {
+  final others =
+      await ref.read(zServiceProvider).openSessionsOf(z.id, except: sessionId);
+  return zClosesWithSession(
+    closeMode: ref.read(sessionRulesProvider).zCloseMode,
+    otherOpenSessions: others.length,
+    tooEarly: zCloseNeedsOverride(ref, z),
   );
 }
 

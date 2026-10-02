@@ -13,6 +13,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/customer_display.dart';
+import '../../utils/snackbar_helper.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // View mode
@@ -2700,15 +2701,7 @@ class _AgendaScreenState extends ConsumerState<AgendaScreen> {
   }
 
   void _agendaToast(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: Duration(seconds: isError ? 4 : 2),
-        backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+    SnackBarHelper.showToast(message, kind: (isError) ? ToastKind.error : ToastKind.info, duration: Duration(seconds: isError ? 4 : 2));
   }
 
   Widget _timeChip(

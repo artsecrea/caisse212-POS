@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/permission_service.dart';
+import '../../utils/snackbar_helper.dart';
 
 /// Widget that shows/hides content based on user permissions
 class PermissionGuard extends ConsumerWidget {
@@ -166,12 +167,7 @@ mixin PermissionCheckMixin on ConsumerWidget {
   }
 
   void showPermissionDenied(BuildContext context, {String? message}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message ?? 'You do not have permission to perform this action'),
-        backgroundColor: Colors.red,
-      ),
-    );
+    SnackBarHelper.showToast(message ?? 'You do not have permission to perform this action', kind: ToastKind.error);
   }
 }
 

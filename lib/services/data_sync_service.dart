@@ -63,7 +63,7 @@ class DataSyncService {
   /// Ids are read out and diffed in Dart rather than expressed as a giant
   /// `NOT IN (…)`: SQLite caps bound variables at ~999, and a catalog of a few
   /// thousand products would blow straight through it. The deletes then go out
-  /// in chunks, the same pattern [clearOldSyncedData] uses.
+  /// in chunks.
   ///
   /// [protectWhere] is raw SQL naming rows that must never be reconciled away
   /// (e.g. a table currently holding an order). [extraKeepWhere] additionally
@@ -186,167 +186,6 @@ class DataSyncService {
     await _database.delete(_database.users).go();
   }
 
-  /// Clear old synced data based on retention period.
-  ///
-  /// Scope is **orders and the rows that belong to them** — not customers,
-  /// not cash sessions, not any other top-level entity. The previous version
-  /// of this method had four flaws we've now fixed:
-  ///
-  ///  1. **It deleted customers** (by `createdAt`) — but customers are NOT
-  ///     order data. A customer created 30 days ago is often still being
-  ///     referenced by a recent order; deleting them left the order with a
-  ///     dangling `clientId`. Customers are now left alone.
-  ///  2. **It deleted cash sessions** — sessions are top-level financial
-  ///     records (Z-reports, totals) and aren't strictly order data. Left
-  ///     alone too; admins can purge them via the sessions screen if needed.
-  ///  3. **It deleted tickets by their own `date`** instead of by their
-  ///     order's eligibility — could orphan a ticket whose parent order had
-  ///     been edited recently. Tickets are now deleted only when their
-  ///     order is being deleted.
-  ///  4. **Child rows were never cleaned up.** SQLite's `foreign_keys`
-  ///     pragma is OFF in this app, so the `onDelete: cascade` declared in
-  ///     `Tickets` and `Notes` does NOT fire — orderProducts,
-  ///     orderProductComponents, orderLogs, payments, and transactions all
-  ///     piled up forever as orphans. This method now manually cascades:
-  ///     children first (OPCs → OPs → tickets/notes/logs/payments/
-  ///     transactions), then the parent order itself. We also clear stale
-  ///     `area_tables.orderId` pointers so a freed table doesn't keep
-  ///     showing as busy.
-  ///
-  /// Wrapped in a single transaction so a partial failure rolls everything
-  /// back rather than leaving the DB half-purged.
-  /// Returns the number of orders deleted.
-  Future<int> clearOldSyncedData(int retentionDays) async {
-    final cutoffDate = DateTime.now().subtract(Duration(days: retentionDays));
-    var deletedOrders = 0;
-
-    await _database.transaction(() async {
-      // 1. Find the set of orders eligible for deletion.
-      //
-      // Eligibility = synced AND paid AND older than the cutoff.
-      // - `isSynced=true` protects orders that haven't reached the server yet
-      //   (deleting them would lose data permanently).
-      // - `paymentId IS NOT NULL` protects unpaid orders — an order with no
-      //   linked payment is still "open business" (held tab, abandoned cart,
-      //   layby, etc.) and must never be auto-purged regardless of age.
-      // - `updatedAt < cutoff` is the retention window.
-      final eligible = await (_database.select(_database.orders)
-            ..where((o) =>
-                o.isSynced.equals(true) &
-                o.paymentId.isNotNull() &
-                o.updatedAt.isSmallerThanValue(cutoffDate)))
-          .get();
-      if (eligible.isEmpty) return;
-      deletedOrders = eligible.length;
-      final orderIds = eligible.map((o) => o.id).toList();
-      final paymentIds = eligible
-          .where((o) => o.paymentId != null)
-          .map((o) => o.paymentId!)
-          .toSet()
-          .toList();
-
-      // 2. Cascade — chunk by 500 to stay clear of SQLite's
-      //    SQLITE_MAX_VARIABLE_NUMBER (typically 999) on large purges.
-      Future<void> deleteInChunks<T>(
-        List<int> ids,
-        Future<void> Function(List<int> chunk) deleter,
-      ) async {
-        const chunkSize = 500;
-        for (var i = 0; i < ids.length; i += chunkSize) {
-          final end = (i + chunkSize).clamp(0, ids.length);
-          await deleter(ids.sublist(i, end));
-        }
-      }
-
-      // 2a. order_product_components — referenced by orderProductId
-      //     (we need the OP ids first).
-      final orderProducts = <int>[];
-      await deleteInChunks(orderIds, (chunk) async {
-        final ops = await (_database.select(_database.orderProducts)
-              ..where((p) => p.orderId.isIn(chunk)))
-            .get();
-        orderProducts.addAll(ops.map((p) => p.id));
-      });
-      if (orderProducts.isNotEmpty) {
-        await deleteInChunks(orderProducts, (chunk) async {
-          await (_database.delete(_database.orderProductComponents)
-                ..where((c) => c.orderProductId.isIn(chunk)))
-              .go();
-        });
-      }
-
-      // 2b. order_products
-      await deleteInChunks(orderIds, (chunk) async {
-        await (_database.delete(_database.orderProducts)
-              ..where((p) => p.orderId.isIn(chunk)))
-            .go();
-      });
-
-      // 2c. tickets
-      await deleteInChunks(orderIds, (chunk) async {
-        await (_database.delete(_database.tickets)
-              ..where((t) => t.orderId.isIn(chunk)))
-            .go();
-      });
-
-      // 2d. notes
-      await deleteInChunks(orderIds, (chunk) async {
-        await (_database.delete(_database.notes)
-              ..where((n) => n.orderId.isIn(chunk)))
-            .go();
-      });
-
-      // 2e. order_logs
-      await deleteInChunks(orderIds, (chunk) async {
-        await (_database.delete(_database.orderLogs)
-              ..where((l) => l.orderId.isIn(chunk)))
-            .go();
-      });
-
-      // 2e2. ticket_draft_splits — local-only, never synced (see the table's
-      // own doc comment), but keyed by orderId like the rows above, so a
-      // purged order's draft split would otherwise sit orphaned forever:
-      // nothing ever queries it again once the order itself is gone.
-      await deleteInChunks(orderIds, (chunk) async {
-        await (_database.delete(_database.ticketDraftSplits)
-              ..where((t) => t.orderId.isIn(chunk)))
-            .go();
-      });
-
-      // 2f. transactions + payments (linked via orders.paymentId →
-      //     payments.id, then transactions.paymentId).
-      if (paymentIds.isNotEmpty) {
-        await deleteInChunks(paymentIds, (chunk) async {
-          await (_database.delete(_database.transactions)
-                ..where((t) => t.paymentId.isIn(chunk)))
-              .go();
-        });
-        await deleteInChunks(paymentIds, (chunk) async {
-          await (_database.delete(_database.payments)
-                ..where((p) => p.id.isIn(chunk)))
-              .go();
-        });
-      }
-
-      // 2g. Clear stale area_tables.orderId pointers so freed tables don't
-      //     keep showing as "busy" with a deleted order.
-      await deleteInChunks(orderIds, (chunk) async {
-        await (_database.update(_database.areaTables)
-              ..where((t) => t.orderId.isIn(chunk)))
-            .write(const AreaTablesCompanion(orderId: Value(null)));
-      });
-
-      // 3. Finally delete the orders themselves.
-      await deleteInChunks(orderIds, (chunk) async {
-        await (_database.delete(_database.orders)
-              ..where((o) => o.id.isIn(chunk)))
-            .go();
-      });
-    });
-
-    return deletedOrders;
-  }
-
   /// Dump/backup the database file before clearing.
   /// Copies the current DB to a timestamped backup in a 'backups' subdirectory.
   /// Returns the path to the backup file, or null if backup failed.
@@ -441,7 +280,7 @@ class DataSyncService {
   ///     pre-sync data they were just looking at, instead of seeing an
   ///     empty UI mid-purge.
   ///
-  ///   Phase 2 (single transaction): run the retention purge, **upsert**
+  ///   Phase 2 (single transaction): **upsert**
   ///     every fetched row (update-or-insert, keyed on the server id),
   ///     then reconcile — delete only the local ids the payload did not
   ///     mention. Wrapped in one transaction, so a throw anywhere rolls
@@ -458,7 +297,7 @@ class DataSyncService {
   ///   * `kds` and `kiosks` are no longer touched at all. syncAllData never
   ///     fetched them, yet the old wipe deleted them every run and nothing
   ///     put them back — device registrations silently disappeared.
-  Future<void> syncAllData({int? dataRetentionDays}) async {
+  Future<void> syncAllData() async {
     try {
       // ── Phase 1: network fetches ────────────────────────────────────
       onProgress?.call('Fetching users...', 0.05);
@@ -567,10 +406,6 @@ class DataSyncService {
       //     set, so they are no longer destroyed and restored from a snapshot.
       onProgress?.call('Updating local data...', 0.95);
       await _database.transaction(() async {
-        if (dataRetentionDays != null && dataRetentionDays > 0) {
-          await clearOldSyncedData(dataRetentionDays);
-        }
-
         // Persist in FK-respecting order. Each helper is a pure DB
         // writer: it doesn't touch the network and can be re-run safely
         // on a partial failure (drift rolls back the transaction on any

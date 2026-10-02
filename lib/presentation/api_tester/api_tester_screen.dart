@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'dart:convert';
 import '../../services/api_service.dart';
 import '../../providers/database_providers.dart';
+import '../../utils/snackbar_helper.dart';
 
 class ApiTesterScreen extends ConsumerStatefulWidget {
   const ApiTesterScreen({super.key});
@@ -603,9 +604,7 @@ class _ApiTesterScreenState extends ConsumerState<ApiTesterScreen> {
                                         tooltip: 'Copy response',
                                         onPressed: () {
                                           Clipboard.setData(ClipboardData(text: _response!));
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(content: Text('Response copied to clipboard')),
-                                          );
+                                          SnackBarHelper.showToast('Response copied to clipboard', kind: ToastKind.info);
                                         },
                                       ),
                                   ],

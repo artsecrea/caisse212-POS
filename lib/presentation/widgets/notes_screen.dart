@@ -6,6 +6,7 @@ import '../../providers/notes_provider.dart';
 import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
 import 'note_edit_dialog.dart';
+import '../../utils/snackbar_helper.dart';
 
 Color _hexToColor(String hex) {
   final h = hex.replaceAll('#', '');
@@ -163,12 +164,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
 
   bool _requirePermission(BuildContext context, String permission, AppLocalizations l10n) {
     if (ref.read(permissionServiceProvider).hasPermission(permission)) return true;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(l10n.translate('no_permission')),
-        backgroundColor: Colors.red,
-      ),
-    );
+    SnackBarHelper.showToast(l10n.translate('no_permission'), kind: ToastKind.error);
     return false;
   }
 

@@ -17,6 +17,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
 import '../../utils/pos_log.dart';
 import '../widgets/adaptive_text_field.dart';
+import '../../utils/snackbar_helper.dart';
 
 class TenantLoginScreen extends ConsumerStatefulWidget {
   const TenantLoginScreen({super.key});
@@ -398,8 +399,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         );
       },
     ).then((value) {
-      passwordController.dispose();
-      confirmPasswordController.dispose();
+      // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
       return value;
     });
   }
@@ -468,16 +468,11 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       },
     );
 
-    passwordController.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
 
     if (verified != true) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invalid password.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('Invalid password.', kind: ToastKind.error);
       }
       return;
     }
@@ -488,13 +483,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     });
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Server URL unlocked. You can now edit it.'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 2),
-        ),
-      );
+      SnackBarHelper.showToast('Server URL unlocked. You can now edit it.', kind: ToastKind.success, duration: Duration(seconds: 2));
     }
   }
 

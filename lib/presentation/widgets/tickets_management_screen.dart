@@ -17,6 +17,7 @@ import '../../utils/currency_formatter.dart';
 import 'admin_mode_chip.dart';
 import 'delivery_fee_totals_chip.dart';
 import './adaptive_text_field.dart';
+import '../../utils/snackbar_helper.dart';
 
 class TicketsManagementScreen extends ConsumerStatefulWidget {
   const TicketsManagementScreen({super.key});
@@ -233,21 +234,11 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
       if (mounted) {
         _refreshFuture();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Synced $syncedCount tickets'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast('Synced $syncedCount tickets', kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sync failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('Sync failed: $e', kind: ToastKind.error);
       }
     } finally {
       if (mounted) {
@@ -812,7 +803,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     }
 
     final itemsForPrint = await _buildTicketPrintItems(database, ticket.id);
-    final businessName = prefs.getString('business_name') ?? 'POS Store';
+    final businessName = prefs.getString('business_name');
 
     final success = await printingService.printTicketReceipt(
       ticketId: ticket.id,
@@ -865,9 +856,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
     if (filtered.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.translate('no_tickets_found'))),
-        );
+        SnackBarHelper.showToast(l10n.translate('no_tickets_found'), kind: ToastKind.info);
       }
       return;
     }
@@ -905,14 +894,9 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     }
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n
+      SnackBarHelper.showToast(l10n
               .translate('reprinted_tickets')
-              .replaceAll('{0}', printed.toString())),
-          backgroundColor: Colors.green,
-        ),
-      );
+              .replaceAll('{0}', printed.toString()), kind: ToastKind.success);
     }
   }
 
@@ -981,15 +965,11 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
         _refreshFuture();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Ticket updated successfully')),
-          );
+          SnackBarHelper.showToast('Ticket updated successfully', kind: ToastKind.info);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error updating ticket: $e')),
-          );
+          SnackBarHelper.showToast('Error updating ticket: $e', kind: ToastKind.error);
         }
       }
     }
@@ -1021,15 +1001,11 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
         await ticketRepo.deleteTicket(ticket.id);
         _refreshFuture();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Ticket deleted successfully')),
-          );
+          SnackBarHelper.showToast('Ticket deleted successfully', kind: ToastKind.info);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error deleting ticket: $e')),
-          );
+          SnackBarHelper.showToast('Error deleting ticket: $e', kind: ToastKind.error);
         }
       }
     }
@@ -1268,7 +1244,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
 
     // Get business name from SharedPreferences
     final prefs = ref.read(sharedPreferencesProvider);
-    final businessName = prefs.getString('business_name') ?? 'POS Store';
+    final businessName = prefs.getString('business_name');
 
     try {
       final success = await printingService.printTicketReceipt(
@@ -1307,32 +1283,17 @@ class _TicketDetailsDialog extends ConsumerWidget {
         );
 
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Ticket #${ticket.num} printed successfully${ticket.isPaid ? " (Paid)" : " (Unpaid)"}'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          SnackBarHelper.showToast('Ticket #${ticket.num} printed successfully${ticket.isPaid ? " (Paid)" : " (Unpaid)"}', kind: ToastKind.success);
           // Refresh the screen
         }
       } else {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to print. Check printer connection.'),
-              backgroundColor: Colors.orange,
-            ),
-          );
+          SnackBarHelper.showToast('Failed to print. Check printer connection.', kind: ToastKind.warning);
         }
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Print error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('Print error: $e', kind: ToastKind.error);
       }
     }
   }
@@ -1444,9 +1405,7 @@ class _EditTicketDialogState extends State<_EditTicketDialog> {
           onPressed: () {
             final amount = double.tryParse(_amountController.text);
             if (amount == null || amount <= 0) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Invalid amount')),
-              );
+              SnackBarHelper.showToast('Invalid amount', kind: ToastKind.error);
               return;
             }
 

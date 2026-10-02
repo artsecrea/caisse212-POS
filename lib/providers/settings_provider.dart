@@ -14,7 +14,6 @@ class SettingsKeys {
   static const String cashierDefaultPermissions = 'cashier_default_permissions';
   static const String autoSyncOnline = 'auto_sync_online';
   static const String bulkSyncSize = 'bulk_sync_size';
-  static const String dataRetentionDays = 'data_retention_days';
   static const String autoSyncDurationMinutes = 'auto_sync_duration_minutes';
   static const String defaultOrderType = 'default_order_type';
   static const String showProductImages = 'show_product_images';
@@ -45,8 +44,6 @@ class SettingsKeys {
   static const String showCashDrawerButton = 'show_cash_drawer_button';
   static const String showCancelOrderButton = 'show_cancel_order_button';
   static const String actionButtonAlignment = 'action_button_alignment';
-  static const String autoClearSyncedData = 'auto_clear_synced_data';
-  static const String lastDataClearDate = 'last_data_clear_date';
   static const String syncUnpaidOrders = 'sync_unpaid_orders';
 
   static const String orderPanelOnRight = 'order_panel_on_right';
@@ -269,7 +266,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
               const [],
       autoSyncOnline: _prefs.getBool(SettingsKeys.autoSyncOnline) ?? true,
       bulkSyncSize: _prefs.getInt(SettingsKeys.bulkSyncSize) ?? 50,
-      dataRetentionDays: _prefs.getInt(SettingsKeys.dataRetentionDays) ?? 7,
       autoSyncDurationMinutes: _prefs.getInt(SettingsKeys.autoSyncDurationMinutes) ?? 5,
       defaultOrderType: _prefs.getString(SettingsKeys.defaultOrderType) ?? 'DINE_IN',
       showProductImages: _prefs.getBool(SettingsKeys.showProductImages) ?? true,
@@ -311,7 +307,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
             e.name == _prefs.getString(SettingsKeys.actionButtonAlignment),
         orElse: () => ActionButtonAlignment.left,
       ),
-      autoClearSyncedData: _prefs.getBool(SettingsKeys.autoClearSyncedData) ?? true,
       syncUnpaidOrders: _prefs.getBool(SettingsKeys.syncUnpaidOrders) ?? true,
       orderPanelOnRight: _prefs.getBool(SettingsKeys.orderPanelOnRight) ?? false,
       serverPort: _prefs.getInt(SettingsKeys.serverPort) ?? 8080,
@@ -453,11 +448,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setBulkSyncSize(int value) async {
     await _prefs.setInt(SettingsKeys.bulkSyncSize, value);
     state = state.copyWith(bulkSyncSize: value);
-  }
-
-  Future<void> setDataRetentionDays(int value) async {
-    await _prefs.setInt(SettingsKeys.dataRetentionDays, value);
-    state = state.copyWith(dataRetentionDays: value);
   }
 
   Future<void> setAutoSyncDuration(int minutes) async {
@@ -625,11 +615,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setActionButtonAlignment(ActionButtonAlignment value) async {
     await _prefs.setString(SettingsKeys.actionButtonAlignment, value.name);
     state = state.copyWith(actionButtonAlignment: value);
-  }
-
-  Future<void> setAutoClearSyncedData(bool value) async {
-    await _prefs.setBool(SettingsKeys.autoClearSyncedData, value);
-    state = state.copyWith(autoClearSyncedData: value);
   }
 
   Future<void> setSyncUnpaidOrders(bool value) async {
@@ -1072,38 +1057,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(sortByLastUsed: value);
   }
 
-  /// Get the last data clear date
-  DateTime? getLastDataClearDate() {
-    final dateStr = _prefs.getString(SettingsKeys.lastDataClearDate);
-    if (dateStr == null) return null;
-    return DateTime.tryParse(dateStr);
-  }
-
-  /// Set the last data clear date to now
-  Future<void> setLastDataClearDate() async {
-    await _prefs.setString(SettingsKeys.lastDataClearDate, DateTime.now().toIso8601String());
-  }
-
-  /// Check if data should be cleared today
-  bool shouldClearDataToday() {
-    if (!state.autoClearSyncedData) return false;
-
-    final lastClearDate = getLastDataClearDate();
-    if (lastClearDate == null) return true;
-
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final lastClearDay = DateTime(lastClearDate.year, lastClearDate.month, lastClearDate.day);
-
-    return today.isAfter(lastClearDay);
-  }
-
   Future<void> resetToDefaults() async {
     await _prefs.remove(SettingsKeys.isDarkMode);
     await _prefs.remove(SettingsKeys.language);
     await _prefs.remove(SettingsKeys.autoSyncOnline);
     await _prefs.remove(SettingsKeys.bulkSyncSize);
-    await _prefs.remove(SettingsKeys.dataRetentionDays);
     await _prefs.remove(SettingsKeys.defaultOrderType);
     await _prefs.remove(SettingsKeys.showProductImages);
     await _prefs.remove(SettingsKeys.defaultOrderStatus);
@@ -1130,7 +1088,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _prefs.remove(SettingsKeys.buttonOrder);
     await _prefs.remove(SettingsKeys.actionButtonAlignment);
     await _prefs.remove(SettingsKeys.openOnStartup);
-    await _prefs.remove(SettingsKeys.autoClearSyncedData);
     await _prefs.remove(SettingsKeys.sseEnabled);
     await _prefs.remove(SettingsKeys.printOrdersListOnClose);
     await _prefs.remove(SettingsKeys.printProductSummaryOnClose);

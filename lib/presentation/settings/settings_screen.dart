@@ -35,6 +35,7 @@ import '../../utils/full_logout.dart';
 import '../../services/z_day_resolver.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../widgets/adaptive_text_field.dart';
+import '../../utils/snackbar_helper.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -308,12 +309,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       if (confirm == true) {
                         await settingsNotifier.resetToDefaults();
                         if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(l10n.translate('settings_reset')),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
+                          SnackBarHelper.showToast(l10n.translate('settings_reset'), kind: ToastKind.success);
                         }
                       }
                     },
@@ -754,8 +750,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
 
-    first.dispose();
-    second.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
     if (pin == null) return;
     // Setting a pin arms the lock: an admin who just typed one twice means to
     // use it, and leaving it disarmed reads as "nothing happened".
@@ -1101,8 +1096,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final session = await ZDayResolver(db).activeSession();
     if (!context.mounted) return;
     if (session == null && mode != 'manual') {
-      messenger.showSnackBar(SnackBar(
-          content: Text(l10n.translate('reset_order_number_no_session'))));
+      SnackBarHelper.showToast(l10n.translate('reset_order_number_no_session'), kind: ToastKind.info);
       return;
     }
     final confirm = await showDialog<bool>(
@@ -1124,8 +1118,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
     if (confirm != true) return;
     await db.resetOrderNumber(session?.id, mode: mode);
-    messenger.showSnackBar(SnackBar(
-        content: Text(l10n.translate('reset_order_number_done'))));
+    SnackBarHelper.showToast(l10n.translate('reset_order_number_done'), kind: ToastKind.info);
   }
 
   Widget _buildOrderDefaultsContent(
@@ -1629,15 +1622,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 8),
         _buildSwitchTile(
           context: context,
-          icon: Icons.auto_delete,
-          title: l10n.translate('auto_clear_synced'),
-          subtitle: l10n.translate('auto_clear_subtitle'),
-          value: settings.autoClearSyncedData,
-          onChanged: (value) => notifier.setAutoClearSyncedData(value),
-        ),
-        const SizedBox(height: 8),
-        _buildSwitchTile(
-          context: context,
           icon: Icons.receipt_long,
           title: l10n.translate('sync_unpaid_orders'),
           subtitle: l10n.translate('sync_unpaid_orders_subtitle'),
@@ -1666,75 +1650,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           max: 200,
           onChanged: (value) => notifier.setBulkSyncSize(value),
         ),
-        const SizedBox(height: 12),
-        _buildRetentionSelector(context, settings, notifier, l10n),
       ],
-    );
-  }
-
-  Widget _buildRetentionSelector(
-    BuildContext context,
-    AppSettings settings,
-    SettingsNotifier notifier,
-    AppLocalizations l10n,
-  ) {
-    const options = [0, 7, 14, 30, 60, 90, 180, 365];
-    final cs = Theme.of(context).colorScheme;
-
-    String label(int days) {
-      if (days == 0) return l10n.translate('never');
-      return '$days ${l10n.translate('days')}';
-    }
-
-    // Snap stored value to nearest option so the dropdown always has a match.
-    final current = options.contains(settings.dataRetentionDays)
-        ? settings.dataRetentionDays
-        : 7;
-
-    return Card(
-      elevation: 0,
-      color: cs.surfaceContainerHighest.withValues(alpha: 0.3),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Icon(Icons.delete_sweep_outlined, color: cs.onSurface),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    l10n.translate('data_retention'),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  Text(
-                    l10n.translate('data_retention_subtitle'),
-                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  ),
-                ],
-              ),
-            ),
-            DropdownButton<int>(
-              value: current,
-              underline: const SizedBox.shrink(),
-              borderRadius: BorderRadius.circular(8),
-              items: options
-                  .map((d) => DropdownMenuItem(
-                        value: d,
-                        child: Text(label(d)),
-                      ))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) notifier.setDataRetentionDays(v);
-              },
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -3421,12 +3337,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (port == null || port <= 0 || port >= 65536) return;
     if (port < 1024) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Port $port is reserved — use a port ≥ 1024 (e.g. 8080).'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        SnackBarHelper.showToast('Port $port is reserved — use a port ≥ 1024 (e.g. 8080).', kind: ToastKind.warning);
       }
       return;
     }
@@ -3740,13 +3651,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                                       onPressed: () {
                                         Clipboard.setData(ClipboardData(text: url));
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            content: Text('URL copied to clipboard'),
-                                            duration: Duration(seconds: 1),
-                                            behavior: SnackBarBehavior.floating,
-                                          ),
-                                        );
+                                        SnackBarHelper.showToast('URL copied to clipboard', kind: ToastKind.info, duration: Duration(seconds: 1));
                                       },
                                     ),
                                 ],
@@ -3804,13 +3709,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                         onPressed: () {
                                           Clipboard.setData(
                                               ClipboardData(text: kdsUrl));
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(const SnackBar(
-                                            content: Text('KDS URL copied'),
-                                            duration: Duration(seconds: 1),
-                                            behavior:
-                                                SnackBarBehavior.floating,
-                                          ));
+                                          SnackBarHelper.showToast('KDS URL copied', kind: ToastKind.info, duration: Duration(seconds: 1));
                                         },
                                       ),
                                   ],
@@ -3853,16 +3752,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                           onPressed: () {
                                             Clipboard.setData(
                                                 ClipboardData(text: u));
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              SnackBar(
-                                                content: Text('Copied $u'),
-                                                duration:
-                                                    const Duration(seconds: 1),
-                                                behavior:
-                                                    SnackBarBehavior.floating,
-                                              ),
-                                            );
+                                            SnackBarHelper.showToast('Copied $u', kind: ToastKind.info, duration: const Duration(seconds: 1));
                                           },
                                         );
                                       }).toList(),
@@ -3892,9 +3782,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               await ref.read(serverServiceProvider).stop();
                               ref.read(serverRunningProvider.notifier).state = false;
                               if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(l10n.translate('server_stopped'))),
-                                );
+                                SnackBarHelper.showToast(l10n.translate('server_stopped'), kind: ToastKind.info);
                               }
                             },
                             icon: const Icon(Icons.stop),
@@ -3910,15 +3798,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               try {
                                 await startServerWithSettings(ref);
                                 if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text(l10n.translate('server_started'))),
-                                  );
+                                  SnackBarHelper.showToast(l10n.translate('server_started'), kind: ToastKind.info);
                                 }
                               } catch (e) {
                                 if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('${l10n.translate('server_start_failed')}: $e')),
-                                  );
+                                  SnackBarHelper.showToast('${l10n.translate('server_start_failed')}: $e', kind: ToastKind.error);
                                 }
                               }
                             },
@@ -4180,13 +4064,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
     final typed = pwdCtrl.text;
-    pwdCtrl.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
     if (unlocked != true) {
       if (unlocked == false && context.mounted && typed.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('updates_server_wrong_password')),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ));
+        SnackBarHelper.showToast(l10n.translate('updates_server_wrong_password'), kind: ToastKind.error);
       }
       return;
     }
@@ -4238,8 +4119,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
     final url = urlCtrl.text.trim();
     final app = appCtrl.text.trim().toLowerCase();
-    urlCtrl.dispose();
-    appCtrl.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
     if (saved != true) return;
 
     final uri = Uri.tryParse(url);
@@ -4254,10 +4134,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     if (invalidKey != null) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(l10n.translate(invalidKey)),
-        backgroundColor: Theme.of(context).colorScheme.error,
-      ));
+      SnackBarHelper.showToast(l10n.translate(invalidKey), kind: ToastKind.error);
       return;
     }
     await service.setBaseUrl(url);
@@ -4268,10 +4145,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _runUpdateCheck(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(l10n.translate('checking_for_updates')),
-      duration: const Duration(seconds: 2),
-    ));
+    SnackBarHelper.showToast(l10n.translate('checking_for_updates'), kind: ToastKind.info, duration: const Duration(seconds: 2));
 
     // Signed update check against the caisse212-updates service (see
     // UpdateService); macOS/iOS are skipped inside the service.
@@ -4291,10 +4165,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           builder: (_) => UpdateDialog(isMandatory: isMandatory),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('app_up_to_date')),
-          backgroundColor: Colors.green,
-        ));
+        SnackBarHelper.showToast(l10n.translate('app_up_to_date'), kind: ToastKind.success);
       }
       return;
     }
@@ -4387,18 +4258,11 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
       await file.writeAsString(sb.toString());
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Exported ${products.length} products → ${file.path}'),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 6),
-        ));
+        SnackBarHelper.showToast('Exported ${products.length} products → ${file.path}', kind: ToastKind.success, duration: const Duration(seconds: 6));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Export failed: $e'),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast('Export failed: $e', kind: ToastKind.error);
       }
     }
   }
@@ -4779,12 +4643,7 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
                   }
                   setState(() => _saveError = null);
                   ref.read(scaleConfigProvider.notifier).save(_draft);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(AppLocalizations.of(context)!.translate('scale_config_saved')),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
+                  SnackBarHelper.showToast(AppLocalizations.of(context)!.translate('scale_config_saved'), kind: ToastKind.success);
                 },
           icon: const Icon(Icons.save),
           label: Text(l10n.translate('save')),

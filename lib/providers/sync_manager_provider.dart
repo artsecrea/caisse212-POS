@@ -14,47 +14,10 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
   final Ref ref;
   Timer? _bulkSyncTimer;
   StreamSubscription? _connectivitySubscription;
-  bool _hasCheckedDailyClear = false;
 
   SyncManagerNotifier(this.ref) : super(const SyncState()) {
     _initBulkSyncTimer();
     _initConnectivityListener();
-    _checkDailyClear();
-  }
-
-  /// Check if daily data clear should be performed
-  Future<void> _checkDailyClear() async {
-    if (_hasCheckedDailyClear) return;
-    _hasCheckedDailyClear = true;
-
-    try {
-      final settingsNotifier = ref.read(settingsProvider.notifier);
-
-      if (settingsNotifier.shouldClearDataToday()) {
-        posLog('Daily data clear check: clearing synced data...');
-        await _clearOldSyncedData();
-        await settingsNotifier.setLastDataClearDate();
-        posLog('Daily data clear completed');
-      }
-    } catch (e) {
-      posLog('Error during daily data clear check: $e');
-    }
-  }
-
-  /// Clear old synced data based on retention settings
-  Future<void> _clearOldSyncedData() async {
-    try {
-      final prefs = ref.read(sharedPreferencesProvider);
-      final apiService = ApiService(prefs);
-      final database = ref.read(databaseProvider);
-      final syncService = DataSyncService(database, apiService);
-      final settings = ref.read(settingsProvider);
-
-      await syncService.clearOldSyncedData(settings.dataRetentionDays);
-      posLog('Cleared synced data older than ${settings.dataRetentionDays} days');
-    } catch (e) {
-      posLog('Error clearing old synced data: $e');
-    }
   }
 
   /// Initialize periodic bulk sync timer using settings duration
@@ -333,7 +296,6 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
 
   /// Manual sync all data (downloads + uploads)
   Future<void> syncAllData() async {
-    final settings = ref.read(settingsProvider);
     final prefs = ref.read(sharedPreferencesProvider);
     final apiService = ApiService(prefs);
     final database = ref.read(databaseProvider);
@@ -342,8 +304,8 @@ class SyncManagerNotifier extends StateNotifier<SyncState> {
     // Upload local data first
     await syncService.uploadLocalData();
 
-    // Download fresh data with retention
-    await syncService.syncAllData(dataRetentionDays: settings.dataRetentionDays);
+    // Download fresh data
+    await syncService.syncAllData();
 
     // Refresh session rules (best-effort — 404 is fine).
     final rules = await syncService.syncSessionRules();

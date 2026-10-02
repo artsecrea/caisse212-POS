@@ -15,6 +15,7 @@ import 'admin_mode_chip.dart';
 import 'close_session_dialog.dart';
 import 'permission_guard.dart';
 import 'x_report_dialog.dart';
+import '../../utils/snackbar_helper.dart';
 
 class SessionsManagementScreen extends ConsumerStatefulWidget {
   const SessionsManagementScreen({super.key});
@@ -605,15 +606,11 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         await sessionService.deleteSession(session.id);
         _refreshFuture();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(l10n.translate('success'))),
-          );
+          SnackBarHelper.showToast(l10n.translate('success'), kind: ToastKind.info);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${l10n.translate('error')}: $e')),
-          );
+          SnackBarHelper.showToast('${l10n.translate('error')}: $e', kind: ToastKind.error);
         }
       }
     }
@@ -644,12 +641,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
           ref.read(currentSessionProvider.notifier).state = null;
 
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(l10n.translate('session_ended_logout')),
-                backgroundColor: Colors.green,
-              ),
-            );
+            SnackBarHelper.showToast(l10n.translate('session_ended_logout'), kind: ToastKind.success);
 
             // Sync all pending data to server before leaving.
             try {
@@ -672,16 +664,12 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         } else {
           _refreshFuture();
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(l10n.translate('session_ended_success'))),
-            );
+            SnackBarHelper.showToast(l10n.translate('session_ended_success'), kind: ToastKind.info);
           }
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${l10n.translate('failed_to_end_session')}: $e')),
-          );
+          SnackBarHelper.showToast('${l10n.translate('failed_to_end_session')}: $e', kind: ToastKind.error);
         }
       }
     }
@@ -824,21 +812,11 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
       if (mounted) {
         _refreshFuture();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.translate('synced_sessions').replaceAll('{0}', '$syncedCount')),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast(l10n.translate('synced_sessions').replaceAll('{0}', '$syncedCount'), kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${l10n.translate('sync_failed')}: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('${l10n.translate('sync_failed')}: $e', kind: ToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _isSyncing = false);

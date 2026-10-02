@@ -1971,13 +1971,7 @@ class _OrdersManagementScreenState
 
   void _handleOrderAction(String action, Order order, OrderFullDetails details) {
     if (details.isZLocked && action != 'view' && action != 'pay') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Z-Report locked: session is closed. Only view or pay allowed.'),
-          backgroundColor: Colors.purple,
-          duration: Duration(seconds: 3),
-        ),
-      );
+      SnackBarHelper.showToast('Z-Report locked: session is closed. Only view or pay allowed.', kind: ToastKind.info, duration: Duration(seconds: 3));
       return;
     }
     switch (action) {
@@ -2060,12 +2054,7 @@ class _OrdersManagementScreenState
     );
 
     if (result == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translate('payment_successful')),
-          backgroundColor: Colors.green,
-        ),
-      );
+      SnackBarHelper.showToast(l10n.translate('payment_successful'), kind: ToastKind.success);
       _loadOrders();
     }
   }
@@ -2073,8 +2062,7 @@ class _OrdersManagementScreenState
   void _deleteOrder(Order order) async {
     final l10n = AppLocalizations.of(context)!;
     if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ordersDelete)) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('no_permission')), backgroundColor: Colors.red));
+      SnackBarHelper.showToast(l10n.translate('no_permission'), kind: ToastKind.error);
       return;
     }
     final confirmed = await showDialog<bool>(
@@ -2102,15 +2090,11 @@ class _OrdersManagementScreenState
         await orderRepo.deleteOrder(order.id);
         _loadOrders();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(l10n.translate('order_deleted_successfully'))),
-          );
+          SnackBarHelper.showToast(l10n.translate('order_deleted_successfully'), kind: ToastKind.info);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${l10n.translate('error_deleting_order')}: $e')),
-          );
+          SnackBarHelper.showToast('${l10n.translate('error_deleting_order')}: $e', kind: ToastKind.error);
         }
       }
     }
@@ -2119,8 +2103,7 @@ class _OrdersManagementScreenState
   void _cancelOrder(Order order) async {
     final l10n = AppLocalizations.of(context)!;
     if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ordersCancel)) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('no_permission')), backgroundColor: Colors.red));
+      SnackBarHelper.showToast(l10n.translate('no_permission'), kind: ToastKind.error);
       return;
     }
     final reasonController = TextEditingController();
@@ -2160,7 +2143,7 @@ class _OrdersManagementScreenState
       ),
     );
 
-    reasonController.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
 
     if (result != null) {
       await _changeOrderStatus(order, 'CANCELED', cancellationReason: result.isNotEmpty ? result : null);
@@ -2325,18 +2308,11 @@ class _OrdersManagementScreenState
           message += ' (${l10n.translate('will_sync_when_online')})';
         }
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message),
-            backgroundColor: synced ? Colors.green : Colors.orange,
-          ),
-        );
+        SnackBarHelper.showToast(message, kind: (synced) ? ToastKind.success : ToastKind.warning);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${l10n.translate('error_changing_status')}: $e'), backgroundColor: Colors.red),
-        );
+        SnackBarHelper.showToast('${l10n.translate('error_changing_status')}: $e', kind: ToastKind.error);
       }
     }
   }
@@ -2347,9 +2323,7 @@ class _OrdersManagementScreenState
 
     if (!isOnline) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.translate('no_network_connection')), backgroundColor: Colors.red),
-        );
+        SnackBarHelper.showToast(l10n.translate('no_network_connection'), kind: ToastKind.error);
       }
       return;
     }
@@ -2363,15 +2337,7 @@ class _OrdersManagementScreenState
       if (mounted) {
         setState(() => _isSyncing = false);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result.message),
-            backgroundColor: result.success && result.totalSynced > 0
-                ? Colors.green
-                : (result.success ? Colors.orange : Colors.red),
-            duration: const Duration(seconds: 4),
-          ),
-        );
+        SnackBarHelper.showToast(result.message, kind: (result.success && result.totalSynced > 0) ? ToastKind.success : ToastKind.error, duration: const Duration(seconds: 4));
 
         if (result.totalSynced > 0) {
           _loadOrders();
@@ -2380,9 +2346,7 @@ class _OrdersManagementScreenState
     } catch (e) {
       if (mounted) {
         setState(() => _isSyncing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${l10n.translate('sync_error')}: $e'), backgroundColor: Colors.red),
-        );
+        SnackBarHelper.showToast('${l10n.translate('sync_error')}: $e', kind: ToastKind.error);
       }
     }
   }
@@ -2471,9 +2435,7 @@ class _OrdersManagementScreenState
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${l10n.translate('error_loading_operations')}: $e'), backgroundColor: Colors.red),
-        );
+        SnackBarHelper.showToast('${l10n.translate('error_loading_operations')}: $e', kind: ToastKind.error);
       }
     }
   }
@@ -2606,24 +2568,11 @@ class _OrdersManagementScreenState
   }
 
   void _showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white),
-            const SizedBox(width: 12),
-            Expanded(child: Text(message)),
-          ],
-        ),
-        backgroundColor: Colors.red[700],
-        behavior: SnackBarBehavior.floating,
-        action: SnackBarAction(
+    SnackBarHelper.showToast(message, kind: ToastKind.error, action: SnackBarAction(
           label: 'Dismiss',
           textColor: Colors.white,
           onPressed: () {},
-        ),
-      ),
-    );
+        ));
   }
 }
 

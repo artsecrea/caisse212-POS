@@ -5,6 +5,7 @@ import '../../providers/database_providers.dart';
 import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
+import '../../utils/snackbar_helper.dart';
 
 class SessionDetailsScreen extends ConsumerStatefulWidget {
   const SessionDetailsScreen({super.key});
@@ -75,18 +76,11 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
       await sessionService.pauseSession(_currentSession!.id);
       await _loadCurrentSession();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session paused'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        SnackBarHelper.showToast('Session paused', kind: ToastKind.warning);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorText(e, AppLocalizations.of(context)!))),
-        );
+        SnackBarHelper.showToast(errorText(e, AppLocalizations.of(context)!), kind: ToastKind.error);
       }
     }
   }
@@ -100,18 +94,11 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
       await sessionService.resumeSession(_currentSession!.id);
       await _loadCurrentSession();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session resumed'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast('Session resumed', kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorText(e, AppLocalizations.of(context)!))),
-        );
+        SnackBarHelper.showToast(errorText(e, AppLocalizations.of(context)!), kind: ToastKind.error);
       }
     }
   }
@@ -170,12 +157,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
         ref.read(currentSessionProvider.notifier).state = null;
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Session ended successfully. Logging out...'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          SnackBarHelper.showToast('Session ended successfully. Logging out...', kind: ToastKind.success);
 
           FocusManager.instance.primaryFocus?.unfocus();
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -187,12 +169,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(errorText(e, AppLocalizations.of(context)!)),
-              backgroundColor: Colors.red,
-            ),
-          );
+          SnackBarHelper.showToast(errorText(e, AppLocalizations.of(context)!), kind: ToastKind.error);
         }
       }
     }

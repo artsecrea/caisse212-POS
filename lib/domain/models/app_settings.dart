@@ -129,9 +129,7 @@ class AppSettings {
   // Sync settings
   final bool autoSyncOnline; // Auto-sync orders when online
   final int bulkSyncSize; // Number of orders to sync at once when offline
-  final int dataRetentionDays; // Days to keep synced data before deletion
   final int autoSyncDurationMinutes; // Auto-sync interval in minutes (default: 5)
-  final bool autoClearSyncedData; // Clear synced data at start of each day
   final bool syncUnpaidOrders; // Whether to sync unpaid orders (default: true)
   final bool orderPanelOnRight;
 
@@ -482,9 +480,7 @@ class AppSettings {
     this.actionButtonAlignment = ActionButtonAlignment.left,
     this.autoSyncOnline = true,
     this.bulkSyncSize = 50,
-    this.dataRetentionDays = 7,
     this.autoSyncDurationMinutes = 5,
-    this.autoClearSyncedData = true,
     this.syncUnpaidOrders = true,
     this.orderPanelOnRight = false,
     this.serverPort = 8080,
@@ -587,9 +583,7 @@ class AppSettings {
     ActionButtonAlignment? actionButtonAlignment,
     bool? autoSyncOnline,
     int? bulkSyncSize,
-    int? dataRetentionDays,
     int? autoSyncDurationMinutes,
-    bool? autoClearSyncedData,
     bool? syncUnpaidOrders,
     bool? orderPanelOnRight,
     int? serverPort,
@@ -697,9 +691,7 @@ class AppSettings {
           actionButtonAlignment ?? this.actionButtonAlignment,
       autoSyncOnline: autoSyncOnline ?? this.autoSyncOnline,
       bulkSyncSize: bulkSyncSize ?? this.bulkSyncSize,
-      dataRetentionDays: dataRetentionDays ?? this.dataRetentionDays,
       autoSyncDurationMinutes: autoSyncDurationMinutes ?? this.autoSyncDurationMinutes,
-      autoClearSyncedData: autoClearSyncedData ?? this.autoClearSyncedData,
       syncUnpaidOrders: syncUnpaidOrders ?? this.syncUnpaidOrders,
       orderPanelOnRight: orderPanelOnRight ?? this.orderPanelOnRight,
       serverPort: serverPort ?? this.serverPort,
@@ -825,9 +817,7 @@ class AppSettings {
       'actionButtonAlignment': actionButtonAlignment.name,
       'autoSyncOnline': autoSyncOnline,
       'bulkSyncSize': bulkSyncSize,
-      'dataRetentionDays': dataRetentionDays,
       'autoSyncDurationMinutes': autoSyncDurationMinutes,
-      'autoClearSyncedData': autoClearSyncedData,
       'syncUnpaidOrders': syncUnpaidOrders,
       'orderPanelOnRight': orderPanelOnRight,
       'serverPort': serverPort,
@@ -961,9 +951,7 @@ class AppSettings {
       ),
       autoSyncOnline: json['autoSyncOnline'] as bool? ?? true,
       bulkSyncSize: json['bulkSyncSize'] as int? ?? 50,
-      dataRetentionDays: json['dataRetentionDays'] as int? ?? 7,
       autoSyncDurationMinutes: json['autoSyncDurationMinutes'] as int? ?? 5,
-      autoClearSyncedData: json['autoClearSyncedData'] as bool? ?? true,
       syncUnpaidOrders: json['syncUnpaidOrders'] as bool? ?? true,
       orderPanelOnRight: json['orderPanelOnRight'] as bool? ?? false,
       serverPort: json['serverPort'] as int?,

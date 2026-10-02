@@ -8,6 +8,7 @@ import '../../utils/app_localizations.dart';
 import '../../utils/customer_display.dart';
 import '../../services/customer_repository.dart';
 import './adaptive_text_field.dart';
+import '../../utils/snackbar_helper.dart';
 
 class CustomerSelectionDialog extends ConsumerStatefulWidget {
   const CustomerSelectionDialog({Key? key}) : super(key: key);
@@ -447,10 +448,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
         if (mounted) {
           setState(() => _isLoading = false);
           final l10n = AppLocalizations.of(context)!;
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(l10n.translate('phone_required')),
-            backgroundColor: Colors.red,
-          ));
+          SnackBarHelper.showToast(l10n.translate('phone_required'), kind: ToastKind.error);
         }
         return;
       }
@@ -473,12 +471,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
 
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${l10n.translate('error')}: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('${l10n.translate('error')}: $e', kind: ToastKind.error);
       }
     }
   }

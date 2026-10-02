@@ -376,16 +376,23 @@ class AppTheme {
         thickness: 1,
         space: 1,
       ),
+      // Fallback for a raw SnackBar; the app's own toasts come from
+      // SnackBarHelper.toast and look the same, plus an accent and icon.
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: scheme.inverseSurface,
-        contentTextStyle: TextStyle(color: scheme.onInverseSurface, fontSize: 14),
-        actionTextColor: scheme.inversePrimary,
+        backgroundColor:
+            isDark ? scheme.surfaceContainerHighest : scheme.surface,
+        contentTextStyle: TextStyle(color: scheme.onSurface, fontSize: 14),
+        actionTextColor: scheme.primary,
+        elevation: 6,
         insetPadding: const EdgeInsets.all(16),
         dismissDirection: DismissDirection.horizontal,
         showCloseIcon: true,
-        closeIconColor: scheme.onInverseSurface.withValues(alpha: 0.8),
-        shape: RoundedRectangleBorder(borderRadius: _brMd),
+        closeIconColor: scheme.onSurfaceVariant,
+        shape: RoundedRectangleBorder(
+          borderRadius: _brMd,
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(
         color: scheme.primary,

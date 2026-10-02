@@ -21,7 +21,8 @@ class SessionRules {
   /// No new Z at or after this time without `pos:z:override`.
   final String? zCantOpenAfter;
 
-  /// `MANUAL` (null) | `AUTO_AFTER_HOUR`.
+  /// `MANUAL` (null) | `AUTO_AFTER_HOUR` | `BY_SESSION` (the Z closes with
+  /// its last open session).
   final String? zCloseMode;
 
   /// With AUTO_AFTER_HOUR: from this time, a session close asks to close the Z.

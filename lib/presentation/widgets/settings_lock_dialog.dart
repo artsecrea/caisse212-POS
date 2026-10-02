@@ -6,6 +6,7 @@ import '../../providers/settings_provider.dart';
 import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
 import 'adaptive_text_field.dart';
+import '../../utils/snackbar_helper.dart';
 
 /// Who may open printer setup.
 ///
@@ -95,10 +96,7 @@ class SettingsLockDialog extends ConsumerStatefulWidget {
       BuildContext context, WidgetRef ref) async {
     if (!canOpenPrinters(ref)) {
       final l10n = AppLocalizations.of(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(l10n?.translate('no_permission') ?? 'No permission'),
-        backgroundColor: Colors.red,
-      ));
+      SnackBarHelper.showToast(l10n?.translate('no_permission') ?? 'No permission', kind: ToastKind.error);
       return false;
     }
     return unlock(context, ref);

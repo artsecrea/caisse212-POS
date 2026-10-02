@@ -5,6 +5,7 @@ import '../../domain/models/order_models.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/device_providers.dart';
 import '../../services/printing_service.dart';
+import '../../utils/snackbar_helper.dart';
 
 class PrintOptionsDialog extends ConsumerStatefulWidget {
   final CurrentOrder order;
@@ -107,13 +108,7 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
           await _incrementPrintCount();
           widget.onPrintComplete?.call();
           Navigator.of(context).pop(true);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Printed successfully'),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 2),
-            ),
-          );
+          SnackBarHelper.showToast('Printed successfully', kind: ToastKind.success, duration: Duration(seconds: 2));
         } else {
           setState(() {
             _isPrinting = false;

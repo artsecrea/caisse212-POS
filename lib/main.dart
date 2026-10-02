@@ -39,6 +39,7 @@ import 'providers/database_providers.dart';
 import 'providers/settings_provider.dart';import 'utils/app_localizations.dart';
 import 'services/app_exit_service.dart';
 import 'providers/sse_provider.dart';
+import 'utils/snackbar_helper.dart';
 
 /// Global navigator key — lets the desktop window-close handler (which runs
 /// outside any widget's build context) obtain a dialog-capable context to drive
@@ -625,6 +626,9 @@ class _MyAppState extends ConsumerState<MyApp>
         result = Stack(
           children: [
             result,
+            // Top-right toasts: above every route and dialog, below the
+            // re-auth gate, which must stay the one thing on top.
+            const ToastHost(),
             ReauthOverlay(
               onSignOut: () async {
                 final api = ref.read(apiServiceProvider);

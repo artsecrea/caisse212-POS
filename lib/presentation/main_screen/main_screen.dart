@@ -47,9 +47,6 @@ import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/sse_provider.dart';
 import '../../providers/session_rules_provider.dart';
-import '../../providers/business_day_provider.dart';
-import '../../services/z_actions.dart' show closeZNow;
-import '../../services/z_service.dart';
 import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
 import '../../services/scale_barcode_service.dart';
@@ -467,21 +464,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     _autoCloseTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
 
-      // Day rollover: a session never outlives its Z. Once the business day
-      // has moved past the open Z's, close it FORCED — which ends every open
-      // session — as soon as the order panel is empty. Checked before the
-      // session-rules early return, which bails when no rules are set.
-      final openZ = ref.read(currentZProvider);
-      if (openZ != null &&
-          ref.read(currentSessionProvider) != null &&
-          ref.read(orderProvider).items.isEmpty) {
-        final today = ref.read(businessDayProvider.notifier).currentZDay();
-        if (ZService.labelOf(openZ).zDay.compareTo(today) < 0) {
-          _closeStaleZ(openZ);
-          return;
-        }
-      }
-
+      // No day-rollover close here: a Z is never closed by the clock while
+      // the till is in use. It stays open past midnight until someone closes
+      // it.
       final rules = ref.read(sessionRulesProvider);
       if (rules.maxEndHour == null && rules.maxSessionDurationMinutes == null) {
         return;
@@ -533,29 +518,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     }
   }
 
-  Future<void> _closeStaleZ(Z z) async {
-    _autoCloseTimer?.cancel();
-    try {
-      await closeZNow(ref, z, closeMode: ZService.closeForced);
-      ref.read(currentSessionProvider.notifier).state = null;
-      if (mounted) {
-        final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('auto_close_day_closed')),
-          backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 5),
-        ));
-        FocusManager.instance.primaryFocus?.unfocus();
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) Navigator.of(context).pushReplacementNamed('/login');
-        });
-      }
-    } catch (e) {
-      _logger.error('Day-rollover Z close failed: $e');
-      _startAutoCloseTimer();
-    }
-  }
-
   Future<void> _autoCloseSession(
       CashSession session, String reasonKey) async {
     _autoCloseTimer?.cancel();
@@ -578,11 +540,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       }
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate(reasonKey)),
-          backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 5),
-        ));
+        SnackBarHelper.showToast(l10n.translate(reasonKey), kind: ToastKind.warning, duration: const Duration(seconds: 5));
         FocusManager.instance.primaryFocus?.unfocus();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) Navigator.of(context).pushReplacementNamed('/login');
@@ -675,25 +633,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     // Show SnackBar when admin pushes a DISPLAY_ALERT command
     ref.listen<String?>(sseAlertProvider, (_, message) {
       if (message == null || !mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.campaign, color: Colors.white, size: 18),
-              const SizedBox(width: 8),
-              Expanded(child: Text(message)),
-            ],
-          ),
-          backgroundColor: Colors.deepOrange,
-          duration: const Duration(seconds: 6),
-          action: SnackBarAction(
+      SnackBarHelper.showToast(message, kind: ToastKind.warning, duration: const Duration(seconds: 6), action: SnackBarAction(
             label: 'OK',
             textColor: Colors.white,
             onPressed: () =>
                 ref.read(sseAlertProvider.notifier).state = null,
-          ),
-        ),
-      );
+          ));
       // Clear after showing so re-watch doesn't retrigger
       ref.read(sseAlertProvider.notifier).state = null;
     });
@@ -799,41 +744,21 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
       final unmapped = item?.order.hasUnmappedItems ?? false;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.receipt_long, color: Colors.white, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(title,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    if (details.isNotEmpty)
-                      Text(details.join('  ·  '),
-                          style: const TextStyle(fontSize: 12)),
-                    // Surfaced here because it decides what the cashier can do
-                    // next: an unmapped line blocks confirm, so sending them to
-                    // the tab expecting a one-tap accept would waste the trip.
-                    if (unmapped)
-                      Text(
-                        l10n?.translate('unmapped_items_blocked') ??
-                            'Some items are not mapped — confirm is blocked',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: unmapped ? Colors.deepOrange : Colors.teal.shade700,
+      SnackBarHelper.showToast(
+          [
+            if (details.isNotEmpty) details.join('  ·  '),
+            // Surfaced here because it decides what the cashier can do next:
+            // an unmapped line blocks confirm, so sending them to the tab
+            // expecting a one-tap accept would waste the trip.
+            if (unmapped)
+              l10n?.translate('unmapped_items_blocked') ??
+                  'Some items are not mapped — confirm is blocked',
+          ].join('\n'),
+          title: title,
+          kind: unmapped ? ToastKind.warning : ToastKind.info,
           duration: const Duration(seconds: 8),
           action: SnackBarAction(
             label: l10n?.translate('view') ?? 'View',
-            textColor: Colors.white,
             onPressed: () {
               Navigator.push(
                 context,
@@ -846,8 +771,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               );
             },
           ),
-        ),
-      );
+        );
     });
 
     // Push order updates to customer display if enabled
@@ -1810,7 +1734,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               // needing the drawer open between sales — for change, a float
               // top-up, or a spot count.
               onPressed: () async {
-                final messenger = ScaffoldMessenger.of(context);
                 final ok = await ref
                     .read(printingServiceProvider)
                     .kickCashDrawer();
@@ -1818,12 +1741,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 // Only the failure is worth a snackbar: a drawer that opened
                 // announced itself, one that stayed shut needs saying.
                 if (ok) return;
-                messenger
-                  ..hideCurrentSnackBar()
-                  ..showSnackBar(SnackBar(
-                    content: Text(l10n.translate('drawer_open_failed')),
-                    backgroundColor: Theme.of(context).colorScheme.error,
-                  ));
+                SnackBarHelper.showToast(l10n.translate('drawer_open_failed'),
+                    kind: ToastKind.error);
               },
             );
           }
@@ -1887,12 +1806,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                               .updateOrder(updated);
                         } catch (e) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('$e'),
-                                backgroundColor: Colors.red.shade700,
-                              ),
-                            );
+                            SnackBarHelper.showToast('$e', kind: ToastKind.error);
                           }
                         }
                       }
@@ -2209,7 +2123,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // Everything below builds the paperwork for the items just paid. All of
       // it is read off local state NOW and printed DETACHED further down, so
       // the cashier never waits on a printer to get the till back.
-      final businessName = prefs.getString('business_name') ?? 'THANK YOU FOR YOUR PURCHASE';
+      final businessName = prefs.getString('business_name');
       final storeAddress = prefs.getString('business_address');
       final storePhone = prefs.getString('business_phone');
 
@@ -2245,6 +2159,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               await printingService.printKdsTicket(
                 order: reloadedOrder,
                 cashierName: currentUser.firstName,
+                // Marked PAID above, before this detached job runs.
+                paidLinesStillOwed: {
+                  for (final item in unpaidItems)
+                    if (item.id != null) item.id!,
+                },
               );
             } catch (kdsError) {
               _logger.error('KDS print failed on direct payment: $kdsError');
@@ -2403,7 +2322,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       ),
     );
     final reason = reasonCtrl.text.trim();
-    reasonCtrl.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
     if (confirmed != true || !mounted) return;
 
     try {
@@ -2443,7 +2362,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   ///
   /// Print failures are logged and swallowed — the order is saved either way,
   /// and a dead printer must not look like a failed save.
-  Future<void> _firePostSavePrints(CurrentOrder reloadedOrder) async {
+  ///
+  /// [beforePayment] is set by the Pay path: the cashier may settle the order
+  /// before this queued job reaches the printer, so the lines unpaid right now
+  /// must still go to the kitchen once they carry a ticket.
+  Future<void> _firePostSavePrints(CurrentOrder reloadedOrder,
+      {bool beforePayment = false}) async {
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
     final prefs = ref.read(sharedPreferencesProvider);
@@ -2480,6 +2404,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         await printingService.printKdsTicket(
           order: reloadedOrder,
           cashierName: currentUser?.firstName,
+          paidLinesStillOwed: beforePayment
+              ? {
+                  for (final item in reloadedOrder.unpaidItems)
+                    if (item.id != null) item.id!,
+                }
+              : const {},
         );
       }
     } catch (e) {
@@ -2487,10 +2417,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     }
   }
 
-  /// [printOnSave] fires [_firePostSavePrints] after the save — true only for
-  /// the long-press on Continue, which replaces a Proceed and therefore owes
-  /// the kitchen its ticket. The long-press on Pay leaves it false: that order
-  /// was already proceeded, so the kitchen has it.
+  /// [printOnSave] forces [_firePostSavePrints] after the save — true for the
+  /// long-press on Continue, which replaces a Proceed and therefore owes the
+  /// kitchen its ticket. Pay does not pass it, but still fires the prints for
+  /// an order that was never saved (see `kitchenOwed`).
   Future<void> _showPaymentDialog({
     bool forceSplitOpen = false,
     bool printOnSave = false,
@@ -2520,6 +2450,16 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     //     currentOrder = ref.read(orderProvider);
     //   }
     // }
+
+    // An order that was never proceeded has never reached the kitchen, and
+    // the payment screen prints no kitchen ticket of its own — so a plain Pay
+    // on a fresh takeaway used to send the food nowhere. A saved order is
+    // re-fired only under modificationsOnly, which sends just the lines added
+    // since the last Continue and nothing at all when there are none.
+    final kitchenOwed = printOnSave ||
+        !currentOrder.isSaved() ||
+        ref.read(printingServiceProvider).config.defaultKdsMode ==
+            KdsPrintMode.modificationsOnly;
 
     setState(() => _isSavingOrder = true);
     try {
@@ -2553,8 +2493,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // food while the cashier is still dividing the bill. Detached, so the
       // division window opens immediately rather than behind the kitchen
       // ticket — the print is already queued by the time it appears.
-      if (printOnSave) {
-        unawaited(_firePostSavePrints(reloadedOrder));
+      if (kitchenOwed) {
+        unawaited(_firePostSavePrints(reloadedOrder, beforePayment: true));
       }
 
       if (context.mounted) {

@@ -38,6 +38,7 @@ import '../widgets/update_dialog.dart';
 import '../widgets/adaptive_text_field.dart';
 import '../widgets/session_expiry_notice.dart';
 import '../widgets/keypad_lab_screen.dart';
+import '../../utils/snackbar_helper.dart';
 
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -176,7 +177,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     try {
       final database = ref.read(databaseProvider);
       final users = await database.select(database.users).get();
-      setState(() => _availableUsers = users);
+      if (!mounted) return;
+      setState(() {
+        _availableUsers = users;
+        // A sync can delete or rename the selected user; the dropdown asserts
+        // if its value is missing from the items.
+        if (_selectedUsername != null &&
+            !users.any((u) => u.username == _selectedUsername)) {
+          _selectedUsername = null;
+          _usernameController.clear();
+        }
+      });
     } catch (e) {
       debugPrint('Error loading users: $e');
     }
@@ -304,19 +315,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         );
       },
     );
-    passwordController.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
 
     if (verified != true) {
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
         final cs = Theme.of(context).colorScheme;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-            l10n.translate('invalid_password_date'),
-            style: TextStyle(color: cs.onError),
-          ),
-          backgroundColor: cs.error,
-        ));
+        SnackBarHelper.showToast(l10n.translate('invalid_password_date'), kind: ToastKind.error);
       }
       return;
     }
@@ -482,7 +487,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         );
       },
     );
-    passwordController.dispose();
+    // Not disposed: the closing dialog still rebuilds its field with this controller for a few frames. It is collected with the dialog.
 
     if (result == true) {
       final apiService = ApiService(prefs);
@@ -498,10 +503,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       }
     } else if (result == false) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('invalid_tenant_password')),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast(l10n.translate('invalid_tenant_password'), kind: ToastKind.error);
       }
     }
   }
@@ -520,10 +522,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       final database = ref.read(databaseProvider);
       final syncService = DataSyncService(database, apiService, prefs);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('syncing_data')),
-          duration: const Duration(seconds: 2),
-        ));
+        SnackBarHelper.showToast(l10n.translate('syncing_data'), kind: ToastKind.info, duration: const Duration(seconds: 2));
       }
       await syncService.syncAllData();
       // Sync session rules in the background (best-effort — 404 is fine).
@@ -531,18 +530,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       if (rules != null && mounted) {
         ref.read(sessionRulesProvider.notifier).updateRules(rules);
       }
+      await _loadUsers();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(l10n.translate('sync_complete')),
-          backgroundColor: Colors.green,
-        ));
+        SnackBarHelper.showToast(l10n.translate('sync_complete'), kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('${l10n.translate('sync_error')}: $e'),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast('${l10n.translate('sync_error')}: $e', kind: ToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -664,12 +658,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             await ref.read(activityLogServiceProvider)
                 .logSessionResume(userId: user.id, username: actorName);
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(l10n
+              SnackBarHelper.showToast(l10n
                     .translate('resumed_session')
-                    .replaceAll('{0}', existingSession.id.toString())),
-                backgroundColor: Colors.green,
-              ));
+                    .replaceAll('{0}', existingSession.id.toString()), kind: ToastKind.success);
             }
           } else {
             ref.read(currentSessionProvider.notifier).state = existingSession;
@@ -723,24 +714,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
             refId: newSession.id.toString(),
           ));
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(l10n
+            SnackBarHelper.showToast(l10n
                   .translate('started_new_session')
-                  .replaceAll('{0}', newSession.id.toString())),
-              backgroundColor: Colors.blue,
-            ));
+                  .replaceAll('{0}', newSession.id.toString()), kind: ToastKind.info);
           }
         }
 
       } catch (e) {
         Logger.instance.error('Session error: $e');
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(l10n
+          SnackBarHelper.showToast(l10n
                 .translate('session_error')
-                .replaceAll('{0}', e.toString())),
-            backgroundColor: Colors.orange,
-          ));
+                .replaceAll('{0}', e.toString()), kind: ToastKind.warning);
         }
         // Session setup failed — do not navigate to main with a null session.
         return;
@@ -811,11 +796,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-              'Can\'t logout: please check your username and password'),
-          backgroundColor: Colors.red,
-        ));
+        SnackBarHelper.showToast('Can\'t logout: please check your username and password', kind: ToastKind.error);
       }
     }
   }
@@ -1192,6 +1173,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
   Widget _buildUserSelector(AppLocalizations l10n) {
     return DropdownButtonFormField<String>(
+      // Rebuild the field's internal state when a sync changes the user list.
+      key: ValueKey(_availableUsers.map((u) => u.username).join('|')),
       value: _selectedUsername,
       decoration: InputDecoration(
         labelText: '${l10n.translate('username')} *',

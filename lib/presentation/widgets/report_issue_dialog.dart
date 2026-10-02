@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/snackbar_helper.dart';
 
 class ReportIssueDialog extends ConsumerStatefulWidget {
   const ReportIssueDialog({super.key});
@@ -60,26 +61,12 @@ class _ReportIssueDialogState extends ConsumerState<ReportIssueDialog> {
 
       if (mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              AppLocalizations.of(context)?.translate('issue_submitted') ?? 
-              'Issue submitted successfully'
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast(AppLocalizations.of(context)?.translate('issue_submitted') ?? 
+              'Issue submitted successfully', kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '${AppLocalizations.of(context)?.translate('issue_submit_failed') ?? 'Failed to submit issue'}: $e'
-            ),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('${AppLocalizations.of(context)?.translate('issue_submit_failed') ?? 'Failed to submit issue'}: $e', kind: ToastKind.error);
       }
     } finally {
       if (mounted) {

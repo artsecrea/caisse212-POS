@@ -1274,12 +1274,7 @@ class _CodeChip extends StatelessWidget {
       onLongPress: () async {
         await Clipboard.setData(ClipboardData(text: value));
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('$label: $value'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
+          SnackBarHelper.showToast('$label: $value', kind: ToastKind.info, duration: const Duration(seconds: 2));
         }
       },
       child: _chip(context, cs),

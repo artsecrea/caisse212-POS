@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
 import '../../services/activity_log_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/snackbar_helper.dart';
 
 class LogsScreen extends ConsumerStatefulWidget {
   const LogsScreen({super.key});
@@ -299,19 +300,11 @@ class _LogsScreenState extends ConsumerState<LogsScreen> {
     try {
       final count = await ref.read(activityLogServiceProvider).exportNow();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                l10n.translate('logs_exported').replaceAll('{0}', '$count')),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast(l10n.translate('logs_exported').replaceAll('{0}', '$count'), kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
-        );
+        SnackBarHelper.showToast('Export failed: $e', kind: ToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _isExporting = false);

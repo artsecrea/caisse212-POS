@@ -423,9 +423,7 @@ class _TopBarState extends ConsumerState<TopBar> {
     final currencyFormatter = ref.read(currencyFormatterProvider);
     final currentUser = ref.read(currentUserProvider);
     if (currentUser == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n?.translate('no_user_logged_in') ?? 'No user logged in')),
-      );
+      SnackBarHelper.showToast(l10n?.translate('no_user_logged_in') ?? 'No user logged in', kind: ToastKind.info);
       return;
     }
 
@@ -435,9 +433,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
     if (session == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n?.translate('no_active_session') ?? 'No active session')),
-        );
+        SnackBarHelper.showToast(l10n?.translate('no_active_session') ?? 'No active session', kind: ToastKind.info);
       }
       return;
     }
@@ -706,12 +702,7 @@ class _TopBarState extends ConsumerState<TopBar> {
         // Pause session
         await sessionService.pauseSession(session.id);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(l10n?.translate('session_paused_resume_login') ?? 'Session paused. Resume when you login again.'),
-              backgroundColor: Colors.orange,
-            ),
-          );
+          SnackBarHelper.showToast(l10n?.translate('session_paused_resume_login') ?? 'Session paused. Resume when you login again.', kind: ToastKind.warning);
         }
         await Future.delayed(const Duration(milliseconds: 500));
         await _doLogout();
@@ -727,12 +718,7 @@ class _TopBarState extends ConsumerState<TopBar> {
         if (!result.closed) return; // user backed out — keep them logged in
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(l10n?.translate('session_ended_successfully') ?? 'Session ended successfully.'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          SnackBarHelper.showToast(l10n?.translate('session_ended_successfully') ?? 'Session ended successfully.', kind: ToastKind.success);
         }
         await Future.delayed(const Duration(milliseconds: 500));
         await _doLogout();
@@ -748,15 +734,10 @@ class _TopBarState extends ConsumerState<TopBar> {
         if (!result.closed) return;
         final closed = result.zClosed;
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(closed
+          SnackBarHelper.showToast(closed
                   ? (l10n?.translate('z_closed') ?? 'Z closed')
                   : (l10n?.translate('session_ended_successfully') ??
-                      'Session ended successfully.')),
-              backgroundColor: Colors.green,
-            ),
-          );
+                      'Session ended successfully.'), kind: ToastKind.success);
         }
         await Future.delayed(const Duration(milliseconds: 500));
         await _doLogout();
@@ -764,12 +745,7 @@ class _TopBarState extends ConsumerState<TopBar> {
     } catch (e) {
       _logger.error('Logout error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${l10n?.translate('error') ?? 'Error'}: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('${l10n?.translate('error') ?? 'Error'}: $e', kind: ToastKind.error);
       }
       await _doLogout();
     }
@@ -942,16 +918,10 @@ class _TopBarState extends ConsumerState<TopBar> {
     final l10n = AppLocalizations.of(context);
     final prefs = ref.read(sharedPreferencesProvider);
     final apiService = ref.read(apiServiceProvider);
-    final settings = ref.read(settingsProvider);
 
     // Check if in demo mode
     if (apiService.isDemoMode()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n?.translate('demo_mode_sync_unavailable') ?? 'Demo mode: Sync not available'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      SnackBarHelper.showToast(l10n?.translate('demo_mode_sync_unavailable') ?? 'Demo mode: Sync not available', kind: ToastKind.warning);
       return;
     }
 
@@ -985,27 +955,17 @@ class _TopBarState extends ConsumerState<TopBar> {
       // Pull server-side deltas (admin edits, tombstones) before full refresh
       await syncService.pullAllDeltas(prefs);
 
-      // Then download fresh data with data retention
-      await syncService.syncAllData(dataRetentionDays: settings.dataRetentionDays);
+      // Then download fresh data
+      await syncService.syncAllData();
 
       if (mounted) {
         Navigator.of(context).pop(); // Close dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n?.translate('data_synced_successfully') ?? 'Data synced successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast(l10n?.translate('data_synced_successfully') ?? 'Data synced successfully!', kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
         Navigator.of(context).pop(); // Close dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${l10n?.translate('sync_failed') ?? 'Sync failed'}: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('${l10n?.translate('sync_failed') ?? 'Sync failed'}: $e', kind: ToastKind.error);
       }
     }
   }
@@ -1017,18 +977,11 @@ class _TopBarState extends ConsumerState<TopBar> {
       final sessionService = SessionService(database);
       await sessionService.pauseSession(sessionId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n?.translate('session_paused') ?? 'Session paused'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        SnackBarHelper.showToast(l10n?.translate('session_paused') ?? 'Session paused', kind: ToastKind.warning);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${l10n?.translate('failed_to_pause_session') ?? 'Failed to pause session'}: $e')),
-        );
+        SnackBarHelper.showToast('${l10n?.translate('failed_to_pause_session') ?? 'Failed to pause session'}: $e', kind: ToastKind.error);
       }
     }
   }
@@ -1040,18 +993,11 @@ class _TopBarState extends ConsumerState<TopBar> {
       final sessionService = SessionService(database);
       await sessionService.resumeSession(sessionId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n?.translate('session_resumed') ?? 'Session resumed'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast(l10n?.translate('session_resumed') ?? 'Session resumed', kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${l10n?.translate('failed_to_resume_session') ?? 'Failed to resume session'}: $e')),
-        );
+        SnackBarHelper.showToast('${l10n?.translate('failed_to_resume_session') ?? 'Failed to resume session'}: $e', kind: ToastKind.error);
       }
     }
   }
@@ -1073,12 +1019,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       ref.read(currentSessionProvider.notifier).state = null;
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n?.translate('session_ended_logging_out') ?? 'Session ended successfully. Logging out...'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        SnackBarHelper.showToast(l10n?.translate('session_ended_logging_out') ?? 'Session ended successfully. Logging out...', kind: ToastKind.success);
 
         // Navigate to login screen – unfocus first to prevent
         // AnimatedDefaultTextStyle dirty-widget-in-wrong-scope errors.
@@ -1092,12 +1033,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${l10n?.translate('failed_to_end_session') ?? 'Failed to end session'}: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        SnackBarHelper.showToast('${l10n?.translate('failed_to_end_session') ?? 'Failed to end session'}: $e', kind: ToastKind.error);
       }
     }
   }
