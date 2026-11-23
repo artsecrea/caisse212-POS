@@ -62,6 +62,10 @@ class AppSettings {
   /// the live kitchen flow (PENDING → PREPARING → COMPLETED) runs on the
   /// products and is what the KDS drives. Default 'PENDING'.
   final String defaultKdsState;
+
+  /// Minutes the kitchen has to serve an order; the POS kitchen board turns
+  /// an order amber at three quarters of it and red past it. 0 = no target.
+  final int kitchenTargetMinutes;
   /// When false, the order-ticket auto-print is skipped on waiter-created
   /// orders even when the source rule allows it. KDS prints still fire.
   /// Default true (current behavior preserved). Common reason to turn
@@ -119,6 +123,14 @@ class AppSettings {
   final bool showDailySummaryButton;
   final bool showCashDrawerButton;
   final bool showCancelOrderButton;
+  /// Main-screen Refund button: find an order by its code and refund it.
+  final bool showRefundButton;
+  /// Main-screen Tag button: put back-office order tags on the current order.
+  final bool showTagsButton;
+
+  /// "Reserve": book the cart's services on the agenda instead of selling
+  /// them now. Shown only when the cart holds a bookable service.
+  final bool showReserveButton;
 
   // Button order - list of button keys defining the order
   final List<String> buttonOrder;
@@ -210,6 +222,17 @@ class AppSettings {
   /// When enabled, the table assignment is cleared as soon as every product
   /// on the order is marked PAID. Default OFF.
   final bool autoClearTableAfterPaying;
+
+  /// Payment also finishes the paid lines in the kitchen (state COMPLETED).
+  /// OFF by default: payment leaves the kitchen state alone, so an order paid
+  /// before it is cooked still reaches the KDS as food to make. For counters
+  /// where the food is always handed over before the customer pays.
+  final bool paymentCompletesKitchen;
+
+  /// Cancelled items are listed in the order panel as struck-through rows
+  /// under the live lines. OFF: one "Cancelled" summary line that opens the
+  /// list in a dialog.
+  final bool showCancelledItemsAsRows;
   /// Print a cancellation ticket when food the kitchen was already told to
   /// make is pulled off an order, or the whole order is voided.
   ///
@@ -251,6 +274,34 @@ class AppSettings {
   /// the other.
   final bool requireAdminToCloseUnbalanced;
 
+  /// Ignore the back office's `maxEndHour` / `maxSessionDurationMinutes`:
+  /// a session then ends only when a person ends it. On by default — a till
+  /// closing a cashier's session mid-shift is worse than one left open.
+  final bool disableSessionAutoClose;
+
+  /// Offer to settle the session's unpaid orders as cash on a plain session
+  /// close. Off leaves that question to the Z close alone.
+  final bool unpaidPromptOnSessionClose;
+
+  /// On a Z close, ask to settle every unpaid order of the whole Z (all its
+  /// sessions) as cash before the day is closed.
+  final bool unpaidPromptOnZClose;
+
+  /// With [unpaidPromptOnZClose], whether the Z may still close with orders
+  /// left unpaid ("Continue without paying"). Off makes paying them the only
+  /// way to close the Z.
+  final bool allowZCloseWithUnpaid;
+
+  /// Warn while the Z has been open longer than [zWarnOpenHours].
+  final bool zWarnOpenTooLong;
+  final int zWarnOpenHours;
+
+  /// Warn once the clock passes [zWarnCutoffTime] (`HH:mm`, business-day
+  /// relative — "04:00" is the morning after the Z's day). Warnings only:
+  /// a Z is never closed by the clock.
+  final bool zWarnPastCutoff;
+  final String zWarnCutoffTime;
+
 
 
 
@@ -276,6 +327,16 @@ class AppSettings {
   final bool printDiscountsOnClose;
   /// Remembered "Print products summary" checkbox on the session-close dialog.
   final bool printProductSummaryOnClose;
+
+  /// [ZReportSection.name]s left off the X / Z ticket. See z_report_sections.
+  final List<String> zReportHiddenSections;
+
+  /// The X's own hidden bands; follows [zReportHiddenSections] until edited.
+  final List<String> xReportHiddenSections;
+
+  /// Leave zero-valued lines off the X / Z. Totals always print.
+  final bool xReportSkipZero;
+  final bool zReportSkipZero;
 
   // Payment settings
   final String defaultPaymentMethod; // Default payment method: 'CASH', 'CARD', 'MOBILE', 'OTHER'
@@ -429,6 +490,15 @@ class AppSettings {
   /// cashier actually taps a field.
   final bool autoFocusProductSearch;
 
+  /// Show the product search field in the top bar. Off also stops
+  /// [autoFocusProductSearch] — there is no field left to focus.
+  final bool showProductSearch;
+
+  /// TVA rate in percent (20 = 20%) applied to products the catalogue
+  /// prices at 0, once the cashier types their price. 0 = off. See
+  /// utils/zero_price_tva.dart.
+  final double zeroPriceTvaRate;
+
   const AppSettings({
     this.isDarkMode = false,
     this.language = 'en',
@@ -438,6 +508,7 @@ class AppSettings {
     this.showProductImages = true,
     this.defaultOrderStatus = 'COMPLETED',
     this.defaultKdsState = 'PENDING',
+    this.kitchenTargetMinutes = 20,
     this.printWaiterOrderTicket = true,
     this.printWaiterPaper = true,
     this.waiterKdsBatchSeconds = 12,
@@ -460,6 +531,9 @@ class AppSettings {
     this.showDailySummaryButton = false,
     this.showCashDrawerButton = false,
     this.showCancelOrderButton = false,
+    this.showRefundButton = true,
+    this.showTagsButton = true,
+    this.showReserveButton = true,
     this.buttonOrder = const [
       'persons',
       'orderType',
@@ -474,6 +548,9 @@ class AppSettings {
       'dailySummary',
       'cashDrawer',
       'cancelOrder',
+      'refund',
+      'tags',
+      'reserve',
       'pay',
       'proceed',
     ],
@@ -494,15 +571,17 @@ class AppSettings {
     this.waiterNotifyReady = false,
     this.waiterNotifyCanceled = false,
     this.waiterNotifyRupture = false,
-    this.sseEnabled = false,
+    this.sseEnabled = true,
     this.enableSnackBars = false,
     this.enableCustomerDisplay = false,
-    this.autoUpdate = true,
+    this.autoUpdate = false,
     this.requireTableForDineIn = false,
     this.requireWaiterForDineIn = false,
     this.requireCustomerForDelivery = false,
     this.requireDeliveryAddress = false,
     this.autoClearTableAfterPaying = false,
+    this.paymentCompletesKitchen = false,
+    this.showCancelledItemsAsRows = false,
     this.coursesEnabled = false,
     this.printKitchenCancellations = true,
     this.printProductsByCategoryOnClose = true,
@@ -510,10 +589,22 @@ class AppSettings {
     this.printSalesByWaiterOnClose = false,
     this.printSalesByCashierOnClose = false,
     this.requireAdminToCloseUnbalanced = false,
+    this.disableSessionAutoClose = true,
+    this.unpaidPromptOnSessionClose = true,
+    this.unpaidPromptOnZClose = true,
+    this.allowZCloseWithUnpaid = true,
+    this.zWarnOpenTooLong = true,
+    this.zWarnOpenHours = 16,
+    this.zWarnPastCutoff = true,
+    this.zWarnCutoffTime = '04:00',
     this.printXOnSessionClose = true,
     this.printOrdersListOnClose = false,
     this.printDiscountsOnClose = false,
     this.printProductSummaryOnClose = false,
+    this.zReportHiddenSections = const [],
+    this.xReportHiddenSections = const [],
+    this.xReportSkipZero = false,
+    this.zReportSkipZero = false,
     this.defaultPaymentMethod = 'CASH',
     this.showTipDialog = false,
     this.showTipButton = false,
@@ -546,6 +637,8 @@ class AppSettings {
     this.settingsLockEnabled = false,
     this.settingsPin = '',
     this.autoFocusProductSearch = true,
+    this.showProductSearch = true,
+    this.zeroPriceTvaRate = 0,
   });
 
   AppSettings copyWith({
@@ -557,6 +650,7 @@ class AppSettings {
     bool? showProductImages,
     String? defaultOrderStatus,
     String? defaultKdsState,
+    int? kitchenTargetMinutes,
     bool? printWaiterOrderTicket,
     bool? printWaiterPaper,
     int? waiterKdsBatchSeconds,
@@ -579,6 +673,9 @@ class AppSettings {
     bool? showDailySummaryButton,
     bool? showCashDrawerButton,
     bool? showCancelOrderButton,
+    bool? showRefundButton,
+    bool? showTagsButton,
+    bool? showReserveButton,
     List<String>? buttonOrder,
     ActionButtonAlignment? actionButtonAlignment,
     bool? autoSyncOnline,
@@ -606,6 +703,8 @@ class AppSettings {
     bool? requireCustomerForDelivery,
     bool? requireDeliveryAddress,
     bool? autoClearTableAfterPaying,
+    bool? paymentCompletesKitchen,
+    bool? showCancelledItemsAsRows,
     bool? coursesEnabled,
     bool? printKitchenCancellations,
     bool? printProductsByCategoryOnClose,
@@ -613,10 +712,22 @@ class AppSettings {
     bool? printSalesByWaiterOnClose,
     bool? printSalesByCashierOnClose,
     bool? requireAdminToCloseUnbalanced,
+    bool? disableSessionAutoClose,
+    bool? unpaidPromptOnSessionClose,
+    bool? unpaidPromptOnZClose,
+    bool? allowZCloseWithUnpaid,
+    bool? zWarnOpenTooLong,
+    int? zWarnOpenHours,
+    bool? zWarnPastCutoff,
+    String? zWarnCutoffTime,
     bool? printXOnSessionClose,
     bool? printOrdersListOnClose,
     bool? printDiscountsOnClose,
     bool? printProductSummaryOnClose,
+    List<String>? zReportHiddenSections,
+    List<String>? xReportHiddenSections,
+    bool? xReportSkipZero,
+    bool? zReportSkipZero,
     String? defaultPaymentMethod,
     bool? showTipDialog,
     bool? showTipButton,
@@ -649,6 +760,8 @@ class AppSettings {
     bool? settingsLockEnabled,
     String? settingsPin,
     bool? autoFocusProductSearch,
+    bool? showProductSearch,
+    double? zeroPriceTvaRate,
   }) {
     return AppSettings(
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -660,6 +773,7 @@ class AppSettings {
       showProductImages: showProductImages ?? this.showProductImages,
       defaultOrderStatus: defaultOrderStatus ?? this.defaultOrderStatus,
       defaultKdsState: defaultKdsState ?? this.defaultKdsState,
+      kitchenTargetMinutes: kitchenTargetMinutes ?? this.kitchenTargetMinutes,
       printWaiterOrderTicket:
           printWaiterOrderTicket ?? this.printWaiterOrderTicket,
       printWaiterPaper: printWaiterPaper ?? this.printWaiterPaper,
@@ -686,6 +800,9 @@ class AppSettings {
       showCashDrawerButton: showCashDrawerButton ?? this.showCashDrawerButton,
       showCancelOrderButton:
           showCancelOrderButton ?? this.showCancelOrderButton,
+      showRefundButton: showRefundButton ?? this.showRefundButton,
+      showTagsButton: showTagsButton ?? this.showTagsButton,
+      showReserveButton: showReserveButton ?? this.showReserveButton,
       buttonOrder: buttonOrder ?? this.buttonOrder,
       actionButtonAlignment:
           actionButtonAlignment ?? this.actionButtonAlignment,
@@ -721,6 +838,10 @@ class AppSettings {
           requireDeliveryAddress ?? this.requireDeliveryAddress,
       autoClearTableAfterPaying:
           autoClearTableAfterPaying ?? this.autoClearTableAfterPaying,
+      paymentCompletesKitchen:
+          paymentCompletesKitchen ?? this.paymentCompletesKitchen,
+      showCancelledItemsAsRows:
+          showCancelledItemsAsRows ?? this.showCancelledItemsAsRows,
       coursesEnabled: coursesEnabled ?? this.coursesEnabled,
       printKitchenCancellations:
           printKitchenCancellations ?? this.printKitchenCancellations,
@@ -733,6 +854,17 @@ class AppSettings {
           printSalesByCashierOnClose ?? this.printSalesByCashierOnClose,
       requireAdminToCloseUnbalanced:
           requireAdminToCloseUnbalanced ?? this.requireAdminToCloseUnbalanced,
+      disableSessionAutoClose:
+          disableSessionAutoClose ?? this.disableSessionAutoClose,
+      unpaidPromptOnSessionClose:
+          unpaidPromptOnSessionClose ?? this.unpaidPromptOnSessionClose,
+      unpaidPromptOnZClose: unpaidPromptOnZClose ?? this.unpaidPromptOnZClose,
+      allowZCloseWithUnpaid:
+          allowZCloseWithUnpaid ?? this.allowZCloseWithUnpaid,
+      zWarnOpenTooLong: zWarnOpenTooLong ?? this.zWarnOpenTooLong,
+      zWarnOpenHours: zWarnOpenHours ?? this.zWarnOpenHours,
+      zWarnPastCutoff: zWarnPastCutoff ?? this.zWarnPastCutoff,
+      zWarnCutoffTime: zWarnCutoffTime ?? this.zWarnCutoffTime,
       printXOnSessionClose: printXOnSessionClose ?? this.printXOnSessionClose,
       printOrdersListOnClose:
           printOrdersListOnClose ?? this.printOrdersListOnClose,
@@ -740,6 +872,12 @@ class AppSettings {
           printDiscountsOnClose ?? this.printDiscountsOnClose,
       printProductSummaryOnClose:
           printProductSummaryOnClose ?? this.printProductSummaryOnClose,
+      zReportHiddenSections:
+          zReportHiddenSections ?? this.zReportHiddenSections,
+      xReportHiddenSections:
+          xReportHiddenSections ?? this.xReportHiddenSections,
+      xReportSkipZero: xReportSkipZero ?? this.xReportSkipZero,
+      zReportSkipZero: zReportSkipZero ?? this.zReportSkipZero,
       defaultPaymentMethod: defaultPaymentMethod ?? this.defaultPaymentMethod,
       showTipDialog: showTipDialog ?? this.showTipDialog,
       showTipButton: showTipButton ?? this.showTipButton,
@@ -778,6 +916,8 @@ class AppSettings {
       settingsPin: settingsPin ?? this.settingsPin,
       autoFocusProductSearch:
           autoFocusProductSearch ?? this.autoFocusProductSearch,
+      showProductSearch: showProductSearch ?? this.showProductSearch,
+      zeroPriceTvaRate: zeroPriceTvaRate ?? this.zeroPriceTvaRate,
     );
   }
 
@@ -791,6 +931,7 @@ class AppSettings {
       'showProductImages': showProductImages,
       'defaultOrderStatus': defaultOrderStatus,
       'defaultKdsState': defaultKdsState,
+      'kitchenTargetMinutes': kitchenTargetMinutes,
       'printWaiterOrderTicket': printWaiterOrderTicket,
       'printWaiterPaper': printWaiterPaper,
       'waiterKdsBatchSeconds': waiterKdsBatchSeconds,
@@ -813,6 +954,9 @@ class AppSettings {
       'showDailySummaryButton': showDailySummaryButton,
       'showCashDrawerButton': showCashDrawerButton,
       'showCancelOrderButton': showCancelOrderButton,
+      'showRefundButton': showRefundButton,
+      'showTagsButton': showTagsButton,
+      'showReserveButton': showReserveButton,
       'buttonOrder': buttonOrder,
       'actionButtonAlignment': actionButtonAlignment.name,
       'autoSyncOnline': autoSyncOnline,
@@ -840,6 +984,8 @@ class AppSettings {
       'requireCustomerForDelivery': requireCustomerForDelivery,
       'requireDeliveryAddress': requireDeliveryAddress,
       'autoClearTableAfterPaying': autoClearTableAfterPaying,
+      'paymentCompletesKitchen': paymentCompletesKitchen,
+      'showCancelledItemsAsRows': showCancelledItemsAsRows,
       'coursesEnabled': coursesEnabled,
       'printKitchenCancellations': printKitchenCancellations,
       'printProductsByCategoryOnClose': printProductsByCategoryOnClose,
@@ -847,10 +993,22 @@ class AppSettings {
       'printSalesByWaiterOnClose': printSalesByWaiterOnClose,
       'printSalesByCashierOnClose': printSalesByCashierOnClose,
       'requireAdminToCloseUnbalanced': requireAdminToCloseUnbalanced,
+      'disableSessionAutoClose': disableSessionAutoClose,
+      'unpaidPromptOnSessionClose': unpaidPromptOnSessionClose,
+      'unpaidPromptOnZClose': unpaidPromptOnZClose,
+      'allowZCloseWithUnpaid': allowZCloseWithUnpaid,
+      'zWarnOpenTooLong': zWarnOpenTooLong,
+      'zWarnOpenHours': zWarnOpenHours,
+      'zWarnPastCutoff': zWarnPastCutoff,
+      'zWarnCutoffTime': zWarnCutoffTime,
       'printXOnSessionClose': printXOnSessionClose,
       'printOrdersListOnClose': printOrdersListOnClose,
       'printDiscountsOnClose': printDiscountsOnClose,
       'printProductSummaryOnClose': printProductSummaryOnClose,
+      'zReportHiddenSections': zReportHiddenSections,
+      'xReportHiddenSections': xReportHiddenSections,
+      'xReportSkipZero': xReportSkipZero,
+      'zReportSkipZero': zReportSkipZero,
       'defaultPaymentMethod': defaultPaymentMethod,
       'showTipDialog': showTipDialog,
       'showTipButton': showTipButton,
@@ -883,6 +1041,8 @@ class AppSettings {
       'settingsLockEnabled': settingsLockEnabled,
       'settingsPin': settingsPin,
       'autoFocusProductSearch': autoFocusProductSearch,
+      'showProductSearch': showProductSearch,
+      'zeroPriceTvaRate': zeroPriceTvaRate,
     };
   }
 
@@ -899,6 +1059,7 @@ class AppSettings {
       showProductImages: json['showProductImages'] as bool? ?? true,
       defaultOrderStatus: json['defaultOrderStatus'] as String? ?? 'COMPLETED',
       defaultKdsState: json['defaultKdsState'] as String? ?? 'PENDING',
+      kitchenTargetMinutes: json['kitchenTargetMinutes'] as int? ?? 20,
       printWaiterOrderTicket: json['printWaiterOrderTicket'] as bool? ?? true,
       printWaiterPaper: json['printWaiterPaper'] as bool? ?? true,
       waiterKdsBatchSeconds:
@@ -928,6 +1089,9 @@ class AppSettings {
       showDailySummaryButton: json['showDailySummaryButton'] as bool? ?? false,
       showCashDrawerButton: json['showCashDrawerButton'] as bool? ?? false,
       showCancelOrderButton: json['showCancelOrderButton'] as bool? ?? false,
+      showRefundButton: json['showRefundButton'] as bool? ?? true,
+      showTagsButton: json['showTagsButton'] as bool? ?? true,
+      showReserveButton: json['showReserveButton'] as bool? ?? true,
       buttonOrder: (json['buttonOrder'] as List<dynamic>?)?.cast<String>() ?? const [
         'persons',
         'orderType',
@@ -942,6 +1106,9 @@ class AppSettings {
         'dailySummary',
       'cashDrawer',
       'cancelOrder',
+      'refund',
+      'tags',
+      'reserve',
         'pay',
         'proceed',
       ],
@@ -967,10 +1134,10 @@ class AppSettings {
       waiterNotifyReady: json['waiterNotifyReady'] as bool? ?? false,
       waiterNotifyCanceled: json['waiterNotifyCanceled'] as bool? ?? false,
       waiterNotifyRupture: json['waiterNotifyRupture'] as bool? ?? false,
-      sseEnabled: json['sseEnabled'] as bool? ?? false,
+      sseEnabled: json['sseEnabled'] as bool? ?? true,
       enableSnackBars: json['enableSnackBars'] as bool? ?? true,
       enableCustomerDisplay: json['enableCustomerDisplay'] as bool? ?? false,
-      autoUpdate: json['autoUpdate'] as bool? ?? true,
+      autoUpdate: json['autoUpdate'] as bool? ?? false,
       requireTableForDineIn:
           json['requireTableForDineIn'] as bool? ?? false,
       requireWaiterForDineIn:
@@ -981,6 +1148,10 @@ class AppSettings {
           json['requireDeliveryAddress'] as bool? ?? false,
       autoClearTableAfterPaying:
           json['autoClearTableAfterPaying'] as bool? ?? false,
+      paymentCompletesKitchen:
+          json['paymentCompletesKitchen'] as bool? ?? false,
+      showCancelledItemsAsRows:
+          json['showCancelledItemsAsRows'] as bool? ?? false,
       coursesEnabled: json['coursesEnabled'] as bool? ?? false,
       printKitchenCancellations:
           json['printKitchenCancellations'] as bool? ?? true,
@@ -993,6 +1164,16 @@ class AppSettings {
           json['printSalesByCashierOnClose'] as bool? ?? false,
       requireAdminToCloseUnbalanced:
           json['requireAdminToCloseUnbalanced'] as bool? ?? false,
+      disableSessionAutoClose:
+          json['disableSessionAutoClose'] as bool? ?? true,
+      unpaidPromptOnSessionClose:
+          json['unpaidPromptOnSessionClose'] as bool? ?? true,
+      unpaidPromptOnZClose: json['unpaidPromptOnZClose'] as bool? ?? true,
+      allowZCloseWithUnpaid: json['allowZCloseWithUnpaid'] as bool? ?? true,
+      zWarnOpenTooLong: json['zWarnOpenTooLong'] as bool? ?? true,
+      zWarnOpenHours: (json['zWarnOpenHours'] as num?)?.toInt() ?? 16,
+      zWarnPastCutoff: json['zWarnPastCutoff'] as bool? ?? true,
+      zWarnCutoffTime: json['zWarnCutoffTime'] as String? ?? '04:00',
       printXOnSessionClose: json['printXOnSessionClose'] as bool? ?? true,
       printOrdersListOnClose:
           json['printOrdersListOnClose'] as bool? ?? false,
@@ -1000,6 +1181,16 @@ class AppSettings {
           json['printDiscountsOnClose'] as bool? ?? false,
       printProductSummaryOnClose:
           json['printProductSummaryOnClose'] as bool? ?? false,
+      zReportHiddenSections:
+          (json['zReportHiddenSections'] as List<dynamic>?)?.cast<String>() ??
+              const [],
+      xReportHiddenSections:
+          (json['xReportHiddenSections'] as List<dynamic>?)?.cast<String>() ??
+              (json['zReportHiddenSections'] as List<dynamic>?)
+                  ?.cast<String>() ??
+              const [],
+      xReportSkipZero: json['xReportSkipZero'] as bool? ?? false,
+      zReportSkipZero: json['zReportSkipZero'] as bool? ?? false,
       defaultPaymentMethod: json['defaultPaymentMethod'] as String? ?? 'CASH',
       showTipDialog: json['showTipDialog'] as bool? ?? false,
       showTipButton: json['showTipButton'] as bool? ?? false,
@@ -1053,6 +1244,9 @@ class AppSettings {
       settingsPin: json['settingsPin'] as String? ?? '',
       autoFocusProductSearch:
           json['autoFocusProductSearch'] as bool? ?? true,
+      showProductSearch: json['showProductSearch'] as bool? ?? true,
+      zeroPriceTvaRate:
+          (json['zeroPriceTvaRate'] as num?)?.toDouble() ?? 0,
     );
   }
 

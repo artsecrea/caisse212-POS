@@ -213,9 +213,17 @@ void main() {
       final svc = PermissionService(user(
           'pos:refunds:view,pos:refunds:create,pos:refunds:waste,'
           'pos:refunds:amount:override'));
-      for (final t in Permissions.refundTokens) {
+      for (final t in const [
+        Permissions.refundsView,
+        Permissions.refundsCreate,
+        Permissions.refundsWaste,
+        Permissions.refundsAmountOverride,
+      ]) {
         expect(svc.hasRefundPermission(t), isTrue, reason: t);
       }
+      // The policy tokens are separate grants: the V148 four don't imply them.
+      expect(svc.hasRefundPermission(Permissions.refundsClosedZ), isFalse);
+      expect(svc.hasRefundPermission(Permissions.refundsOverride), isFalse);
     });
 
     test('an admin is never blocked', () {

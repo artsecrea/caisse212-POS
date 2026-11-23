@@ -60,6 +60,23 @@ class Orders extends Table {
   // separate column so the two can coexist.
   TextColumn get discountReason => text().nullable()();
   TextColumn get address => text().nullable()(); // Delivery address (for DELIVERY order type)
+  /// Free reference the cashier types on a take-away or delivery order (the
+  /// customer's name for the pickup, a platform's order number…). Searchable
+  /// from the resume panel and printed on the tickets.
+  TextColumn get reference => text().nullable()();
+  /// Code of the reservation this order was rung up from. Pushed top-level as
+  /// `reservationCode`; the server links the two after saving the order.
+  /// Kept locally so a reservation converted offline still links once the
+  /// order syncs.
+  TextColumn get reservationCode => text().nullable()();
+
+  /// What the server said about that link: LINKED, ALREADY_LINKED (another
+  /// order holds the reservation, so this may be a duplicate sale) or
+  /// NOT_FOUND. Null until a push reports it.
+  TextColumn get reservationLinkStatus => text().nullable()();
+
+  /// With ALREADY_LINKED: the code of the order that holds the reservation.
+  TextColumn get reservationLinkedOrderCode => text().nullable()();
   TextColumn get cancellationReason => text().nullable()(); // Reason for cancellation when status is CANCELED
   IntColumn get sessionId => integer().nullable()(); // Cash session this order was created in (for Z-report locking)
   /// Short, human-facing number counted per cash session (1, 2, 3…), called
@@ -91,5 +108,13 @@ class Orders extends Table {
   DateTimeColumn get createdAt => dateTime().clientDefault(() => DateTime.now())();
   DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server
+
+  // Order tags (schema v60): server tag ids, comma-separated ("1,4"); null or
+  // empty = untagged. Pushed with PUT /pos/orders/{code}/tags, apart from the
+  // order itself, so [tagsSynced] tracks it on its own.
+  TextColumn get tagIds => text().nullable()();
+  BoolColumn get tagsSynced => boolean().withDefault(const Constant(true))();
+  // Why the server refused the tags (400), so they are not re-sent forever.
+  TextColumn get tagsSyncError => text().nullable()();
 }
 

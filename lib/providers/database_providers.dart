@@ -17,6 +17,13 @@ import '../services/cash_movement_service.dart';
 import '../services/serial_service.dart';
 import '../services/quick_product_service.dart';
 import '../services/api_service.dart';
+import '../services/subscription_store.dart';
+import '../services/account_status_store.dart';
+import '../services/kick_store.dart';
+import '../domain/models/account_status.dart';
+import '../services/refund_policy_store.dart';
+import '../domain/models/refund_policy.dart';
+import '../domain/models/subscription_info.dart';
 import '../services/data_sync_service.dart';
 import '../services/printing_service.dart';
 import '../services/unpaid_orders_service.dart';
@@ -190,6 +197,17 @@ final currentSessionProvider = StateProvider<db.CashSession?>((ref) => null);
 /// with the first session, or by an admin/manager), cleared when it's closed.
 final currentZProvider = StateProvider<db.Z?>((ref) => null);
 
+/// The open Z straight from the database, for screens that show it before
+/// [currentZProvider] is set (the login screen).
+final openZStreamProvider = StreamProvider.autoDispose<db.Z?>((ref) {
+  final database = ref.watch(databaseProvider);
+  return (database.select(database.zs)
+        ..where((z) => z.status.equals('open'))
+        ..orderBy([(z) => OrderingTerm.desc(z.startedAt)])
+        ..limit(1))
+      .watchSingleOrNull();
+});
+
 /// The business day of [z] — the canonical z_day for everything created while
 /// that Z is open.
 DateTime zDayForZ(db.Z z) => ZService.zDayOf(z);
@@ -317,6 +335,18 @@ class CurrentUser{
   }
 }
 
+/// [user] as the local users table now has it. [currentUserProvider] is a
+/// snapshot taken at login, so without this a role or permission change pulled
+/// by a sync would only reach the till at the next sign-in. Returns [user]
+/// unchanged when its row is missing — a sync must never sign anyone out.
+Future<CurrentUser> reloadCurrentUser(
+    AppDatabase database, CurrentUser user) async {
+  final row = await (database.select(database.users)
+        ..where((u) => u.id.equals(user.id)))
+      .getSingleOrNull();
+  return row == null ? user : CurrentUser.fromUser(row);
+}
+
 
 // Shared Preferences Provider
 final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
@@ -354,6 +384,103 @@ class CategoryScopeNotifier extends StateNotifier<List<int>?> {
 final categoryScopeProvider =
     StateNotifierProvider<CategoryScopeNotifier, List<int>?>((ref) {
   return CategoryScopeNotifier(ref.watch(apiServiceProvider));
+});
+
+// The shop's subscription as last heard from the server (login, refresh,
+// catalogue sync, daily check, SSE). null = nothing to track.
+class SubscriptionNotifier extends StateNotifier<SubscriptionInfo?> {
+  SubscriptionNotifier(SharedPreferences prefs)
+      : super(SubscriptionStore(prefs).current) {
+    _sub = SubscriptionStore.changes.listen((info) => state = info);
+  }
+
+  late final StreamSubscription<SubscriptionInfo?> _sub;
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+}
+
+final subscriptionProvider =
+    StateNotifierProvider<SubscriptionNotifier, SubscriptionInfo?>((ref) {
+  return SubscriptionNotifier(ref.watch(sharedPreferencesProvider));
+});
+
+// Tenant / business / terminal deactivated in the back office, as last heard
+// from the server. null = active. Persisted, so the lock survives a restart.
+class AccountBlockNotifier extends StateNotifier<AccountBlock?> {
+  AccountBlockNotifier(SharedPreferences prefs)
+      : super(AccountStatusStore(prefs).current) {
+    _sub = AccountStatusStore.changes.listen((b) => state = b);
+  }
+
+  late final StreamSubscription<AccountBlock?> _sub;
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+}
+
+final accountBlockProvider =
+    StateNotifierProvider<AccountBlockNotifier, AccountBlock?>((ref) {
+  return AccountBlockNotifier(ref.watch(sharedPreferencesProvider));
+});
+
+// The back office's last `force_kick`, until the terminal signs in again.
+class KickNoticeNotifier extends StateNotifier<KickNotice?> {
+  KickNoticeNotifier(SharedPreferences prefs) : super(KickStore(prefs).current) {
+    _sub = KickStore.changes.listen((k) => state = k);
+  }
+
+  late final StreamSubscription<KickNotice?> _sub;
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+}
+
+final kickNoticeProvider =
+    StateNotifierProvider<KickNoticeNotifier, KickNotice?>((ref) {
+  return KickNoticeNotifier(ref.watch(sharedPreferencesProvider));
+});
+
+// The refund policy as last fetched (`GET /pos/refund-policy`), or the
+// defaults (today's behaviour) when the server has none.
+class RefundPolicyNotifier extends StateNotifier<RefundPolicy> {
+  RefundPolicyNotifier(SharedPreferences prefs)
+      : super(RefundPolicyStore(prefs).current) {
+    _sub = RefundPolicyStore.changes.listen((p) => state = p);
+  }
+
+  late final StreamSubscription<RefundPolicy> _sub;
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+}
+
+final refundPolicyProvider =
+    StateNotifierProvider<RefundPolicyNotifier, RefundPolicy>((ref) {
+  return RefundPolicyNotifier(ref.watch(sharedPreferencesProvider));
+});
+
+// The order-tag catalogue, in the back office's order.
+final orderTagsProvider = StreamProvider<List<db.OrderTag>>((ref) {
+  final database = ref.watch(databaseProvider);
+  return (database.select(database.orderTags)
+        ..orderBy([
+          (t) => OrderingTerm(expression: t.sortOrder),
+          (t) => OrderingTerm(expression: t.label),
+        ]))
+      .watch();
 });
 
 // Categories Provider
@@ -606,6 +733,10 @@ Future<Map<int?, ComponentGroupRule>> loadComponentGroupRules(
       maxSelection: o?.maxSelection ?? group.maxSelection,
       freeQuantity: o?.freeQuantity ?? group.freeQuantity,
       displayOrder: o?.displayOrder ?? group.displayOrder,
+      // Product row only: the group-level default is informational, and the
+      // server already dropped triggers this product does not offer. No row
+      // means unconditional on this product.
+      visibleWhenComponentIds: decodeVisibleWhen(o?.visibleWhenComponentIds),
     );
   }
   return rules;

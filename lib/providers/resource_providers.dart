@@ -2,16 +2,18 @@ import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/database/app_database.dart';
-import '../domain/models/booking_models.dart';
 import 'database_providers.dart';
 
-/// All active bookable resources (rooms/chairs/equipment), reactive to the
-/// local Resources table (synced from the server). Ordered by name.
+/// All active bookable resources (staff, rooms, chairs, equipment), reactive
+/// to the local Resources table. In the back office's order.
 final resourcesProvider = StreamProvider<List<Resource>>((ref) {
   final db = ref.watch(databaseProvider);
   return (db.select(db.resources)
         ..where((r) => r.isActive.equals(true))
-        ..orderBy([(r) => OrderingTerm(expression: r.name)]))
+        ..orderBy([
+          (r) => OrderingTerm(expression: r.sortOrder),
+          (r) => OrderingTerm(expression: r.name),
+        ]))
       .watch();
 });
 
@@ -35,28 +37,4 @@ final eligibleResourcesProvider =
         ..where((r) => r.id.isIn(ids) & r.isActive.equals(true))
         ..orderBy([(r) => OrderingTerm(expression: r.name)]))
       .get();
-});
-
-/// Key for [availabilityProvider]. `date` MUST be date-only (midnight) so the
-/// cache key is stable across time-of-day changes. Records give value equality.
-typedef AvailabilityKey = ({
-  int productId,
-  DateTime date,
-  int? waiterId,
-  int? resourceId,
-});
-
-/// Real availability for a booking attempt — online call, cached per key while
-/// watched (`autoDispose`). Invalidate after a successful booking on that date
-/// (`ref.invalidate(availabilityProvider)`), since availability is advisory and
-/// the real guard is the 409 on PATCH /schedule.
-final availabilityProvider = FutureProvider.autoDispose
-    .family<AvailabilityResponse, AvailabilityKey>((ref, key) async {
-  final api = ref.watch(apiServiceProvider);
-  return api.getAvailability(
-    productId: key.productId,
-    date: key.date,
-    waiterId: key.waiterId,
-    resourceId: key.resourceId,
-  );
 });

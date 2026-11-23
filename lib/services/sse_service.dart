@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:loggecrea/loggecrea.dart';
 
 import 'api_service.dart';
+import 'remote_command_service.dart';
 
 enum SseEventType {
   connected,
@@ -17,6 +18,12 @@ enum SseEventType {
   orderCancelled,
   orderReady,
   orderDeliveryStatusChanged,
+  /// The server changed one of this till's orders (admin cancel, discount,
+  /// note). `{orderCode}` — the POS refetches that order.
+  orderUpdated,
+  /// A reservation, block or the opening hours changed on any terminal or the
+  /// web: `{reservationId, code, reason}`. The agenda re-reads its window.
+  reservationUpdated,
   posCommand,
   heartbeat,
   unknown,
@@ -116,6 +123,7 @@ class SseService {
   Timer? _reconnectTimer;
   int _reconnectDelaySeconds = 3;
   bool _shouldRun = false;
+  static String? _version;
   bool _connecting = false;
 
   /// Liveness watchdog. The server sends a heartbeat every 25s and never times
@@ -124,8 +132,14 @@ class SseService {
   /// completes. Without this, the POS looks connected forever and every order
   /// lands in the queue unseen. Two missed heartbeats is the trigger.
   Timer? _livenessTimer;
-  static const Duration _livenessTimeout = Duration(seconds: 60);
+  final Duration _livenessTimeout;
   int _connectCount = 0; // total connect attempts this run (for correlating logs)
+
+  /// The connection that is current. A stream that ended because a newer one
+  /// replaced it (or the watchdog gave up on it) must not schedule a
+  /// reconnect: it would tear the newer connection down — `_connect` closes
+  /// the client — and start the loop again.
+  int _generation = 0;
 
   /// Live connection status, for the diagnostic in Settings. A plain
   /// [ValueNotifier] rather than a stream: the UI wants the CURRENT value the
@@ -138,7 +152,9 @@ class SseService {
         .copyWith(state: s, detail: detail, clearDetail: clearDetail);
   }
 
-  SseService(this._api);
+  SseService(this._api,
+      {Duration livenessTimeout = const Duration(seconds: 60)})
+      : _livenessTimeout = livenessTimeout;
 
   Stream<SseEvent> get events => _controller.stream;
 
@@ -149,28 +165,49 @@ class SseService {
     _connect();
   }
 
-  /// Restart the silence countdown. Called on every frame received.
-  void _markAlive() {
+  /// Restart the silence countdown. Called on every byte received —
+  /// heartbeats included: they are the whole point of the watchdog. (It used
+  /// to run only on business events, so a quiet till killed a healthy stream
+  /// every 60s.)
+  void _markAlive(int generation) {
+    if (generation != _generation) return;
     status.value = status.value.copyWith(lastFrameAt: DateTime.now());
     _livenessTimer?.cancel();
     if (!_shouldRun) return;
     _livenessTimer = Timer(_livenessTimeout, () {
-      if (!_shouldRun) return;
+      if (!_shouldRun || generation != _generation) return;
       Logger.instance.warning(
           'SseService: no frame for ${_livenessTimeout.inSeconds}s — the stream '
           'is silently dead, forcing a reconnect');
-      // Closing the client makes the in-flight read complete, which drops into
-      // the existing error/backoff path rather than duplicating it here.
-      _client?.close(force: true);
-      _client = null;
-      _connecting = false;
+      _abandonCurrent();
       _setState(SseConnectionState.retrying,
           detail: 'No frame for ${_livenessTimeout.inSeconds}s');
       _scheduleReconnect();
     });
   }
 
+  /// Drop the current connection without letting its read loop react.
+  void _abandonCurrent() {
+    _generation++;
+    _livenessTimer?.cancel();
+    _client?.close(force: true);
+    _client = null;
+    _connecting = false;
+  }
+
+  /// Reconnect now instead of waiting out the backoff — the network just came
+  /// back. No-op while a healthy stream is up.
+  void reconnectNow() {
+    if (!_shouldRun || status.value.state == SseConnectionState.live) return;
+    Logger.instance.info('SseService: network back — reconnecting now');
+    _reconnectTimer?.cancel();
+    _reconnectDelaySeconds = 3;
+    _abandonCurrent();
+    _connect();
+  }
+
   void stop() {
+    _generation++;
     _shouldRun = false;
     _livenessTimer?.cancel();
     _livenessTimer = null;
@@ -191,17 +228,24 @@ class SseService {
 
   Future<void> _connect() async {
     if (_connecting || !_shouldRun) return;
+    _connecting = true;
+    final generation = ++_generation;
+
+    // The stream is authenticated once, at connect: an expired token here is
+    // a 401 on every reconnect until something else happens to refresh it.
+    await _api.ensureFreshToken();
+    if (!_shouldRun || generation != _generation) return;
 
     final token = _api.getAccessToken();
     final baseUrl = _api.getBaseUrl();
     if (token == null || baseUrl == null) {
       Logger.instance.info('SseService: no token/baseUrl, skipping connect');
+      _connecting = false;
       _setState(SseConnectionState.rejected,
           detail: token == null ? 'Not signed in' : 'No server URL');
       return;
     }
 
-    _connecting = true;
     final attempt = ++_connectCount;
     status.value = status.value.copyWith(
         state: SseConnectionState.connecting, attempts: attempt);
@@ -247,15 +291,17 @@ class SseService {
       if (businessId != null) {
         request.headers.set('X-Business-Id', businessId.toString());
       }
+      // What this build answers, so the back office only offers those.
+      _version ??= await RemoteCommandService.appVersion();
+      if (_version != null) request.headers.set('X-POS-Version', _version!);
+      request.headers.set(
+          'X-POS-Capabilities', RemoteCommandService.capabilities.join(','));
       request.headers.set(HttpHeaders.acceptHeader, 'text/event-stream');
       request.headers.set('Cache-Control', 'no-cache');
 
       final response = await request.close();
+      if (generation != _generation) return; // replaced while connecting
       _connecting = false;
-      _reconnectDelaySeconds = 3; // reset backoff on successful connect
-      // Arm the watchdog now, not on the first frame: a stream that opens and
-      // then says nothing at all is exactly the failure this catches.
-      _markAlive();
 
       // Dump the key response headers. A proper SSE endpoint answers with
       // `content-type: text/event-stream` and keeps the connection open
@@ -269,6 +315,45 @@ class SseService {
           'SseService: connected (attempt #$attempt, status ${response.statusCode})  '
           'content-type=$ct  connection=$connHdr  transfer-encoding=$te  '
           'content-length=${response.contentLength}');
+
+      if (response.statusCode == 401) {
+        // Expired or rotated token — not a config fault. Refresh, retry soon.
+        await response.drain<void>().catchError((_) {});
+        if (generation != _generation) return;
+        final refreshed = _api.getAccessToken() != token ||
+            await _api.ensureFreshToken(force: true);
+        Logger.instance.warning('SseService: 401 — token '
+            '${refreshed ? 'refreshed, retrying' : 'refresh failed'}');
+        _setState(SseConnectionState.retrying, detail: 'HTTP 401');
+        if (refreshed) _reconnectDelaySeconds = 3;
+        _scheduleReconnect();
+        return;
+      }
+
+      if (response.statusCode == 423 || response.statusCode == 403) {
+        final raw = await response
+            .transform(utf8.decoder)
+            .join()
+            .timeout(const Duration(seconds: 5), onTimeout: () => '')
+            .catchError((_) => '');
+        dynamic body;
+        try {
+          body = jsonDecode(raw);
+        } catch (_) {}
+        if (await _api.noteAccountRefusal(response.statusCode,
+            response.headers.value('x-account-status'), body)) {
+          // The account watcher signs the cashier out, which stops this
+          // service. No reconnect loop against a disabled account.
+          Logger.instance.warning('SseService: account disabled — not reconnecting');
+          _setState(SseConnectionState.rejected, detail: 'Account disabled');
+          return;
+        }
+        if (generation != _generation) return;
+        _setState(SseConnectionState.rejected,
+            detail: 'HTTP ${response.statusCode} from the server');
+        _scheduleReconnect();
+        return;
+      }
 
       if (response.statusCode != 200) {
         _setState(SseConnectionState.rejected,
@@ -286,6 +371,11 @@ class SseService {
       }
 
       if (response.statusCode == 200 && ct.contains('event-stream')) {
+        // Arm the watchdog now, not on the first frame: a stream that opens
+        // and then says nothing at all is exactly the failure it catches.
+        // Not before this check — a rejected answer has its own retry, and a
+        // watchdog left running would cancel it.
+        _markAlive(generation);
         status.value = status.value.copyWith(
           state: SseConnectionState.live,
           connectedAt: DateTime.now(),
@@ -293,8 +383,9 @@ class SseService {
         );
       }
 
-      await _readStream(response, attempt);
+      await _readStream(response, attempt, generation);
     } catch (e, st) {
+      if (generation != _generation) return;
       _connecting = false;
       _setState(SseConnectionState.retrying, detail: '$e');
       Logger.instance.error('SseService: connect error (attempt #$attempt): $e');
@@ -303,10 +394,11 @@ class SseService {
     }
   }
 
-  Future<void> _readStream(HttpClientResponse response, int attempt) async {
+  Future<void> _readStream(
+      HttpClientResponse response, int attempt, int generation) async {
     final buffer = StringBuffer();
     String eventName = '';
-    String eventData = '';
+    final eventData = <String>[];
 
     // Diagnostics: measure how long the stream stays open and what flows
     // through it. A near-zero duration with 0 chunks means the server closed
@@ -319,8 +411,14 @@ class SseService {
 
     try {
       await for (final chunk in response.transform(utf8.decoder)) {
+        if (generation != _generation) break; // replaced — stop reading
         chunkCount++;
         byteCount += chunk.length;
+        _markAlive(generation);
+        // Data is flowing: this connection works, so the next drop starts
+        // the backoff from the bottom again. (Reset on headers alone, a
+        // server answering 200 and closing would be retried every 3s.)
+        _reconnectDelaySeconds = 3;
         // Verbose raw dump (truncated, newlines escaped) via debugPrint so it
         // never touches the log file. Shows exactly what the server sends —
         // heartbeats, events, or an unexpected HTML/JSON error body.
@@ -347,16 +445,17 @@ class SseService {
             // Blank line = end of event block
             if (eventData.isNotEmpty) {
               eventCount++;
-              _dispatch(eventName, eventData);
+              _dispatch(eventName, eventData.join('\n'));
             }
             eventName = '';
-            eventData = '';
+            eventData.clear();
           } else if (trimmed.startsWith('event:')) {
             eventName = trimmed.substring(6).trim();
           } else if (trimmed.startsWith('data:')) {
-            eventData = trimmed.substring(5).trim();
+            // A payload may span several `data:` lines; the spec joins them.
+            eventData.add(trimmed.substring(5).trim());
           }
-          // Ignore `id:` and `retry:` fields
+          // Ignore `id:`, `retry:` and `:` comment lines
         }
       }
     } catch (e) {
@@ -385,7 +484,10 @@ class SseService {
       Logger.instance.info(logline);
     }
 
-    if (_shouldRun) {
+    // A replaced stream ends quietly: the connection that replaced it owns
+    // the state and the reconnect timer.
+    if (_shouldRun && generation == _generation) {
+      _livenessTimer?.cancel();
       _setState(SseConnectionState.retrying,
           detail: endError != null
               ? '$endError'
@@ -405,8 +507,6 @@ class SseService {
         return;
       }
       Logger.instance.info('SseService: event $name');
-      // ANY frame proves the pipe is alive, not just a heartbeat.
-      _markAlive();
       status.value =
           status.value.copyWith(eventCount: status.value.eventCount + 1);
       _controller.add(SseEvent(type, data));
@@ -437,6 +537,10 @@ class SseService {
         return SseEventType.orderReady;
       case 'order-delivery-status-changed':
         return SseEventType.orderDeliveryStatusChanged;
+      case 'order-updated':
+        return SseEventType.orderUpdated;
+      case 'reservation-updated':
+        return SseEventType.reservationUpdated;
       case 'pos-command':
         return SseEventType.posCommand;
       case 'heartbeat':

@@ -22,6 +22,12 @@ class ProductComponentGroups extends Table {
   BoolColumn get isRequired => boolean().nullable()();
   IntColumn get displayOrder => integer().withDefault(const Constant(0))();
 
+  /// JSON array of component ids (from other groups) that make this group
+  /// appear on this product, OR'd. Null or empty = always shown. The server
+  /// resolves it per product, so this column, never the group's own default,
+  /// is what the picker evaluates. See `visibleGroupIds`.
+  TextColumn get visibleWhenComponentIds => text().nullable()();
+
   DateTimeColumn get updatedAt =>
       dateTime().clientDefault(() => DateTime.now())();
 

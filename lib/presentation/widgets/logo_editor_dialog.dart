@@ -2,9 +2,11 @@ import 'dart:typed_data';
 
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 
 import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
+import '../../utils/logo_filter.dart';
 
 /// The logo settings this dialog returns. Null means the operator cancelled.
 class LogoEditResult {
@@ -14,6 +16,8 @@ class LogoEditResult {
   final double cropBottom;
   final int widthPercent;
   final LogoAlign align;
+  final LogoFilter filter;
+  final int threshold;
 
   const LogoEditResult({
     required this.cropLeft,
@@ -22,6 +26,8 @@ class LogoEditResult {
     required this.cropBottom,
     required this.widthPercent,
     required this.align,
+    required this.filter,
+    required this.threshold,
   });
 }
 
@@ -49,6 +55,15 @@ class _LogoEditorDialogState extends State<LogoEditorDialog> {
   late Rect _crop; // normalised 0..1 against the source image
   late int _widthPercent;
   late LogoAlign _align;
+  late LogoFilter _filter;
+  late int _threshold;
+
+  /// Decoded once; the preview is re-filtered from it on every change.
+  img.Image? _decoded;
+
+  /// The picked image as the printer will see it. Null until decoded, or
+  /// when the image cannot be decoded (the raw bytes are shown instead).
+  Uint8List? _preview;
 
   /// How close to a corner a touch has to land to grab it, in logical pixels.
   /// Generous, because this runs on a POS touch screen and the handles are
@@ -74,6 +89,15 @@ class _LogoEditorDialogState extends State<LogoEditorDialog> {
     );
     _widthPercent = c.logoWidthPercent;
     _align = c.logoAlign;
+    _filter = c.logoFilter;
+    _threshold = c.logoThreshold;
+    _decoded = img.decodeImage(widget.imageBytes);
+    _refreshPreview();
+  }
+
+  void _refreshPreview() {
+    final d = _decoded;
+    _preview = d == null ? null : logoPreviewPng(d, _filter, _threshold);
   }
 
   void _reset() {
@@ -81,6 +105,9 @@ class _LogoEditorDialogState extends State<LogoEditorDialog> {
       _crop = const Rect.fromLTRB(0, 0, 1, 1);
       _widthPercent = 100;
       _align = LogoAlign.center;
+      _filter = LogoFilter.blackWhite;
+      _threshold = kDefaultLogoThreshold;
+      _refreshPreview();
     });
   }
 
@@ -226,6 +253,71 @@ class _LogoEditorDialogState extends State<LogoEditorDialog> {
                 selected: {_align},
                 onSelectionChanged: (s) => setState(() => _align = s.first),
               ),
+
+              // ---- black & white ----
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  const Icon(Icons.contrast, size: 20),
+                  const SizedBox(width: 8),
+                  Text(l10n.translate('logo_filter'),
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w500)),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                l10n.translate('logo_filter_hint'),
+                style: TextStyle(
+                    fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 8),
+              SegmentedButton<LogoFilter>(
+                segments: [
+                  ButtonSegment(
+                    value: LogoFilter.none,
+                    icon: const Icon(Icons.image_outlined),
+                    label: Text(l10n.translate('logo_filter_none')),
+                  ),
+                  ButtonSegment(
+                    value: LogoFilter.blackWhite,
+                    icon: const Icon(Icons.contrast),
+                    label: Text(l10n.translate('logo_filter_bw')),
+                  ),
+                  ButtonSegment(
+                    value: LogoFilter.dither,
+                    icon: const Icon(Icons.grain),
+                    label: Text(l10n.translate('logo_filter_dither')),
+                  ),
+                ],
+                selected: {_filter},
+                onSelectionChanged: (s) => setState(() {
+                  _filter = s.first;
+                  _refreshPreview();
+                }),
+              ),
+              if (_filter != LogoFilter.none) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Icon(Icons.brightness_6, size: 20),
+                    const SizedBox(width: 8),
+                    Text(l10n.translate('logo_darkness'),
+                        style: const TextStyle(fontSize: 14)),
+                  ],
+                ),
+                Slider(
+                  value: _threshold.toDouble(),
+                  min: 20,
+                  max: 235,
+                  divisions: 43,
+                  label: '$_threshold',
+                  // Only on release: re-dithering a large logo on every
+                  // drag tick stutters on a till's CPU.
+                  onChanged: (v) => setState(() => _threshold = v.round()),
+                  onChangeEnd: (_) => setState(_refreshPreview),
+                ),
+              ],
             ],
           ),
         ),
@@ -249,6 +341,8 @@ class _LogoEditorDialogState extends State<LogoEditorDialog> {
               cropBottom: _crop.bottom,
               widthPercent: _widthPercent,
               align: _align,
+              filter: _filter,
+              threshold: _threshold,
             ),
           ),
           child: Text(l10n.translate('save')),
@@ -294,7 +388,10 @@ class _LogoEditorDialogState extends State<LogoEditorDialog> {
                 fit: StackFit.expand,
                 children: [
                   Image.memory(
-                    widget.imageBytes,
+                    _preview ?? widget.imageBytes,
+                    // Without this the preview flashes blank while the
+                    // re-filtered image decodes.
+                    gaplessPlayback: true,
                     fit: BoxFit.fill,
                     errorBuilder: (_, __, ___) => Center(
                       child: Icon(Icons.broken_image,

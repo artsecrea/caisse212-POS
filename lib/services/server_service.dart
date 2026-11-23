@@ -16,6 +16,8 @@ import 'package:archive/archive.dart' show ZipDecoder;
 import 'package:crypto/crypto.dart' show md5;
 import 'package:path_provider/path_provider.dart' show getTemporaryDirectory;
 import '../data/database/app_database.dart';
+import '../domain/models/component_rules.dart' show decodeVisibleWhen;
+import '../domain/models/line_payment.dart';
 import '../domain/models/order_course.dart';
 import '../domain/models/socket_models.dart';
 import '../providers/database_providers.dart';
@@ -33,6 +35,8 @@ import 'waiter_kitchen_events.dart';
 import 'waiter_order_money.dart';
 import 'waiter_live_updates.dart';
 import 'waiter_notification_inbox.dart';
+import 'waiter_request_replay.dart';
+import 'line_cancellation.dart';
 import 'printing_service.dart' show PrintOutput, KdsPrintMode, printingServiceProvider;
 import '../utils/order_code.dart';
 import 'package:drift/drift.dart' as drift;
@@ -41,6 +45,7 @@ import 'package:loggecrea/loggecrea.dart';
 import 'product_cost_resolver.dart';
 import 'z_day_resolver.dart';
 import 'pos_notifications.dart';
+import 'kitchen_timing.dart' show kitchenSince, kitchenStageStamps;
 
 /// Thrown inside a DB transaction to abort it (rolling back all writes) and
 /// surface a specific HTTP error to the client. Lets a race-safe check *inside*
@@ -76,6 +81,9 @@ class ServerService {
   /// Kitchen tickets waiting for the waiter to finish adding, keyed by order.
   /// See [_fireKdsForWaiterAddedProduct] and [AppSettings.waiterKdsBatchSeconds].
   final Map<int, Timer> _pendingWaiterKds = {};
+
+  /// Stored answers for retried / double-tapped waiter writes.
+  final WaiterRequestReplay _waiterReplay = WaiterRequestReplay();
 
   ServerService(this._ref, {int port = 8080}) : _port = port;
 
@@ -162,10 +170,19 @@ class ServerService {
     router.get('/waiters/tables', _waiterTables);
     router.get('/waiters/orders', _waiterOrders);
     router.get('/waiters/orders/<code>', _waiterOrderDetail);
-    router.post('/waiters/orders', _waiterCreateOrder);
-    router.put('/waiters/orders/<code>/add-product', _waiterAddProductToOrder);
+    // The three routes that add food are replay-safe: a retried round that
+    // carries the same requestId is answered, not applied twice. See
+    // [WaiterRequestReplay].
+    router.post('/waiters/orders',
+        (Request r) => _waiterReplay.run(r, 'create', _waiterCreateOrder));
     router.put(
-        '/waiters/orders/<code>/add-products', _waiterAddProductsToOrder);
+        '/waiters/orders/<code>/add-product',
+        (Request r, String code) => _waiterReplay.run(r, 'add-product:$code',
+            (req) => _waiterAddProductToOrder(req, code)));
+    router.put(
+        '/waiters/orders/<code>/add-products',
+        (Request r, String code) => _waiterReplay.run(
+            r, 'add-products:$code', (req) => _waiterAddProductsToOrder(req, code)));
     router.post('/waiters/orders/<code>/print', _waiterPrintOrder);
     router.post('/waiters/orders/<code>/cancel', _waiterCancelOrder);
     router.post('/waiters/orders/<code>/transfer-table', _waiterTransferTable);
@@ -211,6 +228,21 @@ class ServerService {
           return innerHandler(request);
         }
 
+        // Tenant / business / terminal deactivated: the waiter app may not
+        // keep selling through this till. The KDS keeps working so the
+        // kitchen can finish what is already ordered.
+        if ((p.startsWith('waiters/') ||
+                (p == 'orders' && request.method == 'POST')) &&
+            _ref.read(apiServiceProvider).isAccountBlocked) {
+          return Response(423,
+              body: jsonEncode({
+                'error': 'ACCOUNT_DISABLED',
+                'code': 'ACCOUNT_DISABLED',
+                'message': 'This till is deactivated.',
+              }),
+              headers: {'Content-Type': 'application/json', ..._corsHeaders});
+        }
+
         // Check password if configured
         if (_serverPassword != null && _serverPassword!.isNotEmpty) {
           final authHeader = request.headers['x-server-password'];
@@ -230,7 +262,8 @@ class ServerService {
   Map<String, String> get _corsHeaders => {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Origin, Content-Type, Accept, X-Server-Password, Last-Event-ID',
+        'Access-Control-Allow-Headers':
+            'Origin, Content-Type, Accept, X-Server-Password, Last-Event-ID, Idempotency-Key',
       };
 
   // ==================== ENDPOINT HANDLERS ====================
@@ -258,6 +291,10 @@ class ServerService {
       // Not a setting: this build sends `order-updated` / `tables-changed`,
       // so the app keeps its stream open whatever else is switched on.
       'waiterLiveUpdates': true,
+      // Not a setting either: create / add-product / add-products honour a
+      // `requestId` (see [WaiterRequestReplay]), so a client may retry a send
+      // whose reply it never got without the round landing twice.
+      'idempotentWrites': true,
       'waiterShowKitchenStatus': s.waiterShowKitchenStatus,
       'waiterNotifyReady': s.waiterNotifyReady,
       'waiterNotifyCanceled': s.waiterNotifyCanceled,
@@ -985,8 +1022,6 @@ class ServerService {
   /// PUT /orders/products/<id>?status=newstatus - Update product status
   Future<Response> _updateOrderProduct(Request request, String id) async {
     try {
-      final database = _ref.read(databaseProvider);
-      final logService = OrderLogService(database);
       final queryParams = request.url.queryParameters;
       final statusParam = queryParams['status'];
 
@@ -1005,90 +1040,15 @@ class ServerService {
         );
       }
 
-      final newState = statusParam.toUpperCase();
-      final now = DateTime.now();
-
-      // Read the current row first: needed to stamp each KDS stage timestamp
-      // only the FIRST time the item enters that stage (a remake bouncing back
-      // to PREPARING must not overwrite the original prep start).
-      final existing = await (database.select(database.orderProducts)
-            ..where((tbl) => tbl.id.equals(productId)))
-          .getSingleOrNull();
-      if (existing == null) {
+      final found = await applyKitchenLineState(
+          productId, statusParam.toUpperCase(),
+          source: 'API');
+      if (!found) {
         return Response.notFound(
           jsonEncode({'error': 'Order product not found'}),
           headers: {'Content-Type': 'application/json'},
         );
       }
-
-      await (database.update(database.orderProducts)
-            ..where((tbl) => tbl.id.equals(productId)))
-          .write(OrderProductsCompanion(
-        state: drift.Value(newState),
-        updatedAt: drift.Value(now),
-        // KDS stage timestamps for LOCAL kitchen stats — first entry only.
-        preparingAt: (newState == 'PREPARING' && existing.preparingAt == null)
-            ? drift.Value(now)
-            : const drift.Value.absent(),
-        readyAt: (newState == 'READY' && existing.readyAt == null)
-            ? drift.Value(now)
-            : const drift.Value.absent(),
-        servedAt: (_isTerminalState(newState) && existing.servedAt == null)
-            ? drift.Value(now)
-            : const drift.Value.absent(),
-      ));
-
-      final orderId = existing.orderId;
-      // First time the kitchen is done with this line → the waiter has food
-      // to carry. Stage timestamps are write-once, so a remake bounced back
-      // and re-bumped does not ring twice.
-      if (isKitchenDoneState(newState) &&
-          existing.readyAt == null &&
-          existing.servedAt == null) {
-        _ref
-            .read(waiterKitchenEventServiceProvider)
-            .lineReady(orderId: orderId, lineId: productId);
-      }
-      final allProducts = await (database.select(database.orderProducts)
-            ..where((tbl) => tbl.orderId.equals(orderId)))
-          .get();
-      final allSameStatus = allProducts.every((p) => p.state == newState);
-      // Whole order finished in the kitchen → tell the delivery platform.
-      // Fired on READY and on any terminal rollup, because a station that goes
-      // straight from PREPARING to COMPLETED never passes through READY.
-      if (allSameStatus &&
-          (newState == 'READY' || _isTerminalState(newState))) {
-        // ignore: unawaited_futures
-        _signalOrderReadyIfDelivery(orderId);
-      }
-      if (allSameStatus) {
-        final terminal = _isTerminalState(newState);
-        // Orders are born COMPLETED (cloud-terminal); the kitchen flow lives on
-        // the PRODUCTS. So a KDS micro-state rollup (PENDING/PREPARING/READY)
-        // must NOT drag order.status back down — that would un-complete a
-        // cloud-terminal order. Only a genuinely terminal rollup
-        // (COMPLETED/CANCELED/DELIVERED) writes order.status, and only a
-        // non-COMPLETED terminal (CANCELED/DELIVERED) is a real change worth
-        // re-syncing.
-        if (terminal) {
-          await (database.update(database.orders)
-                ..where((tbl) => tbl.id.equals(orderId)))
-              .write(OrdersCompanion(
-            status: drift.Value(newState),
-            updatedAt: drift.Value(now),
-            isSynced: const drift.Value(false),
-          ));
-          _autoSyncWaiterOrder(orderId, 'kds-terminal');
-        } else {
-          // Micro-state rollup: bump updatedAt only, so the change-log cursor
-          // still surfaces the order to the KDS on the next poll.
-          await (database.update(database.orders)
-                ..where((tbl) => tbl.id.equals(orderId)))
-              .write(OrdersCompanion(updatedAt: drift.Value(now)));
-        }
-      }
-      await logService.logOrderUpdated(
-          orderId, 'Product status updated via API to $newState');
 
       return Response.ok(
         jsonEncode({'message': 'Product status updated', 'id': productId}),
@@ -1102,6 +1062,101 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     }
+  }
+
+  /// Move one order line to [newState] exactly as a KDS bump does: stage
+  /// stamps, the waiter's "ready" event, the order rollup, and the change-log
+  /// entry the KDS polls on. Shared by `PUT /orders/products/<id>` and the
+  /// POS kitchen board, so a change made at the till reaches every screen.
+  /// Returns false when the line does not exist.
+  Future<bool> applyKitchenLineState(int lineId, String newState,
+      {String source = 'POS'}) async {
+    final database = _ref.read(databaseProvider);
+    final logService = OrderLogService(database);
+    final now = DateTime.now();
+
+    // Read the current row first: needed to stamp each KDS stage timestamp
+    // only the FIRST time the item enters that stage (a remake bouncing back
+    // to PREPARING must not overwrite the original prep start).
+    final existing = await (database.select(database.orderProducts)
+          ..where((tbl) => tbl.id.equals(lineId)))
+        .getSingleOrNull();
+    if (existing == null) return false;
+
+    await (database.update(database.orderProducts)
+          ..where((tbl) => tbl.id.equals(lineId)))
+        .write(kitchenStageStamps(existing, newState, now).copyWith(
+          state: drift.Value(newState),
+          updatedAt: drift.Value(now),
+        ));
+
+    final orderId = existing.orderId;
+    // First time the kitchen is done with this line → the waiter has food
+    // to carry. Stage timestamps are write-once, so a remake bounced back
+    // and re-bumped does not ring twice.
+    if (isKitchenDoneState(newState) &&
+        existing.readyAt == null &&
+        existing.servedAt == null) {
+      _ref
+          .read(waiterKitchenEventServiceProvider)
+          .lineReady(orderId: orderId, lineId: lineId);
+    }
+    final allProducts = await (database.select(database.orderProducts)
+          ..where((tbl) => tbl.orderId.equals(orderId)))
+        .get();
+    final allSameStatus = allProducts.every((p) => p.state == newState);
+    // Whole order finished in the kitchen → tell the delivery platform.
+    // Fired on READY and on any terminal rollup, because a station that goes
+    // straight from PREPARING to COMPLETED never passes through READY.
+    if (allSameStatus &&
+        (newState == 'READY' || _isTerminalState(newState))) {
+      // ignore: unawaited_futures
+      _signalOrderReadyIfDelivery(orderId);
+    }
+    if (allSameStatus) {
+      final terminal = _isTerminalState(newState);
+      // Orders are born COMPLETED (cloud-terminal); the kitchen flow lives on
+      // the PRODUCTS. So a KDS micro-state rollup (PENDING/PREPARING/READY)
+      // must NOT drag order.status back down — that would un-complete a
+      // cloud-terminal order. Only a genuinely terminal rollup
+      // (COMPLETED/CANCELED/DELIVERED) writes order.status, and only a
+      // non-COMPLETED terminal (CANCELED/DELIVERED) is a real change worth
+      // re-syncing.
+      if (terminal) {
+        await (database.update(database.orders)
+              ..where((tbl) => tbl.id.equals(orderId)))
+            .write(OrdersCompanion(
+          status: drift.Value(newState),
+          updatedAt: drift.Value(now),
+          isSynced: const drift.Value(false),
+        ));
+        _autoSyncWaiterOrder(orderId, 'kds-terminal');
+      } else {
+        // Micro-state rollup: bump updatedAt only, so the change-log cursor
+        // still surfaces the order to the KDS on the next poll.
+        await (database.update(database.orders)
+              ..where((tbl) => tbl.id.equals(orderId)))
+            .write(OrdersCompanion(updatedAt: drift.Value(now)));
+      }
+    }
+    await logService.logOrderUpdated(
+        orderId, 'Product status updated via $source to $newState');
+    return true;
+  }
+
+  /// Flag (or unflag) [orderId] as a rush for the kitchen: the KDS shows it
+  /// first, flashing, with the alarm. Rides the order's existing `priority`
+  /// (> 0 = rush) and the change log, so the KDS picks it up on its next poll.
+  Future<void> setOrderRush(int orderId, bool rush) async {
+    final database = _ref.read(databaseProvider);
+    await (database.update(database.orders)
+          ..where((tbl) => tbl.id.equals(orderId)))
+        .write(OrdersCompanion(
+      priority: drift.Value(rush ? 1 : 0),
+      updatedAt: drift.Value(DateTime.now()),
+    ));
+    await OrderLogService(database).logOrderUpdated(
+        orderId, rush ? 'Kitchen rush requested' : 'Kitchen rush cleared');
   }
 
   /// GET /stations/ - Get all stations (for KDS station selection)
@@ -2007,6 +2062,11 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         if (o.minSelection != null) row['minSelection'] = o.minSelection;
         if (o.maxSelection != null) row['maxSelection'] = o.maxSelection;
         if (o.freeQuantity != null) row['freeQuantity'] = o.freeQuantity;
+        // Conditional group: shown only once one of these is picked.
+        final visibleWhen = decodeVisibleWhen(o.visibleWhenComponentIds);
+        if (visibleWhen.isNotEmpty) {
+          row['visibleWhenComponentIds'] = visibleWhen;
+        }
         return row;
       }).toList();
 
@@ -2715,7 +2775,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
                     .get();
                 // No lines yet = a just-opened order, definitely live.
                 stillLive = lines.isEmpty ||
-                    lines.any((l) => l.state != 'PAID' && l.state != 'CANCELED');
+                    lines.any((l) =>
+                        !isLinePaid(l.state, l.ticketId) &&
+                        l.state != 'CANCELED');
               }
               // A live order blocks the table, whoever raised it.
               //
@@ -3770,6 +3832,14 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         final waiterRow = await (database.select(database.waiters)
               ..where((w) => w.id.equals(waiterId)))
             .getSingleOrNull();
+        final comps = await (database.select(database.orderProductComponents)
+              ..where((c) => c.orderProductId.equals(line.id)))
+            .get();
+        // Billed unit price: options in, manual discount out — same as the
+        // till's own tombstones.
+        final unitBilled = line.unitaryPrice +
+            comps.fold<double>(0, (s, c) => s + c.price * c.quantity) -
+            line.manualDiscount;
         final tombstone = RemovedOrderItemsCompanion.insert(
           orderId: order.id,
           orderCode: drift.Value(order.code),
@@ -3780,8 +3850,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           productName: product?.name ?? 'item #${line.productId}',
           variantName: drift.Value(variant?.name),
           quantity: line.quantity,
-          unitaryPrice: drift.Value(line.unitaryPrice),
-          amount: drift.Value(line.quantity * line.unitaryPrice),
+          unitaryPrice: drift.Value(unitBilled),
+          amount: drift.Value(line.quantity * unitBilled),
           wasSentToKitchen: drift.Value(line.kdsPrintedQuantity > 0),
           source: const drift.Value('WAITER'),
           removedBy: drift.Value(waiterId),
@@ -3797,6 +3867,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
             .warning('Removed-item tombstone failed for line #$orderProductId: $e');
       }
 
+      // Kept for the v2 push, which sends it as a cancelled line instead of
+      // letting it vanish from the order.
+      await keepCancelledLine(database, line);
       await (database.delete(database.orderProductComponents)
             ..where((c) => c.orderProductId.equals(orderProductId)))
           .go();
@@ -4453,6 +4526,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
                 quantity: units.toDouble(),
                 unitaryPrice: 0,
                 state: orderProduct.state,
+                paid: isLinePaid(orderProduct.state, orderProduct.ticketId),
                 stationName: station,
                 components: const [],
                 note: '← ${product.name}',
@@ -4509,6 +4583,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         quantity: orderProduct.quantity,
         unitaryPrice: orderProduct.unitaryPrice,
         state: orderProduct.state,
+        paid: isLinePaid(orderProduct.state, orderProduct.ticketId),
         stationId: product.stationId,
         stationName: stationName,
         components: socketComponents,
@@ -4520,6 +4595,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         courseNo: _ref.read(settingsProvider).coursesEnabled
             ? normalizeCourseNo(orderProduct.courseNo)
             : null,
+        kitchenAt: kitchenSince(orderProduct, fallback: order.createdAt),
+        preparingAt: orderProduct.preparingAt,
       ));
     }
 
@@ -4544,6 +4621,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       products: socketProducts,
       note: order.note,
       cancellationReason: order.cancellationReason,
+      reference: order.reference,
       orderNumber: _ref.read(settingsProvider).showOrderNumberOnKds
           ? order.sessionOrderNo
           : null,

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/reauth_provider.dart';
 import '../../utils/app_localizations.dart';
+import 'kick_notice_card.dart';
 
 /// Full-screen, non-dismissible re-authentication gate. Shown app-wide (from
 /// `main.dart`'s builder, above the Navigator) whenever
@@ -98,6 +99,9 @@ class _ReauthOverlayState extends ConsumerState<ReauthOverlay> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      // After a force_kick the gate is how the terminal signs
+                      // back in, so it carries the reason too.
+                      if (!dismissible) const KickNoticeCard(),
                       Icon(Icons.lock_clock_outlined,
                           size: 34, color: cs.primary),
                       const SizedBox(height: 12),

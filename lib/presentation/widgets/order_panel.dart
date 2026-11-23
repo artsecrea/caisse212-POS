@@ -1,3 +1,8 @@
+import 'cancelled_items_dialog.dart'
+    show CancelledItemRows, CancelledSummaryRow;
+import 'exchange_settle_dialog.dart' show ExchangeBanner;
+import 'order_reference_dialog.dart';
+import 'order_tag_widgets.dart' show OrderTagChips;
 import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -21,10 +26,10 @@ import 'product_modification_dialog.dart' show ProductModificationDialog;
 import 'unpaid_orders_dialog.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/order_permissions.dart';
+import '../../utils/zero_price_tva.dart';
 import './adaptive_text_field.dart';
 import '../../core/theme/app_theme.dart';
 import 'order_note_dialog.dart';
-
 
 class OrderPanel extends ConsumerWidget {
   const OrderPanel({Key? key}) : super(key: key);
@@ -74,44 +79,66 @@ class OrderPanel extends ConsumerWidget {
 
   void _showPermissionDenied(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context)!;
-    SnackBarHelper.showErrorSnackBar(context, ref, l10n.translate('no_permission'));
+    SnackBarHelper.showErrorSnackBar(
+      context,
+      ref,
+      l10n.translate('no_permission'),
+    );
   }
 
-  /// True when removing one line would empty an order that is already persisted
-  /// in the DB. Such a removal must delete the whole order rather than leave an
-  /// empty order row behind. Unsaved (draft) carts return false — emptying them
-  /// is harmless (RAM only).
+  /// True when the cart is a SAVED order (has an id) holding a single line —
+  /// removing that line would leave an empty order row behind, so the order is
+  /// cancelled instead. Unsaved (draft) carts return false — emptying them is
+  /// harmless (RAM only).
   bool _isLastItemOfSavedOrder(WidgetRef ref) {
     final order = ref.read(orderProvider);
     return order.isSaved() && order.items.length <= 1;
   }
 
-  /// Confirms and deletes the whole saved order (used when the user removes its
-  /// last item). Returns true if the order was deleted — callers must then NOT
-  /// also remove the individual item.
+  /// Confirms and CANCELS the whole saved order (used when the user removes
+  /// its last item). Returns true if the order was cancelled — callers must
+  /// then NOT also remove the individual item.
   ///
-  /// Requires [Permissions.ordersDelete] (honors admin elevation); without it
-  /// the removal is blocked and the order stays intact. Reuses
-  /// [OrderRepository.deleteOrder] for the DB cascade + server delete/queue +
-  /// closed-session (Z-report) guard.
-  Future<bool> _confirmDeleteWholeOrder(
-      BuildContext context, WidgetRef ref) async {
+  /// Cancelled, never deleted: a deleted order vanishes from the Z, so ringing
+  /// something up and swiping it away left no trace of the annulment. The
+  /// order and its line stay, reported on the cancellations rows.
+  Future<bool> _confirmCancelWholeOrder(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
     final l10n = AppLocalizations.of(context)!;
     final orderId = ref.read(orderProvider).orderId;
     if (orderId == null) return false; // only saved orders reach here
 
     if (!ref
         .read(permissionServiceProvider)
-        .hasPermission(Permissions.ordersDelete)) {
+        .hasPermission(Permissions.ordersCancel)) {
       _showPermissionDenied(context, ref);
       return false;
     }
 
-    final confirmed = await showDialog<bool>(
+    final reasonController = TextEditingController();
+    final reason = await showDialog<String?>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.translate('delete_order')),
-        content: Text(l10n.translate('remove_last_item_deletes_order')),
+        title: Text(l10n.translate('cancel_order')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.translate('remove_last_item_cancels_order')),
+            const SizedBox(height: 16),
+            AdaptiveKeyboardTextField(
+              controller: reasonController,
+              decoration: InputDecoration(
+                labelText: l10n.translate('cancellation_reason'),
+                hintText: l10n.translate('enter_cancellation_reason'),
+                border: const OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
         actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         // Full-width, large touch targets stacked vertically (POS screens).
         actions: [
@@ -126,8 +153,11 @@ class OrderPanel extends ConsumerWidget {
                     backgroundColor: Colors.red,
                     foregroundColor: Colors.white,
                   ),
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: Text(l10n.translate('delete')),
+                  onPressed: () => Navigator.pop(
+                    dialogContext,
+                    reasonController.text.trim(),
+                  ),
+                  child: Text(l10n.translate('cancel_order')),
                 ),
               ),
               const SizedBox(height: 10),
@@ -135,7 +165,7 @@ class OrderPanel extends ConsumerWidget {
                 width: double.infinity,
                 child: TextButton(
                   style: AppButtonStyles.textButtonStyle(isLarge: true),
-                  onPressed: () => Navigator.pop(dialogContext, false),
+                  onPressed: () => Navigator.pop(dialogContext, null),
                   child: Text(l10n.translate('cancel')),
                 ),
               ),
@@ -144,14 +174,26 @@ class OrderPanel extends ConsumerWidget {
         ],
       ),
     );
-    if (confirmed != true) return false;
+    // Not disposed: the closing dialog still rebuilds its field with this
+    // controller for a few frames. It is collected with the dialog.
+    if (reason == null) return false;
 
+    final repo = ref.read(orderRepositoryProvider);
     try {
-      await ref.read(orderRepositoryProvider).deleteOrder(orderId);
+      await repo.updateOrderStatus(
+        orderId,
+        'CANCELED',
+        cancellationReason: reason.isNotEmpty ? reason : null,
+        userId: ref.read(currentUserProvider)?.id,
+      );
+      await repo.freeTablesForOrder(orderId);
     } catch (e) {
       if (context.mounted) {
         SnackBarHelper.showErrorSnackBar(
-            context, ref, '${l10n.translate('error_deleting_order')}: $e');
+          context,
+          ref,
+          '${l10n.translate('error_changing_status')}: $e',
+        );
       }
       return false;
     }
@@ -159,7 +201,10 @@ class OrderPanel extends ConsumerWidget {
     ref.read(orderProvider.notifier).clearOrder();
     if (context.mounted) {
       SnackBarHelper.showSuccessSnackBar(
-          context, ref, l10n.translate('order_deleted_successfully'));
+        context,
+        ref,
+        l10n.translate('order_canceled_successfully'),
+      );
     }
     return true;
   }
@@ -210,17 +255,20 @@ class OrderPanel extends ConsumerWidget {
     ref.read(orderProvider.notifier).loadOrder(order);
   }
 
-  void _showItemOptions(BuildContext context, WidgetRef ref, int index, OrderItem item) async {
+  void _showItemOptions(
+    BuildContext context,
+    WidgetRef ref,
+    int index,
+    OrderItem item,
+  ) async {
     if (!_canEditItem(ref, item, Permissions.ordersItemModify)) {
       _showPermissionDenied(context, ref);
       return;
     }
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => ProductModificationDialog(
-        product: item,
-        isEditMode: true,
-      ),
+      builder: (context) =>
+          ProductModificationDialog(product: item, isEditMode: true),
     );
 
     if (result != null) {
@@ -228,13 +276,37 @@ class OrderPanel extends ConsumerWidget {
       // but not item:remove could otherwise type a smaller qty here and slip
       // a below-baseline reduction past the gate.
       final newQty = (result['quantity'] as num?)?.toDouble() ?? item.quantity;
-      if (newQty != item.quantity &&
-          !_canSetQuantity(ref, item, newQty)) {
+      if (newQty != item.quantity && !_canSetQuantity(ref, item, newQty)) {
         if (context.mounted) _showPermissionDenied(context, ref);
         return;
       }
       // Manual unit-price override (only present when a permitted user set it).
       final priceOverride = (result['priceOverride'] as num?)?.toDouble();
+
+      // A new price on an open-price line changes the TVA inside it. The line
+      // no longer knows its catalogue price, so ask the catalogue.
+      double? newTva;
+      final zeroPriceRate = ref.read(settingsProvider).zeroPriceTvaRate;
+      if (priceOverride != null && priceOverride >= 0 && zeroPriceRate > 0) {
+        final db = ref.read(databaseProvider);
+        final catalogue = item.variantId != null
+            ? await (db.select(db.productVariants)
+                    ..where((v) => v.id.equals(item.variantId!)))
+                  .getSingleOrNull()
+                  .then((v) => v == null ? null : (v.price, v.tvaAmount))
+            : await (db.select(db.products)
+                    ..where((p) => p.id.equals(item.productId)))
+                  .getSingleOrNull()
+                  .then((p) => p == null ? null : (p.finalPrice, p.tvaAmount));
+        if (catalogue != null) {
+          newTva = lineUnitTva(
+            catalogPrice: catalogue.$1,
+            catalogTva: catalogue.$2,
+            unitPrice: priceOverride,
+            zeroPriceRate: zeroPriceRate,
+          );
+        }
+      }
 
       // Update the item with new modifications
       final updatedItem = item.copyWith(
@@ -246,9 +318,7 @@ class OrderPanel extends ConsumerWidget {
         unitPrice: priceOverride != null && priceOverride >= 0
             ? priceOverride
             : null,
-        planStartAt: result['planStartAt'] as DateTime?,
-        planEndAt: result['planEndAt'] as DateTime?,
-        planWaiterId: result['planWaiterId'] as int?,
+        tva: newTva,
       );
 
       // Audit any unit-price override (anti-fraud trail): only when a permitted
@@ -258,7 +328,9 @@ class OrderPanel extends ConsumerWidget {
           priceOverride != item.finalPrice) {
         final actor = ref.read(currentUserProvider);
         final currency = ref.read(settingsProvider).currency;
-        ref.read(activityLogServiceProvider).logPriceChanged(
+        ref
+            .read(activityLogServiceProvider)
+            .logPriceChanged(
               item.displayName,
               CurrencyFormatter.formatWithCurrency(item.finalPrice, currency),
               CurrencyFormatter.formatWithCurrency(priceOverride, currency),
@@ -271,7 +343,11 @@ class OrderPanel extends ConsumerWidget {
     }
   }
 
-  void _showDeletePaidItemDialog(BuildContext context, WidgetRef ref, OrderItem item) async {
+  void _showDeletePaidItemDialog(
+    BuildContext context,
+    WidgetRef ref,
+    OrderItem item,
+  ) async {
     final l10n = AppLocalizations.of(context)!;
     final currentUser = ref.read(currentUserProvider);
     final permissionService = PermissionService(currentUser);
@@ -334,23 +410,24 @@ class OrderPanel extends ConsumerWidget {
 
           if (item.id != null && item.ticketId != null) {
             // First, check how many items are in this ticket
-            final ticketProducts = await (database.select(database.orderProducts)
-              ..where((tbl) => tbl.ticketId.equals(item.ticketId!)))
-                .get();
+            final ticketProducts = await (database.select(
+              database.orderProducts,
+            )..where((tbl) => tbl.ticketId.equals(item.ticketId!))).get();
 
             // Delete the order product from database
-            await (database.delete(database.orderProducts)
-              ..where((tbl) => tbl.id.equals(item.id!)))
-                .go();
+            await (database.delete(
+              database.orderProducts,
+            )..where((tbl) => tbl.id.equals(item.id!))).go();
 
             // Note: Order products are synced as part of the order, not individually
 
             // If this was the only item in the ticket, delete the ticket
             if (ticketProducts.length == 1) {
               // Get ticket and order info for sync
-              final ticket = await (database.select(database.tickets)
-                ..where((tbl) => tbl.id.equals(item.ticketId!)))
-                  .getSingleOrNull();
+              final ticket =
+                  await (database.select(database.tickets)
+                        ..where((tbl) => tbl.id.equals(item.ticketId!)))
+                      .getSingleOrNull();
 
               String? orderCode;
               String? ticketNum;
@@ -358,18 +435,22 @@ class OrderPanel extends ConsumerWidget {
               if (ticket != null) {
                 ticketNum = ticket.num;
                 // Get order code
-                final order = await (database.select(database.orders)
-                  ..where((tbl) => tbl.id.equals(ticket.orderId)))
-                    .getSingleOrNull();
+                final order =
+                    await (database.select(database.orders)
+                          ..where((tbl) => tbl.id.equals(ticket.orderId)))
+                        .getSingleOrNull();
                 orderCode = order?.code;
               }
 
-              await (database.delete(database.tickets)
-                ..where((tbl) => tbl.id.equals(item.ticketId!)))
-                  .go();
+              await (database.delete(
+                database.tickets,
+              )..where((tbl) => tbl.id.equals(item.ticketId!))).go();
 
               // Queue or execute delete operation for ticket
-              if (ticket != null && ticket.isSynced && orderCode != null && ticketNum != null) {
+              if (ticket != null &&
+                  ticket.isSynced &&
+                  orderCode != null &&
+                  ticketNum != null) {
                 await syncService.deleteTicketEntity(
                   entityId: item.ticketId!,
                   orderCode: orderCode,
@@ -379,31 +460,34 @@ class OrderPanel extends ConsumerWidget {
               }
             } else {
               // Otherwise, update the ticket amount
-              final remainingProducts = await (database.select(database.orderProducts)
-                ..where((tbl) => tbl.ticketId.equals(item.ticketId!)))
-                  .get();
+              final remainingProducts = await (database.select(
+                database.orderProducts,
+              )..where((tbl) => tbl.ticketId.equals(item.ticketId!))).get();
 
               final newTicketAmount = remainingProducts.fold<double>(
                 0.0,
-                (sum, product) => sum + (product.unitaryPrice * product.quantity),
+                (sum, product) =>
+                    sum + (product.unitaryPrice * product.quantity),
               );
 
-              await (database.update(database.tickets)
-                ..where((tbl) => tbl.id.equals(item.ticketId!)))
-                  .write(TicketsCompanion(
-                amount: drift.Value(newTicketAmount),
-              ));
+              await (database.update(
+                database.tickets,
+              )..where((tbl) => tbl.id.equals(item.ticketId!))).write(
+                TicketsCompanion(amount: drift.Value(newTicketAmount)),
+              );
 
               // Queue or execute update operation for ticket
-              final ticket = await (database.select(database.tickets)
-                ..where((tbl) => tbl.id.equals(item.ticketId!)))
-                  .getSingleOrNull();
+              final ticket =
+                  await (database.select(database.tickets)
+                        ..where((tbl) => tbl.id.equals(item.ticketId!)))
+                      .getSingleOrNull();
 
               if (ticket != null && ticket.isSynced) {
                 // Get order code
-                final order = await (database.select(database.orders)
-                  ..where((tbl) => tbl.id.equals(ticket.orderId)))
-                    .getSingleOrNull();
+                final order =
+                    await (database.select(database.orders)
+                          ..where((tbl) => tbl.id.equals(ticket.orderId)))
+                        .getSingleOrNull();
 
                 if (order != null) {
                   await syncService.updateTicketEntity(
@@ -417,86 +501,22 @@ class OrderPanel extends ConsumerWidget {
               }
             }
 
-            // Reload the current order from database to get updated state
+            // Reload the whole order. Rebuilding the items by hand here left
+            // out the print cursors, variant and server id of every remaining
+            // line, so the next save told the kitchen the order was unsent.
             final currentOrder = ref.read(orderProvider);
             if (currentOrder.orderId != null) {
-              // Fetch the updated order from database
-              final orderRow = await (database.select(database.orders)
-                ..where((tbl) => tbl.id.equals(currentOrder.orderId!)))
-                  .getSingleOrNull();
-
-              if (orderRow != null) {
-                // Reload all order items with updated ticket IDs
-                final orderProducts = await (database.select(database.orderProducts)
-                  ..where((tbl) => tbl.orderId.equals(currentOrder.orderId!)))
-                    .get();
-
-                // Build updated items list
-                final updatedItems = <OrderItem>[];
-                for (final orderProduct in orderProducts) {
-                  final product = await (database.select(database.products)
-                    ..where((tbl) => tbl.id.equals(orderProduct.productId)))
-                      .getSingleOrNull();
-
-                  if (product != null) {
-                    // Get components for this order product
-                    final components = await (database.select(database.orderProductComponents)
-                      ..where((tbl) => tbl.orderProductId.equals(orderProduct.id)))
-                        .get();
-
-                    final orderItemComponents = <OrderItemComponent>[];
-                    for (final comp in components) {
-                      final component = await (database.select(database.components)
-                        ..where((tbl) => tbl.id.equals(comp.componentId)))
-                          .getSingleOrNull();
-
-                      if (component != null) {
-                        orderItemComponents.add(OrderItemComponent(
-                          componentId: component.id,
-                          name: component.name,
-                          // The price as sold, not as the catalogue reads
-                          // today — a removal charge is whatever it was when
-                          // the customer agreed to it.
-                          price: comp.removalCharge
-                              ? comp.price
-                              : component.price,
-                          quantity: comp.quantity,
-                          isSpecial: comp.isSpecial,
-                          removalCharge: comp.removalCharge,
-                        ));
-                      }
-                    }
-
-                    updatedItems.add(OrderItem(
-                      id: orderProduct.id,
-                      productId: orderProduct.productId,
-                      productName: product.name,
-                      finalPrice: orderProduct.unitaryPrice,
-                      quantity: orderProduct.quantity,
-                      // Re-establish the decrement floor — without this the
-                      // floor check in [_canSetQuantity] treats `saved` as 0
-                      // and skips the `item:remove` gate entirely.
-                      savedQuantity: orderProduct.quantity,
-                      discount: orderProduct.unitaryDiscount,
-                      manualDiscount: orderProduct.manualDiscount,
-                      tva: orderProduct.unitaryTva,
-                      components: orderItemComponents,
-                      ticketId: orderProduct.ticketId,
-                      state: orderProduct.state,
-                      imageUrl: product.imageUrl,
-                      unitName: product.unitName,
-                    ));
-                  }
-                }
-
-                // Update the order with refreshed items
-                ref.read(orderProvider.notifier).loadOrder(
-                  currentOrder.copyWith(items: updatedItems),
-                );
+              final reloaded = await ref
+                  .read(orderRepositoryProvider)
+                  .getOrderById(currentOrder.orderId!);
+              if (reloaded != null) {
+                ref.read(orderProvider.notifier).loadOrder(reloaded);
               }
             } else {
               // If no order ID, just remove from local state
-              final itemIndex = currentOrder.items.indexWhere((i) => i.id == item.id);
+              final itemIndex = currentOrder.items.indexWhere(
+                (i) => i.id == item.id,
+              );
               if (itemIndex != -1) {
                 ref.read(orderProvider.notifier).removeItem(itemIndex);
               }
@@ -506,11 +526,7 @@ class OrderPanel extends ConsumerWidget {
               final message = ticketProducts.length == 1
                   ? 'Paid item and ticket deleted successfully'
                   : 'Paid item deleted successfully';
-              SnackBarHelper.showSuccessSnackBar(
-                context,
-                ref,
-                message,
-              );
+              SnackBarHelper.showSuccessSnackBar(context, ref, message);
             }
           }
         } catch (e) {
@@ -546,34 +562,65 @@ class OrderPanel extends ConsumerWidget {
       ),
       child: Column(
         children: [
+          // An exchange under way: what came back and the credit, above the
+          // new goods being rung up.
+          const ExchangeBanner(),
+          if (currentOrder.tagIds.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: OrderTagChips(tagIds: currentOrder.tagIds),
+              ),
+            ),
           // Header
           Container(
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
-              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+              color: Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.3),
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Row(
               children: [
-                Icon(
-                  Icons.shopping_cart,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 // Flexible, not fixed: an unconstrained Text here grew with a
                 // long order code until it squeezed the Spacer to nothing and
                 // pushed the clear and note buttons off the edge of the panel.
                 // The title is the least important thing in this row — it can
                 // give ground; the buttons cannot.
                 Flexible(
-                  child: Text(
-                    currentOrder.orderCode?.toString() ??
-                        l10n.translate('current_order'),
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.bold),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        [
+                          if (currentOrder.sessionOrderNo != null)
+                            '#${currentOrder.sessionOrderNo}',
+                          currentOrder.orderCode?.toString() ??
+                              l10n.translate('current_order'),
+                        ].join(' · '),
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                      ),
+                      // The take-away / delivery reference, tap to change.
+                      // Offered on those two types, or whenever one is set.
+                      if (currentOrder.type != 'DINE_IN' ||
+                          (currentOrder.reference ?? '').trim().isNotEmpty)
+                        _ReferenceLine(
+                          reference: currentOrder.reference,
+                          onTap: () => showOrderReferenceDialog(context, ref),
+                        ),
+                    ],
                   ),
                 ),
                 const Spacer(),
@@ -647,8 +694,11 @@ class OrderPanel extends ConsumerWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.sticky_note_2,
-                      size: 16, color: Color(0xFF9F1239)),
+                  const Icon(
+                    Icons.sticky_note_2,
+                    size: 16,
+                    color: Color(0xFF9F1239),
+                  ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
@@ -671,42 +721,50 @@ class OrderPanel extends ConsumerWidget {
           // ever opening Pay. Local-only (see [ticketDraftGroupsProvider]):
           // never a fact the server or the printed ticket carries.
           if (currentOrder.orderId != null)
-            Consumer(builder: (context, ref, _) {
-              final ticketCount = ref
-                      .watch(ticketDraftTicketCountProvider(
-                          currentOrder.orderId!))
-                      .valueOrNull ??
-                  0;
-              if (ticketCount <= 1) return const SizedBox.shrink();
-              return Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                color: Theme.of(context)
-                    .colorScheme
-                    .primaryContainer
-                    .withValues(alpha: 0.5),
-                child: Row(
-                  children: [
-                    Icon(Icons.call_split_rounded,
+            Consumer(
+              builder: (context, ref, _) {
+                final ticketCount =
+                    ref
+                        .watch(
+                          ticketDraftTicketCountProvider(currentOrder.orderId!),
+                        )
+                        .valueOrNull ??
+                    0;
+                if (ticketCount <= 1) return const SizedBox.shrink();
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primaryContainer.withValues(alpha: 0.5),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.call_split_rounded,
                         size: 16,
-                        color: Theme.of(context).colorScheme.primary),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        l10n
-                            .translate('order_already_split')
-                            .replaceAll('{0}', '$ticketCount'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Theme.of(context).colorScheme.primary,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          l10n
+                              .translate('order_already_split')
+                              .replaceAll('{0}', '$ticketCount'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              );
-            }),
+                    ],
+                  ),
+                );
+              },
+            ),
 
           // Order Items
           Expanded(
@@ -714,356 +772,509 @@ class OrderPanel extends ConsumerWidget {
                 ? LayoutBuilder(
                     builder: (ctx, constraints) => SingleChildScrollView(
                       child: ConstrainedBox(
-                        constraints:
-                            BoxConstraints(minHeight: constraints.maxHeight),
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                        Icon(
-                          Icons.shopping_cart_outlined,
-                          size: 80,
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          l10n.translate('no_items'),
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        // Fast-access button to resume an unpaid / on-hold
-                        // order. Hidden when items are in the cart so the
-                        // cashier can't accidentally swap the working
-                        // order mid-build.
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: ElevatedButton.icon(
-                            onPressed: () =>
-                                _openResumeDialog(context, ref),
-                            icon: const Icon(Icons.pending_actions, size: 20),
-                            label: Text(l10n.translate('resume_order')),
-                            style: ElevatedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 20, vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: AppTheme.brMd),
-                              textStyle: const TextStyle(
-                                  fontSize: 14, fontWeight: FontWeight.w600),
+                            Icon(
+                              Icons.shopping_cart_outlined,
+                              size: 80,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
                             ),
-                          ),
-                        ),
-                        // Held RAM orders
-                        if (heldOrders.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Row(
-                              children: [
-                                Icon(Icons.pause_circle_outline,
-                                    size: 14,
-                                    color: Theme.of(context).colorScheme.primary),
-                                const SizedBox(width: 4),
-                                Text(
-                                  l10n.translate('held_orders'),
-                                  style: TextStyle(
-                                    fontSize: 12,
+                            const SizedBox(height: 16),
+                            Text(
+                              l10n.translate('no_items'),
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            // Fast-access button to resume an unpaid / on-hold
+                            // order. Hidden when items are in the cart so the
+                            // cashier can't accidentally swap the working
+                            // order mid-build.
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                              ),
+                              child: ElevatedButton.icon(
+                                onPressed: () =>
+                                    _openResumeDialog(context, ref),
+                                icon: const Icon(
+                                  Icons.pending_actions,
+                                  size: 20,
+                                ),
+                                label: Text(l10n.translate('resume_order')),
+                                style: ElevatedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 14,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: AppTheme.brMd,
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontSize: 14,
                                     fontWeight: FontWeight.w600,
-                                    color: Theme.of(context).colorScheme.primary,
                                   ),
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 6),
-                          ...heldOrders.asMap().entries.map((entry) {
-                            final idx = entry.key;
-                            final held = entry.value;
-                            // Units, not lines: "3 articles" should mean three
-                            // things to hand over. Formatted so a whole count
-                            // reads "3" rather than "3.0", while a weighed line
-                            // keeps its decimals.
-                            final unitCount = held.items
-                                .fold<double>(0, (s, i) => s + i.quantity);
-                            final itemCount = unitCount == unitCount.roundToDouble()
-                                ? unitCount.toStringAsFixed(0)
-                                : unitCount.toStringAsFixed(3);
-                            // What is actually in it. A held order is otherwise
-                            // just a code and a total — the waiter has no way to
-                            // tell two parked tables apart without resuming one.
-                            const previewLimit = 3;
-                            final preview = held.items
-                                .take(previewLimit)
-                                .map((i) {
-                                  final q = i.quantity == i.quantity.roundToDouble()
-                                      ? i.quantity.toStringAsFixed(0)
-                                      : i.quantity.toStringAsFixed(3);
-                                  return '${q}x ${i.productName}';
-                                })
-                                .join(' · ');
-                            // Count the REMAINING lines explicitly rather than
-                            // relying on the ellipsis: "+4" tells the waiter how
-                            // much they cannot see, which a fade does not.
-                            final hidden = held.items.length - previewLimit;
-                            final total = held.total;
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 3),
-                              child: InkWell(
-                                onTap: () => _resumeHeldOrder(ref, idx),
-                                borderRadius: AppTheme.brMd,
-                                child: Container(
+                            // Held RAM orders
+                            if (heldOrders.isNotEmpty) ...[
+                              const SizedBox(height: 16),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.pause_circle_outline,
+                                      size: 14,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      l10n.translate('held_orders'),
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              ...heldOrders.asMap().entries.map((entry) {
+                                final idx = entry.key;
+                                final held = entry.value;
+                                // Units, not lines: "3 articles" should mean three
+                                // things to hand over. Formatted so a whole count
+                                // reads "3" rather than "3.0", while a weighed line
+                                // keeps its decimals.
+                                final unitCount = held.items.fold<double>(
+                                  0,
+                                  (s, i) => s + i.quantity,
+                                );
+                                final itemCount =
+                                    unitCount == unitCount.roundToDouble()
+                                    ? unitCount.toStringAsFixed(0)
+                                    : unitCount.toStringAsFixed(3);
+                                // What is actually in it. A held order is otherwise
+                                // just a code and a total — the waiter has no way to
+                                // tell two parked tables apart without resuming one.
+                                const previewLimit = 3;
+                                final preview = held.items
+                                    .take(previewLimit)
+                                    .map((i) {
+                                      final q =
+                                          i.quantity ==
+                                              i.quantity.roundToDouble()
+                                          ? i.quantity.toStringAsFixed(0)
+                                          : i.quantity.toStringAsFixed(3);
+                                      return '${q}x ${i.productName}';
+                                    })
+                                    .join(' · ');
+                                // Count the REMAINING lines explicitly rather than
+                                // relying on the ellipsis: "+4" tells the waiter how
+                                // much they cannot see, which a fade does not.
+                                final hidden = held.items.length - previewLimit;
+                                final total = held.total;
+                                return Padding(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 8),
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .primary
-                                            .withValues(alpha: 0.4)),
-                                    borderRadius: AppTheme.brMd,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .primaryContainer
-                                        .withValues(alpha: 0.2),
+                                    horizontal: 16,
+                                    vertical: 3,
                                   ),
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.shopping_cart_outlined,
-                                          size: 16,
+                                  child: InkWell(
+                                    onTap: () => _resumeHeldOrder(ref, idx),
+                                    borderRadius: AppTheme.brMd,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
                                           color: Theme.of(context)
                                               .colorScheme
-                                              .primary),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Column(
+                                              .primary
+                                              .withValues(alpha: 0.4),
+                                        ),
+                                        borderRadius: AppTheme.brMd,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primaryContainer
+                                            .withValues(alpha: 0.2),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.shopping_cart_outlined,
+                                            size: 16,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  held.orderCode != null
+                                                      ? held.orderCode!
+                                                      : '${l10n.translate('order')} #${idx + 1}',
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  '$itemCount ${l10n.translate('items')}',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                ),
+                                                if (preview.isNotEmpty)
+                                                  Text(
+                                                    hidden > 0
+                                                        ? '$preview  +$hidden'
+                                                        : preview,
+                                                    // Two lines then ellipsis: the
+                                                    // card must stay a fixed, glanceable
+                                                    // size no matter how big the order
+                                                    // is, so a 40-line table cannot
+                                                    // push the list off screen.
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      height: 1.25,
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurfaceVariant
+                                                          .withValues(
+                                                            alpha: 0.85,
+                                                          ),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                          Text(
+                                            currencyFormatter.format(total),
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Icon(
+                                            Icons.chevron_right,
+                                            size: 16,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ],
+                          ],
+                        ), // Column
+                      ), // ConstrainedBox
+                    ), // SingleChildScrollView
+                  ) // LayoutBuilder
+                : Builder(
+                    builder: (context) {
+                      final layout = orderPanelRowOrder(currentOrder.items);
+                      final ordered = layout.ordered;
+                      final showSeparator = layout.showSeparator;
+                      final separatorAt = layout.separatorAt;
+                      final cancelledAsRows = ref.watch(settingsProvider
+                          .select((s) => s.showCancelledItemsAsRows));
+                      final liveRows =
+                          currentOrder.items.length + (showSeparator ? 1 : 0);
+
+                      return ListView.builder(
+                        padding: const EdgeInsets.all(2),
+                        itemCount: liveRows + (cancelledAsRows ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index == liveRows) {
+                            return CancelledItemRows(order: currentOrder);
+                          }
+                          if (showSeparator && index == separatorAt) {
+                            return _SentToKitchenSeparator(
+                              label: l10n.translate('already_sent_to_kitchen'),
+                            );
+                          }
+                          final pos = showSeparator && index > separatorAt
+                              ? index - 1
+                              : index;
+                          // Index into currentOrder.items — removeItem,
+                          // _showItemOptions and _CourseChip all address the order
+                          // by it, so it must stay the REAL position, not the row.
+                          final invertedIndex = ordered[pos];
+                          final item = currentOrder.items[invertedIndex];
+                          final isPaid = item.ticketId != null;
+                          final isHeld = item.state == 'ONHOLD';
+
+                          return Dismissible(
+                            dragStartBehavior: DragStartBehavior.down,
+                            key: ValueKey("${item.hashCode}"),
+                            // Disable dismiss for paid items
+                            confirmDismiss: isPaid
+                                ? (_) async => false
+                                : (direction) async {
+                                    if (!_canEditItem(
+                                      ref,
+                                      item,
+                                      Permissions.ordersItemRemove,
+                                    )) {
+                                      _showPermissionDenied(context, ref);
+                                      return false;
+                                    }
+                                    // Removing the last line of a saved order would leave
+                                    // an empty order in the DB — cancel the whole order
+                                    // instead. Always return false: the clearOrder()
+                                    // rebuild removes the tile on success, and on
+                                    // cancel/denied the item must stay put (returning true
+                                    // would let onDismissed double-remove it).
+                                    if (_isLastItemOfSavedOrder(ref)) {
+                                      await _confirmCancelWholeOrder(
+                                        context,
+                                        ref,
+                                      );
+                                      return false;
+                                    }
+                                    return true;
+                                  },
+                            direction: isPaid
+                                ? DismissDirection.none
+                                : DismissDirection.endToStart,
+                            background: Container(
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 16),
+                              color: Colors.red,
+                              child: const Icon(
+                                Icons.delete,
+                                color: Colors.white,
+                              ),
+                            ),
+                            onDismissed: (direction) {
+                              ref
+                                  .read(orderProvider.notifier)
+                                  .removeItem(invertedIndex);
+                            },
+                            child: GestureDetector(
+                              onLongPress: isPaid
+                                  ? () => _showDeletePaidItemDialog(
+                                      context,
+                                      ref,
+                                      item,
+                                    )
+                                  : null,
+                              child: Opacity(
+                                opacity: isPaid ? 0.6 : 1.0,
+                                child: Card(
+                                  elevation: isPaid ? 0.5 : 1,
+                                  color: isPaid
+                                      ? Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHighest
+                                            .withValues(alpha: 0.5)
+                                      : isHeld
+                                      ? AppTheme.tintFill(
+                                          context,
+                                          Colors.orange,
+                                        )
+                                      : Theme.of(context).cardColor,
+                                  margin: const EdgeInsets.symmetric(
+                                    vertical: 1.5,
+                                    horizontal: 3,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: AppTheme.brSm,
+                                    side: BorderSide(
+                                      color: isPaid
+                                          ? Theme.of(context)
+                                                .colorScheme
+                                                .outline
+                                                .withValues(alpha: 0.2)
+                                          : isHeld
+                                          ? AppTheme.tintBorder(
+                                              context,
+                                              Colors.orange,
+                                            )
+                                          : Theme.of(context).dividerColor
+                                                .withValues(alpha: 0.5),
+                                      width: isPaid
+                                          ? 0.5
+                                          : (isHeld ? 1.5 : 0.5),
+                                    ),
+                                  ),
+                                  child: InkWell(
+                                    onTap: isPaid
+                                        ? null
+                                        : () => _showItemOptions(
+                                            context,
+                                            ref,
+                                            invertedIndex,
+                                            item,
+                                          ),
+                                    borderRadius: AppTheme.brSm,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 4,
+                                      ),
+                                      child: IntrinsicHeight(
+                                        child: Row(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            Text(
-                                              held.orderCode != null
-                                                  ? held.orderCode!
-                                                  : '${l10n.translate('order')} #${idx + 1}',
-                                              style: const TextStyle(
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.w600),
-                                            ),
-                                            Text(
-                                              '$itemCount ${l10n.translate('items')}',
-                                              style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurfaceVariant),
-                                            ),
-                                            if (preview.isNotEmpty)
-                                              Text(
-                                                hidden > 0
-                                                    ? '$preview  +$hidden'
-                                                    : preview,
-                                                // Two lines then ellipsis: the
-                                                // card must stay a fixed, glanceable
-                                                // size no matter how big the order
-                                                // is, so a 40-line table cannot
-                                                // push the list off screen.
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                    fontSize: 10,
-                                                    height: 1.25,
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurfaceVariant
-                                                        .withValues(alpha: 0.85)),
+                                            // 0. Course chip — only when the shop
+                                            // works in courses, and never on a
+                                            // paid line (its ticket is printed).
+                                            if (ref
+                                                    .watch(settingsProvider)
+                                                    .coursesEnabled &&
+                                                !isPaid) ...[
+                                              _CourseChip(
+                                                item: item,
+                                                index: invertedIndex,
                                               ),
-                                          ],
-                                        ),
-                                      ),
-                                      Text(
-                                        currencyFormatter.format(total),
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Icon(Icons.chevron_right,
-                                          size: 16,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          }),
-                        ],
-                      ],
-                    ),       // Column
-                  ),         // ConstrainedBox
-                ),           // SingleChildScrollView
-              )              // LayoutBuilder
-                : Builder(builder: (context) {
-                  final layout = orderPanelRowOrder(currentOrder.items);
-                  final ordered = layout.ordered;
-                  final showSeparator = layout.showSeparator;
-                  final separatorAt = layout.separatorAt;
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(2),
-                    itemCount:
-                        currentOrder.items.length + (showSeparator ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (showSeparator && index == separatorAt) {
-                        return _SentToKitchenSeparator(
-                          label: l10n.translate('already_sent_to_kitchen'),
-                        );
-                      }
-                      final pos = showSeparator && index > separatorAt
-                          ? index - 1
-                          : index;
-                      // Index into currentOrder.items — removeItem,
-                      // _showItemOptions and _CourseChip all address the order
-                      // by it, so it must stay the REAL position, not the row.
-                      final invertedIndex = ordered[pos];
-                      final item = currentOrder.items[invertedIndex];
-                      final isPaid = item.ticketId != null;
-                      final isHeld = item.state == 'ONHOLD';
-
-                      return Dismissible(
-                        dragStartBehavior: DragStartBehavior.down,
-                        key: ValueKey("${item.hashCode}"),
-                        // Disable dismiss for paid items
-                        confirmDismiss: isPaid
-                            ? (_) async => false
-                            : (direction) async {
-                          if (!_canEditItem(ref, item, Permissions.ordersItemRemove)) {
-                            _showPermissionDenied(context, ref);
-                            return false;
-                          }
-                          // Removing the last line of a saved order would leave
-                          // an empty order in the DB — delete the whole order
-                          // instead. Always return false: the clearOrder()
-                          // rebuild removes the tile on success, and on
-                          // cancel/denied the item must stay put (returning true
-                          // would let onDismissed double-remove it).
-                          if (_isLastItemOfSavedOrder(ref)) {
-                            await _confirmDeleteWholeOrder(context, ref);
-                            return false;
-                          }
-                          return true;
-                        },
-                        direction: isPaid ? DismissDirection.none : DismissDirection.endToStart,
-                        background: Container(
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.only(right: 16),
-                          color: Colors.red,
-                          child: const Icon(Icons.delete, color: Colors.white),
-                        ),
-                        onDismissed: (direction) {
-                          ref.read(orderProvider.notifier).removeItem(invertedIndex);
-                        },
-                        child: GestureDetector(
-                          onLongPress: isPaid
-                              ? () => _showDeletePaidItemDialog(context, ref, item)
-                              : null,
-                          child: Opacity(
-                            opacity: isPaid ? 0.6 : 1.0,
-                            child: Card(
-                              elevation: isPaid ? 0.5 : 1,
-                              color: isPaid
-                                  ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
-                                  : isHeld
-                                      ? AppTheme.tintFill(context, Colors.orange)
-                                      : Theme.of(context).cardColor,
-                              margin: const EdgeInsets.symmetric(vertical: 1.5, horizontal: 3),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: AppTheme.brSm,
-                                side: BorderSide(
-                                  color: isPaid
-                                      ? Theme.of(context).colorScheme.outline.withValues(alpha: 0.2)
-                                      : isHeld
-                                          ? AppTheme.tintBorder(context, Colors.orange)
-                                          : Theme.of(context).dividerColor.withValues(alpha: 0.5),
-                                  width: isPaid ? 0.5 : (isHeld ? 1.5 : 0.5),
-                                ),
-                              ),
-                              child: InkWell(
-                                onTap: isPaid ? null : () => _showItemOptions(context, ref, invertedIndex, item),
-                                borderRadius: AppTheme.brSm,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                  child: IntrinsicHeight(
-                                    child: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        // 0. Course chip — only when the shop
-                                        // works in courses, and never on a
-                                        // paid line (its ticket is printed).
-                                        if (ref
-                                                .watch(settingsProvider)
-                                                .coursesEnabled &&
-                                            !isPaid) ...[
-                                          _CourseChip(
-                                            item: item,
-                                            index: invertedIndex,
-                                          ),
-                                          const SizedBox(width: 4),
-                                        ],
-                                        // 1. Quantity Section (Left)
-                                        Center(
-                                          child: isPaid
-                                              ? Container(
-                                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                                  decoration: BoxDecoration(
-                                                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                                    borderRadius: AppTheme.brSm,
-                                                    border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.5)),
-                                                  ),
-                                                  child: Text(
-                                                    formatQty(item.quantity),
-                                                    style: TextStyle(
-                                                      fontWeight: FontWeight.bold,
-                                                      fontSize: 12,
-                                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                                    ),
-                                                  ),
-                                                )
-                                              : item.isWeighedItem
+                                              const SizedBox(width: 4),
+                                            ],
+                                            // 1. Quantity Section (Left)
+                                            Center(
+                                              child: isPaid
+                                                  ? Container(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 4,
+                                                            vertical: 2,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color: Theme.of(context)
+                                                            .colorScheme
+                                                            .surfaceContainerHighest,
+                                                        borderRadius:
+                                                            AppTheme.brSm,
+                                                        border: Border.all(
+                                                          color:
+                                                              Theme.of(context)
+                                                                  .dividerColor
+                                                                  .withValues(
+                                                                    alpha: 0.5,
+                                                                  ),
+                                                        ),
+                                                      ),
+                                                      child: Text(
+                                                        formatQty(
+                                                          item.quantity,
+                                                        ),
+                                                        style: TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                          fontSize: 12,
+                                                          color: Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurfaceVariant,
+                                                        ),
+                                                      ),
+                                                    )
+                                                  : item.isWeighedItem
                                                   // Weighed items — show weight badge with long-press to edit.
                                                   ? InkWell(
-                                                      onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
-                                                      borderRadius: AppTheme.brSm,
+                                                      onLongPress: () =>
+                                                          _showQuantityDialog(
+                                                            context,
+                                                            ref,
+                                                            invertedIndex,
+                                                            item,
+                                                          ),
+                                                      borderRadius:
+                                                          AppTheme.brSm,
                                                       child: Container(
-                                                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                                        alignment: Alignment.center,
-                                                        decoration: BoxDecoration(
-                                                          color: Colors.teal.withValues(alpha: 0.1),
-                                                          borderRadius: AppTheme.brSm,
-                                                          border: Border.all(color: Colors.teal.withValues(alpha: 0.5)),
-                                                        ),
+                                                        constraints:
+                                                            const BoxConstraints(
+                                                              minWidth: 36,
+                                                              minHeight: 36,
+                                                            ),
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 6,
+                                                              vertical: 4,
+                                                            ),
+                                                        alignment:
+                                                            Alignment.center,
+                                                        decoration:
+                                                            BoxDecoration(
+                                                              color: Colors.teal
+                                                                  .withValues(
+                                                                    alpha: 0.1,
+                                                                  ),
+                                                              borderRadius:
+                                                                  AppTheme.brSm,
+                                                              border: Border.all(
+                                                                color: Colors
+                                                                    .teal
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.5,
+                                                                    ),
+                                                              ),
+                                                            ),
                                                         child: Column(
-                                                          mainAxisAlignment: MainAxisAlignment.center,
-                                                          mainAxisSize: MainAxisSize.min,
+                                                          mainAxisAlignment:
+                                                              MainAxisAlignment
+                                                                  .center,
+                                                          mainAxisSize:
+                                                              MainAxisSize.min,
                                                           children: [
                                                             Text(
-                                                              formatQty(item.quantity),
+                                                              formatQty(
+                                                                item.quantity,
+                                                              ),
                                                               style: const TextStyle(
-                                                                color: Colors.teal,
-                                                                fontWeight: FontWeight.bold,
+                                                                color:
+                                                                    Colors.teal,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
                                                                 fontSize: 11,
                                                               ),
                                                             ),
                                                             const Text(
                                                               'kg',
                                                               style: TextStyle(
-                                                                color: Colors.teal,
+                                                                color:
+                                                                    Colors.teal,
                                                                 fontSize: 9,
                                                               ),
                                                             ),
@@ -1073,351 +1284,583 @@ class OrderPanel extends ConsumerWidget {
                                                     )
                                                   : InkWell(
                                                       onTap: () {
-                                                        if (!_canSetQuantity(ref, item, item.quantity + 1)) {
-                                                          _showPermissionDenied(context, ref);
+                                                        if (!_canSetQuantity(
+                                                          ref,
+                                                          item,
+                                                          item.quantity + 1,
+                                                        )) {
+                                                          _showPermissionDenied(
+                                                            context,
+                                                            ref,
+                                                          );
                                                           return;
                                                         }
-                                                        ref.read(orderProvider.notifier).updateItemQuantity(
-                                                          invertedIndex,
-                                                          item.quantity + 1
-                                                        );
+                                                        ref
+                                                            .read(
+                                                              orderProvider
+                                                                  .notifier,
+                                                            )
+                                                            .updateItemQuantity(
+                                                              invertedIndex,
+                                                              item.quantity + 1,
+                                                            );
                                                       },
-                                                      onLongPress: () => _showQuantityDialog(context, ref, invertedIndex, item),
-                                                      borderRadius: AppTheme.brSm,
+                                                      onLongPress: () =>
+                                                          _showQuantityDialog(
+                                                            context,
+                                                            ref,
+                                                            invertedIndex,
+                                                            item,
+                                                          ),
+                                                      borderRadius:
+                                                          AppTheme.brSm,
                                                       child: Container(
-                                                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                                        alignment: Alignment.center,
+                                                        constraints:
+                                                            const BoxConstraints(
+                                                              minWidth: 36,
+                                                              minHeight: 36,
+                                                            ),
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 6,
+                                                              vertical: 4,
+                                                            ),
+                                                        alignment:
+                                                            Alignment.center,
                                                         decoration: BoxDecoration(
-                                                          color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.7),
-                                                          borderRadius: AppTheme.brSm,
+                                                          color:
+                                                              Theme.of(context)
+                                                                  .colorScheme
+                                                                  .primaryContainer
+                                                                  .withValues(
+                                                                    alpha: 0.7,
+                                                                  ),
+                                                          borderRadius:
+                                                              AppTheme.brSm,
                                                           border: Border.all(
-                                                            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                                                            color:
+                                                                Theme.of(
+                                                                      context,
+                                                                    )
+                                                                    .colorScheme
+                                                                    .primary
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.3,
+                                                                    ),
                                                           ),
                                                         ),
                                                         child: Text(
-                                                          formatQty(item.quantity),
+                                                          formatQty(
+                                                            item.quantity,
+                                                          ),
                                                           style: TextStyle(
-                                                            fontWeight: FontWeight.bold,
+                                                            fontWeight:
+                                                                FontWeight.bold,
                                                             fontSize: 16,
-                                                            color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                                            color: Theme.of(context)
+                                                                .colorScheme
+                                                                .onPrimaryContainer,
                                                           ),
                                                         ),
                                                       ),
                                                     ),
-                                        ),
+                                            ),
 
-                                        const SizedBox(width: 8),
+                                            const SizedBox(width: 8),
 
-                                        // 2. Product Details (Middle)
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              // Product Name and Lock Icon
-                                              Row(
+                                            // 2. Product Details (Middle)
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
                                                 children: [
-                                                  if (isPaid) ...[
-                                                    Icon(
-                                                      Icons.lock_outline,
-                                                      size: 12,
-                                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                                    ),
-                                                    const SizedBox(width: 3),
-                                                  ],
-                                                  Expanded(
-                                                    child: Text(
-                                                      item.displayName,
-                                                      style: TextStyle(
-                                                        fontWeight: FontWeight.w600,
-                                                        fontSize: 13,
-                                                        decoration: isPaid ? TextDecoration.lineThrough : null,
-                                                        decorationColor: Theme.of(context).colorScheme.onSurfaceVariant,
-                                                        color: isPaid ? Theme.of(context).colorScheme.onSurfaceVariant : null,
-                                                        height: 1.1,
-                                                      ),
-                                                      maxLines: 2,
-                                                      overflow: TextOverflow.ellipsis,
-                                                    ),
-                                                  ),
-                                                  // How long the kitchen has
-                                                  // had it. Only on lines that
-                                                  // actually went — an unsent
-                                                  // line has nothing to count
-                                                  // from.
-                                                  if (item.kdsPrintedAt != null)
-                                                    _ElapsedBadge(
-                                                        since:
-                                                            item.kdsPrintedAt!),
-                                                ],
-                                              ),
-
-                                              // Unit name label
-                                              if (item.unitName != null && item.unitName!.isNotEmpty) ...[
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                  item.unitName!,
-                                                  style: TextStyle(
-                                                    fontSize: 10,
-                                                    color: Theme.of(context).colorScheme.primary,
-                                                    fontWeight: FontWeight.w500,
-                                                    height: 1.1,
-                                                  ),
-                                                ),
-                                              ],
-
-                                              // Components (Compact)
-                                              if (item.components.isNotEmpty) ...[
-                                                const SizedBox(height: 2),
-                                                Wrap(
-                                                  spacing: 4,
-                                                  runSpacing: 2,
-                                                  // A removed default reads as
-                                                  // "SANS x"; the zero-quantity
-                                                  // signal row beside it carries
-                                                  // no meaning for a reader and
-                                                  // is left out.
-                                                  children: item.components
-                                                      .where((comp) =>
-                                                          comp.removalCharge ||
-                                                          comp.quantity > 0)
-                                                      .map((comp) => Text(
-                                                    comp.removalCharge
-                                                        ? '${AppLocalizations.of(context)!.translate('without')} ${comp.name}'
-                                                        : '+ ${comp.name} (${comp.quantity})',
-                                                    style: TextStyle(
-                                                      fontSize: 10,
-                                                      fontWeight: comp.removalCharge
-                                                          ? FontWeight.bold
-                                                          : null,
-                                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                                      height: 1.1,
-                                                    ),
-                                                  )).toList(),
-                                                ),
-                                              ],
-
-                                              // Weighed item detail line
-                                              if (item.isWeighedItem && item.weightKg != null && item.weightKg! > 0) ...[
-                                                const SizedBox(height: 3),
-                                                Row(
-                                                  children: [
-                                                    Icon(Icons.scale, size: 10, color: Colors.teal[600]),
-                                                    const SizedBox(width: 3),
-                                                    Flexible(
-                                                      child: Text(
-                                                        item.pricePerKgDisplay != null
-                                                            ? '${item.weightKg!.toStringAsFixed(3)} kg × ${item.pricePerKgDisplay!.toStringAsFixed(2)}/kg'
-                                                            : '${item.weightKg!.toStringAsFixed(3)} kg',
-                                                        style: TextStyle(
-                                                          fontSize: 10,
-                                                          color: Colors.teal[700],
-                                                          fontWeight: FontWeight.w600,
-                                                          height: 1.1,
-                                                        ),
-                                                        overflow: TextOverflow.ellipsis,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ],
-
-                                              // Serial number. Shown on the
-                                              // line because it is the one
-                                              // detail the cashier has to check
-                                              // against the box in the
-                                              // customer's hand before payment.
-                                              if (item.serialNumber != null &&
-                                                  item.serialNumber!
-                                                      .isNotEmpty) ...[
-                                                const SizedBox(height: 3),
-                                                Row(
-                                                  children: [
-                                                    Icon(Icons.qr_code_2,
-                                                        size: 11,
-                                                        color: Theme.of(context)
-                                                            .colorScheme
-                                                            .primary),
-                                                    const SizedBox(width: 3),
-                                                    Expanded(
-                                                      child: Text(
-                                                        item.serialNumber!,
-                                                        style: TextStyle(
-                                                          fontSize: 10,
-                                                          fontFamily:
-                                                              'monospace',
-                                                          fontWeight:
-                                                              FontWeight.w700,
-                                                          color: Theme.of(
-                                                                  context)
-                                                              .colorScheme
-                                                              .primary,
-                                                        ),
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ],
-
-                                              // Note (Compact)
-                                              if (item.note != null && item.note!.isNotEmpty) ...[
-                                                const SizedBox(height: 3),
-                                                Container(
-                                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                                  decoration: BoxDecoration(
-                                                    borderRadius: AppTheme.brSm,
-                                                    border: Border.all(),
-                                                  ),
-                                                  child: Row(
-                                                    mainAxisSize: MainAxisSize.min,
+                                                  // Product Name and Lock Icon
+                                                  Row(
                                                     children: [
-                                                      Icon(Icons.sticky_note_2, size: 9, color: Colors.amber[800]),
-                                                      const SizedBox(width: 3),
-                                                      Flexible(
+                                                      if (isPaid) ...[
+                                                        Icon(
+                                                          Icons.lock_outline,
+                                                          size: 12,
+                                                          color: Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurfaceVariant,
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 3,
+                                                        ),
+                                                      ],
+                                                      Expanded(
                                                         child: Text(
-                                                          item.note!,
+                                                          item.displayName,
                                                           style: TextStyle(
-                                                            fontSize: 10,
-                                                            fontStyle: FontStyle.italic,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                            fontSize: 13,
+                                                            decoration: isPaid
+                                                                ? TextDecoration
+                                                                      .lineThrough
+                                                                : null,
+                                                            decorationColor:
+                                                                Theme.of(
+                                                                      context,
+                                                                    )
+                                                                    .colorScheme
+                                                                    .onSurfaceVariant,
+                                                            color: isPaid
+                                                                ? Theme.of(
+                                                                        context,
+                                                                      )
+                                                                      .colorScheme
+                                                                      .onSurfaceVariant
+                                                                : null,
                                                             height: 1.1,
                                                           ),
-                                                          maxLines: 5,
-                                                          overflow: TextOverflow.visible,
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
                                                         ),
                                                       ),
+                                                      // How long the kitchen has
+                                                      // had it. Only on lines that
+                                                      // actually went — an unsent
+                                                      // line has nothing to count
+                                                      // from.
+                                                      if (item.kdsPrintedAt !=
+                                                          null)
+                                                        _ElapsedBadge(
+                                                          since: item
+                                                              .kdsPrintedAt!,
+                                                        ),
                                                     ],
                                                   ),
-                                                ),
-                                              ],
 
-                                              // Badges Row
-                                              if (isPaid || (isHeld && !isPaid)) ...[
-                                                const SizedBox(height: 4),
-                                                Row(
-                                                  children: [
-                                                    if (isPaid)
-                                                      Container(
-                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                        margin: const EdgeInsets.only(right: 4),
-                                                        decoration: BoxDecoration(
-                                                          color: AppTheme.tintFill(context, Colors.green),
-                                                          borderRadius: AppTheme.brSm,
-                                                          border: Border.all(color: AppTheme.tintBorder(context, Colors.green)),
-                                                        ),
-                                                        child: Text(
-                                                          'Ticket #${item.ticketId}',
-                                                          style: TextStyle(
-                                                            fontSize: 10,
-                                                            color: AppTheme.tintOn(context, Colors.green),
-                                                            fontWeight: FontWeight.w600,
-                                                          ),
-                                                        ),
+                                                  // Unit name label
+                                                  if (item.unitName != null &&
+                                                      item
+                                                          .unitName!
+                                                          .isNotEmpty) ...[
+                                                    const SizedBox(height: 2),
+                                                    Text(
+                                                      item.unitName!,
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        color: Theme.of(
+                                                          context,
+                                                        ).colorScheme.primary,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                        height: 1.1,
                                                       ),
-                                                    if (isHeld && !isPaid)
-                                                      Container(
-                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                        decoration: BoxDecoration(
-                                                          color: AppTheme.tintFill(context, Colors.orange),
-                                                          borderRadius: AppTheme.brSm,
-                                                          border: Border.all(color: AppTheme.tintBorder(context, Colors.orange)),
-                                                        ),
-                                                        child: Row(
-                                                          mainAxisSize: MainAxisSize.min,
-                                                          children: [
-                                                            Icon(Icons.pause_circle_outline, size: 10, color: AppTheme.tintOn(context, Colors.orange)),
-                                                            const SizedBox(width: 4),
-                                                            Text(
-                                                              'Held',
+                                                    ),
+                                                  ],
+
+                                                  // Components (Compact)
+                                                  if (item
+                                                      .components
+                                                      .isNotEmpty) ...[
+                                                    const SizedBox(height: 2),
+                                                    Wrap(
+                                                      spacing: 4,
+                                                      runSpacing: 2,
+                                                      // A removed default reads as
+                                                      // "SANS x"; the zero-quantity
+                                                      // signal row beside it carries
+                                                      // no meaning for a reader and
+                                                      // is left out.
+                                                      children: item.components
+                                                          .where(
+                                                            (comp) =>
+                                                                comp.removalCharge ||
+                                                                comp.quantity >
+                                                                    0,
+                                                          )
+                                                          .map(
+                                                            (comp) => Text(
+                                                              comp.removalCharge
+                                                                  ? '${AppLocalizations.of(context)!.translate('without')} ${comp.name}'
+                                                                  : '+ ${comp.name} (${comp.quantity})',
                                                               style: TextStyle(
                                                                 fontSize: 10,
-                                                                color: Colors.orange[800],
-                                                                fontWeight: FontWeight.w600,
+                                                                fontWeight:
+                                                                    comp.removalCharge
+                                                                    ? FontWeight
+                                                                          .bold
+                                                                    : null,
+                                                                color: Theme.of(context)
+                                                                    .colorScheme
+                                                                    .onSurfaceVariant,
+                                                                height: 1.1,
                                                               ),
                                                             ),
-                                                          ],
-                                                        ),
-                                                      ),
+                                                          )
+                                                          .toList(),
+                                                    ),
                                                   ],
-                                                ),
-                                              ],
-                                            ],
-                                          ),
-                                        ),
 
-                                        const SizedBox(width: 6),
+                                                  // Weighed item detail line
+                                                  if (item.isWeighedItem &&
+                                                      item.weightKg != null &&
+                                                      item.weightKg! > 0) ...[
+                                                    const SizedBox(height: 3),
+                                                    Row(
+                                                      children: [
+                                                        Icon(
+                                                          Icons.scale,
+                                                          size: 10,
+                                                          color:
+                                                              Colors.teal[600],
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 3,
+                                                        ),
+                                                        Flexible(
+                                                          child: Text(
+                                                            item.pricePerKgDisplay !=
+                                                                    null
+                                                                ? '${item.weightKg!.toStringAsFixed(3)} kg × ${item.pricePerKgDisplay!.toStringAsFixed(2)}/kg'
+                                                                : '${item.weightKg!.toStringAsFixed(3)} kg',
+                                                            style: TextStyle(
+                                                              fontSize: 10,
+                                                              color: Colors
+                                                                  .teal[700],
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w600,
+                                                              height: 1.1,
+                                                            ),
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ],
 
-                                        // 3. Price & Actions (Right)
-                                        Column(
-                                          crossAxisAlignment: CrossAxisAlignment.end,
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            // Price
-                                            Text(
-                                              currencyFormatter.format(item.totalPrice),
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 13,
-                                                color: isPaid ? Theme.of(context).colorScheme.onSurfaceVariant : null,
+                                                  // Serial number. Shown on the
+                                                  // line because it is the one
+                                                  // detail the cashier has to check
+                                                  // against the box in the
+                                                  // customer's hand before payment.
+                                                  if (item.serialNumber !=
+                                                          null &&
+                                                      item
+                                                          .serialNumber!
+                                                          .isNotEmpty) ...[
+                                                    const SizedBox(height: 3),
+                                                    Row(
+                                                      children: [
+                                                        Icon(
+                                                          Icons.qr_code_2,
+                                                          size: 11,
+                                                          color: Theme.of(
+                                                            context,
+                                                          ).colorScheme.primary,
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 3,
+                                                        ),
+                                                        Expanded(
+                                                          child: Text(
+                                                            item.serialNumber!,
+                                                            style: TextStyle(
+                                                              fontSize: 10,
+                                                              fontFamily:
+                                                                  'monospace',
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w700,
+                                                              color:
+                                                                  Theme.of(
+                                                                        context,
+                                                                      )
+                                                                      .colorScheme
+                                                                      .primary,
+                                                            ),
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ],
+
+                                                  // Note (Compact)
+                                                  if (item.note != null &&
+                                                      item
+                                                          .note!
+                                                          .isNotEmpty) ...[
+                                                    const SizedBox(height: 3),
+                                                    Container(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 4,
+                                                            vertical: 2,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        borderRadius:
+                                                            AppTheme.brSm,
+                                                        border: Border.all(),
+                                                      ),
+                                                      child: Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          Icon(
+                                                            Icons.sticky_note_2,
+                                                            size: 9,
+                                                            color: Colors
+                                                                .amber[800],
+                                                          ),
+                                                          const SizedBox(
+                                                            width: 3,
+                                                          ),
+                                                          Flexible(
+                                                            child: Text(
+                                                              item.note!,
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                                fontStyle:
+                                                                    FontStyle
+                                                                        .italic,
+                                                                height: 1.1,
+                                                              ),
+                                                              maxLines: 5,
+                                                              overflow:
+                                                                  TextOverflow
+                                                                      .visible,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
+
+                                                  // Badges Row
+                                                  if (isPaid ||
+                                                      (isHeld && !isPaid)) ...[
+                                                    const SizedBox(height: 4),
+                                                    Row(
+                                                      children: [
+                                                        if (isPaid)
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets.symmetric(
+                                                                  horizontal: 6,
+                                                                  vertical: 2,
+                                                                ),
+                                                            margin:
+                                                                const EdgeInsets.only(
+                                                                  right: 4,
+                                                                ),
+                                                            decoration: BoxDecoration(
+                                                              color:
+                                                                  AppTheme.tintFill(
+                                                                    context,
+                                                                    Colors
+                                                                        .green,
+                                                                  ),
+                                                              borderRadius:
+                                                                  AppTheme.brSm,
+                                                              border: Border.all(
+                                                                color:
+                                                                    AppTheme.tintBorder(
+                                                                      context,
+                                                                      Colors
+                                                                          .green,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                            child: Text(
+                                                              'Ticket #${item.ticketId}',
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                                color:
+                                                                    AppTheme.tintOn(
+                                                                      context,
+                                                                      Colors
+                                                                          .green,
+                                                                    ),
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w600,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        if (isHeld && !isPaid)
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets.symmetric(
+                                                                  horizontal: 6,
+                                                                  vertical: 2,
+                                                                ),
+                                                            decoration: BoxDecoration(
+                                                              color:
+                                                                  AppTheme.tintFill(
+                                                                    context,
+                                                                    Colors
+                                                                        .orange,
+                                                                  ),
+                                                              borderRadius:
+                                                                  AppTheme.brSm,
+                                                              border: Border.all(
+                                                                color:
+                                                                    AppTheme.tintBorder(
+                                                                      context,
+                                                                      Colors
+                                                                          .orange,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                            child: Row(
+                                                              mainAxisSize:
+                                                                  MainAxisSize
+                                                                      .min,
+                                                              children: [
+                                                                Icon(
+                                                                  Icons
+                                                                      .pause_circle_outline,
+                                                                  size: 10,
+                                                                  color: AppTheme.tintOn(
+                                                                    context,
+                                                                    Colors
+                                                                        .orange,
+                                                                  ),
+                                                                ),
+                                                                const SizedBox(
+                                                                  width: 4,
+                                                                ),
+                                                                Text(
+                                                                  'Held',
+                                                                  style: TextStyle(
+                                                                    fontSize:
+                                                                        10,
+                                                                    color: Colors
+                                                                        .orange[800],
+                                                                    fontWeight:
+                                                                        FontWeight
+                                                                            .w600,
+                                                                  ),
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    ),
+                                                  ],
+                                                ],
                                               ),
                                             ),
-                                            // Discount
-                                            if (item.totalDiscount > 0)
-                                              Text(
-                                                '-${currencyFormatter.format(item.totalDiscount)}',
-                                                style: TextStyle(
-                                                  fontSize: 9,
-                                                  color: Colors.orange[800],
-                                                  fontWeight: FontWeight.w500,
-                                                ),
-                                              ),
 
-                                            // Action Button (Note)
-                                            if (!isPaid) ...[
-                                               const SizedBox(height: 4),
-                                              SizedBox(
-                                                width: 26,
-                                                height: 26,
-                                                child: IconButton(
-                                                  onPressed: () => _showNoteDialog(context, ref, invertedIndex, item),
-                                                  icon: Icon(
-                                                    item.note != null && item.note!.isNotEmpty
-                                                        ? Icons.sticky_note_2
-                                                        : Icons.sticky_note_2_outlined,
-                                                    size: 20,
-                                                    color: item.note != null && item.note!.isNotEmpty
-                                                        ? Colors.amber[700]
-                                                        : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                                            const SizedBox(width: 6),
+
+                                            // 3. Price & Actions (Right)
+                                            Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.end,
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                // Price
+                                                Text(
+                                                  currencyFormatter.format(
+                                                    item.totalPrice,
                                                   ),
-                                                  tooltip: 'Note',
-                                                  padding: EdgeInsets.zero,
-                                                  visualDensity: VisualDensity.compact,
+                                                  style: TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 13,
+                                                    color: isPaid
+                                                        ? Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurfaceVariant
+                                                        : null,
+                                                  ),
                                                 ),
-                                              ),
-                                            ],
+                                                // Discount
+                                                if (item.totalDiscount > 0)
+                                                  Text(
+                                                    '-${currencyFormatter.format(item.totalDiscount)}',
+                                                    style: TextStyle(
+                                                      fontSize: 9,
+                                                      color: Colors.orange[800],
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                    ),
+                                                  ),
+
+                                                // Action Button (Note)
+                                                if (!isPaid) ...[
+                                                  const SizedBox(height: 4),
+                                                  SizedBox(
+                                                    width: 26,
+                                                    height: 26,
+                                                    child: IconButton(
+                                                      onPressed: () =>
+                                                          _showNoteDialog(
+                                                            context,
+                                                            ref,
+                                                            invertedIndex,
+                                                            item,
+                                                          ),
+                                                      icon: Icon(
+                                                        item.note != null &&
+                                                                item
+                                                                    .note!
+                                                                    .isNotEmpty
+                                                            ? Icons
+                                                                  .sticky_note_2
+                                                            : Icons
+                                                                  .sticky_note_2_outlined,
+                                                        size: 20,
+                                                        color:
+                                                            item.note != null &&
+                                                                item
+                                                                    .note!
+                                                                    .isNotEmpty
+                                                            ? Colors.amber[700]
+                                                            : Theme.of(context)
+                                                                  .colorScheme
+                                                                  .onSurfaceVariant
+                                                                  .withValues(
+                                                                    alpha: 0.6,
+                                                                  ),
+                                                      ),
+                                                      tooltip: 'Note',
+                                                      padding: EdgeInsets.zero,
+                                                      visualDensity:
+                                                          VisualDensity.compact,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
                                           ],
                                         ),
-                                      ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                    );
+                          );
+                        },
+                      );
                     },
-                  );
-                }),
+                  ),
           ),
           // Order Summary
           Container(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerLow,
-              border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+              border: Border(
+                top: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1427,11 +1870,16 @@ class OrderPanel extends ConsumerWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(l10n.translate('subtotal'),
-                          style: const TextStyle(fontSize: 12)),
+                      Text(
+                        l10n.translate('subtotal'),
+                        style: const TextStyle(fontSize: 12),
+                      ),
                       Text(
                         currencyFormatter.format(currentOrder.subtotal),
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
@@ -1441,11 +1889,18 @@ class OrderPanel extends ConsumerWidget {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.percent, size: 12, color: Colors.orange[700]),
+                          Icon(
+                            Icons.percent,
+                            size: 12,
+                            color: Colors.orange[700],
+                          ),
                           const SizedBox(width: 3),
                           Text(
                             '${l10n.translate('discount')} (${currentOrder.discountPercentage.toStringAsFixed(0)}%):',
-                            style: TextStyle(color: Colors.orange[700], fontSize: 12),
+                            style: TextStyle(
+                              color: Colors.orange[700],
+                              fontSize: 12,
+                            ),
                           ),
                         ],
                       ),
@@ -1464,11 +1919,16 @@ class OrderPanel extends ConsumerWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('${l10n.translate('subtotal')}:',
-                          style: const TextStyle(fontSize: 12)),
+                      Text(
+                        '${l10n.translate('subtotal')}:',
+                        style: const TextStyle(fontSize: 12),
+                      ),
                       Text(
                         currencyFormatter.format(currentOrder.subtotal),
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
@@ -1477,14 +1937,24 @@ class OrderPanel extends ConsumerWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('${l10n.translate('tax')}:',
-                        style: const TextStyle(fontSize: 12)),
+                    Text(
+                      '${l10n.translate('tax')}:',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     Text(
                       currencyFormatter.format(currentOrder.tax),
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
+                // What was taken off this order — recorded, or swiped away and
+                // not saved yet. Informational: it is not subtracted again.
+                if (!ref.watch(settingsProvider
+                    .select((s) => s.showCancelledItemsAsRows)))
+                  CancelledSummaryRow(order: currentOrder),
                 // Delivery fee — its own line, deliberately after the tax row
                 // and outside the subtotal: it is not a product sale. Shown
                 // whenever one is recorded, including an explicit 0, because
@@ -1496,18 +1966,26 @@ class OrderPanel extends ConsumerWidget {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.delivery_dining,
-                              size: 13, color: Colors.blue[700]),
+                          Icon(
+                            Icons.delivery_dining,
+                            size: 13,
+                            color: Colors.blue[700],
+                          ),
                           const SizedBox(width: 3),
-                          Text('${l10n.translate('delivery_fee')}:',
-                              style: TextStyle(
-                                  fontSize: 12, color: Colors.blue[700])),
+                          Text(
+                            '${l10n.translate('delivery_fee')}:',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.blue[700],
+                            ),
+                          ),
                         ],
                       ),
                       Text(
                         currentOrder.deliveryFeeAmount > 0
-                            ? currencyFormatter
-                                .format(currentOrder.deliveryFeeAmount)
+                            ? currencyFormatter.format(
+                                currentOrder.deliveryFeeAmount,
+                              )
                             : l10n.translate('free'),
                         style: TextStyle(
                           fontSize: 12,
@@ -1526,10 +2004,13 @@ class OrderPanel extends ConsumerWidget {
                   children: [
                     Text(
                       '${l10n.translate('total')}:',
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    Flexible(
+                    Expanded(
                       child: Text(
                         currencyFormatter.format(currentOrder.amountDue),
                         textAlign: TextAlign.end,
@@ -1546,17 +2027,22 @@ class OrderPanel extends ConsumerWidget {
               ],
             ),
           ),
-
         ],
       ),
     );
   }
 
-  void _showQuantityDialog(BuildContext context, WidgetRef ref, int index, OrderItem item) {
+  void _showQuantityDialog(
+    BuildContext context,
+    WidgetRef ref,
+    int index,
+    OrderItem item,
+  ) {
     // Note: no up-front _canEditItem gate. The qty dialog opens for any item.
     // The decrement floor is enforced on submit via _canSetQuantity.
-    final TextEditingController controller =
-        TextEditingController(text: formatQty(item.quantity));
+    final TextEditingController controller = TextEditingController(
+      text: formatQty(item.quantity),
+    );
 
     void trySubmit() {
       final qty = double.tryParse(controller.text.replaceAll(',', '.'));
@@ -1591,21 +2077,25 @@ class OrderPanel extends ConsumerWidget {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          ElevatedButton(
-            onPressed: trySubmit,
-            child: const Text('OK'),
-          ),
+          ElevatedButton(onPressed: trySubmit, child: const Text('OK')),
         ],
       ),
     );
   }
 
-  void _showNoteDialog(BuildContext context, WidgetRef ref, int index, OrderItem item) {
+  void _showNoteDialog(
+    BuildContext context,
+    WidgetRef ref,
+    int index,
+    OrderItem item,
+  ) {
     if (!_canEditItem(ref, item, Permissions.ordersItemModify)) {
       _showPermissionDenied(context, ref);
       return;
     }
-    final TextEditingController controller = TextEditingController(text: item.note ?? '');
+    final TextEditingController controller = TextEditingController(
+      text: item.note ?? '',
+    );
 
     showDialog(
       context: context,
@@ -1655,7 +2145,6 @@ class OrderPanel extends ConsumerWidget {
       ),
     );
   }
-
 }
 
 /// Tag an order line with its course: entrée, plat or dessert.
@@ -1684,12 +2173,14 @@ class OrderPanel extends ConsumerWidget {
 /// order by these (removeItem, _showItemOptions, _CourseChip all take the real
 /// position), so getting this mapping wrong would act on the wrong line.
 ({List<int> ordered, int separatorAt, bool showSeparator}) orderPanelRowOrder(
-    List<OrderItem> items) {
+  List<OrderItem> items,
+) {
   final newIndices = <int>[];
   final sentIndices = <int>[];
   for (var i = items.length - 1; i >= 0; i--) {
     final it = items[i];
-    final hasUnsent = it.ticketId == null && it.quantity > it.kdsPrintedQuantity;
+    final hasUnsent =
+        it.ticketId == null && it.quantity > it.kdsPrintedQuantity;
     (hasUnsent ? newIndices : sentIndices).add(i);
   }
   return (
@@ -1720,7 +2211,13 @@ class _SentToKitchenSeparator extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(6, 8, 6, 4),
       child: Row(
         children: [
-          Expanded(child: Divider(height: 1, thickness: 1, color: color.withValues(alpha: 0.4))),
+          Expanded(
+            child: Divider(
+              height: 1,
+              thickness: 1,
+              color: color.withValues(alpha: 0.4),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Row(
@@ -1740,7 +2237,13 @@ class _SentToKitchenSeparator extends StatelessWidget {
               ],
             ),
           ),
-          Expanded(child: Divider(height: 1, thickness: 1, color: color.withValues(alpha: 0.4))),
+          Expanded(
+            child: Divider(
+              height: 1,
+              thickness: 1,
+              color: color.withValues(alpha: 0.4),
+            ),
+          ),
         ],
       ),
     );
@@ -1760,70 +2263,84 @@ class _CourseChip extends ConsumerWidget {
     final course = OrderCourse.fromNumber(item.courseNo);
     final tagged = course != null;
 
-    return PopupMenuButton<int>(
-      tooltip: l10n.translate('set_course'),
-      padding: EdgeInsets.zero,
-      // 0 is the "no course" entry: null cannot be a PopupMenuItem value and
-      // still be told apart from a dismissed menu.
-      onSelected: (value) => ref.read(orderProvider.notifier).updateItem(
-            index,
-            item.copyWith(
-              courseNo: value == 0 ? null : value,
-              clearCourse: value == 0,
+    // Stretches to the full height of the line (the row is wrapped in an
+    // IntrinsicHeight), so a tall line with options is one big target.
+    return SizedBox(
+      height: double.infinity,
+      child: PopupMenuButton<int>(
+        tooltip: l10n.translate('set_course'),
+        padding: EdgeInsets.zero,
+        // 0 is the "no course" entry: null cannot be a PopupMenuItem value and
+        // still be told apart from a dismissed menu.
+        onSelected: (value) => ref
+            .read(orderProvider.notifier)
+            .updateItem(
+              index,
+              item.copyWith(
+                courseNo: value == 0 ? null : value,
+                clearCourse: value == 0,
+              ),
+            ),
+        itemBuilder: (_) => [
+          for (final c in OrderCourse.values)
+            PopupMenuItem(
+              value: c.number,
+              child: Row(
+                children: [
+                  if (c.number == item.courseNo)
+                    const Icon(Icons.check, size: 16)
+                  else
+                    const SizedBox(width: 16),
+                  const SizedBox(width: 8),
+                  Text(l10n.translate(c.labelKey)),
+                ],
+              ),
+            ),
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: 0,
+            child: Row(
+              children: [
+                const SizedBox(width: 16),
+                const SizedBox(width: 8),
+                Text(l10n.translate('no_course')),
+              ],
             ),
           ),
-      itemBuilder: (_) => [
-        for (final c in OrderCourse.values)
-          PopupMenuItem(
-            value: c.number,
-            child: Row(children: [
-              if (c.number == item.courseNo)
-                const Icon(Icons.check, size: 16)
-              else
-                const SizedBox(width: 16),
-              const SizedBox(width: 8),
-              Text(l10n.translate(c.labelKey)),
-            ]),
-          ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 0,
-          child: Row(children: [
-            const SizedBox(width: 16),
-            const SizedBox(width: 8),
-            Text(l10n.translate('no_course')),
-          ]),
-        ),
-      ],
-      child: Container(
-        // Deliberately larger than a normal chip: this is tapped on every
-        // line of a coursed order, on a touchscreen, by someone holding a
-        // pad in the other hand. A 26px target was a miss waiting to happen.
-        width: 40,
-        height: 40,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: tagged
-              ? scheme.primary.withValues(alpha: 0.12)
-              : Colors.transparent,
-          borderRadius: AppTheme.brSm,
-          border: Border.all(
+        ],
+        child: Container(
+          // Deliberately larger than a normal chip: this is tapped on every
+          // line of a coursed order, on a touchscreen, by someone holding a
+          // pad in the other hand. A 26px target was a miss waiting to happen.
+          width: 52,
+          constraints: const BoxConstraints(minHeight: 44),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
             color: tagged
-                ? scheme.primary.withValues(alpha: 0.5)
-                : scheme.outlineVariant,
+                ? scheme.primary.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: AppTheme.brSm,
+            border: Border.all(
+              color: tagged
+                  ? scheme.primary.withValues(alpha: 0.5)
+                  : scheme.outlineVariant,
+            ),
           ),
-        ),
-        child: tagged
-            ? Text(
-                l10n.translate(course.badgeKey),
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: scheme.primary,
+          child: tagged
+              ? Text(
+                  l10n.translate(course.badgeKey),
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: scheme.primary,
+                  ),
+                )
+              : Icon(
+                  Icons.restaurant_menu,
+                  size: 22,
+                  color: scheme.onSurfaceVariant,
                 ),
-              )
-            : Icon(Icons.restaurant_menu,
-                size: 20, color: scheme.onSurfaceVariant),
+        ),
       ),
     );
   }
@@ -1874,8 +2391,8 @@ class _ElapsedBadgeState extends State<_ElapsedBadge> {
 
     // Loud once the food has been out there a while. The threshold is the
     // point a cashier would want to go and ask, not an SLA.
-    final stale = DateTime.now().difference(widget.since) >=
-        const Duration(minutes: 30);
+    final stale =
+        DateTime.now().difference(widget.since) >= const Duration(minutes: 30);
     final scheme = Theme.of(context).colorScheme;
 
     return Padding(
@@ -1883,8 +2400,9 @@ class _ElapsedBadgeState extends State<_ElapsedBadge> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
         decoration: BoxDecoration(
-          color: (stale ? scheme.error : scheme.onSurfaceVariant)
-              .withValues(alpha: 0.12),
+          color: (stale ? scheme.error : scheme.onSurfaceVariant).withValues(
+            alpha: 0.12,
+          ),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Text(
@@ -1895,6 +2413,57 @@ class _ElapsedBadgeState extends State<_ElapsedBadge> {
             fontWeight: FontWeight.w600,
             color: stale ? scheme.error : scheme.onSurfaceVariant,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "🎫 Sara pickup" under the order code, or "+ Reference" when none is set.
+class _ReferenceLine extends StatelessWidget {
+  final String? reference;
+  final VoidCallback onTap;
+
+  const _ReferenceLine({required this.reference, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    final text = (reference ?? '').trim();
+    final has = text.isNotEmpty;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              has ? Icons.confirmation_number_outlined : Icons.add,
+              size: 14,
+              color: scheme.primary,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                has ? text : l10n.translate('order_reference'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: has ? FontWeight.w600 : FontWeight.normal,
+                  color: has ? scheme.onSurface : scheme.primary,
+                  decoration: has ? null : TextDecoration.underline,
+                ),
+              ),
+            ),
+            if (has) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.edit_outlined, size: 12, color: scheme.primary),
+            ],
+          ],
         ),
       ),
     );

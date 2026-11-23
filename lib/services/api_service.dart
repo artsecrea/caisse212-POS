@@ -5,16 +5,34 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../domain/models/booking_models.dart';
+import '../domain/models/reservation_models.dart';
 import '../utils/pos_log.dart';
+import 'subscription_store.dart';
+import 'account_status_store.dart';
+import 'kick_store.dart';
+import '../domain/models/account_status.dart';
+import '../domain/models/order_tag_codec.dart';
+import 'refund_policy_store.dart';
+import '../domain/models/subscription_info.dart';
 
-/// Sentinel that distinguishes "field omitted → leave unchanged" from an
-/// explicit `null` ("unassign") in [ApiService.patchSchedule].
-class _Unset {
-  const _Unset();
+/// What an order push reported besides success: serial links the server
+/// refused, and how any `reservationCode` on the pushed orders was linked.
+class OrderPushResult {
+  final List<SerialConflictReport> serialConflicts;
+  final List<ReservationLink> reservationLinks;
+
+  const OrderPushResult(this.serialConflicts, this.reservationLinks);
 }
 
-const _unset = _Unset();
+/// The `error` of a DioException for a call refused locally because the
+/// account is disabled. See [ApiService.checkAccountStatus].
+class AccountBlockedException implements Exception {
+  const AccountBlockedException();
+  @override
+  String toString() => 'Account disabled';
+}
+
+enum AccountCheck { active, blocked, unknown }
 
 /// API Service for handling all server communication
 /// Per-record outcome of `POST /pos/refunds/bulk`.
@@ -133,6 +151,20 @@ class PosCatalogException implements Exception {
   String toString() => message;
 }
 
+enum RefundLookupFailure { notFound, offline }
+
+/// Why an online refund lookup failed. `offline` covers every "could not get
+/// a straight answer" case — no network, timeout, 5xx — because the response
+/// is the same: refunds wait for the connection.
+class RefundLookupException implements Exception {
+  final RefundLookupFailure failure;
+  final String? detail;
+  const RefundLookupException(this.failure, [this.detail]);
+
+  @override
+  String toString() => 'RefundLookupException(${failure.name}: $detail)';
+}
+
 class ApiService {
   late final Dio _dio;
   final SharedPreferences _prefs;
@@ -182,6 +214,11 @@ class ApiService {
   static final _categoryScopeController =
       StreamController<List<int>?>.broadcast();
   Stream<List<int>?> get categoryScopeStream => _categoryScopeController.stream;
+
+  // Fires whenever a token expiry moves (new pair saved, force-logout, or a
+  // debug simulation). Static for the same reason as the scope stream above.
+  static final _expiryController = StreamController<void>.broadcast();
+  Stream<void> get expiryChanges => _expiryController.stream;
 
   // Public getter for Dio instance (for testing/debugging)
   Dio get dio => _dio;
@@ -253,8 +290,22 @@ class ApiService {
             options.path.contains('/pos/refresh') ||
             options.path.contains('/pos/logout');
         final isRetry = options.extra['_retried'] == true;
+        final noAuth = options.extra[_noAuthExtra] == true;
 
-        if (!isAuthEndpoint && !isRetry) {
+        // A disabled account makes no cloud calls except the ones that can
+        // tell us it is back (status check, login, refresh) and logout. Failing
+        // here, before the network, keeps sync from burning its retry budget
+        // on refusals: queued work waits untouched until reactivation.
+        if (!_accountGateExempt(options.path) &&
+            AccountStatusStore(_prefs).isBlocked) {
+          return handler.reject(DioException(
+            requestOptions: options,
+            type: DioExceptionType.cancel,
+            error: const AccountBlockedException(),
+          ));
+        }
+
+        if (!isAuthEndpoint && !isRetry && !noAuth) {
           final exp = _accessExpiresAt;
           if (exp != null &&
               DateTime.now().isAfter(exp.subtract(const Duration(seconds: 60)))) {
@@ -270,7 +321,7 @@ class ApiService {
 
         // Add authorization token
         final token = getAccessToken();
-        if (token != null) {
+        if (token != null && !noAuth) {
           options.headers['Authorization'] = 'Bearer $token';
         }
 
@@ -311,7 +362,26 @@ class ApiService {
 
         return handler.next(options);
       },
+      onResponse: (response, handler) async {
+        // login / refresh / GET /pos/subscription carry
+        // posTerminal.accountStatus; an explicit verdict is applied, an
+        // absent one changes nothing.
+        final body = response.data;
+        if (body is Map) {
+          final terminal = body['posTerminal'];
+          final raw = terminal is Map && terminal.containsKey('accountStatus')
+              ? terminal['accountStatus']
+              : body['accountStatus'];
+          await AccountStatusStore(_prefs).applyStatus(parseAccountStatus(raw));
+        }
+        return handler.next(response);
+      },
       onError: (error, handler) async {
+        final block = _accountBlockOf(error);
+        if (block != null) {
+          await AccountStatusStore(_prefs).block(block);
+          return handler.next(error);
+        }
         if (error.response?.statusCode != 401) {
           return handler.next(error);
         }
@@ -337,8 +407,11 @@ class ApiService {
           return handler.resolve(response);
         } on DioException catch (e) {
           // Only force-logout when the server explicitly rejected the refresh
-          // token (4xx). Network errors while offline mean "retry later".
-          if (e.response != null &&
+          // token (4xx). Network errors while offline mean "retry later". A
+          // disabled account is not a dead token: keep the tokens, the lock
+          // card handles it, and they work again on reactivation.
+          if (_accountBlockOf(e) == null &&
+              e.response != null &&
               e.response!.statusCode! >= 400 &&
               e.response!.statusCode! < 500) {
             await _handleForceLogout();
@@ -351,7 +424,142 @@ class ApiService {
     ));
   }
 
+  // ── Account status (tenant / business / terminal active) ─────────────────
+
+  static const _noAuthExtra = '_noAuth';
+
+  static bool _accountGateExempt(String path) =>
+      path.contains('/pos/account-status') ||
+      path.contains('/pos/login') ||
+      path.contains('/pos/refresh') ||
+      path.contains('/pos/logout') ||
+      path.contains('/pos/update_check');
+
+  static AccountBlock? _accountBlockOf(DioException e) {
+    if (e.error is AccountBlockedException) return null; // our own gate
+    final r = e.response;
+    if (r == null) return null;
+    return accountBlockFromError(
+      statusCode: r.statusCode,
+      body: r.data,
+      statusHeader: r.headers.value(kAccountStatusHeader),
+    );
+  }
+
+  AccountBlock? get accountBlock => AccountStatusStore(_prefs).current;
+
+  /// Asks the server whether this till may work: `GET /pos/account-status`,
+  /// sent without a token because a kicked till's token may be refused too.
+  ///
+  /// Stores the verdict and returns it. [AccountCheck.unknown] (offline, server
+  /// error) leaves the stored state alone: only a definite answer locks or
+  /// unlocks.
+  Future<AccountCheck> checkAccountStatus() async {
+    if (isDemoMode()) return AccountCheck.active;
+    try {
+      final response = await _dio.get(
+        '/pos/account-status',
+        options: Options(extra: {_noAuthExtra: true}),
+      );
+      final body = response.data;
+      if (body is Map && body.containsKey('subscription')) {
+        await SubscriptionStore(_prefs).apply(body['subscription']);
+      }
+      final parsed = parseAccountStatus(body);
+      if (parsed == null) return AccountCheck.unknown;
+      await AccountStatusStore(_prefs).applyStatus(parsed);
+      return parsed == true ? AccountCheck.active : AccountCheck.blocked;
+    } on DioException catch (e) {
+      if (_accountBlockOf(e) != null) return AccountCheck.blocked;
+      // A server from before the endpoint: a token refresh stands in. It is
+      // exempt from the local gate, and on a server with the account filter
+      // it answers 423 while disabled. Old servers never checked on refresh,
+      // so success there proves nothing and changes nothing.
+      if (e.response?.statusCode == 404) {
+        try {
+          await _doRefresh();
+        } on DioException catch (re) {
+          if (_accountBlockOf(re) != null) return AccountCheck.blocked;
+        } catch (_) {}
+        return isAccountBlocked ? AccountCheck.unknown : AccountCheck.active;
+      }
+      posLog('Account status check failed: ${e.type} ${e.response?.statusCode}');
+      return AccountCheck.unknown;
+    } catch (e) {
+      posLog('Account status check failed: $e');
+      return AccountCheck.unknown;
+    }
+  }
+
+  bool get isAccountBlocked => AccountStatusStore(_prefs).isBlocked;
+
+  /// For channels outside Dio (the SSE stream): records an "account disabled"
+  /// refusal. Returns true when it was one.
+  Future<bool> noteAccountRefusal(
+      int statusCode, String? statusHeader, dynamic body) async {
+    final block = accountBlockFromError(
+        statusCode: statusCode, body: body, statusHeader: statusHeader);
+    if (block == null) return false;
+    await AccountStatusStore(_prefs).block(block);
+    return true;
+  }
+
+  /// The SSE `force_kick` push: records why, then signs the TERMINAL out —
+  /// tokens wiped, so the re-auth gate asks for the terminal password. Tenant,
+  /// business, POS name and the pending sync queue stay, so signing back in
+  /// picks up where the till left off.
+  Future<void> applyKick(Map<String, dynamic> command) async {
+    final code = (command['code'] as String?)?.trim();
+    final message = (command['message'] as String?)?.trim();
+    await KickStore(_prefs).record(KickNotice(
+      code: code == null || code.isEmpty ? 'ADMIN_KICK' : code.toUpperCase(),
+      message: message == null || message.isEmpty ? null : message,
+      at: DateTime.now(),
+    ));
+    if (command['lock'] == true) {
+      await applyAccountDisabledPush({
+        'scope': command['scope'] ?? 'TERMINAL',
+        'message': message,
+        'reasonCode': code,
+      });
+    }
+    await _handleForceLogout();
+  }
+
+  /// The SSE `account_disabled` push.
+  Future<void> applyAccountDisabledPush(Map<String, dynamic> command) =>
+      AccountStatusStore(_prefs).block(AccountBlock(
+        scope: parseAccountScope(command['scope']),
+        message: (command['message'] as String?)?.trim().isEmpty ?? true
+            ? null
+            : (command['message'] as String).trim(),
+        reasonCode: (command['reasonCode'] as String?)?.trim().isEmpty ?? true
+            ? null
+            : (command['reasonCode'] as String).trim(),
+        since: DateTime.now(),
+      ));
+
   // ── Refresh token flow ───────────────────────────────────────────────────
+
+  /// For callers outside Dio (the SSE stream): refresh the access token when
+  /// it expires within a minute, or always when [force]. Returns false when
+  /// the refresh failed; the caller keeps the token it has.
+  Future<bool> ensureFreshToken({bool force = false}) async {
+    // From prefs, not the in-memory copy: other ApiService instances refresh
+    // too, and acting on a stale expiry would rotate the pair needlessly.
+    final ms = _prefs.getInt(_accessExpiresAtMsKey);
+    final exp = ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+    final due = force ||
+        (exp != null &&
+            DateTime.now().isAfter(exp.subtract(const Duration(seconds: 60))));
+    if (!due) return true;
+    try {
+      await _doRefresh();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Single-flight internal refresh. All concurrent callers await the same
   /// Completer so only one `POST /pos/refresh` is ever in flight at a time.
@@ -360,6 +568,10 @@ class ApiService {
       return _refreshCompleter!.future;
     }
     _refreshCompleter = Completer<void>();
+    // The first caller gets the error from the rethrow below; the shared
+    // future only matters to concurrent waiters. Without this, every failed
+    // refresh nobody else was waiting on surfaced as an "Unhandled Exception".
+    _refreshCompleter!.future.ignore();
     try {
       final refreshToken = _prefs.getString(_refreshTokenKey);
       if (refreshToken == null) throw Exception('No refresh token stored');
@@ -380,6 +592,9 @@ class ApiService {
       // A scope edited in the BMS reaches the till here — refresh is the only
       // channel that carries it (the catalogue sync does not).
       await applyCategoryScope(data['posTerminal']);
+      // Same channel carries the subscription, so every rotation (timer, 401,
+      // Update button, SSE `refresh_token`) also re-reads it for free.
+      await SubscriptionStore(_prefs).applyResponse(data);
       _refreshCompleter!.complete();
     } catch (e) {
       _refreshCompleter!.completeError(e);
@@ -432,6 +647,7 @@ class ApiService {
       await _prefs.setInt(
           _refreshExpiresAtMsKey, refreshExp.millisecondsSinceEpoch);
     }
+    _expiryController.add(null);
     // Persist the username (from the JWT) so the re-auth dialog can prefill it
     // even after tokens are wiped.
     final username = _jwtClaim(accessToken, 'username');
@@ -473,6 +689,7 @@ class ApiService {
     await _prefs.remove(_refreshExpiresAtMsKey);
     _accessExpiresAt = null;
     _refreshExpiresAt = null;
+    _expiryController.add(null);
     if (!_forceLogoutController.isClosed) {
       _forceLogoutController.add(null);
     }
@@ -480,6 +697,57 @@ class ApiService {
 
   /// The refresh-token (session) expiry, or null if unknown.
   DateTime? getRefreshExpiresAt() => _refreshExpiresAt;
+
+  DateTime? getAccessExpiresAt() => _accessExpiresAt;
+
+  String? getRefreshToken() => _prefs.getString(_refreshTokenKey);
+
+  /// Decoded JWT payload (no signature check) — for the debug token panel.
+  static Map<String, dynamic>? jwtPayload(String? token) {
+    if (token == null || token.isEmpty) return null;
+    final parts = token.split('.');
+    if (parts.length != 3) return null;
+    try {
+      var seg = parts[1].replaceAll('-', '+').replaceAll('_', '/');
+      seg = seg.padRight(seg.length + (4 - seg.length % 4) % 4, '=');
+      return jsonDecode(utf8.decode(base64.decode(seg))) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Debug-only simulation (Test mode screen) ──────────────────────────────
+  // These move only the CLIENT's idea of when the tokens die; the tokens
+  // themselves are untouched, so the server keeps accepting them and any real
+  // refresh or re-login puts the true expiry back.
+
+  /// Pretend the session (refresh token) dies at [at]. null restores the real
+  /// expiry decoded from the stored refresh JWT.
+  Future<void> debugSetRefreshExpiry(DateTime? at) async {
+    final real = _jwtExpiry(_prefs.getString(_refreshTokenKey));
+    final value = at ?? real;
+    _refreshExpiresAt = value;
+    if (value == null) {
+      await _prefs.remove(_refreshExpiresAtMsKey);
+    } else {
+      await _prefs.setInt(_refreshExpiresAtMsKey, value.millisecondsSinceEpoch);
+    }
+    _expiryController.add(null);
+  }
+
+  /// Pretend the access token dies at [at], so the next API call takes the
+  /// pre-emptive refresh path.
+  Future<void> debugSetAccessExpiry(DateTime at) async {
+    _accessExpiresAt = at;
+    await _prefs.setInt(_accessExpiresAtMsKey, at.millisecondsSinceEpoch);
+    _expiryController.add(null);
+  }
+
+  /// What a hard-rejected refresh (4xx) looks like to the UI — the obligatory
+  /// re-auth gate — WITHOUT wiping the tokens the real path would wipe.
+  void debugSimulateRefreshRejected() {
+    if (!_forceLogoutController.isClosed) _forceLogoutController.add(null);
+  }
 
   /// Something short and stable that identifies THIS terminal, for codes that
   /// have to differ between tills.
@@ -639,6 +907,11 @@ class ApiService {
     await _prefs.remove(_businessLogoKey);
     await _prefs.remove(_categoryScopeKey);
     _categoryScopeController.add(null);
+    await SubscriptionStore(_prefs).clear();
+    await RefundPolicyStore(_prefs).clear();
+    // Another tenant's lock must not follow a tenant switch; the new one's
+    // login says for itself.
+    await AccountStatusStore(_prefs).clear();
     // NOTE: We do NOT remove 'tenant_password_hash' here - it should only be cleared on full logout
   }
 
@@ -731,6 +1004,11 @@ class ApiService {
 
         // Per-terminal category scope — which categories this till may show.
         await applyCategoryScope(data['posTerminal']);
+        await SubscriptionStore(_prefs).applyResponse(data);
+        // The server checks tenant, business and terminal on login (old
+        // servers check the terminal), so a login it accepts means active.
+        await AccountStatusStore(_prefs).clear();
+        await KickStore(_prefs).clear();
 
         return data;
       } else {
@@ -877,6 +1155,26 @@ class ApiService {
     }
   }
 
+  /// `GET /pos/orders/{code}/split` — the server's view of a split bill:
+  /// `{orderTotal, paidAmount, remainingAmount, unassignedPaidAmount,
+  /// tickets[{ticketNumber, amount, method, date, split}], lines[...]}`.
+  /// Cancelled tickets are already left out. Null on any failure or timeout:
+  /// callers fall back to what this till knows.
+  Future<Map<String, dynamic>?> fetchOrderSplit(String orderCode,
+      {Duration timeout = const Duration(seconds: 3)}) async {
+    try {
+      final r = await _dio
+          .get('/pos/orders/${Uri.encodeComponent(orderCode)}/split')
+          .timeout(timeout);
+      if (r.statusCode == 200 && r.data is Map) {
+        return Map<String, dynamic>.from(r.data as Map);
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Pull a page of payment (ticket) deltas. Same envelope as
   /// [fetchOrderDeltas]; items keyed by (orderCode, ticketNumber).
   Future<Map<String, dynamic>> fetchPaymentDeltas({
@@ -925,6 +1223,38 @@ class ApiService {
     }
     return null;
   }
+
+  /// `GET /pos/subscription` → stored. Returns false when it could not be read
+  /// (offline, older server without the endpoint); the stored copy is kept.
+  ///
+  /// With [onlyIfDue] it is a no-op unless the login warning is showing and
+  /// today's check has not happened yet — see [subscriptionCheckDue].
+  Future<bool> refreshSubscription({bool onlyIfDue = false}) async {
+    final store = SubscriptionStore(_prefs);
+    if (onlyIfDue && !store.checkDue) return true;
+    if (isDemoMode()) return false;
+    try {
+      final response = await _dio.get('/pos/subscription');
+      if (response.statusCode == 200) {
+        final body = response.data;
+        // Accept the object itself or `{ "subscription": {...} }`.
+        await store.apply(body is Map && body.containsKey('subscription')
+            ? body['subscription']
+            : body);
+        return true;
+      }
+      if (response.statusCode == 204) {
+        await store.apply(null);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      posLog('Subscription check skipped: $e');
+      return false;
+    }
+  }
+
+  SubscriptionInfo? get subscription => SubscriptionStore(_prefs).current;
 
   Future<List<Map<String, dynamic>>> fetchCategories() async {
     try {
@@ -1055,190 +1385,269 @@ class ApiService {
     }
   }
 
-  // ── Agenda / Booking ────────────────────────────────────────────────────
+  // ── Reservations (backend V198) ─────────────────────────────────────────
+  //
+  // Every write here is ONLINE ONLY and never queued: it claims slots in the
+  // shop's one diary under a server lock. The business comes from
+  // X-POS-Name; X-Business-Id is added too, as on the other agenda calls.
 
-  /// `GET /order-products/availability` — the real free slots for booking a
-  /// time-managed [productId] on [date] (already accounts for hours, staff
-  /// time-off, existing bookings and resource capacity). Online-only.
-  ///
-  /// Requires the `X-Business-Id` header, which the default interceptor omits by
-  /// design — so we set it explicitly here (mirrors the SSE subscribe fix).
-  Future<AvailabilityResponse> getAvailability({
-    required int productId,
+  Options _reservationOptions() {
+    final businessId = getBusinessId();
+    return Options(headers: {
+      if (businessId != null) 'X-Business-Id': businessId,
+    });
+  }
+
+  /// Maps a reservation write's failure to the contract's errors: 409 →
+  /// [ReservationConflict], 400 → [ReservationValidationError].
+  Never _reservationError(DioException e) {
+    final status = e.response?.statusCode;
+    final body = e.response?.data;
+    final map = body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{};
+    if (status == 409) throw ReservationConflict.fromJson(map);
+    if (status == 400 || status == 403 || status == 404) {
+      throw ReservationValidationError(
+          (map['message'] ?? map['error'] ?? 'Reservation refused').toString());
+    }
+    throw e;
+  }
+
+  Reservation _reservationFrom(Response<dynamic> r) =>
+      Reservation.fromJson(Map<String, dynamic>.from(r.data as Map));
+
+  /// `GET /pos/reservations/agenda` — the frame and reservations of
+  /// [from]..[to] (shop-zone days, inclusive, at most 42).
+  Future<AgendaWindow> fetchReservationAgenda({
+    required DateTime from,
+    required DateTime to,
+    List<int>? resourceIds,
+  }) async {
+    final response = await _dio.get(
+      '/pos/reservations/agenda',
+      queryParameters: {
+        'from': _isoDate(from),
+        'to': _isoDate(to),
+        if (resourceIds != null && resourceIds.isNotEmpty)
+          'resourceIds': resourceIds.join(','),
+      },
+      options: _reservationOptions(),
+    );
+    return AgendaWindow.fromJson(Map<String, dynamic>.from(response.data as Map));
+  }
+
+  /// `GET /pos/reservations/availability` — free starts for the whole basket
+  /// [productIds] (chained back to back) from [date] for [days] days.
+  /// Advisory: the write is the authoritative check.
+  Future<List<AvailabilitySlot>> fetchReservationAvailability({
+    required List<int> productIds,
     required DateTime date,
-    int? waiterId,
-    int? resourceId,
+    int days = 1,
+    List<int>? resourceIds,
+    int? step,
+    int? excludeReservationId,
   }) async {
-    final businessId = getBusinessId();
-    final dateStr = '${date.year.toString().padLeft(4, '0')}-'
-        '${date.month.toString().padLeft(2, '0')}-'
-        '${date.day.toString().padLeft(2, '0')}';
-    try {
-      final query = {
-        'productId': productId,
-        'date': dateStr,
-        if (waiterId != null) 'waiterId': waiterId,
-        if (resourceId != null) 'resourceId': resourceId,
-      };
-      final options = Options(headers: {
-        if (businessId != null) 'X-Business-Id': businessId,
-      });
-
-      Response<dynamic> response;
-      try {
-        response = await _dio.get('/pos/availability',
-            queryParameters: query, options: options);
-      } on DioException catch (e) {
-        // A backend from before the endpoint moved under /pos still answers on
-        // the old path. Terminals and servers update on their own schedules, so
-        // fall back rather than making booking depend on the deploy order.
-        if (e.response?.statusCode != 404) rethrow;
-        response = await _dio.get('/order-products/availability',
-            queryParameters: query, options: options);
-      }
-      if (response.statusCode == 200) {
-        return AvailabilityResponse.fromJson(
-            Map<String, dynamic>.from(response.data as Map));
-      }
-      throw Exception('Failed to fetch availability');
-    } on DioException catch (e) {
-      // 400 = product not bookable yet (no duration configured) or missing
-      // business context — surface the server's message so the UI can explain.
-      if (e.response?.statusCode == 400 && e.response?.data is Map) {
-        final m = Map<String, dynamic>.from(e.response!.data as Map);
-        throw Exception(
-            (m['message'] ?? m['error'] ?? 'Product is not bookable yet')
-                .toString());
-      }
-      throw Exception('Network error: ${e.message ?? 'availability'}');
-    }
-  }
-
-  /// `PATCH /order-products/{id}/schedule` — (re)schedule / (re)assign a booking.
-  /// Partial: only fields you pass change. Times go up as explicit UTC.
-  /// [planWaiterId] / [planResourceId] use a sentinel so `null` explicitly
-  /// UNASSIGNS and omitting leaves it unchanged (per the spec).
-  ///
-  /// Throws [ScheduleConflict] on `409` (waiter/resource conflict) and
-  /// [ScheduleValidationError] on `400` (bad range / unparseable).
-  Future<void> patchSchedule(
-    int orderProductId, {
-    DateTime? planStartAt,
-    DateTime? planEndAt,
-    Object? planWaiterId = _unset,
-    Object? planResourceId = _unset,
-  }) async {
-    final data = <String, dynamic>{};
-    if (planStartAt != null) {
-      data['planStartAt'] = planStartAt.toUtc().toIso8601String();
-    }
-    if (planEndAt != null) {
-      data['planEndAt'] = planEndAt.toUtc().toIso8601String();
-    }
-    if (!identical(planWaiterId, _unset)) data['planWaiterId'] = planWaiterId;
-    if (!identical(planResourceId, _unset)) {
-      data['planResourceId'] = planResourceId;
-    }
-    try {
-      await _dio.patch('/order-products/$orderProductId/schedule', data: data);
-    } on DioException catch (e) {
-      final status = e.response?.statusCode;
-      final body = e.response?.data;
-      if (status == 409) {
-        throw ScheduleConflict.fromJson(
-            body is Map ? Map<String, dynamic>.from(body) : const {});
-      }
-      if (status == 400) {
-        final msg = (body is Map
-                ? (body['message'] ?? body['error'])
-                : null)
-            ?.toString();
-        throw ScheduleValidationError(msg ?? 'Invalid schedule (check the time range)');
-      }
-      rethrow;
-    }
-  }
-
-  /// `DELETE /order-products/{id}/schedule` — unbook the line and free the
-  /// slot. Online-only like the rest of the booking calls: the slot belongs to
-  /// the server, and a queued release would hold a chair hostage until the
-  /// terminal happened to reconnect.
-  Future<void> deleteSchedule(int orderProductId) async {
-    try {
-      await _dio.delete('/order-products/$orderProductId/schedule');
-    } on DioException catch (e) {
-      final status = e.response?.statusCode;
-      // Already unscheduled server-side — the caller wanted it gone and it is.
-      if (status == 404) return;
-      if (status == 400) {
-        final body = e.response?.data;
-        final msg =
-            (body is Map ? (body['message'] ?? body['error']) : null)?.toString();
-        throw ScheduleValidationError(msg ?? 'Cannot unschedule this line');
-      }
-      rethrow;
-    }
-  }
-
-  /// `GET /pos/providers` — bookable staff (barbers/stylists). Same offline
-  /// login shape as `/kds-profiles`. Best-effort like [fetchResources]: an
-  /// older backend without the endpoint must not fail the whole master sync.
-  Future<List<Map<String, dynamic>>> fetchProviders() async {
-    try {
-      final response = await _dio.get('/pos/providers');
-      if (response.statusCode == 200 && response.data is List) {
-        return List<Map<String, dynamic>>.from(response.data);
-      }
-      return const [];
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  /// `GET /pos/agenda` — every booking **overlapping**
-  /// `[startDate 00:00, endDate+1 00:00)`.
-  ///
-  /// Overlap, not start-in-window: a cut that begins at 23:30 and runs past
-  /// midnight belongs to both days, and asking for either must return it.
-  ///
-  /// The `timeStatus` the server sends is deliberately dropped — it is derived
-  /// from the clock and stale on arrival. Callers compute it as they paint,
-  /// see [bookingTimeStatus].
-  Future<AgendaPage> fetchAgenda({
-    required DateTime startDate,
-    required DateTime endDate,
-    int? waiterId,
-    int? resourceId,
-  }) async {
-    final businessId = getBusinessId();
     try {
       final response = await _dio.get(
-        '/pos/agenda',
+        '/pos/reservations/availability',
         queryParameters: {
-          'startDate': _isoDate(startDate),
-          'endDate': _isoDate(endDate),
-          if (waiterId != null) 'waiterId': waiterId,
-          if (resourceId != null) 'resourceId': resourceId,
+          'productIds': productIds.join(','),
+          'date': _isoDate(date),
+          'days': days,
+          if (resourceIds != null && resourceIds.isNotEmpty)
+            'resourceIds': resourceIds.join(','),
+          if (step != null) 'step': step,
+          if (excludeReservationId != null)
+            'excludeReservationId': excludeReservationId,
         },
-        options: Options(headers: {
-          if (businessId != null) 'X-Business-Id': businessId,
-        }),
+        options: _reservationOptions(),
       );
-      if (response.statusCode != 200) return AgendaPage.empty;
-      return AgendaPage.fromResponse(response.data);
-    } on DioException {
-      rethrow;
+      final body = response.data;
+      final slots = body is Map ? body['slots'] : body;
+      return (slots is List ? slots : const [])
+          .whereType<Map>()
+          .map((m) => AvailabilitySlot.fromJson(Map<String, dynamic>.from(m)))
+          .toList();
+    } on DioException catch (e) {
+      _reservationError(e);
     }
   }
 
-  static String _isoDate(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-'
-      '${d.month.toString().padLeft(2, '0')}-'
-      '${d.day.toString().padLeft(2, '0')}';
+  /// `GET /pos/reservations` — search. [search] matches code, name, phone.
+  Future<List<Reservation>> searchReservations({
+    String? search,
+    int? customerId,
+    String? status,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+  }) async {
+    final response = await _dio.get(
+      '/pos/reservations',
+      queryParameters: {
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        if (customerId != null) 'customerId': customerId,
+        if (status != null) 'status': status,
+        if (from != null) 'from': _isoDate(from),
+        if (to != null) 'to': _isoDate(to),
+        'limit': limit.clamp(1, 100),
+      },
+      options: _reservationOptions(),
+    );
+    final body = response.data;
+    final list = body is Map ? (body['data'] ?? body['content']) : body;
+    return (list is List ? list : const [])
+        .whereType<Map>()
+        .map((m) => Reservation.fromJson(Map<String, dynamic>.from(m)))
+        .toList();
+  }
 
-  /// Fetch bookable resources (rooms/chairs/equipment) from the server.
-  /// Best-effort: this is an optional/new endpoint, so a 404 or any network
-  /// error yields an empty list rather than failing the whole master sync.
+  Future<Reservation> fetchReservation(int id) async {
+    try {
+      return _reservationFrom(await _dio.get('/pos/reservations/$id',
+          options: _reservationOptions()));
+    } on DioException catch (e) {
+      _reservationError(e);
+    }
+  }
+
+  Future<Reservation> fetchReservationByCode(String code) async {
+    try {
+      return _reservationFrom(await _dio.get(
+          '/pos/reservations/code/${Uri.encodeComponent(code)}',
+          options: _reservationOptions()));
+    } on DioException catch (e) {
+      _reservationError(e);
+    }
+  }
+
+  /// `POST /pos/reservations`. See [ReservationDraft.toJson] for the body.
+  Future<Reservation> createReservation(Map<String, dynamic> body) async {
+    try {
+      return _reservationFrom(await _dio.post('/pos/reservations',
+          data: body, options: _reservationOptions()));
+    } on DioException catch (e) {
+      _reservationError(e);
+    }
+  }
+
+  /// `PUT /pos/reservations/{id}` — full replace; items keep their `id`.
+  Future<Reservation> updateReservation(
+      int id, Map<String, dynamic> body) async {
+    try {
+      return _reservationFrom(await _dio.put('/pos/reservations/$id',
+          data: body, options: _reservationOptions()));
+    } on DioException catch (e) {
+      _reservationError(e);
+    }
+  }
+
+  /// `PATCH /pos/reservations/{id}/move` — shift the whole reservation,
+  /// optionally onto another resource.
+  Future<Reservation> moveReservation(int id,
+      {required DateTime startAt,
+      int? resourceId,
+      bool overbook = false,
+      bool allowOverlap = false}) async {
+    try {
+      return _reservationFrom(await _dio.patch(
+        '/pos/reservations/$id/move',
+        data: {
+          'startAt': toWireInstant(startAt),
+          if (resourceId != null) 'resourceId': resourceId,
+          if (overbook) 'overbook': true,
+          if (allowOverlap) 'allowOverlap': true,
+        },
+        options: _reservationOptions(),
+      ));
+    } on DioException catch (e) {
+      _reservationError(e);
+    }
+  }
+
+  /// `PATCH /pos/reservations/items/{itemId}` — move or reassign one service.
+  Future<Reservation> updateReservationItem(int itemId,
+      {required DateTime startAt,
+      DateTime? endAt,
+      List<int>? resourceIds,
+      bool overbook = false,
+      bool allowOverlap = false}) async {
+    try {
+      return _reservationFrom(await _dio.patch(
+        '/pos/reservations/items/$itemId',
+        data: {
+          'startAt': toWireInstant(startAt),
+          if (endAt != null) 'endAt': toWireInstant(endAt),
+          if (resourceIds != null) 'resourceIds': resourceIds,
+          if (overbook) 'overbook': true,
+          if (allowOverlap) 'allowOverlap': true,
+        },
+        options: _reservationOptions(),
+      ));
+    } on DioException catch (e) {
+      _reservationError(e);
+    }
+  }
+
+  /// `PATCH /pos/reservations/{id}/status`. CONVERTED is refused here; it is
+  /// set only by an order push carrying `reservationCode`.
+  Future<Reservation> setReservationStatus(int id, String status,
+      {String? reason, bool overbook = false}) async {
+    try {
+      return _reservationFrom(await _dio.patch(
+        '/pos/reservations/$id/status',
+        data: {
+          'status': status,
+          if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+          if (overbook) 'overbook': true,
+        },
+        options: _reservationOptions(),
+      ));
+    } on DioException catch (e) {
+      _reservationError(e);
+    }
+  }
+
+  /// `POST /pos/reservations/blocks` — a break, absence or block on a
+  /// resource. [kind] is BREAK | ABSENCE | BLOCK.
+  Future<void> createAgendaBlock({
+    required int resourceId,
+    required String kind,
+    String? title,
+    required DateTime startAt,
+    required DateTime endAt,
+  }) async {
+    try {
+      await _dio.post(
+        '/pos/reservations/blocks',
+        data: {
+          'resourceId': resourceId,
+          'kind': kind,
+          if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+          'startAt': toWireInstant(startAt),
+          'endAt': toWireInstant(endAt),
+        },
+        options: _reservationOptions(),
+      );
+    } on DioException catch (e) {
+      _reservationError(e);
+    }
+  }
+
+  Future<void> deleteAgendaBlock(int id) async {
+    try {
+      await _dio.delete('/pos/reservations/blocks/$id',
+          options: _reservationOptions());
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return; // already gone
+      _reservationError(e);
+    }
+  }
+
+  static String _isoDate(DateTime d) => dayKey(d);
+
+  /// Fetch bookable resources (staff, rooms, chairs, equipment).
+  /// Best-effort: an older backend without the endpoint, or any network
+  /// error, yields an empty list rather than failing the whole master sync.
   Future<List<Map<String, dynamic>>> fetchResources() async {
     try {
       final response = await _dio.get('/pos/resources');
@@ -1302,10 +1711,11 @@ class ApiService {
   /// merged with the group defaults by the server, so a row here is the
   /// effective rule and everything absent simply follows its group.
   ///
-  /// A 404 is not an error: this endpoint is newer than the POS builds in the
-  /// field, and a server without it just means nobody has overridden anything.
-  /// Anything else still throws — a broken sync should be visible.
-  Future<List<Map<String, dynamic>>> fetchProductComponentGroups() async {
+  /// Null on a 404: the endpoint is newer than some servers in the field, and
+  /// "this server cannot say" must stay distinct from an empty 200, which is
+  /// authoritative (no overrides, no conditional groups). Anything else still
+  /// throws — a broken sync should be visible.
+  Future<List<Map<String, dynamic>>?> fetchProductComponentGroups() async {
     try {
       final response = await _dio.get('/pos/product-component-groups');
       if (response.statusCode == 200) {
@@ -1313,7 +1723,7 @@ class ApiService {
       }
       throw Exception('Failed to fetch product component groups');
     } on DioException catch (e) {
-      if (e.response?.statusCode == 404) return const [];
+      if (e.response?.statusCode == 404) return null;
       throw Exception('Network error: ${e.message ?? 'Failed to fetch product component groups. Check connection.'}');
     } catch (e) {
       throw Exception('Error fetching product component groups: ${e.toString()}');
@@ -1485,6 +1895,29 @@ class ApiService {
     }
   }
 
+  /// Every order of one cash session, each a full snapshot (lines with their
+  /// components, line tombstones, payments). `docs/ORDER_REFRESH_CONTRACT.md`.
+  Future<List<Map<String, dynamic>>> fetchSessionOrders(
+      String sessionCode) async {
+    try {
+      final r = await _dio.get(
+          '/pos/sessions/${Uri.encodeComponent(sessionCode)}/orders');
+      if (r.statusCode == 200) {
+        final data = r.data;
+        final list = data is Map ? data['orders'] : data;
+        return ((list as List?) ?? const [])
+            .map((o) => Map<String, dynamic>.from(o as Map))
+            .toList();
+      }
+      throw Exception('Failed to fetch session orders (${r.statusCode})');
+    } on DioException catch (e) {
+      // A session the server has never seen has no orders there yet.
+      if (e.response?.statusCode == 404) return const [];
+      throw Exception(
+          'Network error: ${e.message ?? 'Failed to fetch session orders. Check connection.'}');
+    }
+  }
+
   /// Fetch a single order by code from server
   Future<Map<String, dynamic>> fetchOrderByCode(String orderCode) async {
     try {
@@ -1509,14 +1942,21 @@ class ApiService {
   /// Throws if the server does not return a 2xx status.
   /// Push a batch of orders. Returns any serial links the server refused —
   /// the orders themselves still saved, so this is not an error path.
-  Future<List<SerialConflictReport>> syncOrders(
-      List<Map<String, dynamic>> orders) async {
+  ///
+  /// [v2] sends to `/pos/v2/orders/bulk`: same body, but every line carries
+  /// its `lineUid` (cancelled lines included) and a known order gets its lines
+  /// merged too, not only its state.
+  Future<OrderPushResult> syncOrders(
+      List<Map<String, dynamic>> orders, {bool v2 = false}) async {
     try {
-      final response = await _dio.post('/pos/orders/bulk', data: {"orders": orders});
+      final response = await _dio.post(
+          v2 ? '/pos/v2/orders/bulk' : '/pos/orders/bulk',
+          data: {"orders": orders});
       if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
         throw Exception('Server returned status ${response.statusCode} for bulk orders sync');
       }
-      return SerialConflictReport.listFrom(response.data);
+      return OrderPushResult(SerialConflictReport.listFrom(response.data),
+          ReservationLink.listFrom(response.data));
     } on DioException catch (e) {
       throw Exception('Failed to sync orders: ${e.message ?? 'Check connection.'}');
     } catch (e) {
@@ -1528,14 +1968,20 @@ class ApiService {
   /// Throws if the server does not return a 2xx status.
   /// Push one order. Same conflict contract as the bulk path, so a batch of
   /// one behaves identically to a batch of two.
-  Future<List<SerialConflictReport>> syncSingleOrder(
-      String orderCode, Map<String, dynamic> orderData) async {
+  ///
+  /// [v2] sends to `/pos/v2/orders/{code}` — see [syncOrders].
+  Future<OrderPushResult> syncSingleOrder(
+      String orderCode, Map<String, dynamic> orderData,
+      {bool v2 = false}) async {
     try {
-      final response = await _dio.put('/pos/orders/$orderCode', data: orderData);
+      final response = await _dio.put(
+          v2 ? '/pos/v2/orders/$orderCode' : '/pos/orders/$orderCode',
+          data: orderData);
       if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
         throw Exception('Server returned status ${response.statusCode} for order $orderCode sync');
       }
-      return SerialConflictReport.listFrom(response.data);
+      return OrderPushResult(SerialConflictReport.listFrom(response.data),
+          ReservationLink.listFrom(response.data, orderCode: orderCode));
     } on DioException catch (e) {
       throw Exception('Failed to sync order: ${e.message ?? 'Check connection.'}');
     } catch (e) {
@@ -1902,6 +2348,91 @@ class ApiService {
     }
   }
 
+  /// The order, fresh from the server, for a refund. Refunds are online-only:
+  /// the server's copy is the truth (another till may have changed or refunded
+  /// it), so any failure is reported — never papered over with a local copy.
+  ///
+  /// Throws [RefundLookupException]: `notFound` on 404, `offline` otherwise.
+  Future<Map<String, dynamic>> fetchOrderForRefund(String orderCode) async {
+    try {
+      final response = await _dio.get(
+        '/pos/orders/${Uri.encodeComponent(orderCode)}',
+        options: Options(validateStatus: (c) => c != null && c < 500),
+      );
+      if (response.statusCode == 404) {
+        throw const RefundLookupException(RefundLookupFailure.notFound);
+      }
+      if (response.statusCode == 200 && response.data is Map) {
+        return Map<String, dynamic>.from(response.data as Map);
+      }
+      throw RefundLookupException(RefundLookupFailure.offline,
+          'HTTP ${response.statusCode}');
+    } on RefundLookupException {
+      rethrow;
+    } catch (e) {
+      throw RefundLookupException(RefundLookupFailure.offline, '$e');
+    }
+  }
+
+  /// Every refund the server holds for [orderCode], from ALL tills — strict.
+  ///
+  /// Unlike [fetchRefunds], a failure throws: "could not ask" must not read as
+  /// "no earlier refunds", or a refund given on another till would not count
+  /// against the cap. 404 = the order has none.
+  Future<List<Map<String, dynamic>>> fetchRefundsForRefund(
+      String orderCode) async {
+    try {
+      final response = await _dio.get(
+        '/pos/refunds',
+        queryParameters: {'orderCode': orderCode},
+        options: Options(validateStatus: (c) => c != null && c < 500),
+      );
+      if (response.statusCode == 404) return const [];
+      final data = response.data;
+      if (response.statusCode == 200) {
+        if (data is List) return List<Map<String, dynamic>>.from(data);
+        if (data is Map && data['content'] is List) {
+          return List<Map<String, dynamic>>.from(data['content'] as List);
+        }
+        if (data == null || data == '') return const [];
+      }
+      throw RefundLookupException(RefundLookupFailure.offline,
+          'HTTP ${response.statusCode}');
+    } on RefundLookupException {
+      rethrow;
+    } catch (e) {
+      throw RefundLookupException(RefundLookupFailure.offline, '$e');
+    }
+  }
+
+  /// One page of refunds across the business, newest first:
+  /// `GET /pos/refunds?from=&to=&page=&size=`. Returns null when the server
+  /// does not support the listing yet (it answers the old `orderCode` form
+  /// only), so the screen can say so instead of showing an empty list.
+  Future<Map<String, dynamic>?> fetchRefundsPage({
+    required DateTime from,
+    required DateTime to,
+    int page = 0,
+    int size = 50,
+  }) async {
+    final response = await _dio.get(
+      '/pos/refunds',
+      queryParameters: {
+        'from': from.toUtc().toIso8601String(),
+        'to': to.toUtc().toIso8601String(),
+        'page': page,
+        'size': size,
+      },
+      options: Options(validateStatus: (c) => c != null && c < 500),
+    );
+    final data = response.data;
+    if (response.statusCode == 200 && data is Map && data['content'] is List) {
+      return Map<String, dynamic>.from(data);
+    }
+    // 400 (missing orderCode), 404, or a bare list: not the paged listing.
+    return null;
+  }
+
   /// Refunds the server holds for an order. GET /pos/refunds?orderCode=...
   Future<List<Map<String, dynamic>>> fetchRefunds(String orderCode) async {
     try {
@@ -2189,6 +2720,125 @@ class ApiService {
       return null;
     } catch (_) {
       return null;
+    }
+  }
+
+  // ========== ORDER TAGS ==========
+
+  /// `GET /pos/order-tags` → the business's tags plus the shared ones. Null
+  /// when the server has no such route (older build): keep the cached list.
+  Future<List<Map<String, dynamic>>?> fetchOrderTags() async {
+    final response = await _dio.get(
+      '/pos/order-tags',
+      options: Options(validateStatus: (c) => c != null && c < 500),
+    );
+    if (response.statusCode == 404) return null;
+    final data = response.data;
+    if (response.statusCode == 200 && data is Map && data['tags'] is List) {
+      return List<Map<String, dynamic>>.from(data['tags'] as List);
+    }
+    throw Exception('Order tags: HTTP ${response.statusCode}');
+  }
+
+  /// `PUT /pos/orders/{code}/tags` — full replace.
+  ///
+  /// On success `stored` is the set the server ACTUALLY kept: a tag deleted
+  /// in the back office while the push was queued is dropped silently, and
+  /// the till must take that set rather than keep showing the deleted one.
+  /// `error` is `'NOT_ON_SERVER'` on 404 (push the order first) or the
+  /// server's message on 400 (a tag that never existed, another business's,
+  /// more than 10). Throws on a transport failure so the caller retries.
+  Future<({List<int>? stored, String? error})> putOrderTags(
+      String orderCode, List<int> tagIds) async {
+    final response = await _dio.put(
+      '/pos/orders/${Uri.encodeComponent(orderCode)}/tags',
+      data: {'tagIds': tagIds},
+      options: Options(validateStatus: (c) => c != null && c < 500),
+    );
+    if (response.statusCode == 404) {
+      return (stored: null, error: 'NOT_ON_SERVER');
+    }
+    if (response.statusCode == 400) {
+      final d = response.data;
+      return (
+        stored: null,
+        error: (d is Map ? (d['message'] ?? d['error']) : d)?.toString() ??
+            'HTTP 400'
+      );
+    }
+    if (response.statusCode != null &&
+        response.statusCode! >= 200 &&
+        response.statusCode! < 300) {
+      final d = response.data;
+      // An older/odd body without the stored set: assume ours was kept.
+      final stored = d is Map ? tagIdsFromSnapshot(Map<String, dynamic>.from(d)) : null;
+      return (stored: stored ?? tagIds, error: null);
+    }
+    throw Exception('Order tags push: HTTP ${response.statusCode}');
+  }
+
+  // ========== REFUND POLICY ==========
+
+  /// `GET /pos/refund-policy` → stored. 200 = the effective policy, 204 =
+  /// nothing configured (defaults). Returns false when it could not be read
+  /// (offline, an older server without the route → 404): the cached policy
+  /// stands, which is what a till refunding offline needs.
+  Future<bool> refreshRefundPolicy() async {
+    if (isDemoMode()) return false;
+    try {
+      final response = await _dio.get('/pos/refund-policy');
+      if (response.statusCode == 204 ||
+          (response.statusCode == 200 && response.data == null)) {
+        await RefundPolicyStore(_prefs).apply(null);
+        return true;
+      }
+      if (response.statusCode == 200 && response.data is Map) {
+        await RefundPolicyStore(_prefs).apply(response.data as Map);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      posLog('Refund policy fetch skipped: $e');
+      return false;
+    }
+  }
+
+  // ========== REMOTE CONSOLE ==========
+
+  /// POST /pos/remote/{requestId}/result — the one reply to a `pos-command`
+  /// that carried a requestId. Never retried: 404 = expired, 403 = another
+  /// terminal's request, 409 = already answered, and anything else would only
+  /// answer twice.
+  Future<void> postRemoteResult(
+      String requestId, Map<String, dynamic> body) async {
+    try {
+      await _dio.post(
+        '/pos/remote/${Uri.encodeComponent(requestId)}/result',
+        data: body,
+      );
+    } on DioException catch (e) {
+      posLog('Remote reply $requestId dropped: '
+          '${e.response?.statusCode ?? e.type}');
+    } catch (e) {
+      posLog('Remote reply $requestId dropped: $e');
+    }
+  }
+
+  /// PUT /pos/remote-access — how support reaches this till. True on 2xx.
+  /// The body may carry the remote-support password: it is never logged.
+  Future<bool> putRemoteAccess(Map<String, dynamic> body) async {
+    if (isDemoMode()) return false;
+    try {
+      final r = await _dio.put('/pos/remote-access', data: body);
+      final code = r.statusCode ?? 0;
+      return code >= 200 && code < 300;
+    } on DioException catch (e) {
+      posLog('Remote access report refused: '
+          '${e.response?.statusCode ?? e.type}');
+      return false;
+    } catch (e) {
+      posLog('Remote access report failed: ${e.runtimeType}');
+      return false;
     }
   }
 

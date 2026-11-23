@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:loggecrea/loggecrea.dart';
 
 import '../data/database/app_database.dart';
 import '../domain/models/order_models.dart';
 import 'daily_summary_service.dart';
+import 'session_service.dart';
 import 'z_service.dart';
 import '../providers/database_providers.dart';
 import '../providers/settings_provider.dart';
@@ -127,7 +129,8 @@ void notifyRemovedItems(
   } catch (_) {}
 }
 
-/// A whole order voided.
+/// A whole order voided — or [deleted] outright, which takes it off the
+/// books just the same.
 void notifyOrderCancelled(
   ProviderReader read, {
   required String orderCode,
@@ -136,6 +139,7 @@ void notifyOrderCancelled(
   String? byName,
   int? byId,
   bool afterKitchen = false,
+  bool deleted = false,
 }) {
   try {
     _send(
@@ -147,6 +151,7 @@ void notifyOrderCancelled(
         orderCode: orderCode,
         amount: amount,
         afterKitchen: afterKitchen,
+        deleted: deleted,
         reason: reason,
         cashierName: byName,
         cashierId: byId,
@@ -156,6 +161,94 @@ void notifyOrderCancelled(
       refId: orderCode,
     );
   } catch (_) {}
+}
+
+Future<String?> _userName(AppDatabase database, int userId) async {
+  final u = await (database.select(database.users)
+        ..where((u) => u.id.equals(userId)))
+      .getSingleOrNull();
+  if (u == null) return null;
+  final dn = u.displayName;
+  return (dn != null && dn.isNotEmpty)
+      ? dn
+      : '${u.firstName} ${u.lastName}'.trim();
+}
+
+/// `POS_SESSION_PAUSED` ([pausedAt] null) or `POS_SESSION_RESUMED` (with the
+/// moment it was paused) for [sessionId]. Call only on a real change — the
+/// SessionService pause / resume return values say so.
+Future<void> notifySessionPauseChange(
+  ProviderReader read,
+  int sessionId, {
+  DateTime? pausedAt,
+}) async {
+  try {
+    final database = read(databaseProvider);
+    final session = await SessionService(database).getSessionById(sessionId);
+    if (session == null) return;
+    final cashier = await _userName(database, session.cashierId) ??
+        'Cashier #${session.cashierId}';
+    final actor = read(currentUserProvider);
+    _send(
+      read,
+      pausedAt == null ? 'POS_SESSION_PAUSED' : 'POS_SESSION_RESUMED',
+      NotificationParams.sessionPauseChange(
+        terminalName: _terminal(read),
+        sessionCode: session.code,
+        cashierName: cashier,
+        cashierId: session.cashierId,
+        byName: actor != null && actor.id != session.cashierId
+            ? actor.effectiveDisplayName
+            : null,
+        at: DateTime.now(),
+        pausedAt: pausedAt,
+      ),
+      refId: sessionId.toString(),
+    );
+  } catch (e) {
+    Logger.instance.warning('session pause notification failed: $e');
+  }
+}
+
+/// `POS_SESSION_CLOSED` for [sessionId], after it ended. [report] is the
+/// session's report when the caller already built one (the close dialog
+/// printed it); otherwise it is built here.
+Future<void> notifySessionClosed(
+  ProviderReader read,
+  int sessionId, {
+  DailySummaryReport? report,
+}) async {
+  try {
+    final database = read(databaseProvider);
+    final r = report ??
+        await DailySummaryService(database).generateSessionReport(sessionId);
+    if (r.sessions.isEmpty) return;
+    final s = r.sessions.first;
+    final session = await SessionService(database).getSessionById(sessionId);
+    final z = session?.zId == null
+        ? null
+        : await ZService(database).getById(session!.zId!);
+    _send(
+      read,
+      'POS_SESSION_CLOSED',
+      NotificationParams.sessionClosed(
+        terminalName: _terminal(read),
+        report: s,
+        closedAt: s.endedAt ?? DateTime.now(),
+        // The same expected-cash definition the close dialog and the printed
+        // Z use, so Expected / Counted / Variance agree on the mobile card.
+        expectedCash: s.expectedCash,
+        currency: _currency(read),
+        sections: r.sections,
+        zDay: z == null ? null : ZService.labelOf(z).zDay,
+        zSeq: z?.zSeq,
+        autoClosed: session?.autoClosed ?? false,
+      ),
+      refId: sessionId.toString(),
+    );
+  } catch (e) {
+    Logger.instance.warning('session-closed notification failed: $e');
+  }
 }
 
 /// `POS_Z_CLOSED` for [zId], summed from its sessions. Call after the close.
@@ -176,18 +269,8 @@ Future<void> notifyZClosed(ProviderReader read, int zId) async {
       endDate: closedAt,
       sessionIds: sessions.map((s) => s.id).toList(),
     );
-    String? closedBy;
-    if (z.endedBy != null) {
-      final u = await (database.select(database.users)
-            ..where((u) => u.id.equals(z.endedBy!)))
-          .getSingleOrNull();
-      if (u != null) {
-        final dn = u.displayName;
-        closedBy = (dn != null && dn.isNotEmpty)
-            ? dn
-            : '${u.firstName} ${u.lastName}'.trim();
-      }
-    }
+    final closedBy =
+        z.endedBy == null ? null : await _userName(database, z.endedBy!);
     final label = ZService.labelOf(z);
     _send(
       read,

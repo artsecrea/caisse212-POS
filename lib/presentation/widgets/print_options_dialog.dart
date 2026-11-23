@@ -5,6 +5,7 @@ import '../../domain/models/order_models.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/device_providers.dart';
 import '../../services/printing_service.dart';
+import '../../utils/app_localizations.dart';
 import '../../utils/snackbar_helper.dart';
 
 class PrintOptionsDialog extends ConsumerStatefulWidget {
@@ -65,8 +66,9 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
   int get _unprintedCount => widget.order.items.where(_isUnprinted).length;
 
   Future<void> _handlePrint() async {
+    final l10n = AppLocalizations.of(context)!;
     if (!_printReceipt && !_printKds) {
-      setState(() => _error = 'Select at least one print option.');
+      setState(() => _error = l10n.translate('select_at_least_one_print'));
       return;
     }
     setState(() {
@@ -108,20 +110,20 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
           await _incrementPrintCount();
           widget.onPrintComplete?.call();
           Navigator.of(context).pop(true);
-          SnackBarHelper.showToast('Printed successfully', kind: ToastKind.success, duration: Duration(seconds: 2));
+          SnackBarHelper.showToast(l10n.translate('printed_successfully'), kind: ToastKind.success, duration: Duration(seconds: 2));
         } else {
           setState(() {
             _isPrinting = false;
             _error = !receiptSuccess && !kdsSuccess
-                ? 'Both receipt and KDS failed. Check connections.'
+                ? l10n.translate('print_failed_both')
                 : !receiptSuccess
-                    ? 'Receipt failed. Check receipt printer.'
-                    : 'KDS failed. Check KDS printer.';
+                    ? l10n.translate('print_failed_receipt')
+                    : l10n.translate('print_failed_kds');
           });
         }
       }
     } catch (e) {
-      if (mounted) setState(() { _isPrinting = false; _error = 'Error: $e'; });
+      if (mounted) setState(() { _isPrinting = false; _error = '${l10n.translate('error')}: $e'; });
     }
   }
 
@@ -143,6 +145,7 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
     final printingService = ref.watch(printingServiceProvider);
     final config = printingService.config;
     final stationsAsync = ref.watch(stationListProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     final receiptReady = config.receiptPrinterName != null;
     final kdsReady = config.kdsEnabled && config.kdsPrinterName != null;
@@ -167,7 +170,10 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Order #${widget.order.orderId ?? "New"}',
+                      l10n.translate('print_dialog_order_title').replaceAll(
+                          '{0}',
+                          widget.order.orderId?.toString() ??
+                              l10n.translate('new_order_label')),
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 17,
@@ -178,7 +184,7 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                   IconButton(
                     icon: const Icon(Icons.settings_outlined,
                         color: Colors.white70, size: 20),
-                    tooltip: 'Configure Printers',
+                    tooltip: l10n.translate('configure_printers'),
                     onPressed: () {
                       Navigator.of(context).pop();
                       Navigator.of(context).pushNamed('/printers');
@@ -205,7 +211,7 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                     const SizedBox(height: 16),
 
                     Text(
-                      'Print options',
+                      l10n.translate('print_options_heading'),
                       style: theme.textTheme.labelLarge?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                         letterSpacing: 0.5,
@@ -216,10 +222,10 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                     // Receipt card
                     _PrintTypeCard(
                       icon: Icons.receipt_long,
-                      title: 'Customer Receipt',
+                      title: l10n.translate('customer_receipt'),
                       subtitle: receiptReady
                           ? config.receiptPrinterName!
-                          : 'No printer configured',
+                          : l10n.translate('no_printer_configured'),
                       ready: receiptReady,
                       selected: _printReceipt,
                       disabled: _isPrinting || !receiptReady,
@@ -232,12 +238,12 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                     // KDS card
                     _PrintTypeCard(
                       icon: Icons.restaurant,
-                      title: 'Kitchen Ticket (KDS)',
+                      title: '${l10n.translate('kitchen_ticket')} (KDS)',
                       subtitle: !config.kdsEnabled
-                          ? 'KDS disabled in settings'
+                          ? l10n.translate('kds_disabled_in_settings')
                           : kdsReady
                               ? config.kdsPrinterName!
-                              : 'No printer configured',
+                              : l10n.translate('no_printer_configured'),
                       ready: kdsReady,
                       selected: _printKds,
                       disabled: _isPrinting || !kdsReady,
@@ -302,7 +308,7 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                   TextButton(
                     onPressed:
                         _isPrinting ? null : () => Navigator.of(context).pop(false),
-                    child: const Text('Cancel'),
+                    child: Text(l10n.translate('cancel')),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton.icon(
@@ -321,7 +327,9 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
                                 strokeWidth: 2, color: Colors.white),
                           )
                         : const Icon(Icons.print, size: 18),
-                    label: Text(_isPrinting ? 'Printing…' : 'Print'),
+                    label: Text(_isPrinting
+                        ? l10n.translate('printing_in_progress')
+                        : l10n.translate('print')),
                   ),
                 ],
               ),
@@ -342,6 +350,7 @@ class _OrderSummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -358,7 +367,7 @@ class _OrderSummaryCard extends StatelessWidget {
               Icon(Icons.receipt, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
               const SizedBox(width: 6),
               Text(
-                'Order Summary',
+                l10n.translate('order_summary'),
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
@@ -374,12 +383,15 @@ class _OrderSummaryCard extends StatelessWidget {
             children: [
               _SummaryChip(
                   icon: Icons.shopping_bag_outlined,
-                  label: '${order.items.length} items'),
+                  label: l10n
+                      .translate('items_count')
+                      .replaceAll('{0}', '${order.items.length}')),
               _SummaryChip(
                   icon: order.type == 'DINE_IN'
                       ? Icons.restaurant
                       : Icons.takeout_dining,
-                  label: order.type == 'DINE_IN' ? 'Dine In' : 'Take Away'),
+                  label: l10n.translate(
+                      order.type == 'DINE_IN' ? 'dine_in' : 'take_away')),
               if (order.tableName != null)
                 _SummaryChip(
                     icon: Icons.table_bar, label: order.tableName!),
@@ -570,11 +582,12 @@ class _KdsOptions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Print mode',
+          l10n.translate('print_mode'),
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
@@ -587,7 +600,7 @@ class _KdsOptions extends StatelessWidget {
           children: [
             Expanded(
               child: _ModeButton(
-                label: 'New items only',
+                label: l10n.translate('new_items_only'),
                 count: unprintedCount,
                 selected: mode == KdsPrintMode.modificationsOnly,
                 color: theme.primaryColor,
@@ -599,7 +612,7 @@ class _KdsOptions extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: _ModeButton(
-                label: 'Full order',
+                label: l10n.translate('full_order'),
                 count: totalCount,
                 selected: mode == KdsPrintMode.full,
                 color: theme.primaryColor,
@@ -659,7 +672,9 @@ class _ModeButton extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              '$count item${count != 1 ? 's' : ''}',
+              AppLocalizations.of(context)!
+                  .translate('items_count')
+                  .replaceAll('{0}', '$count'),
               style: TextStyle(
                 fontSize: 11,
                 color: selected ? color.withValues(alpha: 0.8) : Theme.of(context).colorScheme.onSurfaceVariant,
@@ -691,12 +706,13 @@ class _StationSelector extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final allSelected = selectedIds.isEmpty;
+    final l10n = AppLocalizations.of(context)!;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Station',
+          l10n.translate('station'),
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
@@ -711,7 +727,7 @@ class _StationSelector extends StatelessWidget {
           children: [
             // "All" chip
             _StationChip(
-              label: 'All stations',
+              label: l10n.translate('all_stations'),
               selected: allSelected,
               color: theme.primaryColor,
               onTap: disabled ? null : onClear,
@@ -732,7 +748,9 @@ class _StationSelector extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
-              '${selectedIds.length} station${selectedIds.length != 1 ? 's' : ''} selected',
+              l10n
+                  .translate('stations_selected')
+                  .replaceAll('{0}', '${selectedIds.length}'),
               style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ),

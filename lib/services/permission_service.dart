@@ -108,6 +108,10 @@ class Permissions {
   static const String refundsCreate = 'pos:refunds:create';
   static const String refundsWaste = 'pos:refunds:waste';
   static const String refundsAmountOverride = 'pos:refunds:amount:override';
+  // Refund policy (seeded like V148: admin roles + POS_SUPERVISOR, not the
+  // cashier, who gets the supervisor-approval step instead).
+  static const String refundsClosedZ = 'pos:refunds:closed-z';
+  static const String refundsOverride = 'pos:refunds:override';
 
   /// Every refund token, used to detect a role that predates V148.
   static const List<String> refundTokens = [
@@ -115,6 +119,8 @@ class Permissions {
     refundsCreate,
     refundsWaste,
     refundsAmountOverride,
+    refundsClosedZ,
+    refundsOverride,
   ];
 
   // Printing

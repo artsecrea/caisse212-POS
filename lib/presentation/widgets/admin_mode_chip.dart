@@ -40,15 +40,18 @@ class AdminModeChip extends ConsumerWidget {
       );
     }
 
+    final scheme = Theme.of(context).colorScheme;
+    final master = elevation.viaMasterPassword;
+    final fg = master ? scheme.onTertiary : Colors.white;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: ActionChip(
-        avatar: const Icon(Icons.shield, size: 18, color: Colors.white),
-        backgroundColor: Colors.green.shade600,
-        labelStyle: const TextStyle(
-            color: Colors.white, fontWeight: FontWeight.w600),
+        avatar: Icon(master ? Icons.admin_panel_settings : Icons.shield,
+            size: 18, color: fg),
+        backgroundColor: master ? scheme.tertiary : Colors.green.shade600,
+        labelStyle: TextStyle(color: fg, fontWeight: FontWeight.w600),
         label: Text(
-          l10n.translate('admin_mode_active')
+          l10n.translate(master ? 'master_password_active' : 'admin_mode_active')
               .replaceAll('{0}', elevation.adminUsername),
         ),
         onPressed: () => _revoke(context, ref),

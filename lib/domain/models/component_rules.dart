@@ -6,6 +6,8 @@
 /// `test/component_rules_test.dart`.
 library;
 
+import 'dart:convert';
+
 /// How a group is picked from.
 enum ComponentSelectionType {
   /// Radio. At most one component, always quantity 1.
@@ -63,6 +65,10 @@ class ComponentGroupRule {
   final int freeQuantity;
   final int displayOrder;
 
+  /// Component ids, from other groups, any one of which makes this group
+  /// appear. Empty means always shown. See [visibleGroupIds].
+  final List<int> visibleWhenComponentIds;
+
   const ComponentGroupRule({
     required this.groupId,
     required this.name,
@@ -72,7 +78,10 @@ class ComponentGroupRule {
     this.maxSelection,
     this.freeQuantity = 0,
     this.displayOrder = 0,
+    this.visibleWhenComponentIds = const [],
   });
+
+  bool get isConditional => visibleWhenComponentIds.isNotEmpty;
 
   /// A group is required when it demands at least one unit. There is no
   /// separate flag — this *is* the flag.
@@ -93,6 +102,7 @@ class ComponentGroupRule {
     int? maxSelection,
     int? freeQuantity,
     int? displayOrder,
+    List<int>? visibleWhenComponentIds,
   }) {
     return ComponentGroupRule(
       groupId: groupId,
@@ -103,8 +113,74 @@ class ComponentGroupRule {
       maxSelection: maxSelection ?? this.maxSelection,
       freeQuantity: freeQuantity ?? this.freeQuantity,
       displayOrder: displayOrder ?? this.displayOrder,
+      visibleWhenComponentIds:
+          visibleWhenComponentIds ?? this.visibleWhenComponentIds,
     );
   }
+}
+
+/// The wire value of `visibleWhenComponentIds` as stored locally: a JSON
+/// array, or null when there is nothing to store. Anything that is not a list
+/// of numbers is treated as absent, i.e. the group is unconditional.
+String? encodeVisibleWhen(Object? raw) {
+  if (raw is! List) return null;
+  final ids = [for (final v in raw) if (v is num) v.toInt()];
+  return ids.isEmpty ? null : jsonEncode(ids);
+}
+
+List<int> decodeVisibleWhen(String? stored) {
+  if (stored == null || stored.isEmpty) return const [];
+  try {
+    final raw = jsonDecode(stored);
+    if (raw is! List) return const [];
+    return [for (final v in raw) if (v is num) v.toInt()];
+  } catch (_) {
+    return const [];
+  }
+}
+
+/// Which groups are on screen for the current selection.
+///
+/// A conditional group appears once any of its triggers is selected, but a
+/// trigger only counts while its own group is visible: "Menu" ticked in a
+/// group that is itself hidden opens nothing. Hence the fixpoint rather than
+/// one pass, so chains (Menu -> Boisson -> Taille) resolve in any order.
+///
+/// [groupOfComponent] holds every component this product offers, mapped to
+/// its group (null = ungrouped, which always counts as visible). A trigger the
+/// product does not offer can never fire. A group with no rule is
+/// unconditional. The ungrouped bucket (null) is always visible.
+///
+/// While a group is hidden it does not exist for the line: its minimum does
+/// not apply, its defaults are not seeded, and no row of it, not even a zero,
+/// is sent. Enforcing that is the caller's job; this only answers "which".
+Set<int?> visibleGroupIds({
+  required Map<int?, ComponentGroupRule> rules,
+  required Map<int, int?> groupOfComponent,
+  required Set<int> selectedComponentIds,
+}) {
+  final offered = groupOfComponent.values.toSet()..add(null);
+  final visible = <int?>{
+    for (final g in offered)
+      if (!(rules[g]?.isConditional ?? false)) g,
+  };
+
+  var changed = true;
+  while (changed) {
+    changed = false;
+    for (final g in offered) {
+      if (visible.contains(g)) continue;
+      final fires = rules[g]!.visibleWhenComponentIds.any((t) =>
+          selectedComponentIds.contains(t) &&
+          groupOfComponent.containsKey(t) &&
+          visible.contains(groupOfComponent[t]));
+      if (fires) {
+        visible.add(g);
+        changed = true;
+      }
+    }
+  }
+  return visible;
 }
 
 /// One chosen component within a group.

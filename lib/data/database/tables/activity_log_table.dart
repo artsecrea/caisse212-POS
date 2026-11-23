@@ -43,6 +43,8 @@ class ActivityAction {
   // Session-level "admin mode" elevation toggle.
   static const String adminElevationGranted = 'ADMIN_ELEVATION_GRANTED';
   static const String adminElevationRevoked = 'ADMIN_ELEVATION_REVOKED';
+  // The master password was used instead of a user's own password.
+  static const String masterPasswordUsed = 'MASTER_PASSWORD_USED';
   // Remote command received via SSE from the server.
   static const String posCommand = 'POS_COMMAND';
   // Cashier rang a waiter's phone over the LAN push channel.

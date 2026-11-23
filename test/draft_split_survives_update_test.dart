@@ -101,14 +101,14 @@ void main() {
     final order = (await repo.getOrderById(orderId))!;
     await repo.updateOrder(order, queueSyncOperation: false);
 
+    // Lines are updated in place since the duplication fix, so the ids the
+    // claims point at are the same rows they always were.
     final after = await unpaidRowIds(orderId);
-    expect(after, isNot(before),
-        reason: 'the re-insert really does hand out new ids — '
-            'without that this test would pass for the wrong reason');
+    expect(after, before, reason: 'a save no longer re-mints line ids');
 
     final rows = await draftRows(orderId);
     expect(rows.map((r) => r.orderProductId).toSet(), after.toSet(),
-        reason: 'the claims must have been re-filed against the new ids');
+        reason: 'every claim still points at a live line');
 
     final reloaded = (await repo.getOrderById(orderId))!;
     final tickets = rebuild(reloaded, rows);

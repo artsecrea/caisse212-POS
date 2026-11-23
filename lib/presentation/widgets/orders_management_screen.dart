@@ -1,3 +1,4 @@
+import 'dart:async';
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/orders_management_screen.dart
 
 import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
@@ -24,6 +25,8 @@ import 'delivery_fee_totals_chip.dart';
 import 'permission_guard.dart';
 import 'order_details_dialog.dart';
 import 'refund_dialog.dart';
+import 'order_tag_widgets.dart';
+import '../../domain/models/order_tag_codec.dart';
 import 'order_refunds_panel.dart';
 import 'waiter_settlement_dialog.dart';
 import '../../utils/snackbar_helper.dart';
@@ -50,6 +53,9 @@ class _OrdersManagementScreenState
   // Applied as an in-memory post-filter in the repo because it requires
   // comparing computed sums (tickets vs order line items).
   bool _unpaidOnly = false;
+  // Order tags: ANY of these, plus untagged orders when [_untaggedOnly].
+  Set<int> _tagFilter = {};
+  bool _untaggedOnly = false;
   // Filter orders to those whose `orders.waiterId` matches. null = no filter
   // (show all). Drives the dropdown above the table and is the trigger for
   // the "Settle waiter" affordance in Phase 3.
@@ -177,7 +183,12 @@ class _OrdersManagementScreenState
     }
   }
 
+  // Each load's ticket: a page or filter clicked before the previous load
+  // returns must not be overwritten by it.
+  int _loadSeq = 0;
+
   Future<void> _loadOrders() async {
+    final seq = ++_loadSeq;
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -220,16 +231,18 @@ class _OrdersManagementScreenState
         endDate: _endDate,
         sortColumn: _sortColumn,
         sortAscending: _sortAscending,
+        tagIds: _tagFilter,
+        untagged: _untaggedOnly,
       );
 
-      if (mounted) {
+      if (mounted && seq == _loadSeq) {
         setState(() {
           _paginatedOrders = result;
           _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && seq == _loadSeq) {
         setState(() {
           _errorMessage = e.toString();
           _isLoading = false;
@@ -299,6 +312,14 @@ class _OrdersManagementScreenState
   Widget build(BuildContext context) {
     final currency = ref.watch(currencySymbolProvider);
     final l10n = AppLocalizations.of(context)!;
+    // Admin mode widens the order scope (every session, every cashier), so
+    // toggling it from this screen's chip must re-run the query, not just
+    // repaint the rows already loaded.
+    ref.listen(adminElevationProvider, (prev, next) {
+      if ((prev == null) == (next == null)) return;
+      _currentPage = 0;
+      _loadOrders();
+    });
 
     return Scaffold(
       appBar: _buildAppBar(l10n),
@@ -627,6 +648,8 @@ class _OrdersManagementScreenState
     return _statusFilter != 'ALL' ||
         _typeFilter != 'ALL' ||
         _unpaidOnly ||
+        _tagFilter.isNotEmpty ||
+        _untaggedOnly ||
         _searchQuery.isNotEmpty ||
         _selectedCustomerId != null ||
         _selectedTableId != null ||
@@ -640,6 +663,8 @@ class _OrdersManagementScreenState
       _statusFilter = 'ALL';
       _typeFilter = 'ALL';
       _unpaidOnly = false;
+      _tagFilter = {};
+      _untaggedOnly = false;
       _searchQuery = '';
       _searchController.clear();
       _selectedCustomerId = null;
@@ -1037,6 +1062,17 @@ class _OrdersManagementScreenState
           _onFilterChanged();
         },
       ),
+      // Order tags — ANY of the chosen ones, and/or untagged orders.
+      FilterChip(
+        avatar: const Icon(Icons.label_outline, size: 16),
+        label: Text(
+            _tagFilter.isEmpty && !_untaggedOnly
+                ? l10n.translate('order_tags')
+                : '${l10n.translate('order_tags')} (${_tagFilter.length + (_untaggedOnly ? 1 : 0)})',
+            style: const TextStyle(fontSize: 11)),
+        selected: _tagFilter.isNotEmpty || _untaggedOnly,
+        onSelected: (_) => _pickTagFilter(l10n),
+      ),
       // Waiter dropdown — independent filter. Driving state for the
       // "Settle waiter" affordance which appears only when a single
       // waiter is selected.
@@ -1045,6 +1081,70 @@ class _OrdersManagementScreenState
       // settlement dialog (cash-only batch pay + slip print).
       if (_waiterFilter != null) _buildSettleWaiterButton(l10n),
     ];
+  }
+
+  Future<void> _pickTagFilter(AppLocalizations l10n) async {
+    final chosen = <int>{..._tagFilter};
+    var untagged = _untaggedOnly;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Consumer(builder: (ctx, ref, _) {
+        final catalogue = ref.watch(orderTagsProvider).valueOrNull ?? const [];
+        return StatefulBuilder(builder: (ctx, setLocal) {
+          return AlertDialog(
+            title: Text(l10n.translate('order_tags_filter')),
+            content: SizedBox(
+              width: 420,
+              child: Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final t in catalogue)
+                  FilterChip(
+                    label: Text(t.label,
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    avatar: CircleAvatar(
+                        backgroundColor: orderTagColor(ctx, t), radius: 7),
+                    selected: chosen.contains(t.id),
+                    onSelected: (on) => setLocal(
+                        () => on ? chosen.add(t.id) : chosen.remove(t.id)),
+                  ),
+                FilterChip(
+                  label: Text(l10n.translate('order_tags_untagged')),
+                  selected: untagged,
+                  onSelected: (on) => setLocal(() => untagged = on),
+                ),
+              ]),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => setLocal(() {
+                  chosen.clear();
+                  untagged = false;
+                }),
+                child: Text(l10n.translate('order_tags_clear')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(l10n.translate('apply')),
+              ),
+            ],
+          );
+        });
+      }),
+    );
+    if (ok != true) return;
+    _tagFilter = chosen;
+    _untaggedOnly = untagged;
+    _onFilterChanged();
+  }
+
+  /// Re-tag a saved order. Allowed whatever its session or Z: tags move no
+  /// money.
+  Future<void> _tagOrder(Order order) async {
+    final ids = await showOrderTagPicker(
+        context: context, ref: ref, initial: parseTagIds(order.tagIds));
+    if (ids == null || !mounted) return;
+    await ref.read(orderRepositoryProvider).setOrderTags(order.id, ids);
+    unawaited(ref.read(dataSyncServiceProvider).pushOrderTags());
+    _loadOrders();
   }
 
   Widget _buildSettleWaiterButton(AppLocalizations l10n) {
@@ -1400,6 +1500,7 @@ class _OrdersManagementScreenState
           ..._orderNoBadge(order),
           Text(order.code, style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(width: 8),
+          OrderTagChips(tagIds: parseTagIds(order.tagIds), inline: true),
           if (isZLocked)
             const Tooltip(
               message: 'Z-Report locked',
@@ -1448,26 +1549,34 @@ class _OrdersManagementScreenState
             itemBuilder: (context) {
               final permissionService = ref.read(permissionServiceProvider);
               final canUpdate = permissionService.hasPermission(Permissions.ordersUpdate);
-              final canDelete = permissionService.hasPermission(Permissions.ordersDelete);
               final canCancel = permissionService.hasPermission(Permissions.ordersCancel);
               final canPay = permissionService.hasPermission(Permissions.ticketsCreate);
               return [
                 PopupMenuItem(value: 'view', child: Row(children: [const Icon(Icons.visibility, size: 18), const SizedBox(width: 8), Text(l10n.translate('view'))])),
+                // Tags move no money, so they stay editable on any order,
+                // locked Z or not.
+                PopupMenuItem(value: 'tags', child: Row(children: [const Icon(Icons.label_outline, size: 18), const SizedBox(width: 8), Text(l10n.translate('order_tags'))])),
                 if (isUnpaid && canPay)
                   PopupMenuItem(value: 'pay', child: Row(children: [const Icon(Icons.payment, size: 18, color: Colors.teal), SizedBox(width: 8), Text(l10n.translate('pay'), style: const TextStyle(color: Colors.teal))]))
-                else if (!isZLocked) ...[
+                else ...[
                   // Refunding is a money movement on an already-paid order, so
                   // it rides on the same permission as taking the payment.
+                  //
+                  // Offered whatever the order's session or Z: the refund is
+                  // booked into TODAY's session and Z, and the closed one is
+                  // never touched. Whether a past sale may be refunded is the
+                  // refund policy's call (window, closed-Z permission), made
+                  // inside the dialog where it can say why.
                   if (canPay && !isCancelled && canRefund)
                     PopupMenuItem(value: 'refund', child: Row(children: [Icon(Icons.assignment_return, size: 18, color: Colors.deepOrange), const SizedBox(width: 8), Text(l10n.translate('refund'), style: const TextStyle(color: Colors.deepOrange))])),
+                  if (!isZLocked) ...[
                   if (canUpdate)
                     PopupMenuItem(value: 'edit', child: Row(children: [const Icon(Icons.edit, size: 18), const SizedBox(width: 8), Text(l10n.translate('edit'))])),
                   if (canUpdate)
                     PopupMenuItem(value: 'status', child: Row(children: [const Icon(Icons.swap_horiz, size: 18), const SizedBox(width: 8), Text(l10n.translate('change_status'))])),
                   if (canCancel)
                     PopupMenuItem(value: 'cancel', child: Row(children: [const Icon(Icons.cancel, size: 18, color: Colors.orange), const SizedBox(width: 8), Text(l10n.translate('cancel_order'), style: const TextStyle(color: Colors.orange))])),
-                  if (canDelete)
-                    PopupMenuItem(value: 'delete', child: Row(children: [const Icon(Icons.delete_forever, size: 18, color: Colors.red), const SizedBox(width: 8), Text(l10n.translate('delete'), style: const TextStyle(color: Colors.red))])),
+                  ],
                 ],
               ];
             },
@@ -1605,7 +1714,6 @@ class _OrdersManagementScreenState
               else if (value == 'edit') _editOrder(order);
               else if (value == 'status') _showChangeStatusDialog(order);
               else if (value == 'cancel') _cancelOrder(order);
-              else if (value == 'delete') _deleteOrder(order);
             },
             child: const SizedBox(
               width: double.infinity,
@@ -1615,7 +1723,6 @@ class _OrdersManagementScreenState
             itemBuilder: (context) {
               final permissionService = ref.read(permissionServiceProvider);
               final canUpdate = permissionService.hasPermission(Permissions.ordersUpdate);
-              final canDelete = permissionService.hasPermission(Permissions.ordersDelete);
               final canCancel = permissionService.hasPermission(Permissions.ordersCancel);
               final canPay = permissionService.hasPermission(Permissions.ticketsCreate);
               return [
@@ -1674,17 +1781,6 @@ class _OrdersManagementScreenState
                         ],
                       ),
                     ),
-                  if (canDelete)
-                    PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          const Icon(Icons.delete_forever, size: 18, color: Colors.red),
-                          const SizedBox(width: 8),
-                          Text(l10n.translate('delete')),
-                        ],
-                      ),
-                    ),
                 ],
               ];
             },
@@ -1697,6 +1793,7 @@ class _OrdersManagementScreenState
               ..._orderNoBadge(order),
               Text(order.code, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
               const SizedBox(width: 4),
+              OrderTagChips(tagIds: parseTagIds(order.tagIds), inline: true),
               if (isZLocked)
                 const Tooltip(
                   message: 'Z-Report locked',
@@ -1990,21 +2087,21 @@ class _OrdersManagementScreenState
       case 'cancel':
         _cancelOrder(order);
         break;
-      case 'delete':
-        _deleteOrder(order);
-        break;
       case 'refund':
         _refundOrder(order);
+        break;
+      case 'tags':
+        _tagOrder(order);
         break;
     }
   }
 
   Future<void> _refundOrder(Order order) async {
+    // Online-only: the order and its refunds on every till are re-read from
+    // the server first (see startRefund).
     final refunded =
-        await showRefundDialog(context: context, ref: ref, order: order);
+        await startRefund(context: context, ref: ref, orderCode: order.code);
     if (!refunded || !mounted) return;
-    final l10n = AppLocalizations.of(context)!;
-    SnackBarHelper.success(context, l10n.translate('refund_recorded'));
     _loadOrders();
   }
 
@@ -2056,47 +2153,6 @@ class _OrdersManagementScreenState
     if (result == true && mounted) {
       SnackBarHelper.showToast(l10n.translate('payment_successful'), kind: ToastKind.success);
       _loadOrders();
-    }
-  }
-
-  void _deleteOrder(Order order) async {
-    final l10n = AppLocalizations.of(context)!;
-    if (!ref.read(permissionServiceProvider).hasPermission(Permissions.ordersDelete)) {
-      SnackBarHelper.showToast(l10n.translate('no_permission'), kind: ToastKind.error);
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.translate('delete_order')),
-        content: Text('${l10n.translate('confirm_delete_order')} ${order.code}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(l10n.translate('cancel')),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text(l10n.translate('delete')),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      try {
-        final orderRepo = ref.read(orderRepositoryProvider);
-        await orderRepo.deleteOrder(order.id);
-        _loadOrders();
-        if (mounted) {
-          SnackBarHelper.showToast(l10n.translate('order_deleted_successfully'), kind: ToastKind.info);
-        }
-      } catch (e) {
-        if (mounted) {
-          SnackBarHelper.showToast('${l10n.translate('error_deleting_order')}: $e', kind: ToastKind.error);
-        }
-      }
     }
   }
 
@@ -2748,6 +2804,51 @@ class _OrderDetailsDialog extends ConsumerWidget {
     );
   }
 
+  /// Where the line is in the kitchen, and when it got there:
+  /// "Cooking · sent 12:03 · started 12:05".
+  Widget _kitchenLine(
+      BuildContext context, OrderItemDetails item, AppLocalizations l10n) {
+    final state = (item.kitchenState ?? '').toUpperCase();
+    if (state.isEmpty || state == 'ONHOLD') return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    String hm(DateTime d) =>
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    final (IconData icon, Color color, String label) = switch (state) {
+      'PREPARING' => (Icons.local_fire_department_rounded, scheme.primary,
+          l10n.translate('kitchen_cooking')),
+      'CANCELED' || 'CANCELLED' => (Icons.block, scheme.error,
+          l10n.translate('canceled')),
+      'PENDING' => (Icons.hourglass_top_rounded, scheme.outline,
+          l10n.translate('kitchen_waiting')),
+      _ => (Icons.check_circle_rounded, scheme.secondary,
+          l10n.translate('kitchen_ready')),
+    };
+    final parts = <String>[
+      label,
+      if (item.kitchenAt != null) '${l10n.translate('kitchen_sent')} ${hm(item.kitchenAt!)}',
+      if (item.preparingAt != null)
+        '${l10n.translate('kitchen_started')} ${hm(item.preparingAt!)}',
+      if (item.kitchenDoneAt != null) ...[
+        '${l10n.translate('kitchen_ready')} ${hm(item.kitchenDoneAt!)}',
+        if (item.kitchenAt != null)
+          '(${item.kitchenDoneAt!.difference(item.kitchenAt!).inMinutes} min)',
+      ],
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(parts.join(' · '),
+                style: TextStyle(fontSize: 12, color: color)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildOrderItem(BuildContext context, OrderItemDetails item, String currency, AppLocalizations l10n) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -2822,6 +2923,7 @@ class _OrderDetailsDialog extends ConsumerWidget {
                 ),
               ),
             ],
+            _kitchenLine(context, item, l10n),
           ],
         ),
       ),

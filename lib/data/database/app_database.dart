@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:drift/drift.dart' hide Column;
+// Used by generated code: order_products.line_uid's clientDefault.
+import '../../utils/line_uid.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -37,13 +39,14 @@ import 'tables/resource_table.dart';
 import 'tables/product_resource_table.dart';
 import 'tables/z_table.dart';
 import 'tables/refund_table.dart';
+import 'tables/order_tag_table.dart';
 import 'tables/product_unit_table.dart';
 import 'tables/cash_movement_table.dart';
 import 'tables/removed_order_item_table.dart';
+import 'tables/cancelled_order_line_table.dart';
 import 'tables/serial_table.dart';
 import 'tables/integration_mapping_table.dart';
-import 'tables/provider_table.dart';
-import 'tables/agenda_booking_table.dart';
+import 'tables/reservation_cache_table.dart';
 import 'tables/ticket_draft_split_table.dart';
 import 'tables/pending_notification_table.dart';
 import 'tables/order_number_counter_table.dart';
@@ -52,6 +55,7 @@ import '../../utils/pos_log.dart';
 part 'app_database.g.dart';
 
 @DriftDatabase(tables: [
+  OrderTags,
   Categories,
   Products,
   ProductVariants,
@@ -91,10 +95,11 @@ part 'app_database.g.dart';
   ProductUnits,
   CashMovements,
   RemovedOrderItems,
+  CancelledOrderLines,
   Serials,
   IntegrationMappings,
-  Providers,
-  AgendaBookings,
+  CachedReservations,
+  AgendaDaySnapshots,
   TicketDraftSplits,
   PendingNotifications,
   OrderNumberCounters,
@@ -109,14 +114,50 @@ class AppDatabase extends _$AppDatabase {
 
   static String dbName = 'sqd.db';
 
+  /// The file the live connection opened, once it has. The remote console
+  /// reads it through its own read-only connection.
+  static File? openedFile;
+
+  static const lookupIndexStatements = [
+    'CREATE INDEX IF NOT EXISTS idx_order_products_order_id ON order_products(order_id);',
+    'CREATE INDEX IF NOT EXISTS idx_order_products_ticket_id ON order_products(ticket_id);',
+    'CREATE INDEX IF NOT EXISTS idx_opc_order_product_id ON order_product_components(order_product_id);',
+    'CREATE INDEX IF NOT EXISTS idx_tickets_order_id ON tickets(order_id);',
+    'CREATE INDEX IF NOT EXISTS idx_tickets_session_id ON tickets(session_id);',
+    'CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);',
+    'CREATE INDEX IF NOT EXISTS idx_orders_session_id ON orders(session_id);',
+    'CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);',
+    'CREATE INDEX IF NOT EXISTS idx_orders_client_id ON orders(client_id);',
+    'CREATE INDEX IF NOT EXISTS idx_orders_table_id ON orders(table_id);',
+    'CREATE INDEX IF NOT EXISTS idx_orders_taken_by ON orders(taken_by);',
+    'CREATE INDEX IF NOT EXISTS idx_cash_sessions_z_id ON cash_sessions(z_id);',
+  ];
+
   @override
-  int get schemaVersion => 57;
+  int get schemaVersion => 66;
 
   @override
   MigrationStrategy get migration {
     return MigrationStrategy(
       onCreate: (Migrator m) async {
         await m.createAll();
+      },
+      // Lookup indexes, on every open rather than in a numbered migration:
+      // `IF NOT EXISTS` makes it free once they exist, and a fresh install
+      // (onCreate, which skips onUpgrade) gets them too. Orders are kept
+      // forever, so without these every order list, total and unpaid check
+      // scans the whole history.
+      beforeOpen: (details) async {
+        // The remote console reads through a second, read-only connection. A
+        // reader holds a shared lock while it steps, and with no busy timeout
+        // this connection's commit would fail at once with "database is
+        // locked" instead of waiting the few ms it takes the read to finish.
+        await customStatement('PRAGMA busy_timeout = 3000;');
+        for (final stmt in lookupIndexStatements) {
+          try {
+            await customStatement(stmt);
+          } catch (e) {/* a missing column on a half-migrated db — skip */}
+        }
       },
       onUpgrade: (Migrator m, int from, int to) async {
         if (from < 2) {
@@ -619,6 +660,131 @@ class AppDatabase extends _$AppDatabase {
             } catch (e) {/* may already exist */}
           }
         }
+        if (from < 66) {
+          // Cancelled lines (backend v2 order push): every line gets a
+          // permanent lineUid on insert — older lines keep NULL, so their
+          // order stays on v1 — and a running cut total; lines cancelled whole
+          // are kept for the push in their own table.
+          for (final stmt in const [
+            'ALTER TABLE order_products ADD COLUMN line_uid TEXT NULL;',
+            'ALTER TABLE order_products ADD COLUMN canceled_quantity REAL NOT NULL DEFAULT 0.0;',
+            'ALTER TABLE order_products ADD COLUMN canceled_at TEXT NULL;',
+            'ALTER TABLE order_products ADD COLUMN canceled_by INTEGER NULL;',
+          ]) {
+            try {
+              await customStatement(stmt);
+            } catch (e) {/* may already exist */}
+          }
+          try {
+            await m.createTable(cancelledOrderLines);
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 65) {
+          // Split bill (backend V201): the ticket's `split` JSON as sent and
+          // pulled — mode, part/parts, groupId, the lines it paid.
+          try {
+            await customStatement(
+                'ALTER TABLE tickets ADD COLUMN split_details TEXT NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 64) {
+          // Booking moved from order lines to reservations (backend V198):
+          // the provider list and the line-based diary cache are retired, the
+          // reservation cache replaces them. plan_* columns on order_products
+          // stay on disk, unmapped.
+          for (final stmt in const [
+            'DROP TABLE IF EXISTS agenda_bookings;',
+            'DROP TABLE IF EXISTS providers;',
+          ]) {
+            try {
+              await customStatement(stmt);
+            } catch (e) {/* already gone */}
+          }
+          try {
+            await m.createTable(cachedReservations);
+          } catch (e) {/* may already exist */}
+          try {
+            await m.createTable(agendaDaySnapshots);
+          } catch (e) {/* may already exist */}
+          for (final stmt in const [
+            'ALTER TABLE orders ADD COLUMN reservation_code TEXT NULL;',
+            'ALTER TABLE orders ADD COLUMN reservation_link_status TEXT NULL;',
+            'ALTER TABLE orders ADD COLUMN reservation_linked_order_code TEXT NULL;',
+            'ALTER TABLE resources ADD COLUMN color TEXT NULL;',
+            'ALTER TABLE resources ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;',
+          ]) {
+            try {
+              await customStatement(stmt);
+            } catch (e) {/* may already exist */}
+          }
+        }
+        if (from < 63) {
+          // Conditional modifier groups ("Menu" shows Boisson/Accompagnement).
+          try {
+            await customStatement('ALTER TABLE product_component_groups '
+                'ADD COLUMN visible_when_component_ids TEXT NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 62) {
+          // Take-away / delivery reference typed by the cashier.
+          try {
+            await customStatement(
+                'ALTER TABLE orders ADD COLUMN reference TEXT NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 61) {
+          // KDS timers: when each line reached the kitchen.
+          try {
+            await customStatement(
+                'ALTER TABLE order_products ADD COLUMN kitchen_at TEXT NULL;');
+          } catch (e) {/* may already exist */}
+        }
+        if (from < 60) {
+          // Order tags: the catalogue, and the tags on each order.
+          try {
+            await m.createTable(orderTags);
+          } catch (e) {/* may already exist */}
+          for (final stmt in const [
+            'ALTER TABLE orders ADD COLUMN tag_ids TEXT NULL;',
+            'ALTER TABLE orders ADD COLUMN tags_synced '
+                'INTEGER NOT NULL DEFAULT 1 CHECK (tags_synced IN (0, 1));',
+            'ALTER TABLE orders ADD COLUMN tags_sync_error TEXT NULL;',
+          ]) {
+            try {
+              await customStatement(stmt);
+            } catch (e) {/* may already exist */}
+          }
+        }
+        if (from < 59) {
+          // Exchanges: refund credit spent on a new order.
+          for (final stmt in const [
+            'ALTER TABLE refunds ADD COLUMN exchange_amount '
+                'REAL NOT NULL DEFAULT 0.0;',
+            'ALTER TABLE refunds ADD COLUMN exchange_order_id INTEGER NULL;',
+            'ALTER TABLE refunds ADD COLUMN exchange_order_code TEXT NULL;',
+            'ALTER TABLE tickets ADD COLUMN exchange_refund_code TEXT NULL;',
+          ]) {
+            try {
+              await customStatement(stmt);
+            } catch (e) {/* may already exist */}
+          }
+        }
+        if (from < 58) {
+          // Refund policy: product flag + refund audit fields.
+          for (final stmt in const [
+            'ALTER TABLE products ADD COLUMN refundable '
+                'INTEGER NOT NULL DEFAULT 1 CHECK (refundable IN (0, 1));',
+            'ALTER TABLE refunds ADD COLUMN reason_code TEXT NULL;',
+            'ALTER TABLE refunds ADD COLUMN approved_by INTEGER NULL;',
+            'ALTER TABLE refunds ADD COLUMN policy_flags TEXT NULL;',
+            'ALTER TABLE refunds ADD COLUMN earlier_sale '
+                'INTEGER NOT NULL DEFAULT 0 CHECK (earlier_sale IN (0, 1));',
+          ]) {
+            try {
+              await customStatement(stmt);
+            } catch (e) {/* may already exist */}
+          }
+        }
         if (from < 57) {
           // Counters behind the per-session order number, one per scope.
           try {
@@ -955,12 +1121,7 @@ class AppDatabase extends _$AppDatabase {
           // Bookable staff, and the last pulled diary they appear in. Both are
           // caches of server state, so a failed create is safe to swallow —
           // the next master sync refills them.
-          try {
-            await m.createTable(providers);
-          } catch (e) {/* may already exist */}
-          try {
-            await m.createTable(agendaBookings);
-          } catch (e) {/* may already exist */}
+          // Both retired at v64 (reservations); the v64 step drops them.
         }
         if (from < 42) {
           // Backend-tracked payment position, for service orders settled in
@@ -1054,6 +1215,7 @@ class AppDatabase extends _$AppDatabase {
         }
         posLog(">>>>>>>>"+dbFolder.path);
 
+        openedFile = file;
         return NativeDatabase.createInBackground(file);
       } catch (e) {
         // Fallback: try using executable directory on Windows
@@ -1066,6 +1228,7 @@ class AppDatabase extends _$AppDatabase {
               await dataDir.create(recursive: true);
             }
             final file = File(p.join(dataDir.path, dbName));
+            openedFile = file;
             return NativeDatabase.createInBackground(file);
           } catch (e2) {
             rethrow;

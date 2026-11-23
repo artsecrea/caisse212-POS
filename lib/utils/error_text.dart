@@ -3,8 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 
-import '../domain/models/booking_models.dart';
-import '../services/booking_service.dart';
+import '../domain/models/reservation_models.dart';
 import '../services/api_service.dart';
 import 'app_localizations.dart';
 
@@ -23,19 +22,13 @@ import 'app_localizations.dart';
 String errorText(Object? error, AppLocalizations l10n) {
   if (error == null) return l10n.translate('error_unknown');
 
-  // Booking's own exceptions already say the actionable thing.
-  if (error is OfflineBookingException) {
+  // Reservation errors already say the actionable thing; a 409/400 message
+  // is written by the server for staff ("Leila is already booked …").
+  if (error is OfflineReservationException) {
     return l10n.translate('reconnect_to_book');
   }
-  if (error is UnsyncedLineException) {
-    return l10n.translate('booking_order_sync_failed');
-  }
-  if (error is ScheduleConflict) {
-    final detail =
-        error.capacity != null ? ' (${error.current ?? '?'}/${error.capacity})' : '';
-    return '${error.message}$detail';
-  }
-  if (error is ScheduleValidationError) return error.message;
+  if (error is ReservationConflict) return error.message;
+  if (error is ReservationValidationError) return error.message;
 
   // The till-side catalogue endpoints already carry the server's own words
   // (a plan-limit message names the cap and the plan). Only the 403 is worth

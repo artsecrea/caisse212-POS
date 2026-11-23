@@ -17,6 +17,7 @@ import '../../services/printing_service.dart';
 import 'logo_editor_dialog.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/escpos_parser.dart';
+import '../../utils/logo_filter.dart';
 import './adaptive_text_field.dart';
 import 'settings_lock_dialog.dart';
 import '../../utils/snackbar_helper.dart';
@@ -213,17 +214,23 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
         // A crop belongs to the image it was drawn on. Carrying it over to
         // a newly picked logo would cut a corner off a picture nobody has
         // looked at yet.
-        _updateConfig(_config.copyWith(
+        final fresh = _config.copyWith(
           logoCropLeft: 0.0,
           logoCropTop: 0.0,
           logoCropRight: 1.0,
           logoCropBottom: 1.0,
-        ));
+          // A new logo starts black & white — what thermal paper can show —
+          // and opens straight in the editor so the operator sees the
+          // printed result before the first ticket does.
+          logoFilter: LogoFilter.blackWhite,
+          logoThreshold: kDefaultLogoThreshold,
+        );
+        await _updateConfig(fresh);
         if (mounted) {
           setState(() {
             _logoBytes = bytes;
           });
-          SnackBarHelper.showToast(AppLocalizations.of(context)!.translate('success'), kind: ToastKind.success, duration: const Duration(seconds: 2));
+          await _editLogo(base: fresh);
         }
       }
     }
@@ -235,21 +242,26 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
   /// of the source, which the printer applies when it rasterises. That is
   /// what lets the operator open this again and widen a crop they went too
   /// far with.
-  Future<void> _editLogo() async {
+  /// [base] is the config to start from when the caller has just changed it
+  /// and the [_config] stream has not caught up yet.
+  Future<void> _editLogo({PrinterConfig? base}) async {
     final bytes = _logoBytes;
     if (bytes == null) return;
+    final start = base ?? _config;
     final result = await showDialog<LogoEditResult>(
       context: context,
-      builder: (_) => LogoEditorDialog(imageBytes: bytes, config: _config),
+      builder: (_) => LogoEditorDialog(imageBytes: bytes, config: start),
     );
     if (result == null) return;
-    _updateConfig(_config.copyWith(
+    _updateConfig(start.copyWith(
       logoCropLeft: result.cropLeft,
       logoCropTop: result.cropTop,
       logoCropRight: result.cropRight,
       logoCropBottom: result.cropBottom,
       logoWidthPercent: result.widthPercent,
       logoAlign: result.align,
+      logoFilter: result.filter,
+      logoThreshold: result.threshold,
     ));
   }
 
@@ -1653,6 +1665,7 @@ class _PrintersManagementScreenState extends ConsumerState<PrintersManagementScr
     'customerName': 'Customer name',
     'customerPhone': 'Customer phone',
     'deliveryAddress': 'Delivery address',
+    'reference': 'Reference (take-away / delivery)',
     'paymentMethod': 'Payment method',
     'items': 'Product lines',
     'subtotal': 'Subtotal',

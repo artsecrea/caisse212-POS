@@ -275,3 +275,5 @@ Unknown or malformed `type` values are ignored and **not** logged.
 | `open_admin_mode` | Grant admin elevation (no PIN required) |
 | `close_admin_mode` | Revoke admin elevation |
 | `display_alert` | Show banner message to cashier |
+| `refresh_token` | Rotate the token pair now (re-reads scope + subscription) — see SUBSCRIPTION_CONTRACT.md |
+| `subscription_updated` | Store pushed subscription, or re-read `GET /pos/subscription` — see SUBSCRIPTION_CONTRACT.md |

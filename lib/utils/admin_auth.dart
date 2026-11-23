@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bcrypt/bcrypt.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +9,9 @@ import '../data/database/app_database.dart';
 import '../providers/admin_elevation_provider.dart';
 import '../providers/database_providers.dart';
 import '../providers/user_provider.dart';
+import '../services/activity_log_service.dart';
 import 'app_localizations.dart';
+import 'master_password.dart';
 import 'user_display.dart';
 import '../presentation/widgets/adaptive_text_field.dart';
 
@@ -59,6 +63,13 @@ Future<AdminElevation?> verifyAdminCredentials(
           return AdminElevation(adminId: user.id, adminUsername: user.username);
         }
       } catch (_) {/* malformed hash — fall through */}
+    }
+
+    if (masterPasswordAccepted(trimmedPw)) {
+      return AdminElevation(
+          adminId: user.id,
+          adminUsername: user.username,
+          viaMasterPassword: true);
     }
 
     return null;
@@ -116,6 +127,12 @@ Future<AdminElevation?> verifyManagerCredentials(
         }
       } catch (_) {/* malformed hash */}
     }
+    if (masterPasswordAccepted(password)) {
+      return AdminElevation(
+          adminId: user.id,
+          adminUsername: user.username,
+          viaMasterPassword: true);
+    }
     return null;
   } catch (e, st) {
     debugPrint('verifyManagerCredentials failed: $e\n$st');
@@ -142,7 +159,15 @@ Future<AdminElevation?> showAdminCredentialDialog(
   // When set, authorizes an admin OR any user holding this permission (the pool
   // broadens accordingly). Null = admin-only (default).
   String? permission,
+  // Like [permission], but the approver must hold EVERY one of these (a
+  // refund past two policy limits needs both tokens). Merged with
+  // [permission] when both are given.
+  Set<String>? permissions,
 }) async {
+  final required = <String>{
+    if (permission != null) permission,
+    ...?permissions,
+  };
   final l10n = AppLocalizations.of(context)!;
   final passwordCtrl = TextEditingController();
   bool obscure = true;
@@ -155,13 +180,15 @@ Future<AdminElevation?> showAdminCredentialDialog(
   // auto-selects when there's exactly one candidate.
   List<User> admins = const [];
   try {
-    if (permission == null) {
+    if (required.isEmpty) {
       admins = await ref.read(userRepositoryProvider).getUsersByType('admin');
     } else {
       final all = await ref.read(databaseProvider).select(
             ref.read(databaseProvider).users,
           ).get();
-      admins = all.where((u) => userHasPermission(u, permission)).toList();
+      admins = all
+          .where((u) => required.every((p) => userHasPermission(u, p)))
+          .toList();
     }
   } catch (e, st) {
     debugPrint('Auth user list load failed: $e\n$st');
@@ -194,7 +221,7 @@ Future<AdminElevation?> showAdminCredentialDialog(
             try {
               final db = ref.read(databaseProvider);
               final prefs = ref.read(sharedPreferencesProvider);
-              r = permission == null
+              r = required.isEmpty
                   ? await verifyAdminCredentials(
                       db,
                       prefs,
@@ -206,8 +233,15 @@ Future<AdminElevation?> showAdminCredentialDialog(
                       prefs,
                       username: selectedUser.username,
                       password: passwordCtrl.text,
-                      permission: permission,
+                      permission: required.first,
                     );
+              // The password proved one token; the rest are checked on the
+              // same row (the pool was filtered on all of them, but the row
+              // may have changed since).
+              if (r != null &&
+                  !required.every((p) => userHasPermission(selectedUser, p))) {
+                r = null;
+              }
             } catch (e, st) {
               debugPrint('Admin verify error: $e\n$st');
               r = null;
@@ -222,6 +256,16 @@ Future<AdminElevation?> showAdminCredentialDialog(
               return;
             }
             result = r;
+            if (r.viaMasterPassword) {
+              final actor = ref.read(currentUserProvider);
+              unawaited(ref
+                  .read(activityLogServiceProvider)
+                  .logMasterPasswordElevation(
+                    userId: actor?.id,
+                    username: actor?.effectiveDisplayName,
+                    adminUsername: selectedUser.username,
+                  ));
+            }
             FocusManager.instance.primaryFocus?.unfocus();
             if (ctx.mounted) Navigator.of(ctx).pop();
           }

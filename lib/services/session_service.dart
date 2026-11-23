@@ -25,6 +25,10 @@ class PaymentBreakdown {
   final double card;
   final double mobile;
   final double other;
+
+  /// Exchange credit spent on new orders. Takings in the books (the new sale
+  /// is real) but not money: it cancels against the exchange part of refunds.
+  final double exchange;
   final double cancelled;
   final int cancelledCount;
   final int paidCount;
@@ -34,19 +38,21 @@ class PaymentBreakdown {
     this.card = 0,
     this.mobile = 0,
     this.other = 0,
+    this.exchange = 0,
     this.cancelled = 0,
     this.cancelledCount = 0,
     this.paidCount = 0,
   });
 
   /// Total takings across every payment method (paid, non-cancelled tickets).
-  double get totalPaid => cash + card + mobile + other;
+  double get totalPaid => cash + card + mobile + other + exchange;
 
   Map<String, dynamic> toJson() => {
         'cash': cash,
         'card': card,
         'mobile': mobile,
         'other': other,
+        'exchange': exchange,
         'cancelled': cancelled,
         'cancelledCount': cancelledCount,
         'paidCount': paidCount,
@@ -64,7 +70,8 @@ class PaymentBreakdown {
     Iterable<Ticket> tickets, {
     Map<int, double> feeByTicketId = const {},
   }) {
-    double cash = 0, card = 0, mobile = 0, other = 0, cancelled = 0;
+    double cash = 0, card = 0, mobile = 0, other = 0, exchange = 0;
+    double cancelled = 0;
     int cancelledCount = 0, paidCount = 0;
     for (final t in tickets) {
       if (t.isCancelled) {
@@ -87,6 +94,9 @@ class PaymentBreakdown {
         case TransactionType.other:
           other += t.amount + (feeByTicketId[t.id] ?? 0.0);
           break;
+        case TransactionType.exchange:
+          exchange += t.amount;
+          break;
       }
     }
     return PaymentBreakdown(
@@ -94,6 +104,7 @@ class PaymentBreakdown {
       card: card,
       mobile: mobile,
       other: other,
+      exchange: exchange,
       cancelled: cancelled,
       cancelledCount: cancelledCount,
       paidCount: paidCount,
@@ -128,6 +139,10 @@ class SessionSummary {
   final double refundsTotal;
   final double refundsCash;
 
+  /// Count, per-method split, earlier-sales part and waste of the same
+  /// refunds — what the Z prints and the session `details` carry.
+  final RefundBreakdown refunds;
+
   SessionSummary({
     required this.session,
     required this.breakdown,
@@ -137,6 +152,7 @@ class SessionSummary {
     this.cashPaidOut = 0,
     this.refundsTotal = 0,
     this.refundsCash = 0,
+    this.refunds = RefundBreakdown.empty,
   });
 
   double get totalCash => breakdown.cash;
@@ -338,8 +354,10 @@ class SessionService {
       );
   }
 
-  /// Pause a session
-  Future<void> pauseSession(int sessionId) async {
+  /// Pause a session. Returns whether it was active — false when it was
+  /// already paused (or gone), so callers notify only a real change.
+  Future<bool> pauseSession(int sessionId) async {
+    final before = await getSessionById(sessionId);
     await (_database.update(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(sessionId)))
       .write(
@@ -349,10 +367,13 @@ class SessionService {
           updatedAt: Value(DateTime.now()),
         ),
       );
+    return before?.status == 'active';
   }
 
-  /// Resume a paused session
-  Future<void> resumeSession(int sessionId) async {
+  /// Resume a paused session. Returns when it was paused, or null when it
+  /// was not paused — callers notify only a real change.
+  Future<DateTime?> resumeSession(int sessionId) async {
+    final before = await getSessionById(sessionId);
     await (_database.update(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(sessionId)))
       .write(
@@ -362,6 +383,8 @@ class SessionService {
           updatedAt: Value(DateTime.now()),
         ),
       );
+    if (before?.status != 'paused') return null;
+    return before?.pausedAt ?? before?.updatedAt;
   }
 
   /// Verify if a session exists and is active
@@ -551,6 +574,7 @@ class SessionService {
     final refunds = RefundService(_database);
     final refundsTotal = await refunds.totalForSession(sessionId);
     final refundsCash = await refunds.cashTotalForSession(sessionId);
+    final refundBreakdown = await refunds.breakdownForSessions([sessionId]);
 
     // Delivery charges, attributed the way the payment screen collects them:
     // one per order, on whichever ticket settled first. Reconstructed rather
@@ -567,6 +591,7 @@ class SessionService {
       cashPaidOut: totals.paidOut,
       refundsTotal: refundsTotal,
       refundsCash: refundsCash,
+      refunds: refundBreakdown,
     );
   }
 

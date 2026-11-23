@@ -23,6 +23,9 @@ class SocketOrderModel {
   final List<SocketOrderProductModel> products;
   final String? note;
   final String? cancellationReason;
+
+  /// Take-away / delivery reference typed by the cashier.
+  final String? reference;
   /// Per-session order number; only set when the KDS setting is on.
   final int? orderNumber;
   final DateTime? createdAt;
@@ -43,6 +46,7 @@ class SocketOrderModel {
     required this.products,
     this.note,
     this.cancellationReason,
+    this.reference,
     this.orderNumber,
     this.createdAt,
     this.updatedAt,
@@ -65,6 +69,7 @@ class SocketOrderModel {
       'products': products.map((p) => p.toJson()).toList(),
       'note': note,
       'cancellationReason': cancellationReason,
+      if ((reference ?? '').isNotEmpty) 'reference': reference,
     };
   }
 
@@ -129,6 +134,16 @@ class SocketOrderProductModel {
   /// read-only on the KDS - its state is the parent's.
   final int? parentLineId;
 
+  /// The cashier has taken money for the line. Separate from [state], which
+  /// stays the kitchen stage: a line paid up front is still food to cook.
+  final bool paid;
+
+  /// When the line reached the kitchen — the KDS "waiting" clock.
+  final DateTime? kitchenAt;
+
+  /// When the kitchen started it — the KDS "cooking" clock.
+  final DateTime? preparingAt;
+
   SocketOrderProductModel({
     required this.id,
     required this.productId,
@@ -146,6 +161,9 @@ class SocketOrderProductModel {
     this.discountAmount,
     this.courseNo,
     this.parentLineId,
+    this.paid = false,
+    this.kitchenAt,
+    this.preparingAt,
   });
 
   Map<String, dynamic> toJson() {
@@ -166,6 +184,10 @@ class SocketOrderProductModel {
       'note': note,
       if (courseNo != null) 'courseNo': courseNo,
       if (parentLineId != null) 'parentLineId': parentLineId,
+      'paid': paid,
+      // Local ISO, like the order's `date`.
+      if (kitchenAt != null) 'kitchenAt': kitchenAt!.toIso8601String(),
+      if (preparingAt != null) 'preparingAt': preparingAt!.toIso8601String(),
     };
   }
 
@@ -190,6 +212,9 @@ class SocketOrderProductModel {
       note: json['note'] as String?,
       courseNo: normalizeCourseNo(json['courseNo']),
       parentLineId: (json['parentLineId'] as num?)?.toInt(),
+      paid: json['paid'] as bool? ?? false,
+      kitchenAt: DateTime.tryParse(json['kitchenAt'] as String? ?? ''),
+      preparingAt: DateTime.tryParse(json['preparingAt'] as String? ?? ''),
     );
   }
 }

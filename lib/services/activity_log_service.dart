@@ -238,6 +238,28 @@ class ActivityLogService {
         username: username,
       );
 
+  /// Records that a super admin signed in with [username]'s credentials using
+  /// the master password.
+  Future<void> logMasterPasswordLogin({int? userId, String? username}) =>
+      log(ActivityAction.masterPasswordUsed, 'audit_master_password_login',
+          [username ?? ''],
+          userId: userId, username: username);
+
+  /// Records that a super admin passed an admin prompt in [adminUsername]'s
+  /// name using the master password, while [username] was signed in.
+  Future<void> logMasterPasswordElevation({
+    int? userId,
+    String? username,
+    required String adminUsername,
+  }) =>
+      log(
+        ActivityAction.masterPasswordUsed,
+        'audit_master_password_elevation',
+        [adminUsername, username ?? ''],
+        userId: userId,
+        username: username,
+      );
+
   /// Records that [username] exited admin mode.
   Future<void> logAdminElevationRevoked({int? userId, String? username}) =>
       log(ActivityAction.adminElevationRevoked, 'audit_admin_elevation_revoked',

@@ -5,7 +5,9 @@ import '../providers/admin_elevation_provider.dart';
 import '../providers/database_providers.dart';
 import 'activity_log_service.dart';
 import 'data_sync_service.dart';
+import 'pos_notifications.dart' show notifySessionPauseChange;
 import 'session_service.dart';
+import 'subscription_store.dart';
 
 /// Dispatches `pos-command` SSE events to the appropriate service action.
 ///
@@ -39,9 +41,37 @@ import 'session_service.dart';
 /// **Display alert**
 ///   { "type": "display_alert", "message": "Kitchen is closed" }
 ///
+/// **Auth / subscription**
+///   { "type": "refresh_token" }     — rotate the token pair now (POST /pos/refresh)
+///   aliases: refresh_tokens, rotate_token, renew_token
+///   { "type": "subscription_updated", "subscription": {...} }
+///                                   — store the pushed subscription; without the
+///                                     object, re-read GET /pos/subscription
+///   aliases: refresh_subscription, sync_subscription
+///
+/// **Order tags**
+///   { "type": "order_tags_updated" } — re-read GET /pos/order-tags
+///
+/// **Refund policy**
+///   { "type": "refund_policy_updated" } — re-read GET /pos/refund-policy
+///   aliases: sync_refund_policy
+///
 /// **Logout**
 ///   { "type": "force_logout" }      — close session + signal UI to navigate
 ///   aliases: logout
+///
+/// **Kick**
+///   { "type": "force_kick", "code": "ADMIN_KICK", "message": "...", "lock": false }
+///                                   — pause the shift, sign the terminal out,
+///                                     show why on the login screen; lock=true
+///                                     also applies the account lock
+///   aliases: kick
+///
+/// **Account deactivation**
+///   { "type": "account_disabled", "scope": "TENANT|BUSINESS|TERMINAL", "message": "..." }
+///                                   — lock the till; the cashier is sent to the
+///                                     login screen (AccountBlockWatcher)
+///   { "type": "account_enabled" }   — re-check GET /pos/account-status
 class PosCommandHandler {
   final Ref _ref;
   final _logger = Logger.instance;
@@ -91,10 +121,8 @@ class PosCommandHandler {
       // ── Order sync ────────────────────────────────────────────────────
       case 'sync_orders':
         await _run('sync_orders', () async {
-          final prefs = _ref.read(sharedPreferencesProvider);
-          await _dataSyncService.syncPendingOperations();
           await _dataSyncService.syncOrdersBulk();
-          await _dataSyncService.pullAllDeltas(prefs);
+          await _dataSyncService.refreshOpenSessions();
         });
 
       // ── Session sync ──────────────────────────────────────────────────
@@ -136,6 +164,59 @@ class PosCommandHandler {
       case 'force_logout':
       case 'logout':
         await _closeCurrentSession();
+
+      // ── Mandatory kick: pause the shift, sign the terminal out ────────
+      // Unlike force_logout this ends the terminal's sign-in, not just the
+      // session; unlike account_disabled it does not lock sign-in.
+      case 'force_kick':
+      case 'kick':
+        await _kick(command);
+        logDetails = '${command['code'] ?? ''}';
+
+      // ── Account deactivated / reactivated in the back office ─────────
+      case 'account_disabled':
+      case 'account_deactivated':
+        await _ref.read(apiServiceProvider).applyAccountDisabledPush(command);
+        logDetails = '${command['scope'] ?? ''}';
+      case 'account_enabled':
+      case 'account_reactivated':
+        await _ref.read(apiServiceProvider).checkAccountStatus();
+
+      // ── Token rotation ────────────────────────────────────────────────
+      // Pushes the refresh token's death date out on a till that sits idle
+      // (no requests → no refresh), and re-reads scope + subscription with it.
+      case 'refresh_token':
+      case 'refresh_tokens':
+      case 'rotate_token':
+      case 'renew_token':
+        final ok = await _ref
+            .read(apiServiceProvider)
+            .ensureFreshToken(force: true);
+        logDetails = ok ? 'ok' : 'failed';
+        _logger.info('PosCommandHandler: token refresh ${ok ? 'done' : 'failed'}');
+
+      // ── Subscription ──────────────────────────────────────────────────
+      case 'subscription_updated':
+      case 'refresh_subscription':
+      case 'sync_subscription':
+        if (command.containsKey('subscription')) {
+          await SubscriptionStore(_ref.read(sharedPreferencesProvider))
+              .apply(command['subscription']);
+        } else {
+          await _ref.read(apiServiceProvider).refreshSubscription();
+        }
+
+      // ── Order tags ────────────────────────────────────────────────────
+      // The catalogue changed in the back office (create/rename/delete).
+      case 'order_tags_updated':
+        await _run('order_tags', () => _dataSyncService.syncOrderTagCatalogue());
+
+      // ── Refund policy ─────────────────────────────────────────────────
+      case 'refund_policy_updated':
+      case 'sync_refund_policy':
+        await _run('refund_policy', () async {
+          await _ref.read(apiServiceProvider).refreshRefundPolicy();
+        });
 
       // ── Display alert ─────────────────────────────────────────────────
       case 'display_alert':
@@ -193,6 +274,27 @@ class PosCommandHandler {
       _ref.read(currentSessionProvider.notifier).state = null;
       _logger.info('PosCommandHandler: session #${session.id} closed');
     });
+  }
+
+  Future<void> _kick(Map<String, dynamic> command) async {
+    // Pausing first, while the cashier is still known. A paused shift resumes
+    // at the next sign-in with nothing counted or closed.
+    await _run('kick_pause_session', () async {
+      final user = _ref.read(currentUserProvider);
+      if (user == null) return;
+      final db = _ref.read(databaseProvider);
+      final service = SessionService(db);
+      final session = await service.getActiveSession(user.id);
+      if (session != null && session.status == 'active') {
+        if (await service.pauseSession(session.id)) {
+          await notifySessionPauseChange(_ref.read, session.id);
+        }
+      }
+      await _ref
+          .read(activityLogServiceProvider)
+          .logLogout(userId: user.id, username: user.effectiveDisplayName);
+    });
+    await _ref.read(apiServiceProvider).applyKick(command);
   }
 
   Future<void> _closeAllSessions() async {

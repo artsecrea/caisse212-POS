@@ -5,7 +5,6 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../services/session_service.dart';
-import '../../services/activity_log_service.dart';
 import '../../services/permission_service.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/pending_operations_service.dart';
@@ -14,7 +13,7 @@ import '../../utils/currency_formatter.dart';
 import 'admin_mode_chip.dart';
 import 'close_session_dialog.dart';
 import 'permission_guard.dart';
-import 'x_report_dialog.dart';
+import 'session_reports_dialog.dart';
 import '../../utils/snackbar_helper.dart';
 
 class SessionsManagementScreen extends ConsumerStatefulWidget {
@@ -631,11 +630,6 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
     if (result.closed) {
       try {
-        await ref.read(activityLogServiceProvider).logSessionEnd(
-              userId: currentUser?.id,
-              username: currentUser?.effectiveDisplayName,
-            );
-
         if (isCurrentUserSession) {
           ref.read(currentUserProvider.notifier).state = null;
           ref.read(currentSessionProvider.notifier).state = null;
@@ -732,13 +726,13 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
         ),
         actions: [
           TextButton.icon(
-            onPressed: () => showPrintXReportDialog(
+            onPressed: () => showSessionReportsDialog(
               context: context,
               ref: ref,
               session: session,
             ),
-            icon: const Icon(Icons.print_outlined, size: 18),
-            label: Text(l10n.translate('print_x_report')),
+            icon: const Icon(Icons.assessment_outlined, size: 18),
+            label: Text(l10n.translate('session_reports')),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),

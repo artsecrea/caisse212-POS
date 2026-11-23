@@ -222,12 +222,19 @@ void main() {
       await db.customStatement(
           'SELECT name FROM order_product_components LIMIT 0');
       await db.customStatement('SELECT delivery_fee FROM orders LIMIT 0');
-      // Appointment booking: bookable staff, the cached diary, and the
-      // backend-tracked payment position a part-paid service order needs.
-      await db.customStatement('SELECT pin, is_active FROM providers LIMIT 0');
+      // Reservations (v64): the cached diary, the order's link to its
+      // reservation, resource colours, and the backend-tracked payment
+      // position a part-paid service order needs.
       await db.customStatement(
-          'SELECT plan_start_at, plan_waiter_id, fetched_at, value, '
-          'plan_resource_type FROM agenda_bookings LIMIT 0');
+          'SELECT id, code, status, start_at, end_at, payload, fetched_at '
+          'FROM cached_reservations LIMIT 0');
+      await db.customStatement(
+          'SELECT day, payload FROM agenda_day_snapshots LIMIT 0');
+      await db.customStatement(
+          'SELECT reservation_code, reservation_link_status, '
+          'reservation_linked_order_code FROM orders LIMIT 0');
+      await db.customStatement(
+          'SELECT color, sort_order FROM resources LIMIT 0');
       await db.customStatement(
           'SELECT amount_paid, balance_due, payment_status FROM orders LIMIT 0');
       // Component group selection rules, the 86 switch, and the per-product
@@ -265,7 +272,30 @@ void main() {
       await db.customStatement(
           'SELECT order_id, product_name, quantity, amount, '
           'was_sent_to_kitchen, session_id FROM removed_order_items LIMIT 0');
-      expect(db.schemaVersion, 57);
+      // Refund policy (v58): product flag and refund audit fields.
+      await db.customStatement('SELECT refundable FROM products LIMIT 0');
+      await db.customStatement(
+          'SELECT reason_code, approved_by, policy_flags, earlier_sale '
+          'FROM refunds LIMIT 0');
+      // Exchanges (v59).
+      await db.customStatement(
+          'SELECT exchange_amount, exchange_order_id, exchange_order_code '
+          'FROM refunds LIMIT 0');
+      await db.customStatement(
+          'SELECT exchange_refund_code FROM tickets LIMIT 0');
+      // Order tags (v60).
+      await db.customStatement('SELECT id, label, color FROM order_tags LIMIT 0');
+      await db.customStatement(
+          'SELECT tag_ids, tags_synced, tags_sync_error FROM orders LIMIT 0');
+      // KDS timers (v61).
+      await db.customStatement(
+          'SELECT kitchen_at FROM order_products LIMIT 0');
+      // Take-away / delivery reference (v62).
+      await db.customStatement('SELECT reference FROM orders LIMIT 0');
+      // Conditional modifier groups (v63).
+      await db.customStatement('SELECT visible_when_component_ids '
+          'FROM product_component_groups LIMIT 0');
+      expect(db.schemaVersion, 66);
     });
   });
 }

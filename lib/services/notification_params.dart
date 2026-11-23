@@ -50,6 +50,34 @@ class NotificationParams {
         'currency': currency,
       };
 
+  /// `POS_SESSION_PAUSED` / `POS_SESSION_RESUMED` — a cashier stepping away
+  /// from, or back to, an open session. [pausedAt] is for the resume only:
+  /// it adds `pausedAt` and how long the break lasted. [byName] is whoever
+  /// pressed the button, sent only when not the session's cashier.
+  /// Envelope `refId` is the session id.
+  static Map<String, String> sessionPauseChange({
+    required String terminalName,
+    required String sessionCode,
+    required String cashierName,
+    required int cashierId,
+    String? byName,
+    required DateTime at,
+    DateTime? pausedAt,
+  }) {
+    final minutes = pausedAt == null ? null : at.difference(pausedAt).inMinutes;
+    return {
+      'v': version,
+      'terminalName': terminalName,
+      'sessionCode': sessionCode,
+      'cashierName': cashierName,
+      'cashierId': cashierId.toString(),
+      if (byName != null && byName.trim().isNotEmpty) 'byName': byName.trim(),
+      'at': _localIso(at),
+      if (pausedAt != null) 'pausedAt': _localIso(pausedAt),
+      if (minutes != null) 'pausedMinutes': (minutes < 0 ? 0 : minutes).toString(),
+    };
+  }
+
   /// `POS_SESSION_CLOSED` — the full Z summary, so the mobile can render a rich
   /// card with no second API call.
   ///
@@ -254,7 +282,8 @@ class NotificationParams {
   /// `POS_CANCELLATION` — money taken off after the fact. [kind] is `ORDER`
   /// (a whole order voided), `LINE` (a line removed from a saved order) or
   /// `REFUND`. [afterKitchen] marks food the kitchen had already been told to
-  /// make. Envelope `refId` is the order code.
+  /// make. [deleted] marks an ORDER that was deleted rather than cancelled.
+  /// Envelope `refId` is the order code.
   static Map<String, String> cancellation({
     required String terminalName,
     required String kind,
@@ -263,6 +292,7 @@ class NotificationParams {
     String? productName,
     double? quantity,
     bool afterKitchen = false,
+    bool deleted = false,
     String? reason,
     String? cashierName,
     int? cashierId,
@@ -273,6 +303,7 @@ class NotificationParams {
         'v': version,
         'terminalName': terminalName,
         'kind': kind,
+        if (deleted) 'deleted': 'true',
         'orderCode': orderCode,
         'amount': _money(amount),
         if (productName != null && productName.isNotEmpty)

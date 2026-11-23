@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import '../../../utils/line_uid.dart';
+
 class OrderProducts extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get orderId => integer()();
@@ -29,11 +31,10 @@ class OrderProducts extends Table {
   /// `quantity == 1` — the backend rejects the order otherwise.
   IntColumn get serialId => integer().nullable()();
   TextColumn get note => text().nullable()();
-  TextColumn get state => text().withDefault(const Constant('PENDING'))(); // PENDING, PREPARING, COMPLETED, CANCELED (KDS) | PAID (cashier)
-  DateTimeColumn get planStartAt => dateTime().nullable()(); // Planned start time
-  DateTimeColumn get planEndAt => dateTime().nullable()(); // Planned end time
-  IntColumn get planWaiterId => integer().nullable()(); // Assigned waiter for this booking
-  IntColumn get planResourceId => integer().nullable()(); // Assigned resource (room/chair/equipment) for this booking
+  TextColumn get state => text().withDefault(const Constant('PENDING'))(); // Kitchen stage: PENDING, PREPARING, READY, COMPLETED, CANCELED. Paid-ness is ticketId; PAID only on legacy/cloud-paid rows
+  // plan_start_at / plan_end_at / plan_waiter_id / plan_resource_id still
+  // exist on databases older than v64 but are no longer mapped: booking moved
+  // to reservations (backend V198). Nullable, so inserts that omit them work.
   /// Which course this line belongs to: 1 entrée, 2 plat, 3 dessert.
   ///
   /// Null means the cashier did not say, which is the normal state — the
@@ -71,6 +72,25 @@ class OrderProducts extends Table {
   DateTimeColumn get preparingAt => dateTime().nullable()(); // → PREPARING
   DateTimeColumn get readyAt => dateTime().nullable()();     // → READY
   DateTimeColumn get servedAt => dateTime().nullable()();    // → DELIVERED/COMPLETED
+  // When the line reached the kitchen — the KDS waiting timer starts here.
+  // Survives updateOrder's delete-and-reinsert (carried over); reset when the
+  // line comes off hold or its quantity grows. Null on rows older than v61.
+  DateTimeColumn get kitchenAt =>
+      dateTime().nullable().clientDefault(() => DateTime.now())();
   DateTimeColumn get zDay => dateTime().nullable()(); // Calendar day the session opened (inherited from parent order)
   DateTimeColumn get updatedAt => dateTime().clientDefault(() => DateTime.now())();
+
+  /// The line's identity on the v2 order push, minted on insert and never
+  /// changed. Null only on lines written before v66: an order holding one is
+  /// pushed through v1, because a server that knows the line by its own id
+  /// would read a new id as "old line removed, new line added".
+  TextColumn get lineUid => text().nullable().clientDefault(mintLineUid)();
+
+  /// Units taken off this LIVE line by a quantity cut, as a running total
+  /// (3 → 1 is quantity 1, canceledQuantity 2). [quantity] stays what is
+  /// sold, so every total keeps reading it as before. A line cancelled whole
+  /// leaves this table for `cancelled_order_lines`.
+  RealColumn get canceledQuantity => real().withDefault(const Constant(0.0))();
+  DateTimeColumn get canceledAt => dateTime().nullable()();
+  IntColumn get canceledBy => integer().nullable()();
 }

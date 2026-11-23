@@ -1,10 +1,14 @@
+import 'kitchen_board_dialog.dart' show showKitchenBoardDialog;
 import 'dart:async';
+import '../../services/pos_notifications.dart' show notifySessionPauseChange;
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:caisse212/providers/stat_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
+import 'package:caisse212/services/api_service.dart' show ApiService;
 import 'package:caisse212/services/data_sync_service.dart';
 import 'package:caisse212/services/permission_service.dart';
 import 'package:caisse212/services/activity_log_service.dart';
@@ -27,13 +31,18 @@ import 'calculator_dialog.dart';
 // DISABLED-FOR-NOW: restore alongside the commented menu items below.
 // import 'cash_movement_dialog.dart';
 import 'close_session_dialog.dart';
-import 'x_report_dialog.dart';
+import 'session_reports_dialog.dart';
 import 'z_report_dialog.dart';
 import '../../utils/snackbar_helper.dart';
 import 'settle_unpaid_dialog.dart';
 // import 'notify_admin_dialog.dart';
 import 'report_issue_dialog.dart';
+import 'test_mode_screen.dart';
 import 'sync_inspector_dialog.dart';
+import 'update_dialog.dart' show showUpdateDialog;
+import '../../providers/update_provider.dart';
+import '../../services/update_service.dart' show UpdateService;
+import '../../services/z_actions.dart' show refreshZConfig;
 import './adaptive_text_field.dart';
 import '../../core/theme/app_theme.dart';
 
@@ -92,7 +101,10 @@ class _TopBarState extends ConsumerState<TopBar> {
   /// for. The cashier taps the search box to type; the barcode scanner keeps
   /// working either way, since it listens on the scaffold's own focus node.
   void _requestSearchFocus() {
-    if (!ref.read(settingsProvider).autoFocusProductSearch) return;
+    final settings = ref.read(settingsProvider);
+    if (!settings.showProductSearch || !settings.autoFocusProductSearch) {
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!_mayTakeFocus()) return;
@@ -362,13 +374,6 @@ class _TopBarState extends ConsumerState<TopBar> {
     ref.read(networkStateProvider.notifier).state = _isOnline;
   }
 
-  String _formatTime(DateTime dt) {
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    final s = dt.second.toString().padLeft(2, '0');
-    return '$h:$m:$s';
-  }
-
   /// Clear the backlog of unpaid orders in one pass.
   ///
   /// Credentials first: this turns other people's open orders into collected
@@ -467,17 +472,17 @@ class _TopBarState extends ConsumerState<TopBar> {
             ),
           ),
           actions: [
-            // X report for the shift in progress — a read-only snapshot, so
-            // it is safe on a live session and closes nothing. Same dialog
+            // Reports for the shift in progress (X, products, options,
+            // orders) — read-only, so safe on a live session. Same dialog
             // Sessions management offers, so the two cannot drift.
             TextButton.icon(
-              onPressed: () => showPrintXReportDialog(
+              onPressed: () => showSessionReportsDialog(
                 context: context,
                 ref: ref,
                 session: session,
               ),
-              icon: const Icon(Icons.print_outlined, size: 18),
-              label: Text(l10n?.translate('print_x_report') ?? 'Print X report'),
+              icon: const Icon(Icons.assessment_outlined, size: 18),
+              label: Text(l10n?.translate('session_reports') ?? 'Reports'),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -700,7 +705,9 @@ class _TopBarState extends ConsumerState<TopBar> {
 
       if (choice == 'pause') {
         // Pause session
-        await sessionService.pauseSession(session.id);
+        if (await sessionService.pauseSession(session.id)) {
+          await notifySessionPauseChange(ref.read, session.id);
+        }
         if (mounted) {
           SnackBarHelper.showToast(l10n?.translate('session_paused_resume_login') ?? 'Session paused. Resume when you login again.', kind: ToastKind.warning);
         }
@@ -751,7 +758,7 @@ class _TopBarState extends ConsumerState<TopBar> {
     }
   }
 
-  /// Closes any still-open session for [userId] then pushes all local data
+  /// Pauses any still-active session for [userId] then pushes all local data
   /// to the server before the user leaves. Errors are swallowed — logout
   /// must never be blocked by a failed sync.
   Future<void> _syncAndCloseBeforeLogout(int? userId) async {
@@ -761,12 +768,13 @@ class _TopBarState extends ConsumerState<TopBar> {
       if (userId != null) {
         final session =
             await SessionService(database).getActiveSession(userId);
-        // Only end a genuinely ACTIVE session here. A PAUSED session is
-        // intentionally left open so the next login can resume it — ending it
-        // (getActiveSession also matches 'paused') is what made a paused
-        // session come back "ended" and forced a brand-new session on relogin.
+        // Pause, never end: a session still active here means the logout
+        // dialog's End/Pause did not run (an error fell through to logout).
+        // Ending it would close a cashier's shift nobody asked to close.
         if (session != null && session.status == 'active') {
-          await SessionService(database).endSession(sessionId: session.id);
+          if (await SessionService(database).pauseSession(session.id)) {
+            await notifySessionPauseChange(ref.read, session.id);
+          }
         }
       }
       await syncService.syncPendingOperations();
@@ -916,7 +924,6 @@ class _TopBarState extends ConsumerState<TopBar> {
   /// Sync data from server
   Future<void> _handleSync() async {
     final l10n = AppLocalizations.of(context);
-    final prefs = ref.read(sharedPreferencesProvider);
     final apiService = ref.read(apiServiceProvider);
 
     // Check if in demo mode
@@ -925,21 +932,79 @@ class _TopBarState extends ConsumerState<TopBar> {
       return;
     }
 
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        content: Row(
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(width: 20),
-            Text(l10n?.translate('syncing_data') ?? 'Syncing data...'),
-          ],
-        ),
-      ),
-    );
+    if (_syncing) return;
+    _syncing = true;
 
+    final step = ValueNotifier<String>(
+        l10n?.translate('checking_for_updates') ?? 'Checking for updates…');
+    // Closed by identity, never with a bare pop(): the UpdateWatcher opens
+    // the update dialog on its own when the check finds a build, and a pop()
+    // would close that one and leave this spinner up for good.
+    DialogRoute<void>? progress;
+    void showProgress() {
+      progress = DialogRoute<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: Row(
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(width: 20),
+                Flexible(
+                  child: ValueListenableBuilder<String>(
+                    valueListenable: step,
+                    builder: (_, text, _) => Text(text),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      Navigator.of(context).push(progress!);
+    }
+
+    void hideProgress() {
+      final route = progress;
+      progress = null;
+      if (route != null && route.isActive) route.navigator?.removeRoute(route);
+    }
+
+    try {
+      // A new POS build comes first: installing it restarts the app, so
+      // there is no point refreshing data it would reload anyway. Dismissed
+      // (or the update server unreachable) → carry on with the data.
+      if (UpdateService.platformSupported) {
+        showProgress();
+        final found = await ref
+            .read(updateProvider.notifier)
+            .checkForUpdates()
+            .timeout(const Duration(seconds: 15), onTimeout: () => null)
+            .catchError((_) => null);
+        hideProgress();
+        if (!mounted) return;
+        if (found == true) {
+          // Waits for the watcher's dialog when it already opened one.
+          await showUpdateDialog(context,
+              isMandatory: ref.read(updateProvider).updateRequired);
+          if (!mounted) return;
+        }
+      }
+
+      step.value = l10n?.translate('syncing_data') ?? 'Syncing data...';
+      showProgress();
+      await _syncData(l10n, apiService);
+    } finally {
+      hideProgress();
+      _syncing = false;
+    }
+  }
+
+  bool _syncing = false;
+
+  Future<void> _syncData(AppLocalizations? l10n, ApiService apiService) async {
     try {
       final database = ref.read(databaseProvider);
       final syncService = DataSyncService(database, apiService);
@@ -949,22 +1014,36 @@ class _TopBarState extends ConsumerState<TopBar> {
       // not reach a till that stays signed in. Failure is not fatal to a sync.
       await apiService.refreshTerminalInfo();
 
-      // First upload local data
-      await syncService.uploadLocalData();
+      // Push this till's edits, then take the server's copy of every order
+      // in the open sessions (admin cancels, discounts, notes).
+      await syncService.refreshOpenSessions();
 
-      // Pull server-side deltas (admin edits, tombstones) before full refresh
-      await syncService.pullAllDeltas(prefs);
-
-      // Then download fresh data
+      // Then download fresh data (also subscription, refund policy, tags).
       await syncService.syncAllData();
 
+      // Settings that otherwise only refresh at login or on an SSE push.
+      await refreshZConfig(ref);
+      await syncService.syncIntegrationMappings();
+      await syncService.syncPendingNotifications();
+
+      // The grids watch their tables, but these per-product lookups are
+      // one-shot reads and would keep serving the pre-sync catalogue.
+      ref.invalidate(productComponentsProvider);
+      ref.invalidate(productComponentGroupRulesProvider);
+      ref.invalidate(productVariantsProvider);
+      ref.invalidate(productAttributesProvider);
+
+      final user = ref.read(currentUserProvider);
+      if (user != null) {
+        ref.read(currentUserProvider.notifier).state =
+            await reloadCurrentUser(database, user);
+      }
+
       if (mounted) {
-        Navigator.of(context).pop(); // Close dialog
         SnackBarHelper.showToast(l10n?.translate('data_synced_successfully') ?? 'Data synced successfully!', kind: ToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop(); // Close dialog
         SnackBarHelper.showToast('${l10n?.translate('sync_failed') ?? 'Sync failed'}: $e', kind: ToastKind.error);
       }
     }
@@ -975,7 +1054,9 @@ class _TopBarState extends ConsumerState<TopBar> {
     try {
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
-      await sessionService.pauseSession(sessionId);
+      if (await sessionService.pauseSession(sessionId)) {
+        await notifySessionPauseChange(ref.read, sessionId);
+      }
       if (mounted) {
         SnackBarHelper.showToast(l10n?.translate('session_paused') ?? 'Session paused', kind: ToastKind.warning);
       }
@@ -991,7 +1072,10 @@ class _TopBarState extends ConsumerState<TopBar> {
     try {
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
-      await sessionService.resumeSession(sessionId);
+      final pausedAt = await sessionService.resumeSession(sessionId);
+      if (pausedAt != null) {
+        await notifySessionPauseChange(ref.read, sessionId, pausedAt: pausedAt);
+      }
       if (mounted) {
         SnackBarHelper.showToast(l10n?.translate('session_resumed') ?? 'Session resumed', kind: ToastKind.success);
       }
@@ -1072,13 +1156,22 @@ class _TopBarState extends ConsumerState<TopBar> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final currentUser = ref.watch(currentUserProvider);
-    final time = ref.watch(timeProvider).value ?? DateTime.now();
     final screenWidth = MediaQuery.sizeOf(context).width;
     final isCompact = screenWidth < kBreakpointCompact;
     final isVeryCompact = screenWidth < 700;
 
     final hPad = isVeryCompact ? 8.0 : 16.0;
     final scheme = Theme.of(context).colorScheme;
+
+    final showSearch =
+        ref.watch(settingsProvider.select((s) => s.showProductSearch));
+    // A query typed before the field was hidden would keep filtering the grid
+    // with nothing on screen to clear it.
+    if (!showSearch && ref.read(productSearchQueryProvider).isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(productSearchQueryProvider.notifier).state = '';
+      });
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -1103,19 +1196,18 @@ class _TopBarState extends ConsumerState<TopBar> {
               padding: EdgeInsets.symmetric(horizontal: hPad),
               child: Row(
                 children: [
-                  const Icon(Icons.point_of_sale, color: Colors.white, size: 24),
-                  const SizedBox(width: 10),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: 360,
-                        minWidth: isVeryCompact ? 80 : 150,
+                  if (showSearch) ...[
+                    Flexible(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: 360,
+                          minWidth: isVeryCompact ? 80 : 150,
+                        ),
+                        child: _buildSearchBar(),
                       ),
-                      child: _buildSearchBar(),
                     ),
-                  ),
-                  const SizedBox(width: 6),
+                    const SizedBox(width: 6),
+                  ],
                   // Barcode + nav buttons only on non-compact (go to secondary row on compact)
                   if (!isCompact) ...[
                     _buildBarcodeScanToggle(),
@@ -1129,7 +1221,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                       tooltip: l10n?.translate('calculator') ?? 'Calculator',
                       onPressed: () => showCalculatorDialog(context),
                     ),
-                    if (ref.read(permissionServiceProvider).hasPermission(Permissions.agendaView)) ...[
+                    if (ref.watch(permissionServiceProvider).hasPermission(Permissions.agendaView)) ...[
                       _navButton(
                         icon: Icons.calendar_month_outlined,
                         tooltip: 'Agenda',
@@ -1150,7 +1242,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                     // '/dashboard' route still exists in main.dart but nothing
                     // navigates to it any more — add an entry here or in the
                     // profile menu to bring it back.
-                    if (ref.read(permissionServiceProvider).hasPermission(Permissions.notesView))
+                    if (ref.watch(permissionServiceProvider).hasPermission(Permissions.notesView))
                       _navButton(
                         icon: Icons.sticky_note_2_outlined,
                         tooltip: l10n?.translate('notes') ?? 'Notes',
@@ -1250,6 +1342,9 @@ class _TopBarState extends ConsumerState<TopBar> {
                   context: context,
                   builder: (context) => const ReportIssueDialog(),
                 );
+              } else if (value == 'test_mode') {
+                Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const TestModeScreen()));
               } else if (value == 'logout') {
                 await _handleLogout();
               } else if (value == 'exit_app') {
@@ -1383,6 +1478,38 @@ class _TopBarState extends ConsumerState<TopBar> {
                   ),
                   onTap: () {
                     Navigator.pushNamed(context, '/orders');
+                  },
+                ));
+                items.add(PopupMenuItem(
+                  value: 'kitchen_board',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.soup_kitchen_outlined),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('kitchen_board') ?? 'Kitchen'),
+                    ],
+                  ),
+                  // After the menu closes, or the dialog opens under it.
+                  onTap: () => WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => showKitchenBoardDialog(context)),
+                ));
+              }
+
+              // Refunds screen — every refund given (this till, and all tills
+              // from the server). The refund ACTION is the main-screen button.
+              if (permissionService
+                  .hasRefundPermission(Permissions.refundsView)) {
+                items.add(PopupMenuItem(
+                  value: 'refunds',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.assignment_return, color: Colors.deepOrange),
+                      const SizedBox(width: 8),
+                      Text(l10n?.translate('refunds') ?? 'Refunds'),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/refunds');
                   },
                 ));
               }
@@ -1526,6 +1653,21 @@ class _TopBarState extends ConsumerState<TopBar> {
                 ),
               ));
 
+              // Debug/profile builds only: the tree shaker drops this from
+              // release, so a till never shows it.
+              if (!kReleaseMode) {
+                items.add(PopupMenuItem(
+                  value: 'test_mode',
+                  child: const Row(
+                    children: [
+                      Icon(Icons.science_outlined),
+                      SizedBox(width: 8),
+                      Text('Test mode (debug)'),
+                    ],
+                  ),
+                ));
+              }
+
               // Divider before logout
               items.add(const PopupMenuDivider());
 
@@ -1575,14 +1717,7 @@ class _TopBarState extends ConsumerState<TopBar> {
               child: Row(
                 children: [
                   if (!isVeryCompact) ...[
-                    Text(
-                      _formatTime(time),
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 13,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
+                    const _TopBarClock(),
                     const SizedBox(width: 8),
                     _buildBarcodeScanToggle(),
                     const SizedBox(width: 4),
@@ -1661,3 +1796,26 @@ class _TopBarState extends ConsumerState<TopBar> {
   }
 }
 
+
+/// The compact bar's clock, in a widget of its own so its once-a-second tick
+/// redraws these few glyphs instead of rebuilding the whole top bar — which it
+/// did even on wide screens where the clock is never shown.
+class _TopBarClock extends ConsumerWidget {
+  const _TopBarClock();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = ref.watch(timeProvider).value ?? DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return RepaintBoundary(
+      child: Text(
+        '${two(t.hour)}:${two(t.minute)}:${two(t.second)}',
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: 0.9),
+          fontSize: 13,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
+}

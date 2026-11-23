@@ -121,7 +121,7 @@ class _OrderRefundsPanelState extends ConsumerState<OrderRefundsPanel> {
             ),
           )
         else
-          ..._refunds.map((r) => _RefundRow(
+          ..._refunds.map((r) => RefundRow(
                 refund: r,
                 currency: currency,
                 l10n: l10n,
@@ -133,19 +133,25 @@ class _OrderRefundsPanelState extends ConsumerState<OrderRefundsPanel> {
   }
 }
 
-class _RefundRow extends StatelessWidget {
+class RefundRow extends StatelessWidget {
   final Refund refund;
   final String currency;
   final AppLocalizations l10n;
   final bool isPrinting;
   final VoidCallback onReprint;
 
-  const _RefundRow({
+  /// Extra context after the method and time (the order code, on the
+  /// Refunds screen where rows from many orders sit together).
+  final String? subtitle;
+
+  const RefundRow({
+    super.key,
     required this.refund,
     required this.currency,
     required this.l10n,
     required this.isPrinting,
     required this.onReprint,
+    this.subtitle,
   });
 
   @override
@@ -191,14 +197,15 @@ class _RefundRow extends StatelessWidget {
           Row(
             children: [
               Text(
-                '${refund.method} · ${_fmtDate(refund.refundedAt)}',
+                '${refund.method} · ${_fmtDate(refund.refundedAt)}'
+                '${subtitle == null ? '' : ' · $subtitle'}',
                 style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
               ),
               const SizedBox(width: 8),
               // Sync state matters here more than elsewhere: a refund is money
               // already handed over, so "not on the server yet" is a fact the
               // cashier should be able to see without opening the inspector.
-              _SyncBadge(
+              RefundSyncBadge(
                 synced: refund.isSynced,
                 parked: parked,
                 refundedAt: refund.refundedAt,
@@ -240,13 +247,13 @@ class _RefundRow extends StatelessWidget {
       '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 }
 
-class _SyncBadge extends StatelessWidget {
+class RefundSyncBadge extends StatelessWidget {
   final bool synced;
   final bool parked;
   final DateTime refundedAt;
   final AppLocalizations l10n;
 
-  const _SyncBadge({
+  const RefundSyncBadge({
     required this.synced,
     required this.parked,
     required this.refundedAt,

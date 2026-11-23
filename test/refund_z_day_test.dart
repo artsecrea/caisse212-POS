@@ -7,6 +7,7 @@ import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/data_sync_service.dart';
 import 'package:caisse212/services/z_day_resolver.dart';
+import 'package:caisse212/services/z_rules.dart' show formatZDay;
 
 /// A refund is reported on the shift that gave the money back.
 ///
@@ -63,7 +64,7 @@ void main() {
     final refund = await seedRefund(zDay: shiftDay);
     final payload = await payloadFor(refund);
 
-    expect(payload['zDay'], shiftDay.toIso8601String());
+    expect(payload['zDay'], formatZDay(shiftDay));
     expect(payload['refundedAt'], afterMidnight.toUtc().toIso8601String(),
         reason: 'the timestamp still goes up unchanged — zDay is what says '
             'which shift owns it');
@@ -73,7 +74,7 @@ void main() {
     final sessionId = await openSession();
     final refund = await seedRefund(sessionId: sessionId);
 
-    expect((await payloadFor(refund))['zDay'], shiftDay.toIso8601String(),
+    expect((await payloadFor(refund))['zDay'], formatZDay(shiftDay),
         reason: 'refunds written before the column existed still know their '
             'session');
   });

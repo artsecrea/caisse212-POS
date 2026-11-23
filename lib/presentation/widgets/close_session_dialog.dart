@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,7 +13,7 @@ import '../../services/daily_summary_service.dart';
 import '../../utils/button_styles.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/printing_service.dart';
-import '../../services/notification_params.dart';
+import '../../services/pos_notifications.dart' show notifySessionClosed;
 import '../../services/session_service.dart';
 import '../../services/z_actions.dart';
 import '../../services/z_rules.dart' show ZRuleBlock, printSessionXWithZ;
@@ -23,6 +24,7 @@ import '../../services/activity_log_service.dart';
 import '../../services/permission_service.dart';
 import '../../utils/admin_auth.dart'
     show showAdminCredentialDialog, userHasPermission;
+import 'blocking_progress.dart';
 import 'report_documents.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
@@ -62,11 +64,18 @@ class _UnpaidAction {
 /// Prompts about the session's still-unpaid orders. Returns null if the cashier
 /// cancels the whole close; otherwise a [_UnpaidAction] describing whether to
 /// pay them all as cash and whether to print receipts.
+///
+/// [allowContinue] false drops "end anyway": the admin requires the orders
+/// paid before the Z closes. [canPay] false drops "pay all": there is no
+/// open session left to receive the cash.
 Future<_UnpaidAction?> _promptUnpaidOrders(
   BuildContext context,
   WidgetRef ref,
-  List<OrderFullDetails> unpaid,
-) async {
+  List<OrderFullDetails> unpaid, {
+  bool forZ = false,
+  bool allowContinue = true,
+  bool canPay = true,
+}) async {
   final l10n = AppLocalizations.of(context)!;
   final fmt = ref.read(currencyFormatterProvider);
   final total = unpaid.fold<double>(0, (s, o) => s + (o.total - o.totalPaid));
@@ -126,9 +135,30 @@ Future<_UnpaidAction?> _promptUnpaidOrders(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
             Text(l10n
-                .translate('unpaid_orders_prompt')
+                .translate(forZ ? 'unpaid_orders_z_prompt' : 'unpaid_orders_prompt')
                 .replaceAll('{0}', unpaid.length.toString())
                 .replaceAll('{1}', fmt.format(total))),
+            if (!allowContinue || !canPay) ...[
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                      size: 18, color: Theme.of(ctx).colorScheme.error),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      l10n.translate(!canPay
+                          ? 'unpaid_orders_no_session'
+                          : 'unpaid_orders_must_pay'),
+                      style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.error,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             if (showWaiterBreakdown) ...[
               const SizedBox(height: 14),
               Text(
@@ -155,14 +185,16 @@ Future<_UnpaidAction?> _promptUnpaidOrders(
                   )),
               const Divider(height: 20),
             ],
-            const SizedBox(height: 8),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-              value: printReceipts,
-              onChanged: (v) => setLocal(() => printReceipts = v ?? false),
-              title: Text(l10n.translate('print_receipts')),
-            ),
+            if (canPay) ...[
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: printReceipts,
+                onChanged: (v) => setLocal(() => printReceipts = v ?? false),
+                title: Text(l10n.translate('print_receipts')),
+              ),
+            ],
               ],
             ),
           ),
@@ -173,30 +205,35 @@ Future<_UnpaidAction?> _promptUnpaidOrders(
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: AppButtonStyles.elevatedButtonStyle(
-                    isLarge: true,
-                    backgroundColor: Theme.of(ctx).colorScheme.primary,
-                    foregroundColor: Theme.of(ctx).colorScheme.onPrimary,
+              if (canPay) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: AppButtonStyles.elevatedButtonStyle(
+                      isLarge: true,
+                      backgroundColor: Theme.of(ctx).colorScheme.primary,
+                      foregroundColor: Theme.of(ctx).colorScheme.onPrimary,
+                    ),
+                    onPressed: () => Navigator.pop(ctx,
+                        _UnpaidAction(pay: true, printReceipts: printReceipts)),
+                    child: Text(l10n.translate('pay_all_cash')),
                   ),
-                  onPressed: () => Navigator.pop(ctx,
-                      _UnpaidAction(pay: true, printReceipts: printReceipts)),
-                  child: Text(l10n.translate('pay_all_cash')),
                 ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  style: AppButtonStyles.outlinedButtonStyle(isLarge: true),
-                  onPressed: () =>
-                      Navigator.pop(ctx, const _UnpaidAction(pay: false)),
-                  child: Text(l10n.translate('proceed_and_end')),
+                const SizedBox(height: 10),
+              ],
+              if (allowContinue) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    style: AppButtonStyles.outlinedButtonStyle(isLarge: true),
+                    onPressed: () =>
+                        Navigator.pop(ctx, const _UnpaidAction(pay: false)),
+                    child: Text(l10n.translate(
+                        forZ ? 'continue_without_paying' : 'proceed_and_end')),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
+                const SizedBox(height: 10),
+              ],
               SizedBox(
                 width: double.infinity,
                 child: TextButton(
@@ -226,6 +263,8 @@ Future<bool> _settleUnpaidAsCash(
   final l10n = AppLocalizations.of(context)!;
   final repo = ref.read(orderRepositoryProvider);
   final paidStatus = ref.read(settingsProvider).paidOrderDefaultStatus;
+  final progress =
+      BlockingProgress.show(context, l10n.translate('settling_orders'));
   try {
     final printing = printReceipts ? ref.read(printingServiceProvider) : null;
     final database = ref.read(databaseProvider);
@@ -235,7 +274,9 @@ Future<bool> _settleUnpaidAsCash(
     final businessAddress = prefs.getString('business_address');
     final businessPhone = prefs.getString('business_phone');
 
-    for (final o in unpaid) {
+    for (final (i, o) in unpaid.indexed) {
+      progress.message =
+          '${l10n.translate('settling_orders')} ${i + 1}/${unpaid.length}';
       final due = o.total - o.totalPaid;
       final res = await repo.settleOrderAsCash(
         o.order.id,
@@ -276,6 +317,7 @@ Future<bool> _settleUnpaidAsCash(
             customerName: o.customerName,
             customerPhone: o.customerPhone,
             deliveryAddress: o.order.address,
+            reference: o.order.reference,
             tableName: o.tableName,
             numberOfPersons: o.order.persons,
           );
@@ -286,8 +328,10 @@ Future<bool> _settleUnpaidAsCash(
         } catch (_) {/* print non-fatal — payment already committed */}
       }
     }
+    progress.close();
     return true;
   } catch (e) {
+    progress.close();
     if (context.mounted) {
       SnackBarHelper.error(
         context,
@@ -296,6 +340,84 @@ Future<bool> _settleUnpaidAsCash(
     }
     return false;
   }
+}
+
+/// Outcome of [runUnpaidOrdersGate].
+enum UnpaidGateResult {
+  /// Nothing was unpaid.
+  none,
+
+  /// Every unpaid order was settled as cash.
+  settled,
+
+  /// The person chose to go on with orders still unpaid.
+  leftUnpaid,
+
+  /// The close must not go ahead.
+  cancelled,
+}
+
+/// The unpaid-orders question, over the orders of [sessionIds].
+///
+/// Settled cash goes to [cashSessionId], which must still be open so its
+/// count and totals include it; null hides "pay all" (nothing can take the
+/// cash). [forZ] words it as the day close, where the admin's
+/// `allowZCloseWithUnpaid` decides whether going on unpaid is offered at all.
+Future<UnpaidGateResult> runUnpaidOrdersGate(
+  BuildContext context,
+  WidgetRef ref, {
+  required List<int> sessionIds,
+  required int? cashSessionId,
+  bool forZ = false,
+}) async {
+  final repo = ref.read(orderRepositoryProvider);
+  final unpaid = <OrderFullDetails>[];
+  if (sessionIds.isNotEmpty) {
+    final res = await BlockingProgress.run(
+      context,
+      AppLocalizations.of(context)!.translate('checking_unpaid_orders'),
+      (_) => repo.getPaginatedOrdersWithFullDetails(
+        page: 0,
+        pageSize: 500,
+        sessionIds: sessionIds,
+        unpaidOnly: true,
+      ),
+    );
+    unpaid.addAll(res.orders.where((o) => (o.total - o.totalPaid) > 0.005));
+  }
+  if (unpaid.isEmpty) return UnpaidGateResult.none;
+  if (!context.mounted) return UnpaidGateResult.cancelled;
+
+  final allowContinue =
+      !forZ || ref.read(settingsProvider).allowZCloseWithUnpaid;
+  final action = await _promptUnpaidOrders(
+    context,
+    ref,
+    unpaid,
+    forZ: forZ,
+    allowContinue: allowContinue,
+    canPay: cashSessionId != null,
+  );
+  if (action == null) return UnpaidGateResult.cancelled;
+  if (!action.pay) {
+    if (forZ) {
+      try {
+        final me = ref.read(currentUserProvider);
+        await ref.read(activityLogServiceProvider).log(
+          ActivityAction.zClosed,
+          'audit_z_close_unpaid',
+          ['${unpaid.length}'],
+          userId: me?.id,
+          username: me?.effectiveDisplayName,
+        );
+      } catch (_) {}
+    }
+    return UnpaidGateResult.leftUnpaid;
+  }
+  if (!context.mounted) return UnpaidGateResult.cancelled;
+  final ok = await _settleUnpaidAsCash(
+      context, ref, unpaid, cashSessionId!, action.printReceipts);
+  return ok ? UnpaidGateResult.settled : UnpaidGateResult.cancelled;
 }
 
 /// Two-step session close: shows the cashier the expected cash from tickets,
@@ -320,41 +442,87 @@ Future<CloseSessionResult> showCloseSessionDialog({
   final sessionService = SessionService(ref.read(databaseProvider));
   final dailySummary = DailySummaryService(ref.read(databaseProvider));
 
-  // Unpaid-orders gate: if this session still has unpaid orders, let the
-  // cashier settle them all as cash now (so the cash is captured in THIS
-  // Z-report) or proceed and end anyway. Runs BEFORE the summary is computed
-  // so the expected-cash figure reflects any just-settled orders.
-  // When the cashier ends with unpaid orders still open, their tables stay
-  // occupied; otherwise (no unpaid, or paid all) the session's tables are freed
-  // at close so the floor starts empty next session.
-  bool freeTablesAtClose = true;
-  {
-    final repo = ref.read(orderRepositoryProvider);
-    final unpaidRes = await repo.getPaginatedOrdersWithFullDetails(
-      page: 0,
-      pageSize: 500,
-      sessionId: sessionId,
-      unpaidOnly: true,
-    );
-    final unpaid = unpaidRes.orders
-        .where((o) => (o.total - o.totalPaid) > 0.005)
-        .toList();
-    if (unpaid.isNotEmpty && context.mounted) {
-      final action = await _promptUnpaidOrders(context, ref, unpaid);
-      if (action == null) return CloseSessionResult.cancelled; // user cancelled
-      if (action.pay) {
-        final ok = await _settleUnpaidAsCash(
-            context, ref, unpaid, sessionId, action.printReceipts);
-        if (!ok) return CloseSessionResult.cancelled; // settle failed → abort close
-      } else {
-        // Ending with unpaid orders open → leave their tables occupied.
-        freeTablesAtClose = false;
-      }
+  // Everything up to the dialog reads the day off disk — on a long history
+  // that is seconds, and the button must not look dead meanwhile. Each step
+  // that can prompt closes the overlay first.
+  var preparing =
+      BlockingProgress.show(context, l10n.translate('close_preparing'));
+
+  final zService = ref.read(zServiceProvider);
+  final (sessionZ, openZ, closesZWithSession, sessionsInZ) = await () async {
+    try {
+      // The Z this session belongs to. Null only on a legacy session opened
+      // before Z tracking, which keeps the old per-session Z print.
+      final session = await sessionService.getSessionById(sessionId);
+      final sessionZ = session?.zId == null
+          ? null
+          : await zService.getById(session!.zId!);
+      final openZ =
+          sessionZ != null && sessionZ.status == 'open' ? sessionZ : null;
+      // Closing the Z is never remembered: ending the trading day must be a
+      // deliberate choice every time.
+      // BY_SESSION: this close takes the Z with it, behind the scenes — the
+      // cashier sees a plain session close.
+      final closesZWithSession =
+          openZ != null && await zClosesWithSessionFor(ref, openZ, sessionId);
+      final sessionsInZ = closesZWithSession
+          ? (await zService.sessionsForZ(openZ.id)).length
+          : 0;
+      return (sessionZ, openZ, closesZWithSession, sessionsInZ);
+    } finally {
+      preparing.close();
     }
+  }();
+
+  // Unpaid-orders gate, BEFORE the summary is computed so the expected-cash
+  // figure reflects any just-settled orders. A close that takes the Z with it
+  // asks about the whole Z's unpaid orders (the admin may require them paid);
+  // a plain session close asks about this session's, if the admin wants that.
+  // Ending with unpaid orders open leaves their tables occupied; otherwise the
+  // session's tables are freed at close so the floor starts empty next time.
+  bool freeTablesAtClose = true;
+  final settings = ref.read(settingsProvider);
+  final closesZUpFront = openZ != null && (closeZ || closesZWithSession);
+  // Whether the Z's unpaid orders were already dealt with — ticking "close
+  // the Z" later in the dialog asks only if not.
+  bool zUnpaidChecked = false;
+  {
+    UnpaidGateResult gate = UnpaidGateResult.none;
+    if (closesZUpFront && settings.unpaidPromptOnZClose) {
+      zUnpaidChecked = true;
+      final zSessions = await zService.sessionsForZ(openZ.id);
+      if (!context.mounted) return CloseSessionResult.cancelled;
+      gate = await runUnpaidOrdersGate(
+        context,
+        ref,
+        sessionIds: [for (final s in zSessions) s.id],
+        cashSessionId: sessionId,
+        forZ: true,
+      );
+    } else if (settings.unpaidPromptOnSessionClose && context.mounted) {
+      gate = await runUnpaidOrdersGate(
+        context,
+        ref,
+        sessionIds: [sessionId],
+        cashSessionId: sessionId,
+      );
+    }
+    if (gate == UnpaidGateResult.cancelled) return CloseSessionResult.cancelled;
+    if (gate == UnpaidGateResult.leftUnpaid) freeTablesAtClose = false;
   }
 
-  final summary = await sessionService.getSessionSummary(sessionId);
-  final expected = summary.expectedCashAtEnd;
+  if (!context.mounted) return CloseSessionResult.cancelled;
+  preparing =
+      BlockingProgress.show(context, l10n.translate('close_preparing'));
+  SessionSummary summary;
+  final StaffChoices staffChoices;
+  try {
+    summary = await sessionService.getSessionSummary(sessionId);
+    staffChoices = await StaffChoices.load(ref.read(databaseProvider), l10n);
+  } finally {
+    preparing.close();
+  }
+  var expected = summary.expectedCashAtEnd;
   final currencyFmt = ref.read(currencyFormatterProvider);
 
   // Pre-fill with the expected figure so a confirm without edits still
@@ -372,29 +540,9 @@ Future<CloseSessionResult> showCloseSessionDialog({
   // they reach them from here or from there — so the choice, the UI and the
   // printing are shared. See [ReportDocumentsPicker]. Ticks are remembered.
   final documents = ReportDocuments.fromSettings(ref.read(settingsProvider));
-  final staffChoices =
-      await StaffChoices.load(ref.read(databaseProvider), l10n);
   if (!context.mounted) return CloseSessionResult.cancelled;
 
-  // The Z this session belongs to. Null only on a legacy session opened
-  // before Z tracking, which keeps the old per-session Z print.
-  final session = await sessionService.getSessionById(sessionId);
-  final zService = ref.read(zServiceProvider);
-  final sessionZ = session?.zId == null
-      ? null
-      : await zService.getById(session!.zId!);
-  final openZ = sessionZ != null && sessionZ.status == 'open' ? sessionZ : null;
-  // Closing the Z is never remembered: ending the trading day must be a
-  // deliberate choice every time.
-  // BY_SESSION: this close takes the Z with it, behind the scenes — the
-  // cashier sees a plain session close.
-  final closesZWithSession =
-      openZ != null && await zClosesWithSessionFor(ref, openZ, sessionId);
-  final sessionsInZ = closesZWithSession
-      ? (await zService.sessionsForZ(openZ.id)).length
-      : 0;
   bool closeTheZ = closeZ && openZ != null && !closesZWithSession;
-  if (!context.mounted) return CloseSessionResult.cancelled;
 
   final result = await showDialog<CloseSessionResult>(
     context: context,
@@ -468,6 +616,13 @@ Future<CloseSessionResult> showCloseSessionDialog({
 
           setLocal(() => busy = true);
           final notes = notesCtrl.text.trim();
+          // Printing, sync and the email report can take a while (longer
+          // offline, waiting on timeouts). Closed around the one prompt
+          // below, and before this dialog pops — both share the root
+          // navigator.
+          if (!ctx.mounted) return;
+          var progress = BlockingProgress.show(
+              ctx, l10n.translate('closing_session_progress'));
           try {
             // 1. Close the session locally.
             await sessionService.endSession(
@@ -475,6 +630,15 @@ Future<CloseSessionResult> showCloseSessionDialog({
               countedCash: c,
               countNotes: notes.isEmpty ? null : notes,
             );
+            // Every person-made close leaves a SESSION_END, so one missing
+            // from the log points at a close nobody asked for.
+            try {
+              final me = ref.read(currentUserProvider);
+              await ref.read(activityLogServiceProvider).logSessionEnd(
+                    userId: me?.id,
+                    username: me?.effectiveDisplayName,
+                  );
+            } catch (_) {}
 
             // 1b. Free the tables used this session so the floor starts empty
             //     next session. Covers orders paid earlier in the shift too
@@ -493,6 +657,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
             //    the Z's, and prints only when the Z closes. A legacy session
             //    with no Z gets its X too (a Z would be printed before its
             //    day is closed).
+            progress.message = l10n.translate('printing_reports_progress');
             bool printed = false;
             DailySummaryReport? zReport;
             // What the floor still owes as this shift ends — the figure the
@@ -537,7 +702,25 @@ Future<CloseSessionResult> showCloseSessionDialog({
             } else if (!closeTheZ &&
                 openZ != null &&
                 zAutoCloseDueFor(ref, openZ)) {
-              final yes = await _askCloseDay(ctx, l10n);
+              progress.close();
+              var yes = await _askCloseDay(ctx, l10n);
+              // The session is already counted and ended, so its unpaid
+              // orders can only be acknowledged here, not settled.
+              if (yes &&
+                  ctx.mounted &&
+                  ref.read(settingsProvider).unpaidPromptOnZClose) {
+                final zSessions = await zService.sessionsForZ(openZ.id);
+                final gate = !ctx.mounted
+                    ? UnpaidGateResult.cancelled
+                    : await runUnpaidOrdersGate(
+                        ctx,
+                        ref,
+                        sessionIds: [for (final s in zSessions) s.id],
+                        cashSessionId: null,
+                        forZ: true,
+                      );
+                yes = gate != UnpaidGateResult.cancelled;
+              }
               if (yes && ctx.mounted) {
                 final by = await _authorizeZClose(ctx, ref, openZ);
                 if (by != null) {
@@ -546,6 +729,9 @@ Future<CloseSessionResult> showCloseSessionDialog({
                   zClosedBy = by;
                 }
               }
+              if (!ctx.mounted) return;
+              progress = BlockingProgress.show(
+                  ctx, l10n.translate('printing_reports_progress'));
             }
 
             // 2c. Close the Z. After endSession above, so the Z's last
@@ -553,6 +739,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
             //     the server marks as closing the Z.
             int? closedZId;
             if (closeTheZ && openZ != null) {
+              progress.message = l10n.translate('closing_z_progress');
               try {
                 await closeZNow(ref, openZ,
                     closeMode: closeMode, endedBy: zClosedBy);
@@ -590,6 +777,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
             //    Best-effort: network errors are swallowed; the spinner
             //    stays visible while this runs. If offline, the session
             //    stays isSynced=false and syncSessionsBulk picks it up later.
+            progress.message = l10n.translate('syncing_with_server_progress');
             try {
               final syncService = DataSyncService(
                 ref.read(databaseProvider),
@@ -609,14 +797,17 @@ Future<CloseSessionResult> showCloseSessionDialog({
 
             // 4. Send the email report (awaited — after sync so the server
             //    already has the session/orders/tickets it references).
+            progress.message = l10n.translate('sending_report_progress');
             await _sendEmailReport(ref, dailySummary, sessionId);
 
             // 5. Fire-and-forget notification so admin devices get the Z summary.
             final closedReport = zReport;
             if (closedReport != null && closedReport.sessions.isNotEmpty) {
-              unawaited(_sendClosedNotification(ref, closedReport, sessionId));
+              unawaited(notifySessionClosed(ref.read, sessionId,
+                  report: closedReport));
             }
 
+            progress.close();
             if (ctx.mounted) {
               Navigator.of(ctx).pop(
                 CloseSessionResult(
@@ -626,10 +817,13 @@ Future<CloseSessionResult> showCloseSessionDialog({
               );
             }
           } catch (e) {
+            progress.close();
             setLocal(() => busy = false);
             if (ctx.mounted) {
               SnackBarHelper.failure(ctx, e);
             }
+          } finally {
+            progress.close();
           }
         }
 
@@ -647,6 +841,259 @@ Future<CloseSessionResult> showCloseSessionDialog({
                 ? cs.tertiary
                 : (variance < 0 ? cs.error : cs.secondary));
 
+        Widget panel(String title, IconData icon, List<Widget> children) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerLow,
+              border: Border.all(color: cs.outlineVariant),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(icon, size: 18, color: cs.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(title,
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w700)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                ...children,
+              ],
+            ),
+          );
+        }
+
+        Widget line(String label, String value,
+            {bool strong = false, Color? color}) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(label,
+                      style: TextStyle(
+                          color: strong ? cs.onSurface : cs.onSurfaceVariant,
+                          fontWeight: strong ? FontWeight.w700 : null)),
+                ),
+                Text(value,
+                    style: TextStyle(
+                        fontSize: strong ? 16 : 14,
+                        fontWeight: strong ? FontWeight.bold : FontWeight.w600,
+                        color: color)),
+              ],
+            ),
+          );
+        }
+
+        String money(double v) => currencyFmt.format(v);
+
+        // What was sold, by method — context for the count, not part of it.
+        final summaryPanel = panel(l10n.translate('summary'),
+            Icons.receipt_long_outlined, [
+          line(l10n.translate('tickets'), '${summary.ticketCount}'),
+          line(l10n.translate('total_sales'), money(summary.totalPaid),
+              strong: true),
+          const Divider(height: 16),
+          line(l10n.translate('cash'), money(summary.totalCash)),
+          line(l10n.translate('card'), money(summary.totalCard)),
+          if (summary.totalMobile > 0)
+            line(l10n.translate('mobile'), money(summary.totalMobile)),
+          if (summary.totalOther > 0)
+            line(l10n.translate('other'), money(summary.totalOther)),
+          // A non-cash refund changes revenue but not the drawer, so it is a
+          // memo line here — never part of the expected cash.
+          if (summary.refundsTotal - summary.refundsCash > 0)
+            line(l10n.translate('refunds_non_cash'),
+                money(summary.refundsTotal - summary.refundsCash)),
+        ]);
+
+        // The drawer reconciliation, laid out as the sum it is so a cashier
+        // can see why the expected figure is what it is.
+        final cashPanel = panel(l10n.translate('cash'), Icons.payments_outlined, [
+          line(l10n.translate('starting_balance'),
+              money(summary.session.moneyAtStart)),
+          line(l10n.translate('cash_sales'), '+${money(summary.totalCash)}'),
+          if (summary.cashPaidIn > 0)
+            line(l10n.translate('cash_paid_in'),
+                '+${money(summary.cashPaidIn)}'),
+          if (summary.cashPaidOut > 0)
+            line(l10n.translate('cash_paid_out'),
+                '-${money(summary.cashPaidOut)}'),
+          // Refunds are not transactions, so they are invisible in the ticket
+          // totals. Shown explicitly, otherwise the expected cash looks wrong
+          // to a cashier who handed money back an hour ago.
+          if (summary.refundsCash > 0)
+            line(l10n.translate('refunds_cash_out'),
+                '-${money(summary.refundsCash)}'),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: cs.primaryContainer.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(l10n.translate('expected_cash'),
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: cs.onPrimaryContainer)),
+                ),
+                Text(
+                  money(expected),
+                  style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: cs.onPrimaryContainer),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          AdaptiveKeyboardTextField(
+            controller: countedCtrl,
+            keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            decoration: InputDecoration(
+              labelText: l10n.translate('counted_cash'),
+              prefixIcon: const Icon(Icons.payments_outlined),
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (_) => setLocal(() {}),
+          ),
+          if (variance != null) ...[
+            const SizedBox(height: 8),
+            line(
+              l10n.translate('variance'),
+              '${variance >= 0 ? '+' : ''}${money(variance)}',
+              strong: true,
+              color: varianceColor,
+            ),
+          ],
+          const SizedBox(height: 10),
+          AdaptiveKeyboardTextField(
+            controller: notesCtrl,
+            maxLines: 2,
+            decoration: InputDecoration(
+              labelText: l10n.translate('count_notes'),
+              hintText: l10n.translate('count_notes_hint'),
+              prefixIcon: const Icon(Icons.notes),
+              border: const OutlineInputBorder(),
+            ),
+          ),
+        ]);
+
+        final printPanel = panel(l10n.translate('printing'), Icons.print_outlined, [
+          if (sessionZ != null && !closesZWithSession)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: printX,
+              onChanged: busy
+                  ? null
+                  : (v) {
+                      setLocal(() => printX = v ?? false);
+                      ref
+                          .read(settingsProvider.notifier)
+                          .setPrintXOnSessionClose(v ?? false);
+                    },
+              title: Text(l10n.translate('print_x_report')),
+            ),
+          // Extra tickets — each prints separately, and the choice is
+          // remembered so a shop that always wants them ticks once.
+          ReportDocumentsPicker(
+            documents: documents,
+            staff: staffChoices,
+            enabled: !busy,
+            onChanged: (persist) => setLocal(
+                () => persist(ref.read(settingsProvider.notifier))),
+          ),
+        ]);
+
+        // Close the Z with this session — the day-close gesture. Full width and
+        // tinted so ending the trading day never reads as just another option.
+        final zStrip = openZ != null && !closesZWithSession
+            ? Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: closeTheZ
+                      ? cs.errorContainer.withValues(alpha: 0.5)
+                      : null,
+                  border: Border.all(
+                      color: closeTheZ ? cs.error : cs.outlineVariant),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: closeTheZ,
+                  onChanged: busy
+                      ? null
+                      : (v) async {
+                          final tick = v ?? false;
+                          // Ticked here rather than up front: the Z's unpaid
+                          // orders are asked about now, and anything settled
+                          // moves the expected cash.
+                          if (tick &&
+                              !zUnpaidChecked &&
+                              ref.read(settingsProvider).unpaidPromptOnZClose) {
+                            final zSessions =
+                                await zService.sessionsForZ(openZ.id);
+                            if (!ctx.mounted) return;
+                            final gate = await runUnpaidOrdersGate(
+                              ctx,
+                              ref,
+                              sessionIds: [for (final s in zSessions) s.id],
+                              cashSessionId: sessionId,
+                              forZ: true,
+                            );
+                            if (gate == UnpaidGateResult.cancelled) return;
+                            zUnpaidChecked = true;
+                            if (gate == UnpaidGateResult.leftUnpaid) {
+                              freeTablesAtClose = false;
+                            }
+                            if (gate == UnpaidGateResult.settled) {
+                              final before = expected;
+                              summary = await sessionService
+                                  .getSessionSummary(sessionId);
+                              expected = summary.expectedCashAtEnd;
+                              // An untouched pre-fill follows the new figure;
+                              // a typed count is the cashier's and stays.
+                              if (countedCtrl.text ==
+                                  before.toStringAsFixed(2)) {
+                                countedCtrl.text = expected.toStringAsFixed(2);
+                              }
+                            }
+                          }
+                          setLocal(() => closeTheZ = tick);
+                        },
+                  title: Text(
+                    '${l10n.translate('close_z')} · ${ZService.displayName(openZ)}',
+                    style:
+                        TextStyle(color: cs.error, fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(l10n.translate('close_the_day_subtitle')),
+                ),
+              )
+            : null;
+
+        final screen = MediaQuery.sizeOf(ctx);
+        // Three panels side by side on a till screen; stacked on a phone.
+        final wide = screen.width >= 900;
+        const gap = SizedBox(width: 16, height: 16);
+
         return AlertDialog(
           title: Row(
             children: [
@@ -656,167 +1103,31 @@ Future<CloseSessionResult> showCloseSessionDialog({
             ],
           ),
           content: SizedBox(
-            width: 420,
+            width: wide ? math.min(1100.0, screen.width - 96) : 460,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (sessionZ != null && !closesZWithSession) ...[
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      value: printX,
-                      onChanged: busy
-                          ? null
-                          : (v) {
-                              setLocal(() => printX = v ?? false);
-                              ref
-                                  .read(settingsProvider.notifier)
-                                  .setPrintXOnSessionClose(v ?? false);
-                            },
-                      title: Text(l10n.translate('print_x_report')),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  // Extra tickets — each prints separately, and the choice is
-                  // remembered so a shop that always wants them ticks once.
-                  ReportDocumentsPicker(
-                    documents: documents,
-                    staff: staffChoices,
-                    enabled: !busy,
-                    onChanged: (persist) => setLocal(
-                        () => persist(ref.read(settingsProvider.notifier))),
-                  ),
-                  // Close the Z with this session — the day-close gesture.
-                  if (openZ != null && !closesZWithSession) ...[
-                    const Divider(height: 16),
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      value: closeTheZ,
-                      onChanged: busy
-                          ? null
-                          : (v) => setLocal(() => closeTheZ = v ?? false),
-                      title: Text(
-                        '${l10n.translate('close_z')} · ${ZService.displayName(openZ)}',
-                        style: TextStyle(
-                            color: cs.error, fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: Text(l10n.translate('close_the_day_subtitle')),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: cs.primaryContainer.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Column(
+                  if (wide)
+                    Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(l10n.translate('expected_cash'),
-                            style: TextStyle(
-                                fontSize: 13,
-                                color: cs.onPrimaryContainer
-                                    .withValues(alpha: 0.8),
-                                fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 4),
-                        Text(
-                          currencyFmt.format(expected),
-                          style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                              color: cs.onPrimaryContainer),
-                        ),
-                        // Refunds are not transactions, so they are invisible in
-                        // the ticket totals this figure is built from. Shown
-                        // explicitly, otherwise the expected cash looks wrong to
-                        // a cashier who handed money back an hour ago.
-                        if (summary.refundsCash > 0) ...[
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              Icon(Icons.undo,
-                                  size: 14,
-                                  color: cs.onPrimaryContainer
-                                      .withValues(alpha: 0.8)),
-                              const SizedBox(width: 6),
-                              Text(
-                                '${l10n.translate('refunds_cash_out')}: '
-                                '-${currencyFmt.format(summary.refundsCash)}',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: cs.onPrimaryContainer
-                                        .withValues(alpha: 0.9)),
-                              ),
-                            ],
-                          ),
-                        ],
-                        // A non-cash refund changes revenue but not the drawer,
-                        // so it is a memo line only — never subtracted above.
-                        if (summary.refundsTotal - summary.refundsCash > 0) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            '${l10n.translate('refunds_non_cash')}: '
-                            '${currencyFmt.format(summary.refundsTotal - summary.refundsCash)}',
-                            style: TextStyle(
-                                fontSize: 11,
-                                color: cs.onPrimaryContainer
-                                    .withValues(alpha: 0.7)),
-                          ),
-                        ],
+                        Expanded(flex: 4, child: summaryPanel),
+                        gap,
+                        Expanded(flex: 5, child: cashPanel),
+                        gap,
+                        Expanded(flex: 5, child: printPanel),
                       ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  AdaptiveKeyboardTextField(
-                    controller: countedCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true),
-                    decoration: InputDecoration(
-                      labelText: l10n.translate('counted_cash'),
-                      prefixIcon: const Icon(Icons.payments_outlined),
-                      border: const OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => setLocal(() {}),
-                  ),
-                  if (variance != null) ...[
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Text(
-                          '${l10n.translate('variance')}:',
-                          style: TextStyle(
-                              color: cs.onSurfaceVariant,
-                              fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '${variance >= 0 ? '+' : ''}${currencyFmt.format(variance)}',
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: varianceColor),
-                        ),
-                      ],
-                    ),
+                    )
+                  else ...[
+                    cashPanel,
+                    gap,
+                    summaryPanel,
+                    gap,
+                    printPanel,
                   ],
-                  const SizedBox(height: 12),
-                  AdaptiveKeyboardTextField(
-                    controller: notesCtrl,
-                    maxLines: 2,
-                    decoration: InputDecoration(
-                      labelText: l10n.translate('count_notes'),
-                      hintText: l10n.translate('count_notes_hint'),
-                      prefixIcon: const Icon(Icons.notes),
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
+                  if (zStrip != null) ...[gap, zStrip],
                 ],
               ),
             ),
@@ -936,48 +1247,6 @@ Future<bool> _askCloseDay(BuildContext context, AppLocalizations l10n) async {
     ),
   );
   return yes == true;
-}
-
-/// POSTs a POS_SESSION_CLOSED notification from the Z-report data.
-/// Never throws — best-effort only.
-Future<void> _sendClosedNotification(
-  WidgetRef ref,
-  DailySummaryReport report,
-  int sessionId,
-) async {
-  final s = report.sessions.first;
-  try {
-    final currency = ref.read(settingsProvider).currency;
-    final posName = ref.read(apiServiceProvider).getPosName() ?? '';
-    final closedAt = s.endedAt ?? DateTime.now();
-    final session = await SessionService(ref.read(databaseProvider))
-        .getSessionById(sessionId);
-    final z = session?.zId == null
-        ? null
-        : await ref.read(zServiceProvider).getById(session!.zId!);
-
-    final params = NotificationParams.sessionClosed(
-      terminalName: posName,
-      report: s,
-      closedAt: closedAt,
-      // The same expected-cash definition the close dialog and the printed Z
-      // use, so Expected / Counted / Variance agree on the mobile card.
-      expectedCash: s.expectedCash,
-      currency: currency,
-      sections: report.sections,
-      zDay: z == null ? null : ZService.labelOf(z).zDay,
-      zSeq: z?.zSeq,
-      autoClosed: session?.autoClosed ?? false,
-    );
-
-    await ref.read(notificationOutboxProvider).send(
-      'POS_SESSION_CLOSED',
-      params,
-      refId: sessionId.toString(),
-    );
-  } catch (e) {
-    Logger.instance.warning('session-closed notification failed: $e');
-  }
 }
 
 /// Builds and POSTs the session email-report payload.

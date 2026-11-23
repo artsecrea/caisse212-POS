@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../domain/models/app_settings.dart';
+import '../domain/models/z_report_sections.dart';
 import '../services/autostart_service.dart';
 import 'database_providers.dart'
     show sharedPreferencesProvider, selectedCategoryProvider;
@@ -19,6 +20,7 @@ class SettingsKeys {
   static const String showProductImages = 'show_product_images';
   static const String defaultOrderStatus = 'default_order_status';
   static const String defaultKdsState = 'default_kds_state';
+  static const String kitchenTargetMinutes = 'kitchen_target_minutes';
   static const String printWaiterOrderTicket = 'print_waiter_order_ticket';
   static const String printWaiterPaper = 'print_waiter_paper';
   static const String waiterKdsBatchSeconds = 'waiter_kds_batch_seconds';
@@ -43,6 +45,9 @@ class SettingsKeys {
   static const String buttonOrder = 'button_order';
   static const String showCashDrawerButton = 'show_cash_drawer_button';
   static const String showCancelOrderButton = 'show_cancel_order_button';
+  static const String showRefundButton = 'show_refund_button';
+  static const String showTagsButton = 'show_tags_button';
+  static const String showReserveButton = 'show_reserve_button';
   static const String actionButtonAlignment = 'action_button_alignment';
   static const String syncUnpaidOrders = 'sync_unpaid_orders';
 
@@ -62,6 +67,8 @@ class SettingsKeys {
   static const String showOnscreenKeyboard = 'show_onscreen_keyboard';
   static const String onscreenKeyboardWidthFraction = 'onscreen_keyboard_width_fraction';
   static const String autoFocusProductSearch = 'auto_focus_product_search';
+  static const String showProductSearch = 'show_product_search';
+  static const String zeroPriceTvaRate = 'zero_price_tva_rate';
 
   // Settings lock
   static const String settingsLockEnabled = 'settings_lock_enabled';
@@ -98,6 +105,9 @@ class SettingsKeys {
   static const String requireDeliveryAddress = 'require_delivery_address';
   static const String autoClearTableAfterPaying =
       'auto_clear_table_after_paying';
+  static const String paymentCompletesKitchen = 'payment_completes_kitchen';
+  static const String showCancelledItemsAsRows =
+      'show_cancelled_items_as_rows';
   static const String coursesEnabled = 'courses_enabled';
   static const String printKitchenCancellations =
       'print_kitchen_cancellations';
@@ -110,6 +120,15 @@ class SettingsKeys {
       'print_sales_by_cashier_on_close';
   static const String requireAdminToCloseUnbalanced =
       'require_admin_close_unbalanced';
+  static const String disableSessionAutoClose = 'disable_session_auto_close';
+  static const String unpaidPromptOnSessionClose =
+      'unpaid_prompt_on_session_close';
+  static const String unpaidPromptOnZClose = 'unpaid_prompt_on_z_close';
+  static const String allowZCloseWithUnpaid = 'allow_z_close_with_unpaid';
+  static const String zWarnOpenTooLong = 'z_warn_open_too_long';
+  static const String zWarnOpenHours = 'z_warn_open_hours';
+  static const String zWarnPastCutoff = 'z_warn_past_cutoff';
+  static const String zWarnCutoffTime = 'z_warn_cutoff_time';
   static const String printXOnSessionClose = 'print_x_on_session_close';
   static const String printDiscountsOnClose = 'print_discounts_on_close';
   static const String printOrdersListOnClose = 'print_orders_list_on_close';
@@ -241,6 +260,47 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       _prefs.setStringList(SettingsKeys.buttonOrder, buttonOrder);
     }
 
+    // Migration: Add 'refund' if missing, after the other order-lifecycle
+    // actions — a till with a saved button order would otherwise never show
+    // the main-screen Refund button.
+    if (!buttonOrder.contains('refund')) {
+      final mutableList = List<String>.from(buttonOrder);
+      final anchor = mutableList.indexOf('cancelOrder');
+      if (anchor >= 0) {
+        mutableList.insert(anchor + 1, 'refund');
+      } else {
+        mutableList.add('refund');
+      }
+      buttonOrder = mutableList;
+      _prefs.setStringList(SettingsKeys.buttonOrder, buttonOrder);
+    }
+
+    // Migration: Add 'tags' after 'refund' for tills with a saved order.
+    if (!buttonOrder.contains('tags')) {
+      final mutableList = List<String>.from(buttonOrder);
+      final anchor = mutableList.indexOf('refund');
+      if (anchor >= 0) {
+        mutableList.insert(anchor + 1, 'tags');
+      } else {
+        mutableList.add('tags');
+      }
+      buttonOrder = mutableList;
+      _prefs.setStringList(SettingsKeys.buttonOrder, buttonOrder);
+    }
+
+    // Migration: Add 'reserve' before 'pay' for tills with a saved order.
+    if (!buttonOrder.contains('reserve')) {
+      final mutableList = List<String>.from(buttonOrder);
+      final anchor = mutableList.indexOf('pay');
+      if (anchor >= 0) {
+        mutableList.insert(anchor, 'reserve');
+      } else {
+        mutableList.add('reserve');
+      }
+      buttonOrder = mutableList;
+      _prefs.setStringList(SettingsKeys.buttonOrder, buttonOrder);
+    }
+
     // Migration: Add 'waiter' button if missing (for existing installations)
     if (!buttonOrder.contains('waiter')) {
       final mutableList = List<String>.from(buttonOrder);
@@ -273,6 +333,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getString(SettingsKeys.defaultOrderStatus)),
       defaultKdsState: _safeKdsState(
           _prefs.getString(SettingsKeys.defaultKdsState)),
+      kitchenTargetMinutes:
+          _prefs.getInt(SettingsKeys.kitchenTargetMinutes) ?? 20,
       printWaiterOrderTicket:
           _prefs.getBool(SettingsKeys.printWaiterOrderTicket) ?? true,
       printWaiterPaper:
@@ -300,6 +362,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(SettingsKeys.showCashDrawerButton) ?? false,
       showCancelOrderButton:
           _prefs.getBool(SettingsKeys.showCancelOrderButton) ?? false,
+      showRefundButton: _prefs.getBool(SettingsKeys.showRefundButton) ?? true,
+      showTagsButton: _prefs.getBool(SettingsKeys.showTagsButton) ?? true,
+      showReserveButton:
+          _prefs.getBool(SettingsKeys.showReserveButton) ?? true,
       showDailySummaryButton: _prefs.getBool(SettingsKeys.showDailySummaryButton) ?? false,
       buttonOrder: buttonOrder,
       actionButtonAlignment: ActionButtonAlignment.values.firstWhere(
@@ -324,10 +390,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       waiterNotifyReady: _prefs.getBool(SettingsKeys.waiterNotifyReady) ?? false,
       waiterNotifyCanceled: _prefs.getBool(SettingsKeys.waiterNotifyCanceled) ?? false,
       waiterNotifyRupture: _prefs.getBool(SettingsKeys.waiterNotifyRupture) ?? false,
-      sseEnabled: _prefs.getBool(SettingsKeys.sseEnabled) ?? false,
+      sseEnabled: _prefs.getBool(SettingsKeys.sseEnabled) ?? true,
       enableSnackBars: _prefs.getBool(SettingsKeys.enableSnackBars) ?? false,
       enableCustomerDisplay: _prefs.getBool(SettingsKeys.enableCustomerDisplay) ?? false,
-      autoUpdate: _prefs.getBool(SettingsKeys.autoUpdate) ?? true,
+      autoUpdate: _prefs.getBool(SettingsKeys.autoUpdate) ?? false,
       requireTableForDineIn:
           _prefs.getBool(SettingsKeys.requireTableForDineIn) ?? false,
       requireWaiterForDineIn:
@@ -338,6 +404,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(SettingsKeys.requireDeliveryAddress) ?? false,
       autoClearTableAfterPaying:
           _prefs.getBool(SettingsKeys.autoClearTableAfterPaying) ?? false,
+      paymentCompletesKitchen:
+          _prefs.getBool(SettingsKeys.paymentCompletesKitchen) ?? false,
+      showCancelledItemsAsRows:
+          _prefs.getBool(SettingsKeys.showCancelledItemsAsRows) ?? false,
       coursesEnabled: _prefs.getBool(SettingsKeys.coursesEnabled) ?? false,
       printKitchenCancellations:
           _prefs.getBool(SettingsKeys.printKitchenCancellations) ?? true,
@@ -351,6 +421,19 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(SettingsKeys.printSalesByCashierOnClose) ?? false,
       requireAdminToCloseUnbalanced:
           _prefs.getBool(SettingsKeys.requireAdminToCloseUnbalanced) ?? false,
+      disableSessionAutoClose:
+          _prefs.getBool(SettingsKeys.disableSessionAutoClose) ?? true,
+      unpaidPromptOnSessionClose:
+          _prefs.getBool(SettingsKeys.unpaidPromptOnSessionClose) ?? true,
+      unpaidPromptOnZClose:
+          _prefs.getBool(SettingsKeys.unpaidPromptOnZClose) ?? true,
+      allowZCloseWithUnpaid:
+          _prefs.getBool(SettingsKeys.allowZCloseWithUnpaid) ?? true,
+      zWarnOpenTooLong: _prefs.getBool(SettingsKeys.zWarnOpenTooLong) ?? true,
+      zWarnOpenHours: _prefs.getInt(SettingsKeys.zWarnOpenHours) ?? 16,
+      zWarnPastCutoff: _prefs.getBool(SettingsKeys.zWarnPastCutoff) ?? true,
+      zWarnCutoffTime:
+          _prefs.getString(SettingsKeys.zWarnCutoffTime) ?? '04:00',
       printXOnSessionClose:
           _prefs.getBool(SettingsKeys.printXOnSessionClose) ?? true,
       printDiscountsOnClose:
@@ -359,6 +442,13 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           _prefs.getBool(SettingsKeys.printOrdersListOnClose) ?? false,
       printProductSummaryOnClose:
           _prefs.getBool(SettingsKeys.printProductSummaryOnClose) ?? false,
+      zReportHiddenSections:
+          _prefs.getStringList(kZReportHiddenSectionsKey) ?? const [],
+      xReportHiddenSections: _prefs.getStringList(kXReportHiddenSectionsKey) ??
+          _prefs.getStringList(kZReportHiddenSectionsKey) ??
+          const [],
+      xReportSkipZero: _prefs.getBool(kXReportSkipZeroKey) ?? false,
+      zReportSkipZero: _prefs.getBool(kZReportSkipZeroKey) ?? false,
       defaultPaymentMethod: _prefs.getString(SettingsKeys.defaultPaymentMethod) ?? 'CASH',
       showTipDialog: _prefs.getBool(SettingsKeys.showTipDialog) ?? false,
       showTipButton: _prefs.getBool(SettingsKeys.showTipButton) ?? false,
@@ -381,6 +471,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       showOnscreenKeyboard: _prefs.getBool(SettingsKeys.showOnscreenKeyboard) ?? true,
       autoFocusProductSearch:
           _prefs.getBool(SettingsKeys.autoFocusProductSearch) ?? true,
+      showProductSearch:
+          _prefs.getBool(SettingsKeys.showProductSearch) ?? true,
+      zeroPriceTvaRate:
+          _prefs.getDouble(SettingsKeys.zeroPriceTvaRate) ?? 0,
       settingsLockEnabled:
           _prefs.getBool(SettingsKeys.settingsLockEnabled) ?? false,
       settingsPin: _prefs.getString(SettingsKeys.settingsPin) ?? '',
@@ -607,6 +701,21 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(showCancelOrderButton: value);
   }
 
+  Future<void> setShowTagsButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showTagsButton, value);
+    state = state.copyWith(showTagsButton: value);
+  }
+
+  Future<void> setShowReserveButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showReserveButton, value);
+    state = state.copyWith(showReserveButton: value);
+  }
+
+  Future<void> setShowRefundButton(bool value) async {
+    await _prefs.setBool(SettingsKeys.showRefundButton, value);
+    state = state.copyWith(showRefundButton: value);
+  }
+
   Future<void> setShowCashDrawerButton(bool value) async {
     await _prefs.setBool(SettingsKeys.showCashDrawerButton, value);
     state = state.copyWith(showCashDrawerButton: value);
@@ -745,6 +854,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(autoClearTableAfterPaying: value);
   }
 
+  Future<void> setPaymentCompletesKitchen(bool value) async {
+    await _prefs.setBool(SettingsKeys.paymentCompletesKitchen, value);
+    state = state.copyWith(paymentCompletesKitchen: value);
+  }
+
+  Future<void> setShowCancelledItemsAsRows(bool value) async {
+    await _prefs.setBool(SettingsKeys.showCancelledItemsAsRows, value);
+    state = state.copyWith(showCancelledItemsAsRows: value);
+  }
+
   Future<void> setPrintKitchenCancellations(bool value) async {
     await _prefs.setBool(SettingsKeys.printKitchenCancellations, value);
     state = state.copyWith(printKitchenCancellations: value);
@@ -780,6 +899,46 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(requireAdminToCloseUnbalanced: value);
   }
 
+  Future<void> setDisableSessionAutoClose(bool value) async {
+    await _prefs.setBool(SettingsKeys.disableSessionAutoClose, value);
+    state = state.copyWith(disableSessionAutoClose: value);
+  }
+
+  Future<void> setUnpaidPromptOnSessionClose(bool value) async {
+    await _prefs.setBool(SettingsKeys.unpaidPromptOnSessionClose, value);
+    state = state.copyWith(unpaidPromptOnSessionClose: value);
+  }
+
+  Future<void> setUnpaidPromptOnZClose(bool value) async {
+    await _prefs.setBool(SettingsKeys.unpaidPromptOnZClose, value);
+    state = state.copyWith(unpaidPromptOnZClose: value);
+  }
+
+  Future<void> setAllowZCloseWithUnpaid(bool value) async {
+    await _prefs.setBool(SettingsKeys.allowZCloseWithUnpaid, value);
+    state = state.copyWith(allowZCloseWithUnpaid: value);
+  }
+
+  Future<void> setZWarnOpenTooLong(bool value) async {
+    await _prefs.setBool(SettingsKeys.zWarnOpenTooLong, value);
+    state = state.copyWith(zWarnOpenTooLong: value);
+  }
+
+  Future<void> setZWarnOpenHours(int value) async {
+    await _prefs.setInt(SettingsKeys.zWarnOpenHours, value);
+    state = state.copyWith(zWarnOpenHours: value);
+  }
+
+  Future<void> setZWarnPastCutoff(bool value) async {
+    await _prefs.setBool(SettingsKeys.zWarnPastCutoff, value);
+    state = state.copyWith(zWarnPastCutoff: value);
+  }
+
+  Future<void> setZWarnCutoffTime(String value) async {
+    await _prefs.setString(SettingsKeys.zWarnCutoffTime, value);
+    state = state.copyWith(zWarnCutoffTime: value);
+  }
+
   Future<void> setPrintXOnSessionClose(bool value) async {
     await _prefs.setBool(SettingsKeys.printXOnSessionClose, value);
     state = state.copyWith(printXOnSessionClose: value);
@@ -798,6 +957,29 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> setPrintProductSummaryOnClose(bool value) async {
     await _prefs.setBool(SettingsKeys.printProductSummaryOnClose, value);
     state = state.copyWith(printProductSummaryOnClose: value);
+  }
+
+  Future<void> setZReportSectionShown(ZReportSection section, bool shown) async {
+    final list = withZBandShown(state.zReportHiddenSections, section, shown);
+    await _prefs.setStringList(kZReportHiddenSectionsKey, list);
+    state = state.copyWith(zReportHiddenSections: list);
+  }
+
+  Future<void> setXReportSectionShown(ZReportSection section, bool shown) async {
+    await setXReportHiddenSections(
+        withZBandShown(state.xReportHiddenSections, section, shown));
+  }
+
+  Future<void> setXReportHiddenSections(List<String> hidden) async {
+    await _prefs.setStringList(kXReportHiddenSectionsKey, hidden);
+    state = state.copyWith(xReportHiddenSections: hidden);
+  }
+
+  Future<void> setReportSkipZero({required bool isX, required bool value}) async {
+    await _prefs.setBool(isX ? kXReportSkipZeroKey : kZReportSkipZeroKey, value);
+    state = isX
+        ? state.copyWith(xReportSkipZero: value)
+        : state.copyWith(zReportSkipZero: value);
   }
 
   Future<void> setDefaultPaymentMethod(String method) async {
@@ -922,6 +1104,17 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(autoFocusProductSearch: value);
   }
 
+  Future<void> setShowProductSearch(bool value) async {
+    await _prefs.setBool(SettingsKeys.showProductSearch, value);
+    state = state.copyWith(showProductSearch: value);
+  }
+
+  Future<void> setZeroPriceTvaRate(double value) async {
+    final rate = value.clamp(0, 100).toDouble();
+    await _prefs.setDouble(SettingsKeys.zeroPriceTvaRate, rate);
+    state = state.copyWith(zeroPriceTvaRate: rate);
+  }
+
   /// Turn the Settings lock on or off, and set the code that opens it.
   ///
   /// A [pin] that is not exactly four digits is rejected rather than stored,
@@ -1027,6 +1220,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(showOrderNumberInLists: value);
   }
 
+  Future<void> setKitchenTargetMinutes(int minutes) async {
+    await _prefs.setInt(SettingsKeys.kitchenTargetMinutes, minutes);
+    state = state.copyWith(kitchenTargetMinutes: minutes);
+  }
+
   Future<void> setShowOrderNumberOnKds(bool value) async {
     await _prefs.setBool(SettingsKeys.showOrderNumberOnKds, value);
     state = state.copyWith(showOrderNumberOnKds: value);
@@ -1084,6 +1282,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _prefs.remove(SettingsKeys.showDailySummaryButton);
     await _prefs.remove(SettingsKeys.showCashDrawerButton);
     await _prefs.remove(SettingsKeys.showCancelOrderButton);
+    await _prefs.remove(SettingsKeys.showRefundButton);
+    await _prefs.remove(SettingsKeys.showTagsButton);
+    await _prefs.remove(SettingsKeys.showReserveButton);
     await _prefs.remove(SettingsKeys.showTipButton);
     await _prefs.remove(SettingsKeys.buttonOrder);
     await _prefs.remove(SettingsKeys.actionButtonAlignment);
@@ -1091,6 +1292,10 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _prefs.remove(SettingsKeys.sseEnabled);
     await _prefs.remove(SettingsKeys.printOrdersListOnClose);
     await _prefs.remove(SettingsKeys.printProductSummaryOnClose);
+    await _prefs.remove(kZReportHiddenSectionsKey);
+    await _prefs.remove(kXReportHiddenSectionsKey);
+    await _prefs.remove(kXReportSkipZeroKey);
+    await _prefs.remove(kZReportSkipZeroKey);
     // Leftover of the retired local day lock (pre-v3 Z); nothing reads it.
     await _prefs.remove('z_day_state_json');
     state = const AppSettings();

@@ -18,6 +18,7 @@ import '../../utils/app_localizations.dart';
 import '../../services/activity_log_service.dart';
 import '../../services/permission_service.dart';
 import '../../utils/order_permissions.dart';
+import '../../utils/zero_price_tva.dart';
 import 'product_modification_dialog.dart' as dialog;
 import 'quick_product_dialog.dart';
 import '../../core/theme/app_theme.dart';
@@ -1125,12 +1126,6 @@ class _ProductCard extends ConsumerWidget {
     final variantTva = modifications['variantTva'] as double?;
     final variantImageUrl = modifications['variantImageUrl'] as String?;
 
-    // Planning data
-    final planStartAt = modifications['planStartAt'] as DateTime?;
-    final planEndAt = modifications['planEndAt'] as DateTime?;
-    final planWaiterId = modifications['planWaiterId'] as int?;
-    final planResourceId = modifications['planResourceId'] as int?;
-
     final serialId = modifications['serialId'] as int?;
     final serialNumber = modifications['serialNumber'] as String?;
 
@@ -1154,14 +1149,15 @@ class _ProductCard extends ConsumerWidget {
       finalPrice: unitPrice,
       quantity: quantity,
       components: components,
-      tva: variantTva ?? product.tvaAmount,
+      tva: lineUnitTva(
+        catalogPrice: basePrice,
+        catalogTva: variantTva ?? product.tvaAmount,
+        unitPrice: unitPrice,
+        zeroPriceRate: ref.read(settingsProvider).zeroPriceTvaRate,
+      ),
       discount: discount,
       manualDiscount: manualDiscount,
       note: note,
-      planStartAt: planStartAt,
-      planEndAt: planEndAt,
-      planWaiterId: planWaiterId,
-      planResourceId: planResourceId,
       unitName: product.unitName,
     );
 

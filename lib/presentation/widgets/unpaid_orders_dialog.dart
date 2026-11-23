@@ -26,6 +26,9 @@ class UnpaidOrdersDialog extends ConsumerStatefulWidget {
 class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
   // Filters
   String _typeFilter = 'ALL';
+  // The search box: #number, code, reference, or customer.
+  final _searchController = TextEditingController();
+  String _search = '';
   int? _tableId;
   // Customer filter is split into two states:
   //   - `_customerQuery` is the live text in the search box, used to
@@ -59,6 +62,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
 
   @override
   void dispose() {
+    _searchController.dispose();
     _customerController.dispose();
     _customerFocusNode.dispose();
     super.dispose();
@@ -125,6 +129,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
       customerQuery: _selectedCustomerId != null
           ? null
           : (_customerQuery.isEmpty ? null : _customerQuery),
+      search: _search,
     );
 
     final filtered = _selectedCustomerId == null
@@ -253,6 +258,34 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
             const SizedBox(height: 12),
 
             // ── Filters ───────────────────────────────────────────────
+            AdaptiveKeyboardTextField(
+              controller: _searchController,
+              autofocus: true,
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search, size: 20),
+                hintText: l10n.translate('resume_search_hint'),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                isDense: true,
+                suffixIcon: _search.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _search = '');
+                          _query();
+                        },
+                      ),
+              ),
+              onChanged: (value) {
+                setState(() => _search = value);
+                _query();
+              },
+            ),
+            const SizedBox(height: 10),
             _buildTypeFilter(l10n),
             const SizedBox(height: 10),
             Row(
@@ -500,8 +533,10 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
 
         final content = _contentsByOrderId[order.id];
 
+        final reference = (order.reference ?? '').trim();
         final metaParts = <String>[
           _orderTypeLabel(order.type, l10n),
+          if (reference.isNotEmpty) '${l10n.translate('order_reference')}: $reference',
           if (table != null) table.name,
           if (customer != null)
             '${customer.firstName} ${customer.lastName}'.trim(),
@@ -528,7 +563,10 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      order.code,
+                      // The number called out at the counter, when it has one.
+                      order.sessionOrderNo != null
+                          ? '#${order.sessionOrderNo} · ${order.code}'
+                          : order.code,
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 12,

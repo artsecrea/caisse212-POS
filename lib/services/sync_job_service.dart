@@ -73,6 +73,13 @@ class SyncJobService {
       return;
     }
 
+    // Account disabled: every call would be refused. Queued work stays
+    // queued (no retry counted against it) until reactivation.
+    if (_syncService.isAccountBlocked) {
+      _logger.info('Sync job skipped: account disabled');
+      return;
+    }
+
     _logger.info('Running sync job...');
 
     try {
@@ -84,6 +91,10 @@ class SyncJobService {
       if (identityFix != null) {
         await identityFix.ensureIdentityBackfilled();
       }
+
+      // 1. Subscription: re-checked at most once a day, and only while the
+      //    end date is inside the warning window.
+      await _syncService.refreshSubscriptionIfDue();
 
       // 2. Sync pending operations (deletes, updates)
       await _syncService.syncPendingOperations();
@@ -110,6 +121,12 @@ class SyncJobService {
       final ordersSynced = await _syncService.syncOrdersBulk(batchSize: bulkSize);
       if (ordersSynced > 0) {
         _logger.info('Synced $ordersSynced orders');
+      }
+
+      // 4b. Order tags, now that their orders are on the server.
+      final tagsPushed = await _syncService.pushOrderTags();
+      if (tagsPushed > 0) {
+        _logger.info('Pushed tags of $tagsPushed orders');
       }
 
       // 5. Sync tickets for synced orders (after both sessions and orders are synced)

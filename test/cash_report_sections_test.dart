@@ -53,9 +53,11 @@ void main() {
       int persons = 2,
       double discountPct = 0,
       int? tableId,
-      String code = 'ORD1'}) {
+      String code = 'ORD1',
+      String status = 'COMPLETED'}) {
     return db.into(db.orders).insert(OrdersCompanion.insert(
           code: code,
+          status: Value(status),
           sessionId: Value(sessionId),
           type: Value(type),
           persons: Value(persons),
@@ -104,8 +106,9 @@ void main() {
       final s = await session();
       await product(1, 'Pizza');
       final o = await order(s);
-      // 2 x 100, 10 off each unit -> gross 200, discount 20, net 180.
-      await line(o, 1, qty: 2, price: 100, unitDiscount: 10);
+      // Catalogue 100 with 10 off: the line stores finalPrice 90 and the 10.
+      // 2 units -> gross 200, discount 20, net 180.
+      await line(o, 1, qty: 2, price: 90, unitDiscount: 10);
 
       final r = await builder.build(sessionIds: [s]);
       expect(r.general.grossSales, 200);
@@ -118,12 +121,45 @@ void main() {
       final s = await session();
       await product(1, 'Pizza');
       final o = await order(s, discountPct: 10);
-      // 100 - 20 = 80, then 10% of 80 = 8 -> total discount 28, net 72.
-      await line(o, 1, price: 100, unitDiscount: 20);
+      // 100 - 20 = 80 (stored as finalPrice), then 10% of 80 = 8 -> total
+      // discount 28, net 72.
+      await line(o, 1, price: 80, unitDiscount: 20);
 
       final r = await builder.build(sessionIds: [s]);
       expect(r.general.discounts, closeTo(28, 0.001));
       expect(r.general.netTotal, closeTo(72, 0.001));
+    });
+
+    test('the catalogue discount is not taken off twice', () async {
+      // Regression: finalPrice already has it off, so subtracting it again
+      // made net read 20 short of what the customer paid.
+      final s = await session();
+      await product(1, 'Pizza');
+      final o = await order(s);
+      await line(o, 1, price: 80, unitDiscount: 20);
+
+      final r = await builder.build(sessionIds: [s]);
+      expect(r.general.grossSales, 100);
+      expect(r.general.discounts, 20);
+      expect(r.general.netTotal, 80);
+      expect(r.topArticles.single.amount, 80);
+    });
+
+    test('manual discount and paid options are counted', () async {
+      final s = await session();
+      await product(1, 'Burger');
+      final o = await order(s);
+      // 50 + 10 of options, 5 off by hand, 2 units -> gross 120, disc 10.
+      final id = await line(o, 1, qty: 2, price: 50, manualDiscount: 5);
+      await db.into(db.orderProductComponents).insert(
+          OrderProductComponentsCompanion.insert(
+              componentId: 1, orderProductId: id, price: const Value(10)));
+
+      final r = await builder.build(sessionIds: [s]);
+      expect(r.general.grossSales, 120);
+      expect(r.general.discounts, 10);
+      expect(r.general.netTotal, 110);
+      expect(r.vatTotalTtc, closeTo(110, 0.001));
     });
 
     test('a struck line is reported once, and never as gross', () async {
@@ -141,6 +177,34 @@ void main() {
       expect(r.indicators.cancelledLineCount, 1);
       expect(r.topArticles.single.amount, 100,
           reason: 'struck line is not a sale');
+      expect(r.general.netTotal, 100,
+          reason: 'never in gross, so never taken off net');
+    });
+
+    test('a line pulled off the order counts as a cancelled line', () async {
+      // A whole-line cancel deletes the row and leaves a tombstone, so the
+      // report reads the tombstone, not order_products.
+      final s = await session();
+      await product(1, 'Pizza');
+      final o = await order(s);
+      await line(o, 1, price: 100);
+      await db.into(db.removedOrderItems).insert(
+          RemovedOrderItemsCompanion.insert(
+            orderId: o,
+            sessionId: Value(s),
+            productId: 1,
+            productName: 'Pizza',
+            quantity: 2,
+            unitaryPrice: const Value(30),
+            amount: const Value(60),
+          ));
+
+      final r = await builder.build(sessionIds: [s]);
+      expect(r.general.cancelledLines, 60);
+      expect(r.indicators.cancelledLineCount, 1);
+      expect(r.removedItems.lineCount, 1);
+      expect(r.general.grossSales, 100);
+      expect(r.general.netTotal, 100);
     });
 
     test('both spellings of cancelled are understood', () async {
@@ -153,17 +217,39 @@ void main() {
       expect(r.general.cancelledLines, 40);
     });
 
-    test('a voided ticket is subtracted and counted', () async {
+    test('a paid then cancelled order is shown once, never as a sale',
+        () async {
       final s = await session();
       await product(1, 'Pizza');
-      final o = await order(s);
-      await line(o, 1, price: 100);
+      final o = await order(s, status: 'CANCELED');
+      await line(o, 1, price: 100, vat: 10);
       await ticket(o, s, amount: 100, cancelled: true);
 
       final r = await builder.build(sessionIds: [s]);
       expect(r.general.cancelledTickets, 100);
       expect(r.indicators.cancelledTicketCount, 1);
       expect(r.indicators.ticketCount, 0, reason: 'a void is not a sale');
+      expect(r.general.grossSales, 0);
+      expect(r.general.netTotal, 0);
+      expect(r.vatBands, isEmpty);
+      expect(r.topArticles, isEmpty);
+    });
+
+    test('an unpaid cancelled order is left out of everything', () async {
+      final s = await session();
+      await product(1, 'Pizza', categoryId: null);
+      final live = await order(s, code: 'A', persons: 2);
+      await line(live, 1, price: 50, vat: 10);
+      final dead = await order(s, code: 'B', persons: 4, status: 'CANCELED');
+      await line(dead, 1, price: 80, vat: 10);
+
+      final r = await builder.build(sessionIds: [s]);
+      expect(r.general.grossSales, 50);
+      expect(r.general.netTotal, 50);
+      expect(r.vatBands.single.ttc, closeTo(50, 0.001));
+      expect(r.topArticles.single.amount, 50);
+      expect(r.families.single.amount, 50);
+      expect(r.indicators.covers, 2);
     });
   });
 
@@ -194,6 +280,20 @@ void main() {
       final r = await builder.build(sessionIds: [s]);
       expect(r.vatBands.map((b) => b.rate), [20, 10]);
       expect(r.vatTotalTtc, closeTo(230, 0.001));
+    });
+
+    test('the rate is recovered from the stored tax amount', () async {
+      // unitaryTva is an amount: 60 TTC holding 10 of tax is a 20% line.
+      final s = await session();
+      await product(1, 'Pizza');
+      final o = await order(s);
+      await line(o, 1, qty: 3, price: 60, vat: 10);
+
+      final r = await builder.build(sessionIds: [s]);
+      final band = r.vatBands.single;
+      expect(band.rate, 20);
+      expect(band.baseHt, closeTo(150, 0.001));
+      expect(band.vat, closeTo(30, 0.001));
     });
 
     test('a zero-rated line is all base and no tax', () async {

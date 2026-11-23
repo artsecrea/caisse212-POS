@@ -33,6 +33,30 @@ switch ($Command.ToLower()) {
         if ($arg1) { Invoke-Builder @{ Bump = $true; Version = $arg1 } }
         else { Invoke-Builder @{ Bump = $true } }
     }
+    'support' {
+        # Rebuild the remote-support tool (RustDesk fork) and refresh
+        # C:\c212build\dist\support + dist\tech. Rarely needed - only when the
+        # server/key or the fork's locked settings change. Several minutes.
+        $s = 'C:\c212build\build_support.ps1'
+        if (-not (Test-Path $s)) { Write-Host "[FAIL] $s not found" -ForegroundColor Red; exit 1 }
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $s @Rest
+        exit $LASTEXITCODE
+    }
+    'all' {
+        # Everything end to end: rebuild the remote tool, then build the POS
+        # (which embeds KDS, compiles the updater, bundles dist\support, zips,
+        # and makes the installer). `pos all release` bumps the version too.
+        $s = 'C:\c212build\build_support.ps1'
+        if (Test-Path $s) {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $s
+            if ($LASTEXITCODE -ne 0) { Write-Host '[FAIL] remote-support build failed' -ForegroundColor Red; exit $LASTEXITCODE }
+        } else {
+            Write-Warning "No $s - skipping remote-support rebuild, using the existing dist\support"
+        }
+        if ($arg1 -eq 'release') { Invoke-Builder @{ Bump = $true } }
+        elseif ($arg1) { Invoke-Builder @{ Bump = $true; Version = $arg1 } }
+        else { Invoke-Builder @{} }
+    }
     'pack' { Invoke-Builder @{ SkipBuild = $true } }
     'zip' { Invoke-Builder @{ NoInstaller = $true } }
     'setup' { Invoke-Builder @{ SkipBuild = $true; NoZip = $true } }
@@ -74,6 +98,9 @@ pos - CAISSE212 builder        (current version: $(Get-PubspecVersion))
   pos build            build the current version -> zip + installer
   pos release          bump version (patch+1, build+1) -> build -> zip + installer
   pos release 1.3.0    set version 1.3.0 (build+1) -> build -> zip + installer
+  pos support          rebuild the remote-support tool -> dist\support + dist\tech
+  pos all              rebuild remote tool, then full POS build (zip + installer)
+  pos all release      same, and bump the version first
   pos pack             no flutter build; repackage last build -> zip + installer
   pos zip              build -> zip only (no installer)
   pos setup            no flutter build; installer only

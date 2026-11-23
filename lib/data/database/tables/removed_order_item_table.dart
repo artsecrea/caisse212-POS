@@ -22,9 +22,9 @@ import 'package:drift/drift.dart';
 /// order cancelled whole already reports through `orders.status` +
 /// `tickets.isCancelled`.
 ///
-/// Local-only, like [CashMovements]: there is no POS endpoint for annulments,
-/// so this feeds the X/Z without a sync flag. Add `isSynced` and a bulk push in
-/// the usual pattern when one appears.
+/// Local-only: feeds the X/Z and the order panel's cancelled row. The server
+/// learns about cancellations from the order push itself (cancelled lines on
+/// the v2 push, see `cancelled_order_lines`), not from this table.
 class RemovedOrderItems extends Table {
   IntColumn get id => integer().autoIncrement()();
 
@@ -73,4 +73,5 @@ class RemovedOrderItems extends Table {
   /// Dart-side write, which puts the row outside its own date filters.
   DateTimeColumn get removedAt =>
       dateTime().clientDefault(() => DateTime.now())();
+
 }

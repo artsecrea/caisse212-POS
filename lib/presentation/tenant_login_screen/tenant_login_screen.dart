@@ -12,9 +12,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
 import '../widgets/report_issue_dialog.dart';
-import '../widgets/update_dialog.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
+import '../super_admin/super_admin_tap_target.dart';
 import '../../utils/pos_log.dart';
 import '../widgets/adaptive_text_field.dart';
 import '../../utils/snackbar_helper.dart';
@@ -79,22 +79,9 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
   Future<void> _checkForUpdates() async {
     try {
       final updateNotifier = ref.read(updateProvider.notifier);
-      final hasUpdate = await updateNotifier.checkForUpdates();
-
-      if (hasUpdate && mounted) {
-        final updateState = ref.read(updateProvider);
-        final isMandatory = updateState.updateRequired;
-
-        // Show update dialog
-        await showDialog<bool>(
-          context: context,
-          barrierDismissible: !isMandatory,
-          builder: (context) => UpdateDialog(isMandatory: isMandatory),
-        );
-
-        // Note: We don't block navigation here, just inform the user
-        // The login screen will also check and can enforce mandatory updates
-      }
+      // Downloads silently; the login screen offers a mandatory one, the
+      // global UpdateWatcher an optional one.
+      await updateNotifier.checkForUpdates();
     } catch (e) {
 
       posLog('Error checking for updates: $e');
@@ -587,9 +574,11 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
               ),
             ),
             child: Center(
-              child: SvgPicture.asset(
-                'assets/images/logo-white.svg',
-                width: 360,
+              child: SuperAdminTapTarget(
+                child: SvgPicture.asset(
+                  'assets/images/logo-white.svg',
+                  width: 360,
+                ),
               ),
             ),
           ),
@@ -657,7 +646,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (showLogo) ...[
-            const Caisse212Logo(size: 56),
+            const SuperAdminTapTarget(child: Caisse212Logo(size: 56)),
             const SizedBox(height: 16),
           ],
           Text(

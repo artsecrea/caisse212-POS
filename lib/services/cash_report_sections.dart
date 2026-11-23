@@ -1,7 +1,10 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/models/line_payment.dart' show settlementState;
+import '../domain/models/order_tag_codec.dart' show parseTagIds;
 import '../domain/models/table_occupancy.dart' show isOrderSettled;
+import 'refund_service.dart' show RefundBreakdown, refundCashPaidBack;
 
 /// The banded cash report — the nine sections of a French-style X / Z.
 ///
@@ -27,9 +30,14 @@ class CashReportSections {
     required this.topArticles,
     required this.live,
     this.removedItems = const RemovedItemsSummary(),
+    this.refunds = RefundBreakdown.empty,
+    this.byTag = const TagSummary(),
   });
 
   final GeneralSummary general;
+
+  /// Refunds paid out in the period — booked here whatever Z the sale was in.
+  final RefundBreakdown refunds;
 
   /// Order type -> net TTC. Keyed by the raw `orders.type` so the printer owns
   /// the labels.
@@ -53,6 +61,9 @@ class CashReportSections {
   /// have been deleted by the time this runs.
   final RemovedItemsSummary removedItems;
 
+  /// Sales split by back-office order tag. Opt-in band.
+  final TagSummary byTag;
+
   double get vatTotalHt =>
       vatBands.fold(0.0, (sum, b) => sum + b.baseHt);
   double get vatTotalVat => vatBands.fold(0.0, (sum, b) => sum + b.vat);
@@ -73,9 +84,9 @@ class CashReportSections {
 
 /// Annulments: what was rung up and then pulled off a SAVED order.
 ///
-/// Sourced from `removed_order_items`. Separate from
-/// [GeneralSummary.cancelledLines], which counts lines still present on the
-/// order but struck (state CANCELED) — these are lines that no longer exist.
+/// Sourced from `removed_order_items` — lines that no longer exist on the
+/// order. [GeneralSummary.cancelledLines] and the §5 count add these to the
+/// lines still present but struck (state CANCELED).
 class RemovedItemsSummary {
   const RemovedItemsSummary({
     this.lineCount = 0,
@@ -106,6 +117,53 @@ class RemovedItemsSummary {
   bool get isEmpty => lineCount == 0;
 }
 
+/// One tag's orders: how many, and what their live lines sold for.
+class TagRow {
+  const TagRow({
+    required this.tagId,
+    required this.label,
+    required this.orderCount,
+    required this.amount,
+  });
+
+  final int tagId;
+  final String label;
+  final int orderCount;
+  final double amount;
+}
+
+/// Sales by order tag.
+///
+/// An order carrying several tags counts IN FULL under each of them — it was
+/// a VIP order and a delivery-app order, not half of each — so the [rows] add
+/// up to more than the takings whenever tags overlap. [taggedOrderCount] /
+/// [taggedAmount] count every tagged order once, and with the untagged pair
+/// they add back up to the report's sales.
+///
+/// Amounts are line nets (same basis as the family and article bands), so a
+/// rung-but-unpaid order is in, a delivery fee is not.
+class TagSummary {
+  const TagSummary({
+    this.rows = const [],
+    this.taggedOrderCount = 0,
+    this.taggedAmount = 0,
+    this.untaggedOrderCount = 0,
+    this.untaggedAmount = 0,
+    this.multiTagOrderCount = 0,
+  });
+
+  /// Biggest first.
+  final List<TagRow> rows;
+  final int taggedOrderCount;
+  final double taggedAmount;
+  final int untaggedOrderCount;
+  final double untaggedAmount;
+
+  /// Tagged orders carrying two or more tags — the ones counted more than
+  /// once in [rows].
+  final int multiTagOrderCount;
+}
+
 /// §1 RESUME GENERAL.
 class GeneralSummary {
   const GeneralSummary({
@@ -123,18 +181,70 @@ class GeneralSummary {
   /// as a positive number. Printed negative.
   final double discounts;
 
-  /// Money on tickets that were voided after the fact.
+  /// Money on tickets that were voided after the fact. Shown, not
+  /// subtracted: a voided ticket belongs to a cancelled order, and those are
+  /// left out of [grossSales] altogether.
   final double cancelledTickets;
 
-  /// Lines struck off an order that was not itself cancelled.
+  /// Lines cancelled off an order that was not itself cancelled: lines still
+  /// present but struck, plus the ones pulled off and deleted (the
+  /// `removed_order_items` tombstones), which is how a cancel is stored now.
   final double cancelledLines;
 
   /// Money handed back through the refund flow.
   final double refunds;
 
   /// What the shop actually kept.
-  double get netTotal =>
-      grossSales - discounts - cancelledTickets - cancelledLines - refunds;
+  ///
+  /// [cancelledLines] and [cancelledTickets] are shown but not subtracted:
+  /// neither is in [grossSales] to begin with, so taking them off again
+  /// counted them twice.
+  double get netTotal => grossSales - discounts - refunds;
+}
+
+/// What one `order_products` row is worth, split the way §1 prints it.
+///
+/// `unitaryPrice` is the catalogue `finalPrice`: TTC, with the catalogue
+/// discount (`unitaryDiscount`) ALREADY taken off. So gross adds it back, and
+/// net matches `OrderItem.totalPrice` with the order percentage on top —
+/// subtracting `unitaryDiscount` from `unitaryPrice` again took it off twice.
+class LineMoney {
+  const LineMoney({required this.gross, required this.discount});
+
+  factory LineMoney.of(
+    OrderProduct line, {
+    double componentsPerUnit = 0,
+    double orderDiscountPercentage = 0,
+  }) {
+    final q = line.quantity;
+    final gross = (line.unitaryPrice + line.unitaryDiscount + componentsPerUnit) * q;
+    final lineDiscount = (line.unitaryDiscount + line.manualDiscount) * q;
+    final afterLine = gross - lineDiscount;
+    final orderLevel = orderDiscountPercentage > 0
+        ? afterLine * (orderDiscountPercentage / 100)
+        : 0.0;
+    return LineMoney(gross: gross, discount: lineDiscount + orderLevel);
+  }
+
+  /// Catalogue price plus options, before anything came off.
+  final double gross;
+
+  /// Catalogue + manual discount, plus the line's share of the order remise.
+  final double discount;
+
+  double get net => gross - discount;
+}
+
+/// The VAT rate of a line, as a percentage.
+///
+/// `unitaryTva` is the tax AMOUNT inside one unit's TTC price (see
+/// `lineUnitTva`), not a rate, so the rate is recovered from it. Rounded to
+/// the half point: the amount is stored to the cent, which on a cheap item
+/// reads 19.76% for a 20% line.
+double vatRateOf(OrderProduct line) {
+  final ht = line.unitaryPrice - line.unitaryTva;
+  if (line.unitaryTva <= 0 || ht <= 0) return 0;
+  return ((line.unitaryTva / ht * 100) * 2).roundToDouble() / 2;
 }
 
 /// One row of §4, a single VAT rate.
@@ -165,6 +275,7 @@ class CashMovements {
     this.cashDeliveryFees = 0,
     this.cashIn = 0,
     this.cashOut = 0,
+    this.cashRefunds = 0,
     this.countedCash,
   });
 
@@ -185,11 +296,18 @@ class CashMovements {
   final double cashIn;
   final double cashOut;
 
+  /// Refunds paid out in cash. They are not transactions or cash movements,
+  /// so without this term the expected figure on the X/Z read high by exactly
+  /// the cash refunded — disagreeing with the close dialog, which subtracts
+  /// them (SessionSummary.expectedCashAtEnd).
+  final double cashRefunds;
+
   /// What the cashier counted. Null while the shift is open (an X), which is
   /// why the variance is null too rather than a misleading zero.
   final double? countedCash;
 
-  double get expectedCash => openingFloat + cashSales + cashIn - cashOut;
+  double get expectedCash =>
+      openingFloat + cashSales + cashIn - cashOut - cashRefunds;
 
   double? get variance =>
       countedCash == null ? null : countedCash! - expectedCash;
@@ -289,9 +407,14 @@ class CashReportBuilder {
   }) async {
     if (sessionIds.isEmpty) return CashReportSections.empty;
 
-    final orders = await (_db.select(_db.orders)
-          ..where((o) => o.sessionId.isIn(sessionIds)))
-        .get();
+    // A cancelled order was never a sale: none of its lines reach gross, VAT,
+    // families, best sellers, stations, covers or tables. Its voided tickets
+    // still show on the cancelled-tickets row.
+    final orders = (await (_db.select(_db.orders)
+              ..where((o) => o.sessionId.isIn(sessionIds)))
+            .get())
+        .where((o) => !_isCancelledState(o.status))
+        .toList();
     if (orders.isEmpty) {
       return _emptyWithCash(sessionIds, countedCash);
     }
@@ -345,6 +468,20 @@ class CashReportBuilder {
             .get();
     final stationNameById = {for (final s in stations) s.id: s.name};
 
+    // Paid options are part of what the line sold for: `OrderItem.totalPrice`
+    // adds them, so a report that leaves them out disagrees with the till.
+    final lineIds = lines.map((l) => l.id).toList();
+    final componentsPerUnit = <int, double>{};
+    if (lineIds.isNotEmpty) {
+      final comps = await (_db.select(_db.orderProductComponents)
+            ..where((c) => c.orderProductId.isIn(lineIds)))
+          .get();
+      for (final c in comps) {
+        componentsPerUnit[c.orderProductId] =
+            (componentsPerUnit[c.orderProductId] ?? 0) + c.price * c.quantity;
+      }
+    }
+
     // ---- §1 + §4 + §7 + §8, all derived from the lines -------------------
     var gross = 0.0;
     var discounts = 0.0;
@@ -355,20 +492,18 @@ class CashReportBuilder {
     final byCategory = <String, _RowAcc>{};
     final byArticle = <String, _RowAcc>{};
     final stationOrderIds = <String, Set<int>>{};
+    // Orders with at least one live line -> their net. Orders whose every
+    // line was struck sold nothing and stay out of the tag band.
+    final netByOrder = <int, double>{};
 
     for (final line in lines) {
       final order = orderById[line.orderId];
       if (order == null) continue;
 
-      final lineGross = line.unitaryPrice * line.quantity;
-      // Per-unit discount and the manual one are both per-unit figures; the
-      // order-level percentage applies on top of what is left.
-      final lineDiscount =
-          (line.unitaryDiscount + line.manualDiscount) * line.quantity;
-      final afterLine = lineGross - lineDiscount;
-      final orderPct = order.discountPercentage;
-      final orderLevel = orderPct > 0 ? afterLine * (orderPct / 100) : 0.0;
-      final net = afterLine - orderLevel;
+      final money = LineMoney.of(line,
+          componentsPerUnit: componentsPerUnit[line.id] ?? 0,
+          orderDiscountPercentage: order.discountPercentage);
+      final net = money.net;
 
       final isCancelled = _isCancelledState(line.state);
       if (isCancelled) {
@@ -379,11 +514,11 @@ class CashReportBuilder {
         continue;
       }
 
-      gross += lineGross;
-      discounts += lineDiscount + orderLevel;
+      gross += money.gross;
+      discounts += money.discount;
+      netByOrder[order.id] = (netByOrder[order.id] ?? 0) + net;
 
-      // `unitaryTva` is a percentage; net is TTC, so the base is backed out.
-      final rate = line.unitaryTva;
+      final rate = vatRateOf(line);
       final base = rate > 0 ? net / (1 + rate / 100) : net;
       final acc = vatByRate.putIfAbsent(rate, () => _VatAcc());
       acc.base += base;
@@ -413,11 +548,12 @@ class CashReportBuilder {
         cancelledTicketRows.fold(0.0, (sum, t) => sum + t.amount);
     final refundTotal = refunds.fold(0.0, (sum, r) => sum + r.totalAmount);
 
+    final removedItems = await _removedItems(sessionIds);
     final general = GeneralSummary(
       grossSales: gross,
       discounts: discounts,
       cancelledTickets: cancelledTicketTotal,
-      cancelledLines: cancelledLines,
+      cancelledLines: cancelledLines + removedItems.amount,
       refunds: refundTotal,
     );
 
@@ -501,6 +637,7 @@ class CashReportBuilder {
       cashDeliveryFees: cashDeliveryFees,
       cashIn: cashIn,
       cashOut: cashOut,
+      cashRefunds: refunds.fold(0.0, (sum, r) => sum + refundCashPaidBack(r)),
       countedCash: counted,
     );
 
@@ -515,8 +652,8 @@ class CashReportBuilder {
     var tablesOpen = 0;
     for (final order in orders) {
       if (order.tableId == null) continue;
-      final states =
-          (linesByOrder[order.id] ?? const <OrderProduct>[]).map((l) => l.state);
+      final states = (linesByOrder[order.id] ?? const <OrderProduct>[])
+          .map((l) => settlementState(l.state, l.ticketId));
       if (states.isEmpty) continue;
       if (isOrderSettled(states)) {
         tablesClosed++;
@@ -530,7 +667,7 @@ class CashReportBuilder {
     final indicators = RestaurantIndicators(
       ticketCount: liveTickets.length,
       cancelledTicketCount: cancelledTicketRows.length,
-      cancelledLineCount: cancelledLineCount,
+      cancelledLineCount: cancelledLineCount + removedItems.lineCount,
       totalDiscounts: discounts,
       totalRefunds: refundTotal,
       covers: covers,
@@ -554,8 +691,72 @@ class CashReportBuilder {
       families: _sortedRows(byCategory),
       topArticles: _sortedRows(byArticle).take(topArticlesLimit).toList(),
       live: live,
-      removedItems: await _removedItems(sessionIds),
+      removedItems: removedItems,
+      refunds: await _refundBreakdown(refunds),
+      byTag: await _tagSummary(orderById, netByOrder),
     );
+  }
+
+  Future<TagSummary> _tagSummary(
+      Map<int, Order> orderById, Map<int, double> netByOrder) async {
+    if (netByOrder.isEmpty) return const TagSummary();
+    final tags = await _db.select(_db.orderTags).get();
+    final labelById = {for (final t in tags) t.id: t.label};
+
+    final byTag = <int, _TagAcc>{};
+    var taggedCount = 0;
+    var taggedAmount = 0.0;
+    var untaggedCount = 0;
+    var untaggedAmount = 0.0;
+    var multiCount = 0;
+    netByOrder.forEach((orderId, net) {
+      final ids = parseTagIds(orderById[orderId]?.tagIds);
+      if (ids.isEmpty) {
+        untaggedCount++;
+        untaggedAmount += net;
+        return;
+      }
+      taggedCount++;
+      taggedAmount += net;
+      if (ids.length > 1) multiCount++;
+      for (final id in ids) {
+        final acc = byTag.putIfAbsent(id, () => _TagAcc());
+        acc.count++;
+        acc.amount += net;
+      }
+    });
+
+    final rows = [
+      for (final e in byTag.entries)
+        TagRow(
+          tagId: e.key,
+          // A tag deleted in the back office since the order was tagged.
+          label: labelById[e.key] ?? '#${e.key}',
+          orderCount: e.value.count,
+          amount: e.value.amount,
+        ),
+    ]..sort((a, b) => b.amount.compareTo(a.amount));
+
+    return TagSummary(
+      rows: rows,
+      taggedOrderCount: taggedCount,
+      taggedAmount: taggedAmount,
+      untaggedOrderCount: untaggedCount,
+      untaggedAmount: untaggedAmount,
+      multiTagOrderCount: multiCount,
+    );
+  }
+
+  Future<RefundBreakdown> _refundBreakdown(List<Refund> refunds) async {
+    if (refunds.isEmpty) return RefundBreakdown.empty;
+    final lines = await (_db.select(_db.refundLines)
+          ..where((l) => l.refundId.isIn(refunds.map((r) => r.id).toList())))
+        .get();
+    final byRefund = <int, List<RefundLine>>{};
+    for (final l in lines) {
+      (byRefund[l.refundId] ??= []).add(l);
+    }
+    return RefundBreakdown.fromRows(refunds, byRefund);
   }
 
   /// §9 asks what the floor looks like NOW, not what this shift sold, so it is
@@ -604,25 +805,44 @@ class CashReportBuilder {
         cashOut += m.amount;
       }
     }
+    // A shift with no sales can still have paid refunds out (yesterday's
+    // sale brought back), and the drawer is short by them.
+    final refundRows = await (_db.select(_db.refunds)
+          ..where((r) => r.sessionId.isIn(sessionIds)))
+        .get();
+    // A period can have no surviving orders and still have annulments.
+    final removedItems = await _removedItems(sessionIds);
+    final voided = await (_db.select(_db.tickets)
+          ..where((t) => t.sessionId.isIn(sessionIds) & t.isCancelled))
+        .get();
     return CashReportSections(
-      general: const GeneralSummary(),
+      refunds: await _refundBreakdown(refundRows),
+      general: GeneralSummary(
+        cancelledLines: removedItems.amount,
+        cancelledTickets: voided.fold(0.0, (sum, t) => sum + t.amount),
+        refunds: refundRows.fold(0.0, (sum, r) => sum + r.totalAmount),
+      ),
       salesByType: const {},
       vatBands: const [],
       cash: CashMovements(
         openingFloat: sessions.fold(0.0, (sum, s) => sum + s.moneyAtStart),
         cashIn: cashIn,
         cashOut: cashOut,
+        cashRefunds:
+            refundRows.fold(0.0, (sum, r) => sum + refundCashPaidBack(r)),
         countedCash: countedCash ??
             (sessions.every((s) => s.moneyAtEnd != null)
                 ? sessions.fold<double>(0.0, (sum, s) => sum + (s.moneyAtEnd ?? 0))
                 : null),
       ),
-      indicators: const RestaurantIndicators(),
+      indicators: RestaurantIndicators(
+        cancelledLineCount: removedItems.lineCount,
+        cancelledTicketCount: voided.length,
+      ),
       families: const [],
       topArticles: const [],
       live: await _liveStatuses(),
-      // A period can have no surviving orders and still have annulments.
-      removedItems: await _removedItems(sessionIds),
+      removedItems: removedItems,
     );
   }
 
@@ -698,6 +918,11 @@ class CashReportBuilder {
 class _VatAcc {
   double base = 0;
   double vat = 0;
+}
+
+class _TagAcc {
+  int count = 0;
+  double amount = 0;
 }
 
 class _RowAcc {

@@ -5,8 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:caisse212/domain/models/booking_models.dart';
-import 'package:caisse212/services/booking_service.dart';
+import 'package:caisse212/domain/models/reservation_models.dart';
 import 'package:caisse212/utils/app_localizations.dart';
 import 'package:caisse212/utils/error_text.dart';
 
@@ -137,29 +136,28 @@ void main() {
     });
   });
 
-  group('booking exceptions keep their own wording', () {
-    test('offline booking points at the connection', () {
-      expect(errorText(const OfflineBookingException(), en),
+  group('reservation errors keep their own wording', () {
+    test('offline points at the connection', () {
+      expect(errorText(const OfflineReservationException(), en),
           en.translate('reconnect_to_book'));
     });
 
-    test('an unsynced line says to sync the order', () {
-      expect(errorText(const UnsyncedLineException(), en),
-          en.translate('booking_order_sync_failed'));
-    });
-
-    test('a resource conflict carries the occupancy', () {
-      final text = errorText(
-        const ScheduleConflict(
-            message: 'Room full', isResource: true, current: 2, capacity: 2),
-        en,
+    test('a 409 shows the server message staff can act on', () {
+      expect(
+        errorText(
+            const ReservationConflict(
+                message: 'Leila is already booked 14/10 17:00–17:30',
+                code: 'SLOT_TAKEN'),
+            en),
+        'Leila is already booked 14/10 17:00–17:30',
       );
-      expect(text, 'Room full (2/2)');
     });
 
     test('a validation error is passed through verbatim', () {
-      expect(errorText(const ScheduleValidationError('End before start'), en),
-          'End before start');
+      expect(
+          errorText(const ReservationValidationError('Sarah is not available'),
+              en),
+          'Sarah is not available');
     });
   });
 

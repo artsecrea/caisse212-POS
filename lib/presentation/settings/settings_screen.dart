@@ -19,6 +19,7 @@ import '../../utils/permission_descriptions.dart';
 import '../../utils/responsive_utils.dart';
 import '../../services/discovery_service.dart';
 import '../../domain/models/scale_config.dart';
+import '../../domain/models/z_report_sections.dart';
 import '../../providers/scale_config_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/session_rules_provider.dart';
@@ -36,6 +37,17 @@ import '../../services/z_day_resolver.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../widgets/adaptive_text_field.dart';
 import '../../utils/snackbar_helper.dart';
+
+/// Lower-cased because Windows reports e.g. `DESKTOP-JDJEKZB`; DNS/NetBIOS
+/// lookups are case-insensitive and the lower form reads better in a URL.
+final String _hostName = () {
+  if (kIsWeb) return '';
+  try {
+    return Platform.localHostname.trim().toLowerCase();
+  } catch (_) {
+    return '';
+  }
+}();
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -552,6 +564,167 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ),
         const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: cs.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: SwitchListTile(
+              value: settings.disableSessionAutoClose,
+              onChanged: settingsNotifier.setDisableSessionAutoClose,
+              title: Text(l10n.translate('disable_session_auto_close')),
+              subtitle: Text(
+                l10n.translate('disable_session_auto_close_hint'),
+                style: const TextStyle(fontSize: 12),
+              ),
+              isThreeLine: true,
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          l10n.translate('unpaid_orders_at_close'),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: cs.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  value: settings.unpaidPromptOnZClose,
+                  onChanged: settingsNotifier.setUnpaidPromptOnZClose,
+                  title: Text(l10n.translate('unpaid_prompt_on_z_close')),
+                  subtitle: Text(
+                    l10n.translate('unpaid_prompt_on_z_close_hint'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  isThreeLine: true,
+                ),
+                SwitchListTile(
+                  value: settings.allowZCloseWithUnpaid,
+                  onChanged: settings.unpaidPromptOnZClose
+                      ? settingsNotifier.setAllowZCloseWithUnpaid
+                      : null,
+                  title: Text(l10n.translate('allow_z_close_with_unpaid')),
+                  subtitle: Text(
+                    l10n.translate('allow_z_close_with_unpaid_hint'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  isThreeLine: true,
+                ),
+                const Divider(),
+                SwitchListTile(
+                  value: settings.unpaidPromptOnSessionClose,
+                  onChanged: settingsNotifier.setUnpaidPromptOnSessionClose,
+                  title: Text(l10n.translate('unpaid_prompt_on_session_close')),
+                  subtitle: Text(
+                    l10n.translate('unpaid_prompt_on_session_close_hint'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  isThreeLine: true,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          l10n.translate('z_warnings'),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.translate('z_warnings_hint'),
+          style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+        ),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: cs.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  value: settings.zWarnOpenTooLong,
+                  onChanged: settingsNotifier.setZWarnOpenTooLong,
+                  title: Text(l10n.translate('z_warn_open_too_long')),
+                  subtitle: Text(
+                    l10n.translate('z_warn_open_too_long_hint'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                ListTile(
+                  enabled: settings.zWarnOpenTooLong,
+                  leading: const Icon(Icons.hourglass_bottom),
+                  title: Text(l10n.translate('z_warn_open_hours')),
+                  trailing: DropdownButton<int>(
+                    value: settings.zWarnOpenHours,
+                    items: [
+                      for (final h in {
+                        6, 8, 10, 12, 14, 16, 18, 20, 24, 36, 48,
+                        settings.zWarnOpenHours,
+                      }.toList()..sort())
+                        DropdownMenuItem(value: h, child: Text('$h h')),
+                    ],
+                    onChanged: settings.zWarnOpenTooLong
+                        ? (h) {
+                            if (h != null) settingsNotifier.setZWarnOpenHours(h);
+                          }
+                        : null,
+                  ),
+                ),
+                const Divider(),
+                SwitchListTile(
+                  value: settings.zWarnPastCutoff,
+                  onChanged: settingsNotifier.setZWarnPastCutoff,
+                  title: Text(l10n.translate('z_warn_past_cutoff')),
+                  subtitle: Text(
+                    l10n.translate('z_warn_past_cutoff_hint'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  isThreeLine: true,
+                ),
+                ListTile(
+                  enabled: settings.zWarnPastCutoff,
+                  leading: const Icon(Icons.schedule),
+                  title: Text(l10n.translate('z_warn_cutoff_time')),
+                  trailing: DropdownButton<String>(
+                    value: settings.zWarnCutoffTime,
+                    items: [
+                      for (final t in {
+                        for (var m = 0; m < 24 * 60; m += 30)
+                          '${(m ~/ 60).toString().padLeft(2, '0')}:'
+                              '${(m % 60).toString().padLeft(2, '0')}',
+                        settings.zWarnCutoffTime,
+                      }.toList()..sort())
+                        DropdownMenuItem(value: t, child: Text(t)),
+                    ],
+                    onChanged: settings.zWarnPastCutoff
+                        ? (t) {
+                            if (t != null) settingsNotifier.setZWarnCutoffTime(t);
+                          }
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -777,7 +950,114 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         const SizedBox(height: 16),
         const _ZRulesView(),
+        const SizedBox(height: 24),
+        Text(
+          l10n.translate('z_report_sections'),
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.translate('z_report_sections_hint'),
+          style: TextStyle(
+              fontSize: 13,
+              color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 8),
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            children: [
+              _reportBandRow(
+                context,
+                label: Text(l10n.translate('report_section_col'),
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                x: const Text('X',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                z: const Text('Z',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              const Divider(height: 1),
+              for (final band in ZReportSection.values)
+                _reportBandRow(
+                  context,
+                  label: Text(l10n.translate(band.l10nKey)),
+                  x: kZOnlySections.contains(band)
+                      ? const Checkbox(value: false, onChanged: null)
+                      : Checkbox(
+                          value: zBandShown(
+                              band, settings.xReportHiddenSections),
+                          onChanged: (v) =>
+                              notifier.setXReportSectionShown(band, v ?? true),
+                        ),
+                  z: Checkbox(
+                    value: zBandShown(band, settings.zReportHiddenSections),
+                    onChanged: (v) =>
+                        notifier.setZReportSectionShown(band, v ?? true),
+                  ),
+                ),
+              const Divider(height: 1),
+              _reportBandRow(
+                context,
+                label: Text(l10n.translate('report_skip_zero')),
+                x: Checkbox(
+                  value: settings.xReportSkipZero,
+                  onChanged: (v) =>
+                      notifier.setReportSkipZero(isX: true, value: v ?? false),
+                ),
+                z: Checkbox(
+                  value: settings.zReportSkipZero,
+                  onChanged: (v) =>
+                      notifier.setReportSkipZero(isX: false, value: v ?? false),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              icon: const Icon(Icons.short_text_rounded),
+              label: Text(l10n.translate('report_brief_x')),
+              onPressed: () => notifier.setXReportHiddenSections([
+                for (final band in ZReportSection.values)
+                  if (!kBriefXSections.contains(band)) band.name,
+              ]),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.notes_rounded),
+              label: Text(l10n.translate('report_full_x')),
+              onPressed: () => notifier.setXReportHiddenSections(const []),
+            ),
+          ],
+        ),
       ],
+    );
+  }
+
+  /// One row of the X / Z band table: a label, then the X and Z columns.
+  Widget _reportBandRow(
+    BuildContext context, {
+    required Widget label,
+    required Widget x,
+    required Widget z,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      child: Row(
+        children: [
+          Expanded(child: label),
+          SizedBox(width: 56, child: Center(child: x)),
+          SizedBox(width: 56, child: Center(child: z)),
+        ],
+      ),
     );
   }
 
@@ -1066,12 +1346,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 16),
         _buildSwitchTile(
           context: context,
-          icon: Icons.filter_center_focus,
-          title: l10n.translate('auto_focus_product_search'),
-          subtitle: l10n.translate('auto_focus_product_search_subtitle'),
-          value: settings.autoFocusProductSearch,
-          onChanged: (value) => notifier.setAutoFocusProductSearch(value),
+          icon: Icons.search,
+          title: l10n.translate('show_product_search'),
+          subtitle: l10n.translate('show_product_search_subtitle'),
+          value: settings.showProductSearch,
+          onChanged: (value) => notifier.setShowProductSearch(value),
         ),
+        // No field, nothing to focus — the auto-focus switch would do nothing.
+        if (settings.showProductSearch) ...[
+          const SizedBox(height: 16),
+          _buildSwitchTile(
+            context: context,
+            icon: Icons.filter_center_focus,
+            title: l10n.translate('auto_focus_product_search'),
+            subtitle: l10n.translate('auto_focus_product_search_subtitle'),
+            value: settings.autoFocusProductSearch,
+            onChanged: (value) => notifier.setAutoFocusProductSearch(value),
+          ),
+        ],
         const SizedBox(height: 16),
         _buildSwitchTile(
           context: context,
@@ -1081,6 +1373,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           value: settings.numericKeypadBeta,
           onChanged: (value) => notifier.setNumericKeypadBeta(value),
           badge: 'BETA',
+        ),
+        const SizedBox(height: 16),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.remove_shopping_cart_outlined,
+          title: l10n.translate('show_cancelled_items_as_rows_title'),
+          subtitle: l10n.translate('show_cancelled_items_as_rows_subtitle'),
+          value: settings.showCancelledItemsAsRows,
+          onChanged: (value) => notifier.setShowCancelledItemsAsRows(value),
         ),
       ],
     );
@@ -1143,6 +1444,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 24),
+        // Fiscal, so admin only — a cashier must not be able to zero it.
+        if (ref.watch(currentUserProvider)?.type.toLowerCase() == 'admin') ...[
+          _ZeroPriceTvaField(
+            rate: settings.zeroPriceTvaRate,
+            onChanged: notifier.setZeroPriceTvaRate,
+          ),
+          const SizedBox(height: 12),
+        ],
         _buildOrderTypeSelector(
           context: context,
           currentType: settings.defaultOrderType,
@@ -1161,6 +1470,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           context: context,
           currentState: settings.defaultKdsState,
           onChanged: (value) => notifier.setDefaultKdsState(value),
+        ),
+        const SizedBox(height: 12),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.timer_outlined),
+          title: Text(l10n.translate('kitchen_target_minutes')),
+          subtitle: Text(l10n.translate('kitchen_target_minutes_subtitle')),
+          trailing: DropdownButton<int>(
+            value: settings.kitchenTargetMinutes,
+            items: [
+              for (final m in {
+                0, 10, 15, 20, 25, 30, 40, 45, 60,
+                settings.kitchenTargetMinutes,
+              }.toList()..sort())
+                DropdownMenuItem(
+                  value: m,
+                  child: Text(m == 0 ? l10n.translate('off') : '$m min'),
+                ),
+            ],
+            onChanged: (m) {
+              if (m != null) notifier.setKitchenTargetMinutes(m);
+            },
+          ),
         ),
         const SizedBox(height: 12),
         _buildSwitchTile(
@@ -1392,6 +1724,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           value: settings.autoClearTableAfterPaying,
           onChanged: (v) => notifier.setAutoClearTableAfterPaying(v),
         ),
+        const SizedBox(height: 8),
+        _buildSwitchTile(
+          context: context,
+          icon: Icons.soup_kitchen,
+          title: l10n.translate('payment_completes_kitchen_title'),
+          subtitle: l10n.translate('payment_completes_kitchen_subtitle'),
+          value: settings.paymentCompletesKitchen,
+          onChanged: (v) => notifier.setPaymentCompletesKitchen(v),
+        ),
       ],
     );
   }
@@ -1456,6 +1797,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           .watch(permissionServiceProvider)
           .hasPermission(Permissions.ordersCancel))
         'cancelOrder': (icon: Icons.cancel_outlined, titleKey: 'cancel_order_button', subtitleKey: 'cancel_saved_order', visible: settings.showCancelOrderButton, setVisible: notifier.setShowCancelOrderButton),
+      // Same gate main_screen uses to render it.
+      if (ref.watch(permissionServiceProvider).hasRefundPermission(Permissions.refundsCreate))
+        'refund': (icon: Icons.assignment_return, titleKey: 'refund_button', subtitleKey: 'refund_button_hint', visible: settings.showRefundButton, setVisible: notifier.setShowRefundButton),
+      'tags': (icon: Icons.label_outline, titleKey: 'tags_button', subtitleKey: 'tags_button_hint', visible: settings.showTagsButton, setVisible: notifier.setShowTagsButton),
+      'reserve': (icon: Icons.event_available, titleKey: 'reserve_button', subtitleKey: 'reserve_button_hint', visible: settings.showReserveButton, setVisible: notifier.setShowReserveButton),
       'cashDrawer': (icon: Icons.point_of_sale, titleKey: 'cash_drawer_button', subtitleKey: 'open_cash_drawer', visible: settings.showCashDrawerButton, setVisible: notifier.setShowCashDrawerButton),
       'dailySummary': (icon: Icons.summarize, titleKey: 'daily_summary_button', subtitleKey: 'daily_report', visible: settings.showDailySummaryButton, setVisible: notifier.setShowDailySummaryButton),
       // Tip button toggle intentionally hidden — same reasoning as the
@@ -3630,6 +3976,42 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         if (isRunning) ...[
                           const SizedBox(height: 8),
+                          // The host name survives DHCP changing the IP, so it
+                          // is the address to hand out on Windows networks.
+                          // Some Android/TV browsers can't resolve bare host
+                          // names, hence the IP stays listed below.
+                          if (_hostName.isNotEmpty)
+                            Builder(builder: (context) {
+                              final hostUrl =
+                                  'http://$_hostName:${serverService.port}';
+                              return Row(
+                                children: [
+                                  Expanded(
+                                    child: SelectableText(
+                                      'Host: $hostUrl',
+                                      style: const TextStyle(
+                                          fontFamily: 'monospace',
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.copy, size: 18),
+                                    tooltip: 'Copy host URL',
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                        minWidth: 32, minHeight: 32),
+                                    onPressed: () {
+                                      Clipboard.setData(
+                                          ClipboardData(text: hostUrl));
+                                      SnackBarHelper.showToast(
+                                          'URL copied to clipboard',
+                                          kind: ToastKind.info,
+                                          duration: const Duration(seconds: 1));
+                                    },
+                                  ),
+                                ],
+                              );
+                            }),
                           FutureBuilder<String>(
                             future: DiscoveryService.getLocalIp(),
                             builder: (context, snapshot) {
@@ -3665,8 +4047,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             future: DiscoveryService.getLocalIp(),
                             builder: (context, snapshot) {
                               final ip = snapshot.data ?? 'loading...';
-                              final kdsUrl =
+                              final ipKdsUrl =
                                   'http://$ip:${serverService.port}/kds';
+                              final kdsUrl = _hostName.isNotEmpty
+                                  ? 'http://$_hostName:${serverService.port}/kds'
+                                  : ipKdsUrl;
                               return Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
@@ -3699,6 +4084,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                                 fontFamily: 'monospace',
                                                 fontSize: 13),
                                           ),
+                                          if (kdsUrl != ipKdsUrl)
+                                            SelectableText(
+                                              ipKdsUrl,
+                                              style: TextStyle(
+                                                  fontFamily: 'monospace',
+                                                  fontSize: 12,
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant),
+                                            ),
                                         ],
                                       ),
                                     ),
@@ -3953,6 +4348,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               value: info?.buildNumber ?? '—',
             ),
             const SizedBox(height: 24),
+            Text(
+              l10n.translate('updates_section'),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            _buildUpdateStatusTile(context),
+            const SizedBox(height: 8),
             _buildSwitchTile(
               context: context,
               icon: Icons.autorenew,
@@ -3961,6 +4363,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               value: ref.watch(settingsProvider).autoUpdate,
               onChanged: (v) =>
                   ref.read(settingsProvider.notifier).setAutoUpdate(v),
+            ),
+            const SizedBox(height: 8),
+            _buildCheckFrequencyTile(context),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.notifications_active_outlined,
+              title: l10n.translate('updates_notify'),
+              subtitle: l10n.translate('updates_notify_subtitle'),
+              value: ref.read(updateServiceProvider).notify,
+              onChanged: (v) async {
+                await ref.read(updateServiceProvider).setNotify(v);
+                if (mounted) setState(() {});
+              },
+            ),
+            const SizedBox(height: 8),
+            _buildSwitchTile(
+              context: context,
+              icon: Icons.restart_alt,
+              title: l10n.translate('updates_install_on_start'),
+              subtitle: l10n.translate('updates_install_on_start_subtitle'),
+              value: ref.read(updateServiceProvider).installOnStart,
+              onChanged: (v) async {
+                await ref.read(updateServiceProvider).setInstallOnStart(v);
+                if (mounted) setState(() {});
+              },
             ),
             const SizedBox(height: 8),
             _buildUpdatesServerTile(context),
@@ -3977,6 +4405,118 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildUpdateStatusTile(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final s = ref.watch(updateProvider);
+    final last = ref.read(updateServiceProvider).lastCheck;
+    final version = s.version ?? '';
+
+    final String status;
+    if (s.isDownloading) {
+      status = l10n.translate('updates_downloading_short').replaceAll('{0}', version);
+    } else if (s.updateReady) {
+      status = l10n.translate('updates_downloaded_short').replaceAll('{0}', version);
+    } else if (s.hasUpdate) {
+      status = l10n.translate('updates_available_short').replaceAll('{0}', version);
+    } else {
+      status = l10n.translate('updates_up_to_date_short');
+    }
+    final lastText = last == null
+        ? l10n.translate('never')
+        : '${_two(last.day)}/${_two(last.month)}/${last.year} '
+            '${_two(last.hour)}:${_two(last.minute)}';
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withValues(alpha: 0.3),
+      child: ListTile(
+        leading: s.isBusy
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.info_outline),
+        title: Text('${l10n.translate('updates_status')}: $status'),
+        subtitle: Text('${l10n.translate('updates_last_check')}: $lastText'),
+        trailing: Wrap(
+          spacing: 8,
+          children: [
+            if (s.hasUpdate && !s.updateReady && !s.isDownloading)
+              OutlinedButton(
+                onPressed: () => ref.read(updateProvider.notifier).startDownload(),
+                child: Text(l10n.translate('updates_download_now')),
+              ),
+            if (s.updateReady)
+              FilledButton(
+                onPressed: () => showUpdateDialog(context,
+                    isMandatory: s.updateRequired),
+                child: Text(l10n.translate('update_install_now')),
+              ),
+            if (s.updateReady)
+              OutlinedButton(
+                onPressed: () async {
+                  await ref.read(updateProvider.notifier).discardDownload();
+                  if (!context.mounted) return;
+                  SnackBarHelper.showToast(
+                      l10n.translate('updates_download_deleted'),
+                      kind: ToastKind.success);
+                },
+                child: Text(l10n.translate('updates_delete_download')),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _two(int n) => n.toString().padLeft(2, '0');
+
+  Widget _buildCheckFrequencyTile(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final service = ref.read(updateServiceProvider);
+    const labels = {
+      0: 'updates_manual_only',
+      1: 'updates_every_hour',
+      6: 'updates_every_6h',
+      12: 'updates_every_12h',
+      24: 'updates_daily',
+      168: 'updates_weekly',
+    };
+    final current = UpdateConfig.checkHoursChoices.contains(service.checkHours)
+        ? service.checkHours
+        : UpdateConfig.defaultCheckHours;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withValues(alpha: 0.3),
+      child: ListTile(
+        leading: const Icon(Icons.schedule),
+        title: Text(l10n.translate('updates_check_frequency')),
+        subtitle: Text(l10n.translate('updates_check_frequency_subtitle')),
+        trailing: DropdownButton<int>(
+          value: current,
+          underline: const SizedBox.shrink(),
+          items: [
+            for (final h in UpdateConfig.checkHoursChoices)
+              DropdownMenuItem(value: h, child: Text(l10n.translate(labels[h]!))),
+          ],
+          onChanged: (v) async {
+            if (v == null) return;
+            await service.setCheckHours(v);
+            if (mounted) setState(() {});
+            // A shorter interval may make a check due right away.
+            ref.read(updateProvider.notifier).maybeCheck();
+          },
+        ),
+      ),
     );
   }
 
@@ -4018,7 +4558,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         leading: const Icon(Icons.dns),
         title: Text(l10n.translate('updates_server')),
         subtitle: Text(
-          '${url.isEmpty ? l10n.translate('updates_server_not_set') : url}\n'
+          '${url.isEmpty ? l10n.translate('updates_server_not_set') : url}'
+          '${service.usesDefaultBaseUrl ? ' (${l10n.translate('updates_server_default')})' : ''}\n'
           '${l10n.translate('updates_app_name')}: ${service.appSlug}',
           style: const TextStyle(fontFamily: 'monospace'),
         ),
@@ -4074,7 +4615,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!context.mounted) return;
 
     final service = ref.read(updateServiceProvider);
-    final urlCtrl = TextEditingController(text: service.baseUrl);
+    final urlCtrl = TextEditingController(
+        text: service.usesDefaultBaseUrl ? '' : service.baseUrl);
     final appCtrl = TextEditingController(text: service.appSlug);
     final saved = await showDialog<bool>(
       context: context,
@@ -4091,7 +4633,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 keyboardType: TextInputType.url,
                 decoration: const InputDecoration(
                   labelText: 'URL',
-                  hintText: 'https://updates.example.com',
+                  hintText: UpdateConfig.defaultBaseUrl,
                 ),
               ),
               const SizedBox(height: 12),
@@ -4157,13 +4699,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final notifier = ref.read(updateProvider.notifier);
       final found = await notifier.checkForUpdates();
       if (!context.mounted) return;
-      if (found) {
-        final isMandatory = ref.read(updateProvider).updateRequired;
-        showDialog(
-          context: context,
-          barrierDismissible: !isMandatory,
-          builder: (_) => UpdateDialog(isMandatory: isMandatory),
-        );
+      if (found == null) {
+        SnackBarHelper.showToast(l10n.translate('update_server_unreachable'), kind: ToastKind.error);
+      } else if (found && ref.read(updateProvider).hasUpdate) {
+        showUpdateDialog(context,
+            isMandatory: ref.read(updateProvider).updateRequired);
       } else {
         SnackBarHelper.showToast(l10n.translate('app_up_to_date'), kind: ToastKind.success);
       }
@@ -5008,6 +5548,68 @@ class _SseStatusTileState extends ConsumerState<_SseStatusTile> {
           ),
         );
       },
+    );
+  }
+}
+
+/// Admin field for the TVA rate given to open-price (catalogue price 0)
+/// products. Its own state so a settings rebuild does not reset the caret
+/// mid-typing.
+class _ZeroPriceTvaField extends StatefulWidget {
+  final double rate;
+  final ValueChanged<double> onChanged;
+
+  const _ZeroPriceTvaField({required this.rate, required this.onChanged});
+
+  @override
+  State<_ZeroPriceTvaField> createState() => _ZeroPriceTvaFieldState();
+}
+
+class _ZeroPriceTvaFieldState extends State<_ZeroPriceTvaField> {
+  late final TextEditingController _controller =
+      TextEditingController(text: _format(widget.rate));
+
+  static String _format(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      child: ListTile(
+        leading: const Icon(Icons.percent),
+        title: Text(l10n.translate('zero_price_tva_rate')),
+        subtitle: Text(l10n.translate('zero_price_tva_rate_subtitle')),
+        trailing: SizedBox(
+          width: 90,
+          child: AdaptiveKeyboardTextField(
+            controller: _controller,
+            textAlign: TextAlign.right,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+            ],
+            decoration: const InputDecoration(
+              suffixText: '%',
+              isDense: true,
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (text) {
+              final v = double.tryParse(text.replaceAll(',', '.'));
+              widget.onChanged(v ?? 0);
+            },
+          ),
+        ),
+      ),
     );
   }
 }

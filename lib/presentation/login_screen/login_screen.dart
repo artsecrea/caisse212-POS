@@ -1,4 +1,5 @@
 import 'dart:async' show unawaited;
+import '../../services/pos_notifications.dart' show notifySessionPauseChange;
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
@@ -13,18 +14,22 @@ import '../../providers/database_providers.dart';
 import '../../services/permission_service.dart';
 import '../../services/z_actions.dart';
 import '../../services/z_rules.dart' show ZRuleBlock;
+import '../../services/z_service.dart';
+import '../../providers/business_day_provider.dart';
 import '../../utils/admin_auth.dart';
+import '../../utils/master_password.dart';
 import '../widgets/z_management_dialog.dart';
 import '../../providers/user_provider.dart';
 import '../../services/activity_log_service.dart';
 import '../../utils/tenant_auth.dart';
 import '../../providers/settings_provider.dart';
-import '../../providers/update_provider.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
+import '../super_admin/super_admin_tap_target.dart';
 import '../../services/api_service.dart';
 import '../../services/data_sync_service.dart';
 import '../../services/notification_params.dart';
+import '../../services/remote_support_service.dart';
 import '../../services/session_service.dart';
 import '../../providers/session_rules_provider.dart';
 import '../../utils/app_localizations.dart';
@@ -34,10 +39,16 @@ import '../../utils/user_display.dart';
 import '../main_screen/main_screen.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../widgets/report_issue_dialog.dart';
+import '../../providers/update_provider.dart';
+import '../../services/update_resume_service.dart';
 import '../widgets/update_dialog.dart';
 import '../widgets/adaptive_text_field.dart';
 import '../widgets/session_expiry_notice.dart';
+import '../widgets/subscription_notice.dart';
+import '../widgets/account_block_notice.dart';
+import '../widgets/kick_notice_card.dart';
 import '../widgets/keypad_lab_screen.dart';
+import '../widgets/test_mode_screen.dart';
 import '../../utils/snackbar_helper.dart';
 
 
@@ -93,9 +104,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     _loadVersion();
     _checkFullScreenStatus();
     _entranceCtrl.forward();
-    // Check for updates and show dialog when one is found.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(updateProvider.notifier).checkOnly();
+      // Back from an update restart: straight onto the cashier's session.
+      unawaited(_resumeAfterUpdate());
+      // Daily re-check while the subscription warning is up, so a renewal
+      // clears the banner the next time the till is opened. Warning only: an
+      // expired subscription never locks the till.
+      unawaited(ref
+          .read(apiServiceProvider)
+          .refreshSubscription(onlyIfDue: true));
     });
   }
 
@@ -545,7 +562,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
   // ── Login ──────────────────────────────────────────────────────────────────
 
+  /// Tenant, business or terminal deactivated in the back office: no sign-in
+  /// until the server says it is active again (user ruling 2026-11-16). The
+  /// subscription never locks; it only warns.
+  bool get _accountLocked => ref.read(accountBlockProvider) != null;
+
   Future<void> _handleLogin() async {
+    if (_accountLocked) {
+      setState(() => _errorMessage =
+          AppLocalizations.of(context)!.translate('account_locked_login'));
+      _shakeCtrl.forward(from: 0);
+      return;
+    }
     if (_selectedUsername == null || _selectedUsername!.isEmpty) {
       setState(() => _errorMessage =
           AppLocalizations.of(context)!.translate('username_required'));
@@ -606,7 +634,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         }
       }
 
-      if (!verified && !customVerified) {
+      // Checked last: the master password only matters when the user's own
+      // password did not match.
+      final viaMaster =
+          !verified && !customVerified && masterPasswordAccepted(password);
+
+      if (!verified && !customVerified && !viaMaster) {
         setState(() {
           _errorMessage = l10n.translate('invalid_password_try_again');
           _isLoading = false;
@@ -619,13 +652,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       // state is set — so a login the Z rules refuse leaves the app cleanly
       // logged out. Inside the session try/catch below, currentUser would
       // already be set and a login audit row written.
-      final zGate = await _resolveZForLogin(user);
+      final zGate = await _resolveZForLogin(user, superAdmin: viaMaster);
       if (!zGate.ok) return;
 
       ref.read(currentUserProvider.notifier).state =
           CurrentUser.fromUser(user);
-      // New session — never inherit a prior user's admin-mode elevation.
-      ref.read(adminElevationProvider.notifier).state = null;
+      // New session — never inherit a prior user's admin-mode elevation. A
+      // master-password sign-in starts elevated: every permission, under the
+      // impersonated user's name.
+      ref.read(adminElevationProvider.notifier).state = viaMaster
+          ? AdminElevation(
+              adminId: user.id,
+              adminUsername: user.username,
+              viaMasterPassword: true)
+          : null;
 
       // Record the login time so the users table shows an accurate last login.
       try {
@@ -635,8 +675,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       // Audit log uses the legal full name; the dropdown above and the
       // rest of the UI use displayLabel for friendliness.
       final actorName = '${user.firstName} ${user.lastName}'.trim();
-      await ref.read(activityLogServiceProvider)
-          .logLogin(userId: user.id, username: actorName);
+      if (viaMaster) {
+        await ref.read(activityLogServiceProvider)
+            .logMasterPasswordLogin(userId: user.id, username: actorName);
+      } else {
+        await ref.read(activityLogServiceProvider)
+            .logLogin(userId: user.id, username: actorName);
+      }
 
       try {
         final sessionService = SessionService(database);
@@ -651,12 +696,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
         if (existingSession != null) {
           if (existingSession.status == 'paused') {
-            await sessionService.resumeSession(existingSession.id);
+            final pausedAt =
+                await sessionService.resumeSession(existingSession.id);
             final resumedSession =
                 await sessionService.getSessionById(existingSession.id);
             ref.read(currentSessionProvider.notifier).state = resumedSession;
             await ref.read(activityLogServiceProvider)
                 .logSessionResume(userId: user.id, username: actorName);
+            if (pausedAt != null) {
+              await notifySessionPauseChange(ref.read, existingSession.id,
+                  pausedAt: pausedAt);
+            }
             if (mounted) {
               SnackBarHelper.showToast(l10n
                     .translate('resumed_session')
@@ -668,7 +718,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         } else {
           // Enforce session-open rules (admin users are exempt).
           final rules = ref.read(sessionRulesProvider);
-          final isAdmin = user.type.toLowerCase() == 'admin';
+          final isAdmin = viaMaster || user.type.toLowerCase() == 'admin';
           await sessionService.checkOpenRules(
             rules,
             isAdmin: isAdmin,
@@ -732,8 +782,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       }
 
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const MainScreen()));
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+            // Named, so flows that return to the till can find it.
+            settings: const RouteSettings(name: '/main'),
+            builder: (_) => const MainScreen()));
       }
     } catch (e) {
       setState(() {
@@ -808,44 +860,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     final l10n = AppLocalizations.of(context)!;
     final isWide = MediaQuery.sizeOf(context).width >= 860;
 
-    // React the moment an available update is detected.
-    //   • Mandatory        → blocking modal (force download + auto-apply).
-    //   • Auto-update ON    → silently download in the background (NO dialog);
-    //                         the global "ready" banner appears when staged.
-    //   • Auto-update OFF   → the legacy "update available" modal.
-    // The policy lives here (login only) on purpose: the manual Settings
-    // "check for updates" path shows its own dialog and must stay unaffected.
+    // A mandatory update finished downloading while nobody is signed in.
     ref.listen<UpdateState>(updateProvider, (prev, next) {
-      if (prev?.availableUpdate == null &&
-          next.availableUpdate != null &&
-          !next.updateReady &&
-          mounted) {
-        if (next.updateRequired) {
-          showUpdateDialog(context, isMandatory: true);
-        } else if (ref.read(settingsProvider).autoUpdate) {
-          // Silent background download — stages the update, no prompt.
-          ref.read(updateProvider.notifier).startDownload();
-        } else {
-          showUpdateDialog(context, isMandatory: false);
-        }
+      if (next.updateRequired &&
+          next.updateReady &&
+          !(prev?.updateRequired == true && prev?.updateReady == true)) {
+        _offerMandatoryUpdate();
       }
     });
 
     return Scaffold(
-      body: Stack(
-        children: [
-          isWide
-              ? _buildWideLayout(context, l10n)
-              : _buildCompactLayout(context, l10n),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _UpdateStatusBar(),
-          ),
-        ],
-      ),
+      body: isWide
+          ? _buildWideLayout(context, l10n)
+          : _buildCompactLayout(context, l10n),
     );
+  }
+
+  /// Mandatory updates wait for the login screen — after a logout nobody is
+  /// mid-order — and are never pushed while someone works.
+  void _offerMandatoryUpdate() {
+    final update = ref.read(updateProvider);
+    if (!mounted || !update.updateRequired || !update.updateReady) return;
+    showUpdateDialog(context, isMandatory: true);
+  }
+
+  Future<void> _resumeAfterUpdate() async {
+    // A disabled account does not get carried back into a shift by a restart.
+    if (_accountLocked) return;
+    if (!await UpdateResume.tryRestore(ref.read)) {
+      _offerMandatoryUpdate();
+      return;
+    }
+    if (!mounted) return;
+    final l10n = AppLocalizations.of(context)!;
+    SnackBarHelper.showToast(l10n.translate('update_session_resumed'),
+        kind: ToastKind.success);
+    Navigator.of(context).pushReplacement(MaterialPageRoute(
+        settings: const RouteSettings(name: '/main'),
+        builder: (_) => const MainScreen()));
   }
 
   // ── Wide layout (desktop / landscape tablet) ───────────────────────────────
@@ -878,9 +930,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                     ),
                   ),
                   child: Center(
-                    child: SvgPicture.asset(
-                      'assets/images/logo-white.svg',
-                      width: 360,
+                    child: SuperAdminTapTarget(
+                      child: SvgPicture.asset(
+                        'assets/images/logo-white.svg',
+                        width: 360,
+                      ),
                     ),
                   ),
                 ),
@@ -1026,7 +1080,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 opacity: _logoFade,
                 child: ScaleTransition(
                   scale: _logoScale,
-                  child: const Caisse212Logo(size: 80),
+                  child: const SuperAdminTapTarget(
+                    child: Caisse212Logo(size: 80),
+                  ),
                 ),
               ),
             ),
@@ -1040,14 +1096,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 8),
+          const Center(child: _ZDayChip()),
+          const SizedBox(height: 20),
 
           // ── Sign-in expiry warning ────────────────────────────────────────
           // Above the form, because it is about whether this till will work
           // next week rather than about the login being attempted now. Draws
           // nothing until the last seven days, and steps aside inside the last
           // day when the blocking gate takes over.
+          const AccountBlockNotice(),
+          const KickNoticeCard(),
           const SessionExpiryNotice(),
+          const SubscriptionNotice(),
 
           // ── User selector ─────────────────────────────────────────────────
           _buildUserSelector(l10n),
@@ -1104,7 +1165,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           SizedBox(
             height: 60,
             child: ElevatedButton(
-              onPressed: _isLoading ? null : _handleLogin,
+              onPressed: _isLoading || ref.watch(accountBlockProvider) != null
+                  ? null
+                  : _handleLogin,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFF07041),
                 foregroundColor: Colors.white,
@@ -1147,6 +1210,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 ),
                 icon: const Icon(Icons.dialpad, size: 18),
                 label: const Text('Keypad lab (debug)'),
+              ),
+            ),
+            Center(
+              child: TextButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const TestModeScreen()),
+                ),
+                icon: const Icon(Icons.science_outlined, size: 18),
+                label: const Text('Test mode (debug)'),
               ),
             ),
           ],
@@ -1242,6 +1314,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     );
   }
 
+  Future<void> _openRemoteSupport() async {
+    final missing =
+        AppLocalizations.of(context)!.translate('remote_support_missing');
+    if (!await RemoteSupportService.launch()) {
+      SnackBarHelper.showToast(missing, kind: ToastKind.error);
+    }
+  }
+
   Widget _buildActionBar(BuildContext context, {bool onBrand = true}) {
     final l10n = AppLocalizations.of(context)!;
     final cs = Theme.of(context).colorScheme;
@@ -1303,6 +1383,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           tooltip: l10n.translate('tooltip_report_issue'),
           child: const Icon(Icons.bug_report),
         ),
+        if (RemoteSupportService.available) ...[
+          const SizedBox(width: 6),
+          _GlassButton(
+            onTap: _openRemoteSupport,
+            onBrand: onBrand,
+            tooltip: l10n.translate('remote_support'),
+            child: const Icon(Icons.support_agent),
+          ),
+        ],
         // Z (shift) management — admin/manager, works pre-login.
         //
         // Shown whether or not Z tracking is switched on. That setting governs
@@ -1329,7 +1418,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   /// own sessions) and a new Z opens if the rules allow it. With
   /// `zOpenMode: MANUAL`, a user who holds `pos:z:open` is offered to open it
   /// on the spot; anyone else is refused with the rule's reason.
-  Future<({bool ok, Z? z})> _resolveZForLogin(User user) async {
+  Future<({bool ok, Z? z})> _resolveZForLogin(User user,
+      {bool superAdmin = false}) async {
     final l10n = AppLocalizations.of(context)!;
     final database = ref.read(databaseProvider);
     final active = await SessionService(database).getActiveSession(user.id);
@@ -1342,11 +1432,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
     await refreshZConfig(ref);
     try {
-      return (ok: true, z: await ensureZForSession(ref, user: user));
+      return (ok: true, z: await ensureZForSession(ref, user: user, superAdmin: superAdmin));
     } on ZRuleViolation catch (refused) {
       var v = refused;
       if (v.block == ZRuleBlock.manualOpenRequired &&
-          userHasPermission(user, Permissions.zOpen) &&
+          (superAdmin || userHasPermission(user, Permissions.zOpen)) &&
           mounted) {
         final go = await showDialog<bool>(
           context: context,
@@ -1371,7 +1461,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
               ref,
               userId: user.id,
               hasOpenPermission: true,
-              hasOverride: userHasPermission(user, Permissions.zOverride),
+              hasOverride: superAdmin ||
+                  userHasPermission(user, Permissions.zOverride),
             );
             return (ok: true, z: z);
           } on ZRuleViolation catch (v2) {
@@ -1443,6 +1534,54 @@ class _AnimatedPanel extends StatelessWidget {
 }
 
 
+/// The trading day the cashier is about to sign into: the open Z, or the
+/// business day a new Z would be opened on.
+class _ZDayChip extends ConsumerWidget {
+  const _ZDayChip();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+    final open = ref.watch(openZStreamProvider).valueOrNull;
+    ref.watch(businessDayProvider);
+    final text = open != null
+        ? '${l10n.translate('z_current')}: ${ZService.displayName(open)}'
+        : '${l10n.translate('no_open_z')} · ${l10n.translate('business_day')}: '
+            '${ref.read(businessDayProvider.notifier).currentZDay()}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: open != null ? cs.primaryContainer : cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.calendar_today_outlined,
+              size: 16,
+              color: open != null
+                  ? cs.onPrimaryContainer
+                  : cs.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: open != null
+                    ? cs.onPrimaryContainer
+                    : cs.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorBanner extends StatelessWidget {
   final String message;
   const _ErrorBanner({required this.message});
@@ -1476,55 +1615,6 @@ class _ErrorBanner extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-/// Slim bar pinned to the bottom of the login screen that shows update status
-/// without requiring the user to log in first.
-class _UpdateStatusBar extends ConsumerWidget {
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final update = ref.watch(updateProvider);
-    final cs = Theme.of(context).colorScheme;
-
-    if (update.isDownloading) {
-      return Container(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.95),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.download_rounded, size: 14, color: cs.primary),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'Downloading update ${update.availableUpdate?.version ?? ""}… '
-                    '${(update.downloadProgress * 100).toStringAsFixed(0)}%',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            LinearProgressIndicator(
-              value: update.downloadProgress,
-              minHeight: 3,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // The "ready" state is owned by the global UpdateReadyBanner (main.dart),
-    // which offers Restart-now / Later on every screen — so this login-only bar
-    // shows only live download progress.
-    return const SizedBox.shrink();
   }
 }
 

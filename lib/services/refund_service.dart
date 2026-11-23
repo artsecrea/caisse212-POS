@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/models/refund_policy.dart';
 
 /// One line the cashier chose to refund, as selected in the UI.
 class RefundLineDraft {
@@ -127,6 +128,147 @@ class RefundAmountException implements Exception {
       '(max $maximum)';
 }
 
+/// What a refund actually paid back in cash: nothing unless its method is
+/// CASH, and never the part spent as exchange credit on a new order.
+double refundCashPaidBack(Refund r) => r.method.toUpperCase() == 'CASH'
+    ? (r.totalAmount - r.exchangeAmount).clamp(0, double.infinity).toDouble()
+    : 0.0;
+
+/// Refunds of a session or Z, broken down the way the Z reports them.
+///
+/// Every figure is additive, so a Z is the plain sum of its sessions — the
+/// rule the server's Z merger applies to `details` (numbers add; `byMethod`
+/// merges on `method`).
+class RefundBreakdown {
+  final double total;
+
+  /// The cash part: the only one that left the drawer.
+  final double cash;
+  final int count;
+
+  /// Method → (count, amount).
+  final Map<String, ({int count, double amount})> byMethod;
+
+  /// Part of [total] given back on orders sold in an earlier, closed Z.
+  final double earlierSales;
+
+  /// Value of the lines refunded WITHOUT returning the goods to stock.
+  final double waste;
+
+  /// Part of [total] not paid back but spent as exchange credit. It cancels
+  /// against the EXCHANGE tender on the new orders; [byMethod] holds only
+  /// what was actually paid back.
+  final double exchange;
+
+  const RefundBreakdown({
+    this.total = 0,
+    this.cash = 0,
+    this.count = 0,
+    this.byMethod = const {},
+    this.earlierSales = 0,
+    this.waste = 0,
+    this.exchange = 0,
+  });
+
+  static const empty = RefundBreakdown();
+
+  /// [linesByRefund]: refund id → its lines (for the waste figure).
+  factory RefundBreakdown.fromRows(
+    List<Refund> refunds,
+    Map<int, List<RefundLine>> linesByRefund,
+  ) {
+    var total = 0.0, cash = 0.0, earlier = 0.0, waste = 0.0, exchange = 0.0;
+    final byMethod = <String, ({int count, double amount})>{};
+    for (final r in refunds) {
+      total += r.totalAmount;
+      final method = r.method.toUpperCase();
+      cash += refundCashPaidBack(r);
+      exchange += r.exchangeAmount;
+      if (r.earlierSale) earlier += r.totalAmount;
+      final paidBack = r.totalAmount - r.exchangeAmount;
+      // A full exchange paid nothing back: it is in [exchange], not here.
+      if (paidBack > 0.005) {
+        final prev = byMethod[method] ?? (count: 0, amount: 0.0);
+        byMethod[method] =
+            (count: prev.count + 1, amount: prev.amount + paidBack);
+      }
+      for (final l in linesByRefund[r.id] ?? const <RefundLine>[]) {
+        if (!l.restock) waste += l.amount ?? 0;
+      }
+    }
+    return RefundBreakdown(
+      total: total,
+      cash: cash,
+      count: refunds.length,
+      byMethod: byMethod,
+      earlierSales: earlier,
+      waste: waste,
+      exchange: exchange,
+    );
+  }
+}
+
+/// What the refund policy needs to know about the order being refunded.
+class RefundOrderContext {
+  /// The order was sold in a Z that is now closed (an earlier Z or day).
+  final bool saleZClosed;
+
+  /// Business day of the sale, when known.
+  final DateTime? saleZDay;
+
+  /// Refund methods matching how the order was paid (CASH/CARD/…).
+  final Set<String> paidMethods;
+
+  /// Local `order_products.id`s whose product is marked non-refundable.
+  final Set<int> nonRefundableLineIds;
+
+  const RefundOrderContext({
+    required this.saleZClosed,
+    required this.saleZDay,
+    required this.paidMethods,
+    required this.nonRefundableLineIds,
+  });
+}
+
+/// Quantities refunded on OTHER tills, per local `order_products.id`, from the
+/// server's refunds of an order.
+///
+/// A refund this till already holds ([localCodes]) is skipped — it is in the
+/// local tally already, and counting it twice would block a legitimate refund.
+/// Server lines name the SERVER line id, mapped back through
+/// [localIdByServerId]; a line that maps to nothing on this till is ignored
+/// (it cannot be refunded here anyway).
+///
+/// Lenient on names (`orderProductId` / `orderProductServerId` /
+/// `order_product_id`) because the read model is not ours.
+Map<int, double> otherTillsRefunded({
+  required List<Map<String, dynamic>> serverRefunds,
+  required Set<String> localCodes,
+  required Map<int, int> localIdByServerId,
+}) {
+  final out = <int, double>{};
+  for (final r in serverRefunds) {
+    final code = r['code']?.toString();
+    if (code != null && localCodes.contains(code)) continue;
+    final lines = r['lines'];
+    if (lines is! List) continue;
+    for (final raw in lines) {
+      if (raw is! Map) continue;
+      final sid = raw['orderProductId'] ??
+          raw['orderProductServerId'] ??
+          raw['order_product_id'];
+      final serverId = sid is int ? sid : int.tryParse('${sid ?? ''}');
+      final localId = serverId == null ? null : localIdByServerId[serverId];
+      if (localId == null) continue;
+      final q = raw['quantity'];
+      final qty = q is num ? q.toDouble() : double.tryParse('${q ?? ''}') ?? 0;
+      if (qty <= 0) continue;
+      out[localId] = (out[localId] ?? 0) + qty;
+    }
+  }
+  return out;
+}
+
 class RefundService {
   final AppDatabase _database;
 
@@ -171,6 +313,78 @@ class RefundService {
     return '$base-${next.toString().padLeft(3, '0')}';
   }
 
+  /// Facts about [order] for the refund policy, relative to the Z open now
+  /// ([currentZId] / [currentZDay]).
+  ///
+  /// "Closed Z" is decided from the order's own session when this till has it
+  /// (session → Z row → status), because that is exact. An order with no local
+  /// session — imported from another till by its code — falls back to the
+  /// business day: sold on an earlier day means an earlier, closed Z. Same-day
+  /// imports count as not closed; this till cannot know, and guessing "closed"
+  /// would demand a permission for a sale made an hour ago next door.
+  Future<RefundOrderContext> policyContextFor(
+    Order order, {
+    required int? currentZId,
+    required DateTime? currentZDay,
+  }) async {
+    final saleZDay = order.zDay ?? order.date;
+
+    bool earlierDay() =>
+        currentZDay != null &&
+        businessDaysBetween(saleZDay, currentZDay) > 0;
+
+    var closed = false;
+    final sessionId = order.sessionId;
+    CashSession? session;
+    if (sessionId != null) {
+      session = await (_database.select(_database.cashSessions)
+            ..where((s) => s.id.equals(sessionId)))
+          .getSingleOrNull();
+    }
+    if (session != null && session.zId != null) {
+      if (session.zId == currentZId) {
+        closed = false;
+      } else {
+        final z = await (_database.select(_database.zs)
+              ..where((t) => t.id.equals(session!.zId!)))
+            .getSingleOrNull();
+        // A Z row gone missing is not the current one, so it is in the past.
+        closed = z == null || z.status == 'closed' || z.id != currentZId;
+      }
+    } else {
+      closed = earlierDay();
+    }
+
+    final tickets = await (_database.select(_database.tickets)
+          ..where((t) => t.orderId.equals(order.id) & t.isCancelled.equals(false)))
+        .get();
+    final paid = refundMethodsForPayments(tickets.map((t) => t.paymentMethod));
+
+    final lines = await (_database.select(_database.orderProducts)
+          ..where((op) => op.orderId.equals(order.id)))
+        .get();
+    final productIds = lines.map((l) => l.productId).toSet().toList();
+    final products = productIds.isEmpty
+        ? <Product>[]
+        : await (_database.select(_database.products)
+              ..where((p) => p.id.isIn(productIds)))
+            .get();
+    final nonRefundableProducts = {
+      for (final p in products)
+        if (!p.refundable) p.id
+    };
+
+    return RefundOrderContext(
+      saleZClosed: closed,
+      saleZDay: saleZDay,
+      paidMethods: paid,
+      nonRefundableLineIds: {
+        for (final l in lines)
+          if (nonRefundableProducts.contains(l.productId)) l.id
+      },
+    );
+  }
+
   /// How much of [orderProductId] has already been refunded, so the UI can cap
   /// the next refund and never give back more than was sold.
   Future<Map<int, double>> refundedQuantitiesForOrder(int orderId) async {
@@ -203,6 +417,18 @@ class RefundService {
     int? sessionId,
     DateTime? zDay,
     String? posName,
+    String? reasonCode,
+    int? approvedBy,
+    List<RefundPolicyFlag> policyFlags = const [],
+    bool earlierSale = false,
+    // Quantities already given back on other tills (see [otherTillsRefunded]),
+    // so the cap holds across the business, not just this till.
+    Map<int, double> refundedElsewhere = const {},
+    // Exchange: the part of the total spent as credit on [exchangeOrderId]
+    // instead of being paid back.
+    double exchangeAmount = 0,
+    int? exchangeOrderId,
+    String? exchangeOrderCode,
   }) async {
     if (lines.isEmpty) {
       throw ArgumentError('A refund needs at least one line');
@@ -255,7 +481,8 @@ class RefundService {
       if (l.quantity <= 0) {
         throw ArgumentError('Refund quantity must be greater than zero');
       }
-      final prior = alreadyRefunded[l.orderProductId] ?? 0;
+      final prior = (alreadyRefunded[l.orderProductId] ?? 0) +
+          (refundedElsewhere[l.orderProductId] ?? 0);
       // Tolerance for the usual binary-fraction noise on weighed lines, so a
       // full refund of a 0.3kg line is not rejected by a 1e-15 overshoot.
       if (prior + l.quantity > op.quantity + 0.0001) {
@@ -294,6 +521,10 @@ class RefundService {
     for (final l in lines) {
       total += l.amount ?? perUnit(l.orderProductId) * l.quantity;
     }
+    if (exchangeAmount < 0 || exchangeAmount > total + 0.01) {
+      throw ArgumentError(
+          'Exchange credit $exchangeAmount outside 0..${total.toStringAsFixed(2)}');
+    }
 
     final now = DateTime.now();
     return _database.transaction(() async {
@@ -309,6 +540,16 @@ class RefundService {
               refundedAt: Value(now),
               sessionId: Value(sessionId),
               zDay: Value(zDay),
+              reasonCode: Value(reasonCode),
+              approvedBy: Value(approvedBy),
+              policyFlags: Value(policyFlags.isEmpty
+                  ? null
+                  : policyFlags.map((f) => f.wire).join(',')),
+              earlierSale: Value(earlierSale),
+              exchangeAmount:
+                  Value(double.parse(exchangeAmount.toStringAsFixed(2))),
+              exchangeOrderId: Value(exchangeOrderId),
+              exchangeOrderCode: Value(exchangeOrderCode),
               updatedAt: Value(now),
             ),
           );
@@ -339,6 +580,25 @@ class RefundService {
     });
   }
 
+  /// Codes of every refund this till holds for [orderId].
+  Future<Set<String>> localRefundCodes(int orderId) async =>
+      (await (_database.select(_database.refunds)
+                ..where((r) => r.orderId.equals(orderId)))
+              .get())
+          .map((r) => r.code)
+          .toSet();
+
+  /// Server line id → local line id for [orderId].
+  Future<Map<int, int>> localIdsByServerId(int orderId) async {
+    final rows = await (_database.select(_database.orderProducts)
+          ..where((op) => op.orderId.equals(orderId)))
+        .get();
+    return {
+      for (final op in rows)
+        if (op.serverId != null) op.serverId!: op.id
+    };
+  }
+
   Future<List<Refund>> refundsForOrder(int orderId) =>
       (_database.select(_database.refunds)
             ..where((r) => r.orderId.equals(orderId))
@@ -366,6 +626,23 @@ class RefundService {
           ..where((r) => r.sessionId.isIn(sessionIds)))
         .get();
     return rows.fold<double>(0, (s, r) => s + r.totalAmount);
+  }
+
+  /// The Z breakdown of every refund taken in [sessionIds].
+  Future<RefundBreakdown> breakdownForSessions(List<int> sessionIds) async {
+    if (sessionIds.isEmpty) return RefundBreakdown.empty;
+    final rows = await (_database.select(_database.refunds)
+          ..where((r) => r.sessionId.isIn(sessionIds)))
+        .get();
+    if (rows.isEmpty) return RefundBreakdown.empty;
+    final lines = await (_database.select(_database.refundLines)
+          ..where((l) => l.refundId.isIn(rows.map((r) => r.id).toList())))
+        .get();
+    final byRefund = <int, List<RefundLine>>{};
+    for (final l in lines) {
+      (byRefund[l.refundId] ??= []).add(l);
+    }
+    return RefundBreakdown.fromRows(rows, byRefund);
   }
 
   /// Assemble the printable slip for [refund], resolving product names, serial
@@ -459,8 +736,6 @@ class RefundService {
     final rows = await (_database.select(_database.refunds)
           ..where((r) => r.sessionId.isIn(sessionIds)))
         .get();
-    return rows
-        .where((r) => r.method.toUpperCase() == 'CASH')
-        .fold<double>(0, (s, r) => s + r.totalAmount);
+    return rows.fold<double>(0, (s, r) => s + refundCashPaidBack(r));
   }
 }

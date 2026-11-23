@@ -5,8 +5,9 @@
 ;
 ; Running the installer over an existing install upgrades it in place: the
 ; running POS is closed, files are replaced, and the POS is started again.
-; The local database lives in the user's Documents folder, so neither an
-; upgrade nor an uninstall touches it.
+; The database and settings live in C:\ProgramData\caisse212, shared by every
+; Windows account on the till, and neither an upgrade nor an uninstall touches
+; them.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -53,10 +54,9 @@ VersionInfoProductName={#AppName}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-; Per-user by default so the in-app updater can overwrite files without a UAC
-; prompt; an admin can still pick "all users" from the dialog.
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog commandline
+; All users: the restricted cashier accounts made in super admin mode must be
+; able to run the same POS. The in-app updater asks for UAC to write here.
+PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
@@ -98,9 +98,14 @@ Name: "startup"; Description: "{cm:StartWithWindows}"; GroupDescription: "{cm:St
 [InstallDelete]
 Type: files; Name: "{app}\{#LegacyExe}"
 
+[Dirs]
+; Every account must write the shared database, not just the one that made it.
+Name: "{commonappdata}\caisse212"; Permissions: users-modify; Flags: uninsneveruninstall
+
 [Files]
 Source: "{#VcRedist}"; Flags: dontcopy
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.db,*.db-wal,*.db-shm,logs.txt,error_log.txt"
+Source: "setup_remote_access.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Registry]
 ; HKA = this user for a per-user install, every user for an all-users install.
@@ -112,11 +117,16 @@ Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
+; Unattended remote support: service + a fresh permanent password, handed to
+; the POS once (see setup_remote_access.ps1). Runs elevated, before the POS.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\setup_remote_access.ps1"" -SupportDir ""{app}\support"""; Flags: runhidden waituntilterminated; Check: FileExists(ExpandConstant('{app}\support\caisse212-support.exe')); StatusMsg: "Remote support..."
 ; No skipifsilent: a silent upgrade (/VERYSILENT) must bring the POS back up too.
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall
+; runasoriginaluser: the POS must not inherit the setup's admin token.
+Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "KillApp"
+Filename: "{commonpf}\Caisse212-Support\Caisse212-Support.exe"; Parameters: "--uninstall"; Flags: runhidden skipifdoesntexist; RunOnceId: "RemoveSupport"
 
 [Code]
 const
@@ -161,12 +171,26 @@ begin
     SuppressibleMsgBox(FmtMessage(CustomMessage('VcRedistFailed'), [IntToStr(ResultCode)]), mbError, MB_OK, IDOK);
 end;
 
+// Older builds installed per-user under AppData. That copy would keep its
+// own autostart entry and could win the race at boot with a stale version,
+// so it goes once the all-users copy is in place. Data never lived in it.
+procedure RemovePerUserInstall;
+var
+  Uninst: String;
+  ResultCode: Integer;
+begin
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{DD01BD8F-1902-449C-9FEA-D39C9043165B}_is1',
+                         'UninstallString', Uninst) then
+    Exec(RemoveQuotes(Uninst), '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
     InstallVcRedist
   else if CurStep = ssPostInstall then
   begin
+    RemovePerUserInstall;
     // [Registry] only ever adds the value, so unticking the task on a
     // reinstall has to remove it here.
     if not WizardIsTaskSelected('startup') then

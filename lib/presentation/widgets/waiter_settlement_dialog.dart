@@ -8,6 +8,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../services/kitchen_timing.dart' show completeKitchenForTicket;
 import '../../providers/sync_manager_provider.dart';
 import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
@@ -217,23 +218,27 @@ class _WaiterSettlementDialogState
                 ),
               );
 
-          // Mark every UNPAID line on this order as PAID and attach the
-          // new ticket. Anything already PAID stays as-is so partials don't
-          // get re-stamped.
+          // Attach the new ticket to every UNPAID line on this order.
+          // Anything already paid stays as-is so partials don't get
+          // re-stamped. `state` is the kitchen's and stays as it is.
           await (database.update(database.orderProducts)
                 ..where((p) =>
-                    p.orderId.equals(orderId) & p.state.equals('PAID').not()))
+                    p.orderId.equals(orderId) &
+                    p.ticketId.isNull() &
+                    p.state.equals('PAID').not()))
               .write(OrderProductsCompanion(
             ticketId: Value(ticketId),
-            state: const Value('PAID'),
             updatedAt: Value(DateTime.now()),
           ));
+          if (ref.read(settingsProvider).paymentCompletesKitchen) {
+            await completeKitchenForTicket(database, ticketId);
+          }
         });
 
         // Mark the order paid AND free its table in one atomic step — the same
         // path the cashier uses, so a waiter-settled order frees its table
         // (occupancy-based) exactly like a cashier-paid one, honoring the
-        // auto-clear-table setting. All lines are PAID by now, so this always
+        // auto-clear-table setting. All lines are paid by now, so this always
         // settles.
         // The waiter keeps `servedBy`; the till that took the cash takes
         // `takenBy`, so the money lands in this cashier's session.
@@ -293,6 +298,7 @@ class _WaiterSettlementDialogState
             customerName: o.customerName,
             customerPhone: o.customerPhone,
             deliveryAddress: o.order.address,
+            reference: o.order.reference,
             tableName: o.tableName,
             numberOfPersons: o.order.persons,
           );

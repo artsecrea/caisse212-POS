@@ -40,6 +40,32 @@ class Refunds extends Table {
   IntColumn get sessionId => integer().nullable()();
   DateTimeColumn get zDay => dateTime().nullable()();
 
+  /// Preset reason picked from the refund policy (schema v58); [reason]
+  /// still carries the text that was printed.
+  TextColumn get reasonCode => text().nullable()();
+
+  /// Supervisor who approved a refund past the policy (schema v58).
+  IntColumn get approvedBy => integer().nullable()();
+
+  /// Policy limits this refund went past, comma-separated wire names
+  /// (`CLOSED_Z,WINDOW`…) — sent as `policyFlags` (schema v58).
+  TextColumn get policyFlags => text().nullable()();
+
+  /// The order was sold in an earlier, closed Z (schema v58). Feeds the
+  /// Z's `refunds.earlierSales`, independent of whether the policy asked
+  /// for a permission.
+  BoolColumn get earlierSale => boolean().withDefault(const Constant(false))();
+
+  /// Exchange (schema v59): the part of [totalAmount] NOT paid back but spent
+  /// as credit on a new order. [method] is then the method of the remainder
+  /// only; 0 = an ordinary refund.
+  RealColumn get exchangeAmount =>
+      real().withDefault(const Constant(0.0))();
+
+  /// The new order that received the credit (local id + its stable code).
+  IntColumn get exchangeOrderId => integer().nullable()();
+  TextColumn get exchangeOrderCode => text().nullable()();
+
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
   /// Why the server refused this refund, if it did.
   ///

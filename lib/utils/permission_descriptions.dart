@@ -328,6 +328,14 @@ const Map<String, PermissionDescription> kPermissionDescriptions = {
     titleKey: 'perm_pos_refunds_amount_override_title',
     subtitleKey: 'perm_pos_refunds_amount_override_subtitle',
   ),
+  'pos:refunds:closed-z': PermissionDescription(
+    titleKey: 'perm_pos_refunds_closed_z_title',
+    subtitleKey: 'perm_pos_refunds_closed_z_subtitle',
+  ),
+  'pos:refunds:override': PermissionDescription(
+    titleKey: 'perm_pos_refunds_override_title',
+    subtitleKey: 'perm_pos_refunds_override_subtitle',
+  ),
 
   // ── Z (shift) ──────────────────────────────────────────────────────────
   'pos:z:open': PermissionDescription(

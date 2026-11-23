@@ -124,7 +124,7 @@ Future<bool> zReportBlockedByOpenShift(AppDatabase db) async {
 ///
 /// Each ticked document prints separately with its own cut, and each failure
 /// is isolated so one dead document cannot swallow the rest — same shape as
-/// [showPrintXReportDialog], which this is the day-level counterpart to.
+/// [showSessionReportsDialog], which this is the day-level counterpart to.
 Future<void> showPrintZReportDialog({
   required BuildContext context,
   required WidgetRef ref,

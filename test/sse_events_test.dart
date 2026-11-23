@@ -20,9 +20,10 @@ void main() {
       'order-delivery-status-changed': SseEventType.orderDeliveryStatusChanged,
       'pos-command': SseEventType.posCommand,
       'heartbeat': SseEventType.heartbeat,
+      'reservation-updated': SseEventType.reservationUpdated,
     };
 
-    test('all eight documented events are recognised', () {
+    test('every documented event is recognised', () {
       for (final entry in names.entries) {
         expect(SseService.toEventType(entry.key), entry.value,
             reason: entry.key);

@@ -42,6 +42,11 @@ class Products extends Table {
   /// tracked = product flag OR variant flag.
   BoolColumn get isSerialTracked =>
       boolean().withDefault(const Constant(false))();
+  /// SERVER-owned (schema v58): false = the refund policy treats a line of
+  /// this product as non-refundable (served food…) — only
+  /// `pos:refunds:override` may refund it. Resolved server-side as
+  /// product ?? category ?? true.
+  BoolColumn get refundable => boolean().withDefault(const Constant(true))();
   BoolColumn get isPlannable => boolean().withDefault(const Constant(false))();
   IntColumn get planDurationMinutes => integer().nullable()(); // Default plan duration in minutes
   /// MBW / PLU code used for scale-barcode lookup (nullable — only set for weighed products).

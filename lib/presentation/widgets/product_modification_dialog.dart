@@ -1,16 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-// intl exports a TextDirection of its own, which collides with the one
-// material.dart brings in from dart:ui. Only the formatters are wanted
-// here, so the clashing name is dropped at the import.
-import 'package:intl/intl.dart' hide TextDirection;
 import '../../data/database/app_database.dart';
-import '../../providers/booking_providers.dart';
 import '../../providers/database_providers.dart';
-import '../../providers/network_provider.dart';
-import '../../providers/resource_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/component_rules.dart';
@@ -24,22 +16,6 @@ import '../../providers/order_provider.dart';
 import 'permission_guard.dart';
 import 'serial_picker_panel.dart';
 import './adaptive_text_field.dart';
-
-/// A slot chosen from the availability sheet.
-class _SlotPick {
-  final DateTime start;
-  final DateTime end;
-  final int? waiterId;
-  final String? waiterName;
-  final int? resourceId;
-  const _SlotPick({
-    required this.start,
-    required this.end,
-    this.waiterId,
-    this.waiterName,
-    this.resourceId,
-  });
-}
 
 String _fmtQtyLocal(double q) {
   if (q == q.truncateToDouble()) return q.toInt().toString();
@@ -106,20 +82,11 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   String? _variantImageUrl;
   String? _variantName;
 
-  // ─── Planning state ──────────────────────────────────────────────────────────
+  /// Time-managed service: sold as a whole count of sessions. Booking a slot
+  /// lives in reservations now, never on the order line.
   bool _isPlannable = false;
-  int? _planDurationMinutes;
-  DateTime? _planStartAt;
-  DateTime? _planEndAt;
-  int? _planWaiterId;
-  String? _planWaiterName;
-  int? _planResourceId;
-  bool _loadingAvailability = false;
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
-
-  /// When a plannable product has a start date selected, quantity is locked to 1.
-  bool get _isQuantityLocked => _isPlannable && _planStartAt != null;
 
   /// Whether this product (or the chosen variant) needs a serial. Read
   /// synchronously off the already-loaded rows so the panel can switch on the
@@ -205,11 +172,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           _loadExistingVariant(item.variantId!);
         });
       }
-      // Restore planning fields
-      _planStartAt = item.planStartAt;
-      _planEndAt = item.planEndAt;
-      _planWaiterId = item.planWaiterId;
-      _planResourceId = item.planResourceId;
     } else {
       _productDiscount = widget.product.discountAmount ?? 0.0;
       // Seeding happens in build() via ref.listen so it fires as soon as the
@@ -226,16 +188,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         setState(() {
           _isPlannable = product.isPlannable;
           _serialTrackedDb = product.isSerialTracked;
-          _planDurationMinutes = product.planDurationMinutes;
           _unitName = product.unitName;
-          if (_planStartAt != null && _planEndAt == null && _planDurationMinutes != null) {
-            _planEndAt = _planStartAt!.add(Duration(minutes: _planDurationMinutes!));
-          }
-          // Lock quantity to 1 if already in plannable+start-set state (edit mode)
-          if (_isPlannable && _planStartAt != null) {
-            _quantity = 1.0;
-            _quantityController.text = '1';
-          }
         });
       }
     });
@@ -343,8 +296,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   /// Seeds _componentQuantities from [componentsData] for any component not yet
   /// tracked. The initial quantity is max(defaultQuantity, minQuantity) so that
   /// required components always start at their minimum, never below it.
-  void _seedComponents(
-      List<dynamic> componentsData, Map<int?, ComponentGroupRule> rules) {
+  void _seedComponents(List<dynamic> componentsData,
+      Map<int?, ComponentGroupRule> rules, Set<int?> visible) {
     final byGroup = <int?, List<dynamic>>{};
     for (final cd in componentsData) {
       final groupId = cd['component']?.componentGroupId as int?;
@@ -352,6 +305,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     }
 
     byGroup.forEach((groupId, members) {
+      // A hidden group's defaults are not preselected: they would be billed
+      // (or, with charge-on-removal, read as removed) on a line that never
+      // offered the group.
+      if (!visible.contains(groupId)) return;
       final rule =
           rules[groupId] ?? ComponentGroupRule(groupId: groupId, name: '');
       final seeded = seedGroup(rule, [
@@ -369,6 +326,62 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         _componentQuantities[componentId] = quantity;
       });
     });
+  }
+
+  Map<int, int?> _groupOfComponent(List<dynamic> componentsData) => {
+        for (final cd in componentsData)
+          if (cd['component']?.id is int)
+            cd['component'].id as int: cd['component']?.componentGroupId as int?,
+      };
+
+  /// Groups on screen for the current selection — see [visibleGroupIds].
+  Set<int?> _visibleGroups(
+          List<dynamic> componentsData, Map<int?, ComponentGroupRule> rules) =>
+      visibleGroupIds(
+        rules: rules,
+        groupOfComponent: _groupOfComponent(componentsData),
+        selectedComponentIds: {
+          for (final e in _componentQuantities.entries)
+            if (e.value > 0) e.key,
+        },
+      );
+
+  /// Components sitting in a group the current selection hides. Empty until
+  /// the rules load, when nothing is conditional yet.
+  Set<int> _hiddenComponentIds(List<dynamic> componentsData) {
+    final rules =
+        ref.read(productComponentGroupRulesProvider(_productId)).valueOrNull;
+    if (rules == null) return const {};
+    final visible = _visibleGroups(componentsData, rules);
+    return {
+      for (final e in _groupOfComponent(componentsData).entries)
+        if (!visible.contains(e.value)) e.key,
+    };
+  }
+
+  /// Bring the selection in line with which groups are showing: seed the
+  /// defaults of every visible group, and forget everything picked in a
+  /// hidden one (Menu -> Seul drops the drink).
+  ///
+  /// Repeated until stable, because seeding can select a trigger that opens
+  /// another group, and dropping a group can close the ones it opened.
+  void _syncComponentSelection(
+      List<dynamic> componentsData, Map<int?, ComponentGroupRule> rules) {
+    final groupOf = _groupOfComponent(componentsData);
+    for (var pass = 0; pass <= rules.length; pass++) {
+      final before = Map<int, int>.from(_componentQuantities);
+      final visible = _visibleGroups(componentsData, rules);
+      bool hidden(int id, Object? _) =>
+          groupOf.containsKey(id) && !visible.contains(groupOf[id]);
+      _componentQuantities.removeWhere(hidden);
+      _componentSpecial.removeWhere(hidden);
+      _seedComponents(componentsData, rules, visible);
+
+      final stable = before.length == _componentQuantities.length &&
+          before.entries
+              .every((e) => _componentQuantities[e.key] == e.value);
+      if (stable) return;
+    }
   }
 
   /// Adjust a component's quantity by [delta] (+1 or -1), respecting min/max.
@@ -470,9 +483,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   /// behaves as it always has: take the cheese off, pay less.
   List<RemovalCandidate> _removalCandidates(List<dynamic> componentsData) {
     final out = <RemovalCandidate>[];
+    // A default in a hidden group was never on offer, so its absence is not a
+    // removal: no zero row, no charge.
+    final hidden = _hiddenComponentIds(componentsData);
     for (final cd in componentsData) {
       final id = cd['component']?.id as int?;
-      if (id == null) continue;
+      if (id == null || hidden.contains(id)) continue;
       final candidate = RemovalCandidate(
         componentId: id,
         defaultQuantity: cd['defaultQuantity'] as int? ?? 0,
@@ -497,9 +513,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       final groupId = cd['component']?.componentGroupId as int?;
       byGroup.putIfAbsent(groupId, () => []).add(cd);
     }
+    final visible = _visibleGroups(componentsData, rules);
     for (final entry in byGroup.entries) {
       final rule = rules[entry.key];
-      if (rule == null) continue;
+      if (rule == null || !visible.contains(entry.key)) continue;
       final problem = validateGroup(rule, _picksFor(entry.value));
       if (problem != null) return problem;
     }
@@ -600,9 +617,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       return;
     }
 
-    final rawQuantity = _isQuantityLocked
-        ? 1.0
-        : (double.tryParse(_quantityController.text.replaceAll(',', '.')) ?? 1.0);
+    final rawQuantity =
+        double.tryParse(_quantityController.text.replaceAll(',', '.')) ?? 1.0;
     // Time-managed products are a whole count of sessions — the backend rejects
     // a fractional quantity, so round to an integer here.
     // A serial names one physical unit, so the quantity is not the cashier's to
@@ -626,9 +642,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
     final componentsData = componentsAsync.value!;
 
-    // Validate required components
+    // Validate required components. A hidden group's requirements do not
+    // apply — the drink is required only once Menu is picked.
+    final hiddenComponents = _hiddenComponentIds(componentsData);
     for (var componentData in componentsData) {
       final component = componentData['component'];
+      if (hiddenComponents.contains(component.id)) continue;
       final isRequired = componentData['isRequired'] as bool;
       final minQuantity = componentData['minQuantity'] as int;
 
@@ -680,6 +699,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
     final selectedComponents = <OrderItemComponent>[];
     for (final line in allocation) {
+      if (hiddenComponents.contains(line.componentId)) continue;
       Map<String, dynamic>? row;
       try {
         row = componentsData
@@ -798,10 +818,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       'variantPrice': variantPrice,
       'variantTva': variantTva,
       'variantImageUrl': variantImageUrl,
-      'planStartAt': _planStartAt,
-      'planEndAt': _planEndAt,
-      'planWaiterId': _planWaiterId,
-      'planResourceId': _planResourceId,
     });
   }
 
@@ -854,8 +870,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     // — and because seeding never overwrites what is already tracked, the
     // dialog stayed wrong for as long as it was open. Both providers are
     // watched, so this runs again on the rebuild when the rules land.
+    //
+    // Re-run on every build, not just the first: picking or dropping a
+    // trigger (Menu) shows or hides groups, and their selection follows.
     if (componentsAsync.hasValue && componentRulesAsync.hasValue) {
-      _seedComponents(componentsAsync.value!, componentRulesAsync.value!);
+      _syncComponentSelection(
+          componentsAsync.value!, componentRulesAsync.value!);
     }
     final l10n = AppLocalizations.of(context)!;
     final currencyFormatter = ref.watch(currencyFormatterProvider);
@@ -884,25 +904,27 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               l10n: l10n,
             ),
 
-            // ── Variant selector (if applicable) ──
-            if (_isVariantProduct && attributesAsync != null)
-              _buildVariantSection(
-                  context, attributesAsync, variantsAsync, l10n),
-
             // ── Two-column body ──
             Expanded(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // LEFT: Discount, Note, Preview
+                  // LEFT: Variants, Discount, Note, Preview.
+                  //
+                  // Variants live here, inside the scrolling column, rather
+                  // than above both columns: up there a product with several
+                  // attributes took most of the height and squeezed the
+                  // components list down to a line.
                   Expanded(
                     flex: 4,
                     child: SingleChildScrollView(
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          if (_isVariantProduct && attributesAsync != null)
+                            _buildVariantSection(
+                                context, attributesAsync, variantsAsync, l10n),
                           _buildLeftPanel(productPrice, l10n, currencyFormatter),
-                          // Planning section (only for plannable products)
-                          if (_isPlannable) _buildPlanningSection(context, l10n),
                         ],
                       ),
                     ),
@@ -1280,8 +1302,10 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             }
 
             // Groups in the order the catalogue puts them in; the ungrouped
-            // bucket carries displayOrder 9999 so it always trails.
-            final orderedIds = grouped.keys.toList()
+            // bucket carries displayOrder 9999 so it always trails. Groups
+            // the current selection hides are not shown at all.
+            final visible = _visibleGroups(componentsData, rules);
+            final orderedIds = grouped.keys.where(visible.contains).toList()
               ..sort((a, b) {
                 final ra = rules[a]?.displayOrder ?? 9999;
                 final rb = rules[b]?.displayOrder ?? 9999;
@@ -1332,525 +1356,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   }
 
   // ─── Header ──────────────────────────────────────────────────────────────────
-
-  /// Touch-friendly combined date + time picker.
-  ///
-  /// Replaces the two-step Material date-dial + time-dial dialogs with a single
-  /// scrolling wheel ([CupertinoDatePicker]) in a bottom sheet — far quicker to
-  /// operate on a POS touch screen. Returns the chosen [DateTime], or null if
-  /// dismissed. [minimum] clamps the earliest selectable instant (used so an
-  /// end time can't precede its start).
-  Future<DateTime?> _pickWheelDateTime({
-    required BuildContext context,
-    required AppLocalizations l10n,
-    required DateTime initial,
-    DateTime? minimum,
-    String? title,
-  }) async {
-    final theme = Theme.of(context);
-    const interval = 5; // minute granularity for the wheel
-
-    // CupertinoDatePicker asserts the initial (and minimum) sit on the minute
-    // interval boundary, so snap both to it.
-    DateTime snap(DateTime d) =>
-        DateTime(d.year, d.month, d.day, d.hour, (d.minute ~/ interval) * interval);
-
-    final minDate = minimum == null ? null : snap(minimum);
-    var temp = snap(initial);
-    if (minDate != null && temp.isBefore(minDate)) temp = minDate;
-
-    return showModalBottomSheet<DateTime>(
-      context: context,
-      backgroundColor: theme.colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          top: false,
-          child: SizedBox(
-            height: 320,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Row(
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: Text(l10n.translate('cancel')),
-                      ),
-                      Expanded(
-                        child: Text(
-                          title ?? '',
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, temp),
-                        child: Text(
-                          l10n.translate('done'),
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: CupertinoTheme(
-                    data: CupertinoThemeData(
-                      brightness: theme.brightness,
-                      textTheme: CupertinoTextThemeData(
-                        dateTimePickerTextStyle: theme.textTheme.titleLarge,
-                      ),
-                    ),
-                    child: CupertinoDatePicker(
-                      mode: CupertinoDatePickerMode.dateAndTime,
-                      initialDateTime: temp,
-                      minimumDate: minDate,
-                      minuteInterval: interval,
-                      use24hFormat: MediaQuery.of(ctx).alwaysUse24HourFormat,
-                      onDateTimeChanged: (d) => temp = d,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // ─── Planning Section ────────────────────────────────────────────────────────
-
-  Widget _buildPlanningSection(BuildContext context, AppLocalizations l10n) {
-    final theme = Theme.of(context);
-    final dateTimeFmt = DateFormat('dd/MM HH:mm');
-
-    Future<void> pickStart() async {
-      final picked = await _pickWheelDateTime(
-        context: context,
-        l10n: l10n,
-        initial: _planStartAt ?? DateTime.now(),
-        title: l10n.translate('select_start_time'),
-      );
-      if (picked == null || !context.mounted) return;
-      setState(() {
-        _planStartAt = picked;
-        if (_planDurationMinutes != null) {
-          _planEndAt = picked.add(Duration(minutes: _planDurationMinutes!));
-        } else if (_planEndAt != null && _planEndAt!.isBefore(picked)) {
-          _planEndAt = picked.add(const Duration(hours: 1));
-        }
-        // Enforce quantity = 1 as soon as a time is selected for plannable product
-        if (_isPlannable) {
-          _quantity = 1.0;
-          _quantityController.text = '1';
-        }
-      });
-    }
-
-    Future<void> pickEnd() async {
-      final start = _planStartAt ?? DateTime.now();
-      final picked = await _pickWheelDateTime(
-        context: context,
-        l10n: l10n,
-        initial: _planEndAt ?? start.add(const Duration(hours: 1)),
-        minimum: start, // end can never precede start
-        title: l10n.translate('select_end_time'),
-      );
-      if (picked == null || !context.mounted) return;
-      setState(() => _planEndAt = picked);
-    }
-
-    final canSchedule = ref.watch(lastKnownOnlineStatusProvider);
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.25),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.calendar_month, size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 6),
-              Text(
-                l10n.translate('planning'),
-                style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold, color: theme.colorScheme.primary),
-              ),
-              const Spacer(),
-              if (_planStartAt != null)
-                IconButton(
-                  icon: const Icon(Icons.clear, size: 16),
-                  tooltip: 'Clear planning',
-                  onPressed: () => setState(() {
-                    _planStartAt = null;
-                    _planEndAt = null;
-                    _planWaiterId = null;
-                    _planWaiterName = null;
-                    // Quantity lock lifts when planning is cleared
-                  }),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (_planDurationMinutes == null)
-            _durationRequiredBanner(theme, l10n),
-          if (_planDurationMinutes != null) ...[
-            _availabilityButton(context, l10n),
-            const SizedBox(height: 8),
-          ],
-          // Manual start/end. Disabled offline for the same reason the
-          // availability button is: these write the plan fields.
-          Row(children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.play_arrow, size: 16),
-                label: Text(_planStartAt != null
-                    ? dateTimeFmt.format(_planStartAt!)
-                    : l10n.translate('select_start_time')),
-                onPressed: canSchedule ? pickStart : null,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.stop, size: 16),
-                label: Text(_planEndAt != null
-                    ? dateTimeFmt.format(_planEndAt!)
-                    : l10n.translate('select_end_time')),
-                onPressed:
-                    canSchedule && _planStartAt != null ? pickEnd : null,
-              ),
-            ),
-          ]),
-          if (_planStartAt != null && _planEndAt != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Duration: ${_planEndAt!.difference(_planStartAt!).inMinutes} min'
-              '${_planWaiterName != null ? ' · ${l10n.translate('with')} $_planWaiterName' : ''}',
-              style: theme.textTheme.bodySmall,
-            ),
-          ],
-          // Resource selector (only shown when the service has an eligible pool)
-          const SizedBox(height: 8),
-          _buildResourceSelectorForPlan(context, l10n),
-          // Waiter selector
-          const SizedBox(height: 8),
-          _buildWaiterSelectorForPlan(context, l10n),
-        ],
-      ),
-    );
-  }
-
-  /// Amber banner: a time-managed service can't be booked until it has a
-  /// duration (the availability endpoint 400s otherwise).
-  Widget _durationRequiredBanner(ThemeData theme, AppLocalizations l10n) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.orange.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(children: [
-        const Icon(Icons.info_outline, size: 16, color: Colors.orange),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            l10n.translate('booking_needs_duration'),
-            style: theme.textTheme.bodySmall,
-          ),
-        ),
-      ]),
-    );
-  }
-
-  /// "Find available slots" — online-only entry point to real availability.
-  ///
-  /// Offline this is not a degraded mode with a manual fallback, it is closed.
-  /// A time picked here becomes `planStartAt` on the line, which the next order
-  /// sync would push as a booking — a slot claimed without ever asking the
-  /// diary that owns it. Selling the service as a walk-in still works; it just
-  /// carries no plan fields.
-  Widget _availabilityButton(BuildContext context, AppLocalizations l10n) {
-    final online = ref.watch(lastKnownOnlineStatusProvider);
-    if (!online) {
-      return Row(children: [
-        Icon(Icons.cloud_off, size: 15, color: Theme.of(context).colorScheme.onSurfaceVariant),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(l10n.translate('reconnect_to_book'),
-              style: Theme.of(context).textTheme.bodySmall),
-        ),
-      ]);
-    }
-    return SizedBox(
-      width: double.infinity,
-      child: FilledButton.tonalIcon(
-        icon: _loadingAvailability
-            ? const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2))
-            : const Icon(Icons.event_available, size: 18),
-        label: Text(l10n.translate('find_available_slots')),
-        onPressed:
-            _loadingAvailability ? null : () => _showAvailabilitySheet(context, l10n),
-      ),
-    );
-  }
-
-  /// Resource dropdown, shown only when this product has an eligible resource
-  /// pool. `null` = unassigned. Kept in sync with the availability sheet.
-  Widget _buildResourceSelectorForPlan(
-      BuildContext context, AppLocalizations l10n) {
-    final asyncRes = ref.watch(eligibleResourcesProvider(_productId));
-    final resources = asyncRes.valueOrNull ?? const <Resource>[];
-    if (resources.isEmpty) return const SizedBox.shrink();
-    return DropdownButtonFormField<int?>(
-      value: _planResourceId,
-      decoration: InputDecoration(
-        labelText: l10n.translate('assign_resource'),
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-      ),
-      items: [
-        DropdownMenuItem<int?>(
-            value: null, child: Text(l10n.translate('unspecified'))),
-        ...resources.map((r) => DropdownMenuItem<int?>(
-            value: r.id, child: Text(r.name))),
-      ],
-      onChanged: (v) => setState(() => _planResourceId = v),
-    );
-  }
-
-  /// Bottom sheet that queries real availability and lets the user pick a slot.
-  /// Picking a slot sets start (clamped to `start + duration`), end, waiter,
-  /// and — when the service requires one — the resource.
-  Future<void> _showAvailabilitySheet(
-      BuildContext context, AppLocalizations l10n) async {
-    if (_planDurationMinutes == null) return;
-    DateTime selectedDate = DateTime(
-      (_planStartAt ?? DateTime.now()).year,
-      (_planStartAt ?? DateTime.now()).month,
-      (_planStartAt ?? DateTime.now()).day,
-    );
-    int? sheetResourceId = _planResourceId;
-
-    final picked = await showModalBottomSheet<_SlotPick>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetCtx) {
-        return StatefulBuilder(builder: (sheetCtx, setSheet) {
-          final key = (
-            productId: _productId,
-            date: selectedDate,
-            waiterId: null as int?,
-            resourceId: sheetResourceId,
-          );
-          final async = ref.watch(availabilityProvider(key));
-          final fmt = DateFormat('HH:mm');
-          final dateFmt = DateFormat('EEE dd/MM');
-          return SafeArea(
-            child: Padding(
-              padding: EdgeInsets.only(
-                  left: 16,
-                  right: 16,
-                  top: 12,
-                  bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    Text(l10n.translate('available_slots'),
-                        style: Theme.of(sheetCtx).textTheme.titleMedium),
-                    const Spacer(),
-                    TextButton.icon(
-                      icon: const Icon(Icons.calendar_today, size: 16),
-                      label: Text(dateFmt.format(selectedDate)),
-                      onPressed: () async {
-                        final d = await showDatePicker(
-                          context: sheetCtx,
-                          initialDate: selectedDate,
-                          firstDate: DateTime.now()
-                              .subtract(const Duration(days: 1)),
-                          lastDate:
-                              DateTime.now().add(const Duration(days: 365)),
-                        );
-                        if (d != null) {
-                          setSheet(() =>
-                              selectedDate = DateTime(d.year, d.month, d.day));
-                        }
-                      },
-                    ),
-                  ]),
-                  const SizedBox(height: 8),
-                  Flexible(
-                    child: async.when(
-                      loading: () => const Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Center(child: CircularProgressIndicator())),
-                      error: (e, _) => Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          e.toString().replaceFirst('Exception: ', ''),
-                          style: TextStyle(
-                              color: Theme.of(sheetCtx).colorScheme.error),
-                        ),
-                      ),
-                      data: (avail) {
-                        // Resource chooser when required and not yet resolved.
-                        final needsResource = avail.requiresResource &&
-                            sheetResourceId == null &&
-                            avail.eligibleResourceIds.isNotEmpty;
-                        if (needsResource) {
-                          final resList =
-                              ref.watch(resourcesByIdProvider);
-                          return ListView(
-                            shrinkWrap: true,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: Text(
-                                    l10n.translate('pick_a_resource_first'),
-                                    style: Theme.of(sheetCtx)
-                                        .textTheme
-                                        .bodySmall),
-                              ),
-                              ...avail.eligibleResourceIds.map((rid) {
-                                final r = resList[rid];
-                                return ListTile(
-                                  dense: true,
-                                  leading: const Icon(Icons.meeting_room),
-                                  title: Text(r?.name ?? 'Resource #$rid'),
-                                  onTap: () =>
-                                      setSheet(() => sheetResourceId = rid),
-                                );
-                              }),
-                            ],
-                          );
-                        }
-                        if (!avail.hasAnyAvailability) {
-                          return Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Text(l10n.translate('no_slots_available')),
-                          );
-                        }
-                        final dur =
-                            Duration(minutes: _planDurationMinutes!);
-                        return ListView(
-                          shrinkWrap: true,
-                          children: [
-                            for (final c in avail.candidates)
-                              if (c.hasAvailability) ...[
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 6),
-                                  child: Text(c.waiterName,
-                                      style: Theme.of(sheetCtx)
-                                          .textTheme
-                                          .labelLarge),
-                                ),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    for (final iv in c.freeIntervals)
-                                      // Offer the interval's start; clamp end to
-                                      // start + duration (interval may be longer).
-                                      ActionChip(
-                                        label: Text(
-                                            '${fmt.format(iv.start)} - ${fmt.format(iv.start.add(dur))}'),
-                                        onPressed: () => Navigator.of(sheetCtx)
-                                            .pop(_SlotPick(
-                                          start: iv.start,
-                                          end: iv.start.add(dur),
-                                          waiterId: c.waiterId,
-                                          waiterName: c.waiterName,
-                                          resourceId: sheetResourceId ??
-                                              avail.resolvedResourceId,
-                                        )),
-                                      ),
-                                  ],
-                                ),
-                                const Divider(height: 12),
-                              ],
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        });
-      },
-    );
-
-    if (picked == null || !mounted) return;
-    setState(() {
-      _planStartAt = picked.start;
-      _planEndAt = picked.end;
-      _planWaiterId = picked.waiterId;
-      _planWaiterName = picked.waiterName;
-      if (picked.resourceId != null) {
-        _planResourceId = picked.resourceId;
-      }
-      _quantity = 1.0;
-      _quantityController.text = '1';
-    });
-  }
-
-  Widget _buildWaiterSelectorForPlan(BuildContext context, AppLocalizations l10n) {
-    // `planWaiterId` is a *provider* employee id — a staff profile of its own,
-    // and never a waiter: the backend allows one profile per employee and
-    // rejects a non-provider outright, so offering waiters here would only
-    // produce a 400 at the point of booking.
-    final serviceProviders =
-        ref.watch(serviceProvidersProvider).valueOrNull ?? const [];
-    if (serviceProviders.isEmpty) return const SizedBox.shrink();
-
-    return DropdownButtonFormField<int?>(
-      value: _planWaiterId,
-      decoration: InputDecoration(
-        labelText: l10n.translate('provider'),
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-      ),
-      items: [
-        DropdownMenuItem<int?>(
-            value: null, child: Text(l10n.translate('unspecified'))),
-        ...serviceProviders.map((sp) => DropdownMenuItem<int?>(
-            value: sp.id, child: Text(providerDisplayName(sp)))),
-      ],
-      // Left enabled offline on purpose: naming who is cutting the hair claims
-      // no slot — there is no time window to conflict over — so a walk-in can
-      // still record its provider with the connection down.
-      onChanged: (v) => setState(() {
-        _planWaiterId = v;
-        _planWaiterName = v == null
-            ? null
-            : providerDisplayName(
-                serviceProviders.firstWhere((sp) => sp.id == v));
-      }),
-    );
-  }
 
   Widget _buildHeader(
       BuildContext context, {
@@ -1952,7 +1457,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       CurrencyFormatter currencyFormatter,
       AppLocalizations l10n,
       ) {
-    final locked = _isQuantityLocked;
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final disabledColor = onSurface.withValues(alpha: 0.3);
 
@@ -1967,34 +1471,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           ),
         ),
         const SizedBox(width: 8),
-        if (locked) ...[
-          // Locked display: show quantity badge + lock icon, no controls
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              border: Border.all(
-                  color: Theme.of(context).colorScheme.primary, width: 1.5),
-              borderRadius: BorderRadius.circular(8),
-              color: Theme.of(context)
-                  .colorScheme
-                  .primaryContainer
-                  .withValues(alpha: 0.3),
-            ),
-            child: Text(
-              '1',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Tooltip(
-            message: 'Quantity locked to 1 for bookable products',
-            child: Icon(Icons.lock, size: 18, color: disabledColor),
-          ),
-        ] else ...[
+        ...[
           // Bumped tap targets to 48×48 (Material touch-target spec) — the
           // previous EdgeInsets.zero + empty constraints shrank these to the
           // icon's intrinsic 30px, which is fiddly on a touchscreen.
@@ -2143,11 +1620,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         final variantsData = variantsAsync?.valueOrNull ?? [];
 
         final theme = Theme.of(context);
-        // Cap how much vertical space the variant block can claim so a product
-        // with many attributes/values can't push the body (components, etc.)
-        // off-screen. Past the cap the section scrolls internally.
-        final dialogMaxH = MediaQuery.of(context).size.height * 0.9;
-        final variantMaxH = (dialogMaxH * 0.45).clamp(180.0, 360.0);
 
         return Container(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -2155,10 +1627,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
             color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
             border: Border(bottom: BorderSide(color: theme.dividerColor)),
           ),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: variantMaxH),
-            child: SingleChildScrollView(
-              child: Column(
+          child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -2265,8 +1734,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                   }),
                 ],
               ),
-            ),
-          ),
         );
       },
       loading: () => const Padding(

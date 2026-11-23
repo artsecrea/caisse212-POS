@@ -11,7 +11,12 @@ class Tickets extends Table {
   DateTimeColumn get zDay => dateTime().nullable()(); // Calendar day the session opened
   IntColumn get printCount => integer().withDefault(const Constant(0))();
   TextColumn get paymentMethod => text()(); // TransactionType enum value
+  // An EXCHANGE ticket's refund (schema v59): the credit it spends.
+  TextColumn get exchangeRefundCode => text().nullable()();
   RealColumn get amount => real()();
+  // Split bill (schema v65): the `split` JSON object exchanged with the
+  // server, verbatim. Null = not part of a split. See split_bill.dart.
+  TextColumn get splitDetails => text().nullable()();
   BoolColumn get isPaid => boolean().withDefault(const Constant(false))();
   BoolColumn get isCancelled => boolean().withDefault(const Constant(false))(); // Whether ticket belongs to a cancelled order
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))(); // Track if synced to server

@@ -32,13 +32,17 @@ This document defines the `params` payload for every notification type the POS s
 |---|---|---|
 | `POS_SESSION_OPENED` | **POS** | Cashier opens a new cash session |
 | `POS_SESSION_CLOSED` | **POS** | Cashier closes a session (Z-report) |
+| `POS_SESSION_PAUSED` / `POS_SESSION_RESUMED` | **POS** | A cashier pauses an open session / resumes it |
 | `POS_Z_CLOSED` | **POS** | The day's Z closes (MANUAL, AUTO or FORCED) |
 | `POS_DISCOUNT_APPLIED` | **POS** | A remise is saved on an order or a line |
 | `POS_CANCELLATION` | **POS / LAN** | An order is voided, a line removed from a saved order, or a refund given |
 | `GENERAL` | **POS** | Free-form admin message from the terminal |
-| `POS_ONLINE` | backend (SSE) | Terminal heartbeat came online *(POS does not send)* |
-| `POS_OFFLINE` | backend (SSE) | Terminal went offline *(POS does not send)* |
 | `SUBSCRIPTION_EXPIRING` | backend (task) | Subscription nearing end *(POS does not send)* |
+| `EXTERNAL_ORDER_RECEIVED` / `EXTERNAL_ORDER_STUCK` | backend | External (DealUp/WhatsApp) order events *(POS does not send)* |
+
+`POS_ONLINE` / `POS_OFFLINE` are retired server-side (never emitted). The full mobile-facing
+reference, including server behaviour (data-only pushes, ADMIN devices only, feed paged by
+receive time), lives in the backend repo: `bms/docs/MOBILE_NOTIFICATIONS.md`.
 
 ---
 
@@ -133,7 +137,7 @@ without a second API call.
 | key | required | example | notes |
 |---|---|---|---|
 | `moneyAtStart` | yes | `"500.00"` | Opening float |
-| `moneyAtEnd` | yes | `"3300.00"` | `moneyAtStart + totalCash` (expected) |
+| `moneyAtEnd` | yes | `"3300.00"` | Expected drawer cash: float + cash sales − cash refunds + paid-in − paid-out |
 | `countedCash` | **no** | `"3295.00"` | Physical drawer count — omitted if cashier skipped |
 | `variance` | **no** | `"-5.00"` | `countedCash − moneyAtEnd`; negative = shortage |
 | `countNotes` | **no** | `"Slight shortage"` | Cashier note — omitted when blank |
@@ -222,7 +226,7 @@ are unchanged.
 | `averageTicket` | `"80.77"` | |
 | `voidedLinesCount` / `voidedLinesAmount` | `"3"` / `"95.00"` | Lines removed from saved orders |
 | `zDay` / `zSeq` | `"2026-09-25"` / `"1"` | The Z the session belongs to |
-| `autoClosed` | `"true"` | Present only when the system ended the session |
+| `autoClosed` | `"true"` | Present only when the system ended the session — a Z close ends every session still open, and each one gets its own `POS_SESSION_CLOSED` with this key (no drawer count, so no `countedCash` / `variance`) |
 
 ---
 
@@ -248,6 +252,24 @@ Fired when the Z (day close) closes, summed over all its sessions. Envelope `ref
 | `cashPaidIn`, `cashPaidOut`, `deliveryFees` | yes | | |
 | `countedCash`, `variance` | no | | Sums over the counted sessions |
 | detail keys | no | | Same as the session detail keys (`grossSales` … `voidedLinesAmount`) |
+
+---
+
+## `POS_SESSION_PAUSED` / `POS_SESSION_RESUMED`
+
+A cashier steps away from an open session (pause, which also logs them out) or comes back
+to it (resume, at their next login). Sent only on a real change — pausing an already paused
+session sends nothing. Envelope `refId` = session id.
+
+| key | required | example | notes |
+|---|---|---|---|
+| `v`, `terminalName` | yes | | |
+| `sessionCode` | yes | `"CS-20261009-081400-1"` | |
+| `cashierName` / `cashierId` | yes | `"Sara Amrani"` / `"42"` | The session's cashier |
+| `byName` | no | `"Admin"` | Who pressed the button, only when not the session's cashier |
+| `at` | yes | local ISO | When it was paused / resumed |
+| `pausedAt` | RESUMED only | local ISO | When the break started |
+| `pausedMinutes` | RESUMED only | `"35"` | Length of the break, whole minutes |
 
 ---
 
@@ -283,6 +305,7 @@ Money taken off after the fact. Envelope `refId` = order code.
 | `amount` | yes | `"60.00"` | Order total / line value / refunded amount |
 | `productName`, `quantity` | no | | LINE only; weighed quantities have 3 decimals |
 | `afterKitchen` | no | `"true"` | The kitchen had already been told to make it (waste) |
+| `deleted` | no | `"true"` | `ORDER` only: the saved order was deleted rather than cancelled. Empty orders and orders already CANCELED are deleted silently |
 | `reason` | no | | |
 | `method` | no | `"CASH"` | REFUND only |
 | `cashierName`, `cashierId` | no | | Cashier, or the waiter for waiter-app actions (no id then) |

@@ -275,6 +275,61 @@ class ProductsSummaryReport {
   double get totalDiscount => rows.fold(0.0, (s, r) => s + r.discount);
 }
 
+/// One line of the "options sold" ticket: a modifier, how many times it was
+/// added, and what it brought in.
+class OptionSummaryEntry {
+  final int componentId;
+  final String name;
+
+  /// The customer took a paid-for default off and was still charged. Kept on
+  /// its own line so "SANS fromage" never adds to the count of "fromage".
+  final bool removal;
+  final double quantity;
+  final double amount;
+
+  const OptionSummaryEntry({
+    required this.componentId,
+    required this.name,
+    this.removal = false,
+    required this.quantity,
+    required this.amount,
+  });
+}
+
+/// The "options sold" ticket: every modifier taken in the scope, busiest
+/// first. Counts are units served — a double cheese on two burgers is four.
+class OptionsSummaryReport {
+  final String scopeLabel;
+  final DateTime start;
+  final DateTime end;
+  final List<String> sessionCodes;
+  final String? zCode;
+  final int? zNumber;
+  final List<OptionSummaryEntry> rows;
+
+  const OptionsSummaryReport({
+    required this.scopeLabel,
+    required this.start,
+    required this.end,
+    this.sessionCodes = const [],
+    this.zCode,
+    this.zNumber,
+    this.rows = const [],
+  });
+
+  double get totalQuantity => rows.fold(0.0, (s, r) => s + r.quantity);
+  double get totalAmount => rows.fold(0.0, (s, r) => s + r.amount);
+}
+
+/// The sessions a "whole day" report covers, and how its tickets are headed.
+typedef ReportScope = ({
+  List<int> sessionIds,
+  String label,
+  List<String> sessionCodes,
+  String? zCode,
+  int? zNumber,
+});
+
 /// Model for session summary data
 class SessionSummaryReport {
   final int sessionId;
@@ -296,6 +351,9 @@ class SessionSummaryReport {
   final double paidByCard;
   final double paidByPhone;
   final double paidByOther;
+
+  /// Exchange credit spent on new orders (see TransactionType.exchange).
+  final double paidByExchange;
   final int cancelledTickets;
   final double cancelledAmount;
   // Z-report fields (null when the session was closed without a cash count).
@@ -346,6 +404,7 @@ class SessionSummaryReport {
     required this.paidByCard,
     required this.paidByPhone,
     required this.paidByOther,
+    this.paidByExchange = 0,
     this.cancelledTickets = 0,
     this.cancelledAmount = 0,
     this.countedCash,
@@ -360,7 +419,8 @@ class SessionSummaryReport {
     this.waiterBreakdown = const [],
   });
 
-  double get totalPaid => paidByCash + paidByCard + paidByPhone + paidByOther;
+  double get totalPaid =>
+      paidByCash + paidByCard + paidByPhone + paidByOther + paidByExchange;
 
   /// Signed net effect of the cash movements on the drawer.
   double get cashMovementsNet => cashPaidIn - cashPaidOut;
@@ -394,6 +454,7 @@ class DailySummaryReport {
   final double totalPaidByCard;
   final double totalPaidByPhone;
   final double totalPaidByOther;
+  final double totalPaidByExchange;
   final double totalStartingBalance;
   final double totalEndingBalance;
   final int totalCancelledTickets;
@@ -428,6 +489,7 @@ class DailySummaryReport {
     required this.totalPaidByCard,
     required this.totalPaidByPhone,
     required this.totalPaidByOther,
+    this.totalPaidByExchange = 0,
     required this.totalStartingBalance,
     required this.totalEndingBalance,
     this.totalCancelledTickets = 0,
@@ -437,7 +499,12 @@ class DailySummaryReport {
     this.sections = CashReportSections.empty,
   });
 
-  double get totalPaid => totalPaidByCash + totalPaidByCard + totalPaidByPhone + totalPaidByOther;
+  double get totalPaid =>
+      totalPaidByCash +
+      totalPaidByCard +
+      totalPaidByPhone +
+      totalPaidByOther +
+      totalPaidByExchange;
 }
 
 class DailySummaryService {
@@ -482,6 +549,7 @@ class DailySummaryService {
     double totalPaidByCard = 0;
     double totalPaidByPhone = 0;
     double totalPaidByOther = 0;
+    double totalPaidByExchange = 0;
     double totalStartingBalance = 0;
     double totalEndingBalance = 0;
     int totalCancelledTickets = 0;
@@ -504,6 +572,7 @@ class DailySummaryService {
       totalPaidByCard += session.paidByCard;
       totalPaidByPhone += session.paidByPhone;
       totalPaidByOther += session.paidByOther;
+      totalPaidByExchange += session.paidByExchange;
       totalStartingBalance += session.startingBalance;
       totalEndingBalance += session.endingBalance ?? 0;
       totalCancelledTickets += session.cancelledTickets;
@@ -556,6 +625,7 @@ class DailySummaryService {
       totalPaidByCard: totalPaidByCard,
       totalPaidByPhone: totalPaidByPhone,
       totalPaidByOther: totalPaidByOther,
+      totalPaidByExchange: totalPaidByExchange,
       totalStartingBalance: totalStartingBalance,
       totalEndingBalance: totalEndingBalance,
       totalCancelledTickets: totalCancelledTickets,
@@ -701,6 +771,7 @@ class DailySummaryService {
               acc.paidByPhone += t.amount;
               break;
             case TransactionType.other:
+            case TransactionType.exchange:
               acc.paidByOther += t.amount;
               break;
           }
@@ -775,6 +846,7 @@ class DailySummaryService {
       paidByCard: paidByCard,
       paidByPhone: paidByPhone,
       paidByOther: paidByOther,
+      paidByExchange: breakdown.exchange,
       cancelledTickets: cancelledTicketCount,
       cancelledAmount: cancelledAmount,
       cashPaidIn: cashTotals.paidIn,
@@ -911,6 +983,7 @@ class DailySummaryService {
       orders: orders,
       orderProducts: orderProducts,
       tickets: tickets,
+      components: components,
       compCostByOpId: compCostByOpId,
       tableNameById: {for (final t in tables) t.id: t.name},
       waiterNameById: {
@@ -959,6 +1032,7 @@ class DailySummaryService {
       var itemCount = 0.0;
       var lineDiscount = 0.0;
       for (final op in ops) {
+        if (op.state == 'CANCELED') continue;
         lineTotal += _opLineTotal(op, data.compCostByOpId[op.id] ?? 0.0);
         itemCount += op.quantity;
         lineDiscount += (op.unitaryDiscount + op.manualDiscount) * op.quantity;
@@ -1055,10 +1129,14 @@ class DailySummaryService {
     final acc = <int, _ProductAcc>{};
     for (final op in data.orderProducts) {
       if (!liveOrderIds.contains(op.orderId)) continue;
+      if (op.state == 'CANCELED') continue;
       final compCost = data.compCostByOpId[op.id] ?? 0.0;
       final a = acc.putIfAbsent(op.productId, () => _ProductAcc());
       a.quantity += op.quantity;
-      a.gross += (op.unitaryPrice + compCost) * op.quantity;
+      // `unitaryPrice` already has the catalogue discount off; adding it back
+      // is what makes gross - discount = net on the printed row.
+      a.gross +=
+          (op.unitaryPrice + op.unitaryDiscount + compCost) * op.quantity;
       a.discount += (op.unitaryDiscount + op.manualDiscount) * op.quantity;
       a.net += _opLineTotal(op, compCost);
     }
@@ -1258,6 +1336,109 @@ class DailySummaryService {
     );
   }
 
+  /// Modifiers sold across [sessionIds]. Cancelled orders are left out, the
+  /// same rule as [generateProductsSummary], so the two tickets agree.
+  Future<OptionsSummaryReport> generateOptionsSummary({
+    required List<int> sessionIds,
+    required String scopeLabel,
+    List<String> sessionCodes = const [],
+    String? zCode,
+    int? zNumber,
+  }) async {
+    final data = await _loadScope(sessionIds);
+    final liveOrderIds = data.orders
+        .where((o) => o.status != 'CANCELED')
+        .map((o) => o.id)
+        .toSet();
+    final opById = {
+      for (final op in data.orderProducts)
+        if (liveOrderIds.contains(op.orderId)) op.id: op
+    };
+
+    final missingNames = <int>{
+      for (final c in data.components)
+        if ((c.name ?? '').trim().isEmpty) c.componentId
+    };
+    final catalogueName = <int, String>{
+      if (missingNames.isNotEmpty)
+        for (final c in await (_db.select(_db.components)
+              ..where((c) => c.id.isIn(missingNames.toList())))
+            .get())
+          c.id: c.name
+    };
+
+    final acc = <(int, bool), ({String name, double qty, double amount})>{};
+    for (final c in data.components) {
+      final op = opById[c.orderProductId];
+      if (op == null) continue;
+      final units = c.quantity * op.quantity;
+      final key = (c.componentId, c.removalCharge);
+      final name = (c.name ?? '').trim().isNotEmpty
+          ? c.name!.trim()
+          : (catalogueName[c.componentId] ?? '#${c.componentId}');
+      final prev = acc[key];
+      acc[key] = (
+        name: prev?.name ?? name,
+        qty: (prev?.qty ?? 0) + units,
+        amount: (prev?.amount ?? 0) + c.price * units,
+      );
+    }
+
+    final rows = [
+      for (final e in acc.entries)
+        OptionSummaryEntry(
+          componentId: e.key.$1,
+          removal: e.key.$2,
+          name: e.value.name,
+          quantity: e.value.qty,
+          amount: e.value.amount,
+        )
+    ]..sort((a, b) {
+        final c = b.quantity.compareTo(a.quantity);
+        return c != 0 ? c : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+
+    return OptionsSummaryReport(
+      scopeLabel: scopeLabel,
+      start: data.orders.isEmpty ? DateTime.now() : data.orders.first.createdAt,
+      end: data.orders.isEmpty ? DateTime.now() : data.orders.last.createdAt,
+      sessionCodes: sessionCodes,
+      zCode: zCode,
+      zNumber: zNumber,
+      rows: rows,
+    );
+  }
+
+  /// The trading day [session] belongs to: every session of its Z when it has
+  /// one, otherwise every session whose business day is the day it started.
+  /// Open sessions count — this is read mid-day, not at close.
+  Future<ReportScope> dayScopeFor(CashSession session) async {
+    if (session.zId != null) {
+      final z = await _zScope(session.zId!);
+      if (z.sessionIds.isNotEmpty) {
+        return (
+          sessionIds: z.sessionIds,
+          label: z.code ?? '#${session.zId}',
+          sessionCodes: await _sessionCodes(z.sessionIds),
+          zCode: z.code,
+          zNumber: z.number,
+        );
+      }
+    }
+    final day = DateTime(session.startedAt.year, session.startedAt.month,
+        session.startedAt.day);
+    final ids = await sessionIdsForPeriod(day, day);
+    if (!ids.contains(session.id)) ids.add(session.id);
+    return (
+      sessionIds: ids,
+      label: '${day.year}-${day.month.toString().padLeft(2, '0')}-'
+          '${day.day.toString().padLeft(2, '0')}',
+      sessionCodes: await _sessionCodes(ids),
+      zCode: null,
+      zNumber: null,
+    );
+  }
+
   Future<List<String>> _sessionCodes(List<int> sessionIds) async {
     if (sessionIds.isEmpty) return const [];
     final rows = await (_db.select(_db.cashSessions)
@@ -1313,16 +1494,31 @@ class DailySummaryService {
               ..where((op) => op.orderId.isIn(orderIds)))
             .get()
         : <OrderProduct>[];
+    final opIds = allOps.map((op) => op.id).toList();
+    final compPerUnit = <int, double>{};
+    if (opIds.isNotEmpty) {
+      final comps = await (_db.select(_db.orderProductComponents)
+            ..where((c) => c.orderProductId.isIn(opIds)))
+          .get();
+      for (final c in comps) {
+        compPerUnit[c.orderProductId] =
+            (compPerUnit[c.orderProductId] ?? 0) + c.price * c.quantity;
+      }
+    }
+    final pctByOrder = {for (final o in orders) o.id: o.discountPercentage};
     for (final op in allOps) {
+      if (op.state == 'CANCELED') continue;
       final acc =
           productAcc.putIfAbsent(op.productId, () => _EmailProductAcc());
       acc.quantity += op.quantity;
-      final gross = op.unitaryPrice * op.quantity;
-      final disc = (op.unitaryDiscount + op.manualDiscount) * op.quantity;
-      acc.grossRevenue += gross;
-      acc.discountTotal += disc;
-      acc.netRevenue += gross - disc;
-      discountTotal += disc;
+      // Same split as the Z (§1), so the email and the paper agree.
+      final money = LineMoney.of(op,
+          componentsPerUnit: compPerUnit[op.id] ?? 0,
+          orderDiscountPercentage: pctByOrder[op.orderId] ?? 0);
+      acc.grossRevenue += money.gross;
+      acc.discountTotal += money.discount;
+      acc.netRevenue += money.net;
+      discountTotal += money.discount;
     }
 
     // Resolve product metadata
@@ -1391,6 +1587,7 @@ class DailySummaryService {
           'CARD': _round2(session.paidByCard),
           'PHONE': _round2(session.paidByPhone),
           'OTHER': _round2(session.paidByOther),
+          'EXCHANGE': _round2(session.paidByExchange),
         },
       },
       'products': productRows,
@@ -1452,6 +1649,7 @@ class _ScopeData {
   final List<Order> orders;
   final List<OrderProduct> orderProducts;
   final List<Ticket> tickets;
+  final List<OrderProductComponent> components;
   final Map<int, double> compCostByOpId;
   final Map<int, String> tableNameById;
   final Map<int, String> waiterNameById;
@@ -1460,6 +1658,7 @@ class _ScopeData {
     required this.orders,
     required this.orderProducts,
     required this.tickets,
+    this.components = const [],
     required this.compCostByOpId,
     required this.tableNameById,
     required this.waiterNameById,

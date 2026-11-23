@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../widgets/order_reference_dialog.dart';
 import 'package:caisse212/domain/models/order_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../services/kitchen_timing.dart' show completeKitchenForTicket;
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/external_order_models.dart';
 import '../../services/permission_service.dart';
@@ -29,6 +31,9 @@ import '../widgets/category_grid.dart';
 import '../widgets/commercial_selection_dialog.dart';
 import '../widgets/customer_selection_dialog.dart';
 import '../widgets/daily_summary_dialog.dart';
+import '../widgets/refund_dialog.dart' show showRefundReceiptDialog;
+import '../widgets/exchange_settle_dialog.dart';
+import '../widgets/order_tag_widgets.dart' show showOrderTagPicker;
 import '../widgets/manual_discount_dialog.dart';
 import '../widgets/print_options_dialog.dart';
 import '../widgets/quick_product_dialog.dart';
@@ -46,14 +51,20 @@ import '../../utils/responsive_utils.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/sse_provider.dart';
+import '../../providers/reservation_providers.dart';
+import '../reservations/agenda_screen.dart';
+import '../reservations/reservation_panel.dart' show BasketLine, PanelCustomer;
+import '../../domain/models/reservation_models.dart';
 import '../../providers/session_rules_provider.dart';
 import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
 import '../../services/scale_barcode_service.dart';
 import '../../domain/models/scale_config.dart';
+import '../../domain/models/split_bill.dart';
 import '../../providers/scale_config_provider.dart';
 import '../widgets/adaptive_text_field.dart';
 import '../../core/theme/app_theme.dart';
+import '../widgets/z_open_warning_banner.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({Key? key}) : super(key: key);
@@ -467,6 +478,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // No day-rollover close here: a Z is never closed by the clock while
       // the till is in use. It stays open past midnight until someone closes
       // it.
+      if (ref.read(settingsProvider).disableSessionAutoClose) return;
       final rules = ref.read(sessionRulesProvider);
       if (rules.maxEndHour == null && rules.maxSessionDurationMinutes == null) {
         return;
@@ -598,8 +610,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     // it so the cashier sees the latest items/prices without manual refresh.
     ref.listen<AsyncValue<int>>(syncedOrderUpdatedProvider, (_, next) {
       next.whenData((updatedOrderId) async {
-        final panelOrderId = ref.read(orderProvider).orderId;
-        if (panelOrderId != updatedOrderId) return;
+        final panel = ref.read(orderProvider);
+        if (panel.orderId != updatedOrderId) return;
+        // Reloading would throw away lines the cashier has not saved yet.
+        // Their save pushes the order, and the next refresh brings the
+        // server's change back on top of it.
+        if (panel.hasUnsavedChanges) return;
         final refreshed = await ref
             .read(orderRepositoryProvider)
             .getOrderById(updatedOrderId);
@@ -627,6 +643,23 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         l10n
             .translate('call_waiter_acknowledged')
             .replaceAll('{0}', call.waiterName),
+      );
+    });
+
+    // Two tills rang up the same reservation (offline, typically): the server
+    // kept the first link. Both sales stand; the cashier decides.
+    ref.listen<AsyncValue<ReservationLink>>(reservationDuplicateProvider,
+        (_, next) {
+      final link = next.valueOrNull;
+      if (link == null || !mounted) return;
+      SnackBarHelper.showToast(
+        l10n
+            .translate('res_duplicate_warning')
+            .replaceAll('{res}', link.reservationCode)
+            .replaceAll('{order}', link.linkedOrderCode ?? '?')
+            .replaceAll('{this}', link.orderCode ?? '?'),
+        kind: ToastKind.warning,
+        duration: const Duration(seconds: 12),
       );
     });
 
@@ -852,6 +885,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               children: [
                 // Top Bar with status, network state, and update button
                 const TopBar(),
+                const ZOpenWarningBanner(),
                 Expanded(
                 child: Row(
                   children: orderPanelOnRight
@@ -998,6 +1032,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     ref.read(orderProvider.notifier).setOrderType(selected);
     if (selected == 'DELIVERY' && context.mounted) {
       await _showDeliveryAddressDialog(context);
+    } else if (selected == 'TAKE_AWAY' && context.mounted) {
+      await showOrderReferenceDialog(context, ref);
     }
   }
 
@@ -1012,6 +1048,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final order = ref.read(orderProvider);
     final addressController =
         TextEditingController(text: order.deliveryAddress ?? '');
+    final referenceController =
+        TextEditingController(text: order.reference ?? '');
     final feeController = TextEditingController(
       text: order.hasDeliveryFee ? _trimAmount(order.deliveryFee!) : '',
     );
@@ -1057,6 +1095,16 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       decoration: InputDecoration(
                         labelText: l10n.translate('delivery_address'),
                         hintText: l10n.translate('enter_delivery_address'),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    AdaptiveKeyboardTextField(
+                      controller: referenceController,
+                      style: const TextStyle(fontSize: 18),
+                      decoration: InputDecoration(
+                        labelText: l10n.translate('order_reference'),
+                        hintText: l10n.translate('order_reference_hint'),
                         border: const OutlineInputBorder(),
                       ),
                     ),
@@ -1148,6 +1196,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
     final notifier = ref.read(orderProvider.notifier);
     notifier.setDeliveryAddress(addressController.text.trim());
+    notifier.setReference(referenceController.text);
 
     // Blank (or unparseable) clears the fee rather than storing 0 — the two
     // states carry different meanings all the way to the server.
@@ -1224,6 +1273,70 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     );
   }
 
+  /// Opens the agenda to book the cart as a reservation. The cart is not
+  /// saved as an order; it empties once the reservation is booked, and the
+  /// reservation is rung up later from the agenda.
+  void _reserveCart(BuildContext context, WidgetRef ref, AppLocalizations l10n) {
+    final cart = ref.read(orderProvider);
+    final services = {
+      for (final p in ref.read(bookableServicesProvider).valueOrNull ??
+          const <Product>[])
+        p.id: p
+    };
+    if (!cart.items.any((i) => services.containsKey(i.productId))) {
+      SnackBarHelper.showToast(l10n.translate('res_need_service'),
+          kind: ToastKind.warning);
+      return;
+    }
+    List<BasketLine> lines() => [
+          for (final i in cart.items)
+            for (var n = 0;
+                n < (services.containsKey(i.productId) ? i.quantity.round() : 1);
+                n++)
+              BasketLine(
+                productId: i.productId,
+                variantId: i.variantId,
+                name: i.variantName == null
+                    ? i.productName
+                    : '${i.productName} — ${i.variantName}',
+                // A service is one slot per unit; a retail line keeps its qty.
+                quantity: services.containsKey(i.productId) ? 1 : i.quantity,
+                catalogPrice: i.finalPrice,
+                // Only a price the cashier changed travels as agreed price.
+                unitPrice: services[i.productId] != null &&
+                        (services[i.productId]!.finalPrice - i.finalPrice).abs() >
+                            0.004
+                    ? i.finalPrice
+                    : null,
+                durationMinutes: services[i.productId]?.planDurationMinutes,
+              ),
+        ];
+    final names = cart.items
+        .where((i) => services.containsKey(i.productId))
+        .map((i) => i.productName)
+        .toList();
+    final retail =
+        cart.items.where((i) => !services.containsKey(i.productId)).length;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => AgendaScreen(
+        booking: CartBooking(
+          lines: lines,
+          customer: (cart.customerName ?? cart.customerPhone) == null
+              ? null
+              : PanelCustomer(
+                  localId: cart.customerId,
+                  name: cart.customerName,
+                  phone: cart.customerPhone),
+          summary: retail == 0
+              ? names.join(', ')
+              : '${names.join(', ')} ${l10n.translate('res_plus_products').replaceAll('{n}', '$retail')}',
+          hadOptions: cart.items.any((i) => i.components.isNotEmpty),
+          onBooked: () => ref.read(orderProvider.notifier).clearOrder(),
+        ),
+      ),
+    ));
+  }
+
   /// Build action buttons in the order specified by settings.buttonOrder
   List<Widget> _buildOrderedActionButtons(
     BuildContext context,
@@ -1233,7 +1346,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     AppLocalizations l10n,
   ) {
     final List<Widget> buttons = [];
-    final permissionService = ref.read(permissionServiceProvider);
+    final permissionService = ref.watch(permissionServiceProvider);
 
     // Check if table is selected - if so, order type is locked to DINE_IN
     final bool isTableSelected = currentOrder.tableId != null;
@@ -1502,20 +1615,28 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   final action = result['action'];
                   if (action == 'unselect') {
                     ref.read(orderProvider.notifier).clearWaiter();
-                    // Update database if order is saved
+                    // Update database if order is saved. The waiter is a
+                    // header field: writing the lines here as well left the
+                    // panel holding a cart the database had moved past.
                     if (currentOrder.orderId != null) {
                       final updatedOrder = ref.read(orderProvider);
-                      await ref.read(orderRepositoryProvider).updateOrder(updatedOrder);
+                      await ref
+                          .read(orderRepositoryProvider)
+                          .updateOrder(updatedOrder, headerOnly: true);
                     }
                   } else if (action == 'select') {
                     ref.read(orderProvider.notifier).setWaiter(
                       result['waiterId'],
                       result['waiterName'],
                     );
-                    // Update database if order is saved
+                    // Update database if order is saved. The waiter is a
+                    // header field: writing the lines here as well left the
+                    // panel holding a cart the database had moved past.
                     if (currentOrder.orderId != null) {
                       final updatedOrder = ref.read(orderProvider);
-                      await ref.read(orderRepositoryProvider).updateOrder(updatedOrder);
+                      await ref
+                          .read(orderRepositoryProvider)
+                          .updateOrder(updatedOrder, headerOnly: true);
                     }
                   }
                 }
@@ -1718,6 +1839,82 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               label: l10n.translate('cancel_order'),
               color: canCancel ? Colors.red[700] : null,
               onPressed: canCancel ? _cancelCurrentOrder : null,
+            );
+          }
+          break;
+
+        case 'tags':
+          // Back-office tags on the current order. An unsaved basket keeps
+          // them until it is saved; a saved order is written and queued at
+          // once. Tags move no money, so this is never gated by Z or pay.
+          shouldShow = settings.showTagsButton;
+          if (shouldShow) {
+            final hasTags = currentOrder.tagIds.isNotEmpty;
+            button = _buildActionButton(
+              icon: Icons.label_outline,
+              label: hasTags
+                  ? '${l10n.translate('order_tags')} (${currentOrder.tagIds.length})'
+                  : l10n.translate('order_tags'),
+              color: hasTags ? Colors.indigo : null,
+              onPressed: () async {
+                final ids = await showOrderTagPicker(
+                    context: context,
+                    ref: ref,
+                    initial: ref.read(orderProvider).tagIds);
+                if (ids == null) return;
+                ref.read(orderProvider.notifier).setTagIds(ids);
+                final orderId = ref.read(orderProvider).orderId;
+                if (orderId != null) {
+                  await ref
+                      .read(orderRepositoryProvider)
+                      .setOrderTags(orderId, ids);
+                  unawaited(ref.read(dataSyncServiceProvider).pushOrderTags());
+                }
+              },
+            );
+          }
+          break;
+
+        case 'reserve':
+          // Book the cart's services on the agenda instead of selling them
+          // now. Needs at least one bookable service; retail lines may ride
+          // along. Only an unsaved cart: a saved order is already a sale.
+          final bookable = ref.watch(bookableProductIdsProvider);
+          shouldShow = settings.showReserveButton &&
+              currentOrder.orderId == null &&
+              (currentOrder.items as List<OrderItem>)
+                  .any((i) => bookable.contains(i.productId));
+          if (shouldShow) {
+            button = _buildActionButton(
+              icon: Icons.event_available,
+              label: l10n.translate('reserve'),
+              color: Colors.teal,
+              onPressed: () => _reserveCart(context, ref, l10n),
+            );
+          }
+          break;
+
+        case 'refund':
+          // Taking payments + the refund token, like the order-level
+          // Refund entry. Independent of the basket: it refunds an order
+          // that is already paid, found by its code.
+          shouldShow = settings.showRefundButton &&
+              permissionService.hasPermission(Permissions.ticketsCreate) &&
+              permissionService.hasRefundPermission(Permissions.refundsCreate);
+          if (shouldShow) {
+            // Refunds are online-only. Greyed out without a network, but
+            // still tappable so the cashier is told why rather than met with
+            // a dead button.
+            final online = ref.watch(lastKnownOnlineStatusProvider);
+            button = _buildActionButton(
+              icon: Icons.assignment_return,
+              label: l10n.translate('refund'),
+              color: online ? Colors.deepOrange : Colors.grey,
+              onPressed: online
+                  ? () => showRefundReceiptDialog(context: context, ref: ref)
+                  : () => SnackBarHelper.showToast(
+                      l10n.translate('action_needs_network'),
+                      kind: ToastKind.warning),
             );
           }
           break;
@@ -2067,21 +2264,27 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // Get next ticket number
       final existingTickets = await (database.select(database.tickets)
         ..where((t) => t.orderId.equals(orderId))).get();
-
-      final maxTicketNum = existingTickets.isEmpty
-          ? 0
-          : existingTickets.map((t) => int.tryParse(t.num) ?? 0).reduce((a, b) => a > b ? a : b);
-
-      final newTicketNum = maxTicketNum + 1;
-      final ticketNumStr = newTicketNum.toString().padLeft(4, '0');
+      final ticketNumStr = nextTicketNumber(existingTickets.map((t) => t.num));
 
       // Calculate total only from unpaid items (apply order-level discount proportionally)
       final unpaidTotal = unpaidItems.fold(0.0, (sum, item) => sum + item.totalPrice);
-      final total = reloadedOrder.discountPercentage > 0
+      final fullTotal = reloadedOrder.discountPercentage > 0
           ? unpaidTotal * (1 - reloadedOrder.discountPercentage / 100)
           : unpaidTotal;
+      // Parts already paid by amount (split bill) come off: this payment
+      // closes that split, so it carries its `split` too.
+      final moneyParts = await ref
+          .read(orderRepositoryProvider)
+          .moneySplitParts(orderId);
+      final credit = moneyParts.fold<double>(0, (s, t) => s + t.amount);
+      final total = credit > 0
+          ? (roundMoney(fullTotal - credit) < 0 ? 0.0 : roundMoney(fullTotal - credit))
+          : fullTotal;
+      final lastSplit = moneyParts.isEmpty
+          ? null
+          : SplitDetails.decode(moneyParts.last.splitDetails);
 
-      // Insert ticket + mark the unpaid items PAID atomically — mirrors
+      // Insert ticket + attach it to the unpaid items atomically — mirrors
       // payment_screen._processPayment. Without the transaction, a failure
       // between the ticket insert and the item updates would leave a paid
       // ticket with still-PENDING items: the order reads as paid on the ticket
@@ -2096,6 +2299,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             orderId: orderId,
             paymentMethod: TransactionType.cash.value,
             amount: total,
+            splitDetails: Value(moneyParts.isEmpty
+                ? null
+                : SplitDetails(
+                    groupId: lastSplit?.groupId ?? 'A-${reloadedOrder.orderCode}',
+                    mode: SplitMode.amount,
+                    part: moneyParts.length + 1,
+                    parts: moneyParts.length + 1,
+                    orderTotal: lastSplit?.orderTotal ?? fullTotal,
+                  ).encode()),
             sessionId: Value(session.id),
             // z_day = the session's opening calendar day (constant across midnight).
             zDay: Value(zDay),
@@ -2112,11 +2324,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               ..where((tbl) => tbl.id.equals(item.id!))).write(
               OrderProductsCompanion(
                 ticketId: Value(ticketId),
-                state: const Value('PAID'),
                 updatedAt: Value(DateTime.now()),
               ),
             );
           }
+        }
+        if (ref.read(settingsProvider).paymentCompletesKitchen) {
+          await completeKitchenForTicket(database, ticketId);
         }
       });
 
@@ -2159,7 +2373,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               await printingService.printKdsTicket(
                 order: reloadedOrder,
                 cashierName: currentUser.firstName,
-                // Marked PAID above, before this detached job runs.
+                // Ticket attached above, before this detached job runs.
                 paidLinesStillOwed: {
                   for (final item in unpaidItems)
                     if (item.id != null) item.id!,
@@ -2193,6 +2407,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             customerName: reloadedOrder.customerName,
             customerPhone: reloadedOrder.customerPhone,
             deliveryAddress: reloadedOrder.deliveryAddress,
+            reference: reloadedOrder.reference,
             tableName: reloadedOrder.tableName,
             numberOfPersons: reloadedOrder.numberOfPersons,
           );
@@ -2426,6 +2641,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     bool printOnSave = false,
   }) async {
     if (_isSavingOrder) return;
+    final perf = Stopwatch()..start();
     var currentOrder = ref.read(orderProvider);
     final orderRepo = ref.read(orderRepositoryProvider);
     final currentUser = ref.read(currentUserProvider);
@@ -2441,6 +2657,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final ok = await _resolveRuleViolations();
     if (!ok) return;
     currentOrder = ref.read(orderProvider);
+    final tRules = perf.elapsedMilliseconds;
 
     // TEMP-TIP-HIDDEN: pre-save tip dialog disabled.
     // if (mounted) {
@@ -2484,10 +2701,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
       // Reload the order from database to get updated IDs (and the tip
       // we just persisted).
+      final tSave = perf.elapsedMilliseconds;
       final reloadedOrder = await orderRepo.getOrderById(orderId);
       if (reloadedOrder == null) {
         throw Exception('Failed to reload order');
       }
+      _logger.info('[PERF] pay: rules=${tRules}ms save=${tSave - tRules}ms '
+          'reload=${perf.elapsedMilliseconds - tSave}ms '
+          'saved=${currentOrder.isSaved()} kitchenOwed=$kitchenOwed '
+          'items=${reloadedOrder.items.length}');
 
       // Fired before the dialog, not after: the kitchen should start on the
       // food while the cashier is still dividing the bill. Detached, so the
@@ -2495,6 +2717,29 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // ticket — the print is already queued by the time it appears.
       if (kitchenOwed) {
         unawaited(_firePostSavePrints(reloadedOrder, beforePayment: true));
+      }
+
+      final exchange = ref.read(exchangeDraftProvider);
+      if (exchange != null && context.mounted) {
+        // An exchange is under way: this order is the new goods. Settle it
+        // against the credit instead of the normal payment screen.
+        final settled = await showExchangeSettleDialog(
+          context: context,
+          ref: ref,
+          order: reloadedOrder,
+          draft: exchange,
+        );
+        if (!context.mounted) return;
+        if (settled) {
+          ref.read(exchangeDraftProvider.notifier).state = null;
+          ref.read(orderProvider.notifier).clearOrder();
+        } else {
+          final updatedOrder = await orderRepo.getOrderById(orderId);
+          if (updatedOrder != null) {
+            ref.read(orderProvider.notifier).loadOrder(updatedOrder);
+          }
+        }
+        return;
       }
 
       if (context.mounted) {
@@ -2505,6 +2750,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           builder: (context) => PaymentScreen(
             order: reloadedOrder,
             forceSplitOpen: forceSplitOpen,
+            perfSince: perf,
           ),
         );
 

@@ -25,6 +25,7 @@ db.Product prod(int id, String name, {int? categoryId}) => db.Product(
       isAvailable: true,
       isVariant: false,
       isSerialTracked: false,
+      refundable: true,
       isPlannable: false,
       createdAt: DateTime(2026, 1, 1),
       updatedAt: DateTime(2026, 1, 1),

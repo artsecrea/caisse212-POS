@@ -23,6 +23,7 @@ Map<String, dynamic> buildSessionDetails(
       'CARD': b.card,
       'MOBILE': b.mobile,
       'OTHER': b.other,
+      'EXCHANGE': b.exchange,
     }.entries)
       if (e.value != 0) {'method': e.key, 'amount': _r(e.value)},
   ];
@@ -35,9 +36,19 @@ Map<String, dynamic> buildSessionDetails(
       'byMethod': byMethod,
       'cancelled': {'count': b.cancelledCount, 'amount': _r(b.cancelled)},
     },
+    // Numbers, never strings: the server's Z merger sums numbers and keeps
+    // the first value of anything else.
     'refunds': {
       'total': _r(summary.refundsTotal),
       'cash': _r(summary.refundsCash),
+      'count': summary.refunds.count,
+      'byMethod': [
+        for (final e in summary.refunds.byMethod.entries)
+          {'method': e.key, 'count': e.value.count, 'amount': _r(e.value.amount)},
+      ],
+      'earlierSales': _r(summary.refunds.earlierSales),
+      'waste': _r(summary.refunds.waste),
+      'exchange': _r(summary.refunds.exchange),
     },
     'cash': {
       'cashSales': _r(b.cash),

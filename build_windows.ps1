@@ -19,7 +19,10 @@ param(
     [switch]$Bump,
     [switch]$SkipBuild,
     [switch]$NoZip,
-    [switch]$NoInstaller
+    [switch]$NoInstaller,
+    # The remote-support build (rebranded RustDesk, see C:\c212build). Shipped
+    # beside the POS in support\, never linked into it.
+    [string]$SupportDir = 'C:\c212build\dist\support'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -89,6 +92,28 @@ New-Item -ItemType Directory -Force $Bundle | Out-Null
 robocopy $ReleaseDir $Bundle /E /NFL /NDL /NJH /NJS /NP /XF $ShipExe '*.db' '*.db-wal' '*.db-shm' 'logs.txt' 'error_log.txt' | Out-Null
 if ($LASTEXITCODE -ge 8) { Fail "robocopy failed (exit $LASTEXITCODE)" }
 Rename-Item (Join-Path $Bundle $FlutterExe) $ShipExe
+if (Test-Path (Join-Path $SupportDir 'caisse212-support.exe')) {
+    Step "Adding remote support from $SupportDir"
+    robocopy $SupportDir (Join-Path $Bundle 'support') /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { Fail "robocopy support failed (exit $LASTEXITCODE)" }
+} else {
+    Write-Warning "No remote support build in $SupportDir - shipping without it"
+}
+# The updater window (no console flashes during an update). Compiled with the
+# .NET Framework csc.exe every Windows 10/11 has; the app falls back to its
+# .bat when this file is missing. Lives in updater\ so the bundle keeps one
+# top-level exe.
+$csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+if (-not (Test-Path $csc)) { Fail "csc.exe not found at $csc (.NET Framework 4)" }
+$updaterDir = Join-Path $Bundle 'updater'
+New-Item -ItemType Directory -Force $updaterDir | Out-Null
+Get-ChildItem $updaterDir -Filter '*.ps1' | Remove-Item -Force
+Step 'Compiling caisse212-updater.exe'
+& $csc -nologo -target:winexe -codepage:65001 -optimize `
+    "-out:$(Join-Path $updaterDir 'caisse212-updater.exe')" `
+    -r:System.Windows.Forms.dll -r:System.Drawing.dll `
+    (Join-Path $Root 'windows\updater\caisse212_updater.cs')
+if ($LASTEXITCODE -ne 0) { Fail "updater compile failed (exit $LASTEXITCODE)" }
 $exeCount = @(Get-ChildItem $Bundle -Filter '*.exe' -File).Count
 if ($exeCount -ne 1) { Fail "Bundle must hold exactly one top-level .exe (found $exeCount); the in-app updater relies on it" }
 

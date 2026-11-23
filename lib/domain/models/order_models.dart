@@ -30,10 +30,6 @@ class OrderItem {
   final double manualDiscount; // manual discount amount per item
   final double tva; // TVA amount per item
   final String state; // PENDING, ONHOLD, PREPARING, READY, SERVED, etc.
-  final DateTime? planStartAt; // Planning start time
-  final DateTime? planEndAt; // Planning end time
-  final int? planWaiterId; // Assigned waiter for this booking
-  final int? planResourceId; // Assigned resource (room/chair/equipment) for this booking
   final DateTime? kdsPrintedAt; // When item was sent to kitchen (KDS ticket printed)
   /// Quantity that has already been sent to the kitchen. Persisted. Lets
   /// `KdsPrintMode.modificationsOnly` fire a ticket for the *added* units when
@@ -93,10 +89,6 @@ class OrderItem {
     this.manualDiscount = 0.0,
     this.tva = 0.0,
     this.state = 'PENDING',
-    this.planStartAt,
-    this.planEndAt,
-    this.planWaiterId,
-    this.planResourceId,
     this.kdsPrintedAt,
     this.kdsPrintedQuantity = 0.0,
     this.kdsPrintQuantity,
@@ -162,10 +154,6 @@ class OrderItem {
     double? manualDiscount,
     double? tva,
     String? state,
-    DateTime? planStartAt,
-    DateTime? planEndAt,
-    int? planWaiterId,
-    int? planResourceId,
     DateTime? kdsPrintedAt,
     double? kdsPrintedQuantity,
     double? kdsPrintQuantity,
@@ -200,10 +188,6 @@ class OrderItem {
       manualDiscount: manualDiscount ?? this.manualDiscount,
       tva: tva ?? this.tva,
       state: state ?? this.state,
-      planStartAt: planStartAt ?? this.planStartAt,
-      planResourceId: planResourceId ?? this.planResourceId,
-      planEndAt: planEndAt ?? this.planEndAt,
-      planWaiterId: planWaiterId ?? this.planWaiterId,
       kdsPrintedAt: kdsPrintedAt ?? this.kdsPrintedAt,
       kdsPrintedQuantity: kdsPrintedQuantity ?? this.kdsPrintedQuantity,
       kdsPrintQuantity: kdsPrintQuantity ?? this.kdsPrintQuantity,
@@ -246,10 +230,6 @@ class OrderItem {
       'discount': discount,
       'tva': tva,
       'state': state,
-      'planStartAt': planStartAt?.toIso8601String(),
-      'planResourceId': planResourceId,
-      'planEndAt': planEndAt?.toIso8601String(),
-      'planWaiterId': planWaiterId,
       'kdsPrintedAt': kdsPrintedAt?.toIso8601String(),
       'kdsPrintedQuantity': kdsPrintedQuantity,
       'isWeighedItem': isWeighedItem,
@@ -357,6 +337,14 @@ class CurrentOrder {
 
   final String type;
   final String? deliveryAddress; // Delivery address (when type == DELIVERY)
+
+  /// Free reference typed on a take-away / delivery order (the pickup name,
+  /// a platform's order number…). Empty string = cleared; saved as null.
+  final String? reference;
+
+  /// Code of the reservation this cart was rung up from; pushed with the
+  /// order as `reservationCode` so the server links the two.
+  final String? reservationCode;
   final int numberOfPersons; // Number of persons for the order
 
   /// Tip stored on the server via `PATCH /api/orders/{id}/tip`. NOT included
@@ -399,6 +387,15 @@ class CurrentOrder {
   /// else" is an every-shift occurrence on a table the cashier has open.
   final DateTime? loadedAt;
 
+  /// Ids of the lines this cart was loaded with, or null for a cart that was
+  /// never loaded from the database.
+  ///
+  /// The exact form of [loadedAt]: a row absent from [items] whose id is in
+  /// here was dropped by the cashier; one whose id is not was written by
+  /// somebody else after the load. The timestamp could only guess, and a row
+  /// the KDS or a print touched after the load looked "new" to it.
+  final Set<int>? loadedLineIds;
+
   CurrentOrder({
     this.orderId,
     this.orderCode,
@@ -419,12 +416,20 @@ class CurrentOrder {
     this.discountReason,
     this.type = 'DINE_IN',
     this.deliveryAddress,
+    this.reference,
+    this.reservationCode,
     this.numberOfPersons = 1,
     this.tip = 0.0,
     this.deliveryFee,
     this.source,
     this.loadedAt,
+    this.loadedLineIds,
+    this.tagIds = const [],
   });
+
+  /// Server ids of the order tags on this order (see OrderTags). Travels with
+  /// the cart so an unsaved basket can be tagged; written on save.
+  final List<int> tagIds;
 
   /// True when there is an order note worth surfacing to the cashier.
   bool get hasNote => note != null && note!.trim().isNotEmpty;
@@ -507,12 +512,16 @@ class CurrentOrder {
     String? discountReason,
     String? type,
     String? deliveryAddress,
+    String? reference,
+    String? reservationCode,
     int? numberOfPersons,
     double? tip,
     double? deliveryFee,
     String? source,
     DateTime? loadedAt,
+    Set<int>? loadedLineIds,
     int? sessionOrderNo,
+    List<int>? tagIds,
     /// `copyWith` can't express "set this back to null" through a nullable
     /// parameter — `deliveryFee: null` is indistinguishable from "not passed".
     /// This flag is how the cashier's "remove the fee" action round-trips, and
@@ -539,12 +548,16 @@ class CurrentOrder {
       discountReason: discountReason ?? this.discountReason,
       type: type ?? this.type,
       deliveryAddress: deliveryAddress ?? this.deliveryAddress,
+      reference: reference ?? this.reference,
+      reservationCode: reservationCode ?? this.reservationCode,
       numberOfPersons: numberOfPersons ?? this.numberOfPersons,
       tip: tip ?? this.tip,
       deliveryFee:
           clearDeliveryFee ? null : (deliveryFee ?? this.deliveryFee),
       source: source ?? this.source,
       loadedAt: loadedAt ?? this.loadedAt,
+      loadedLineIds: loadedLineIds ?? this.loadedLineIds,
+      tagIds: tagIds ?? this.tagIds,
     );
   }
 
@@ -627,6 +640,12 @@ class OrderItemDetails {
   final String? ticketNum;
   final List<ComponentDetails> components;
 
+  /// The line's kitchen (KDS) state and when it reached each stage.
+  final String? kitchenState;
+  final DateTime? kitchenAt;
+  final DateTime? preparingAt;
+  final DateTime? kitchenDoneAt;
+
   OrderItemDetails({
     required this.productName,
     this.variantId,
@@ -636,6 +655,10 @@ class OrderItemDetails {
     required this.isPaid,
     this.ticketNum,
     this.components = const [],
+    this.kitchenState,
+    this.kitchenAt,
+    this.preparingAt,
+    this.kitchenDoneAt,
   });
 
   /// Returns the display name - variant name if available, otherwise product name

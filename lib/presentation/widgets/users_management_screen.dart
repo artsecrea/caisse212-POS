@@ -13,7 +13,7 @@ import 'admin_mode_chip.dart';
 /// Permission catalog grouped by resource (used by the table + details dialog).
 const Map<String, List<String>> kPermissionGroups = <String, List<String>>{
   'Orders':      ['pos:orders:create', 'pos:orders:view', 'pos:orders:update', 'pos:orders:delete', 'pos:orders:cancel', 'pos:orders:item:add', 'pos:orders:item:remove', 'pos:orders:item:modify', 'pos:orders:item:price', 'pos:orders:waiter:update'],
-  'Refunds':     ['pos:refunds:view', 'pos:refunds:create', 'pos:refunds:waste', 'pos:refunds:amount:override'],
+  'Refunds':     ['pos:refunds:view', 'pos:refunds:create', 'pos:refunds:waste', 'pos:refunds:amount:override', 'pos:refunds:closed-z', 'pos:refunds:override'],
   'Tickets':     ['pos:tickets:create', 'pos:tickets:view', 'pos:tickets:update', 'pos:tickets:print', 'pos:tickets:delete'],
   'Sessions':    ['pos:sessions:start', 'pos:sessions:end', 'pos:sessions:pause', 'pos:sessions:view', 'pos:sessions:delete'],
   'Customers':   ['pos:customer:set', 'pos:customer:create', 'pos:customer:view', 'pos:customer:delete'],

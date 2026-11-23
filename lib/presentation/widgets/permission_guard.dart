@@ -163,7 +163,7 @@ class PermissionMenuItem extends ConsumerWidget {
 /// Mixin for checking permissions in widgets
 mixin PermissionCheckMixin on ConsumerWidget {
   bool checkPermission(WidgetRef ref, String permission) {
-    return ref.read(permissionServiceProvider).hasPermission(permission);
+    return ref.watch(permissionServiceProvider).hasPermission(permission);
   }
 
   void showPermissionDenied(BuildContext context, {String? message}) {

@@ -13,7 +13,7 @@ import '../utils/admin_auth.dart' show userHasPermission;
 import '../utils/app_localizations.dart';
 import 'activity_log_service.dart';
 import 'daily_summary_service.dart';
-import 'pos_notifications.dart' show notifyZClosed;
+import 'pos_notifications.dart' show notifySessionClosed, notifyZClosed;
 import 'permission_service.dart' show Permissions;
 import 'z_rules.dart';
 import 'z_service.dart';
@@ -221,7 +221,9 @@ Future<void> _applyPlanCloses(WidgetRef ref, _Planned planned) async {
 /// The Z the next session of [user] belongs to: the open one, a server Z to
 /// adopt after a reinstall, or a new one — which must pass the terminal's
 /// open rules. Throws [ZRuleViolation] when a new Z may not open by itself.
-Future<db.Z> ensureZForSession(WidgetRef ref, {required db.User user}) async {
+/// [superAdmin] (a master-password sign-in) holds every Z permission.
+Future<db.Z> ensureZForSession(WidgetRef ref,
+    {required db.User user, bool superAdmin = false}) async {
   final zService = ref.read(zServiceProvider);
   final planned = await _planZ(ref);
   final plan = planned.plan;
@@ -241,8 +243,9 @@ Future<db.Z> ensureZForSession(WidgetRef ref, {required db.User user}) async {
       ref,
       plan.next,
       explicitOpen: false,
-      hasOpenPermission: userHasPermission(user, Permissions.zOpen),
-      hasOverride: userHasPermission(user, Permissions.zOverride),
+      hasOpenPermission:
+          superAdmin || userHasPermission(user, Permissions.zOpen),
+      hasOverride: superAdmin || userHasPermission(user, Permissions.zOverride),
     );
   }
 
@@ -396,6 +399,9 @@ Future<void> closeZNow(
   required String closeMode,
   int? endedBy,
 }) async {
+  // The sessions the close is about to end for their cashiers: each still
+  // owes the admin its own POS_SESSION_CLOSED card.
+  final autoEnded = await ref.read(zServiceProvider).openSessionsOf(z.id);
   await ref.read(zServiceProvider).closeZ(
         zId: z.id,
         closeMode: closeMode,
@@ -405,6 +411,9 @@ Future<void> closeZNow(
             closeMode != ZService.closeForced && zCloseNeedsOverride(ref, z),
       );
   ref.read(currentZProvider.notifier).state = null;
+  for (final s in autoEnded) {
+    unawaited(notifySessionClosed(ref.read, s.id));
+  }
   unawaited(notifyZClosed(ref.read, z.id));
 
   final closed = await ref.read(zServiceProvider).getById(z.id);

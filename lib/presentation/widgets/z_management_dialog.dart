@@ -13,6 +13,9 @@ import '../../utils/admin_auth.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/snackbar_helper.dart';
+import 'blocking_progress.dart';
+import 'close_session_dialog.dart'
+    show runUnpaidOrdersGate, UnpaidGateResult;
 import 'z_report_dialog.dart' show showPrintZReportDialog;
 import 'products_sold_report_dialog.dart';
 
@@ -38,6 +41,8 @@ Future<void> showZManagementDialog(
   if (!context.mounted) return;
   await refreshZConfig(ref);
   if (!context.mounted) return;
+  // A Z close in flight — a second tap must not start another.
+  var closingZ = false;
   await showDialog<void>(
     context: context,
     barrierDismissible: true,
@@ -89,6 +94,8 @@ Future<void> showZManagementDialog(
             // Every session of the Z must already be closed: the Z closes on
             // its last session, which carries the close to the server.
             Future<void> closeZ(Z open, {required bool printZ}) async {
+              if (closingZ) return;
+              closingZ = true;
               try {
                 final block = await zCloseBlock(
                   ref,
@@ -100,14 +107,36 @@ Future<void> showZManagementDialog(
                   if (ctx.mounted) SnackBarHelper.error(ctx, block.message(l10n));
                   return;
                 }
-                await closeZNow(ref, open,
-                    closeMode: ZService.closeManual,
-                    endedBy: elevation.adminId);
-                if (printZ) {
-                  final ok = await printZReport(ref, open.id, isX: false);
-                  if (ctx.mounted && !ok) {
-                    SnackBarHelper.error(ctx, l10n.translate('print_error'));
-                  }
+                if (ref.read(settingsProvider).unpaidPromptOnZClose &&
+                    ctx.mounted) {
+                  final zService = ref.read(zServiceProvider);
+                  // Settled cash needs a session still open to count it; the
+                  // close then ends that session with the cash in its totals.
+                  final openSessions = await zService.openSessionsOf(open.id);
+                  final zSessions = await zService.sessionsForZ(open.id);
+                  if (!ctx.mounted) return;
+                  final gate = await runUnpaidOrdersGate(
+                    ctx,
+                    ref,
+                    sessionIds: [for (final s in zSessions) s.id],
+                    cashSessionId: openSessions.isEmpty ? null : openSessions.last.id,
+                    forZ: true,
+                  );
+                  if (gate == UnpaidGateResult.cancelled) return;
+                }
+                if (!ctx.mounted) return;
+                final printOk = await BlockingProgress.run(
+                    ctx, l10n.translate('closing_z_progress'), (progress) async {
+                  await closeZNow(ref, open,
+                      closeMode: ZService.closeManual,
+                      endedBy: elevation.adminId);
+                  if (!printZ) return true;
+                  progress.message =
+                      l10n.translate('printing_reports_progress');
+                  return printZReport(ref, open.id, isX: false);
+                });
+                if (ctx.mounted && !printOk) {
+                  SnackBarHelper.error(ctx, l10n.translate('print_error'));
                 }
                 if (ctx.mounted) {
                   SnackBarHelper.success(ctx, l10n.translate('z_closed'));
@@ -115,6 +144,8 @@ Future<void> showZManagementDialog(
                 }
               } catch (e) {
                 if (ctx.mounted) SnackBarHelper.failure(ctx, e);
+              } finally {
+                closingZ = false;
               }
             }
 

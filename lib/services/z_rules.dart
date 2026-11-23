@@ -12,6 +12,15 @@ String zDayKeyOf(DateTime localNow, int startHour) {
   return formatZDay(DateTime(shifted.year, shifted.month, shifted.day));
 }
 
+/// A local timestamp as the backend reads POS dates: `yyyy-MM-ddTHH:mm:ss.SSS`,
+/// no offset (taken as the shop's local time).
+String formatLocalMillis(DateTime t) {
+  final l = t.toLocal();
+  String p(int v, [int w = 2]) => v.toString().padLeft(w, '0');
+  return '${p(l.year, 4)}-${p(l.month)}-${p(l.day)}T'
+      '${p(l.hour)}:${p(l.minute)}:${p(l.second)}.${p(l.millisecond, 3)}';
+}
+
 String formatZDay(DateTime day) =>
     '${day.year.toString().padLeft(4, '0')}-'
     '${day.month.toString().padLeft(2, '0')}-'
@@ -86,8 +95,10 @@ class ZSnapshot {
     if (day == null || day.isEmpty || seq == null) return null;
     final n = seq is num ? seq.toInt() : int.tryParse('$seq');
     if (n == null || n < 1) return null;
-    return ZSnapshot(ZLabel(day.substring(0, 10), n),
-        closed: json['closed'] == true);
+    return ZSnapshot(
+      ZLabel(day.substring(0, 10), n),
+      closed: json['closed'] == true,
+    );
   }
 }
 
@@ -114,11 +125,7 @@ class ZPlan {
   /// it locally (no push; the server already knows) before opening [next].
   final bool closeLocalAsServerClosed;
 
-  const ZPlan(
-    this.action,
-    this.next, {
-    this.closeLocalAsServerClosed = false,
-  });
+  const ZPlan(this.action, this.next, {this.closeLocalAsServerClosed = false});
 
   @override
   String toString() =>
@@ -160,8 +167,11 @@ ZPlan planZ({
     final serverClosedIt =
         server != null && server.closed && server.label == localOpen;
     if (serverClosedIt) {
-      return ZPlan(ZPlanAction.openNew, ZLabel(currentZDay, maxSeqToday() + 1),
-          closeLocalAsServerClosed: true);
+      return ZPlan(
+        ZPlanAction.openNew,
+        ZLabel(currentZDay, maxSeqToday() + 1),
+        closeLocalAsServerClosed: true,
+      );
     }
     return ZPlan(ZPlanAction.continueOpen, localOpen);
   }
@@ -273,3 +283,63 @@ bool zClosesWithSession({
 /// X only when the Z had other sessions — a lone session's X would repeat
 /// the Z line for line.
 bool printSessionXWithZ(int sessionsInZ) => sessionsInZ > 1;
+
+/// Why an open Z deserves a warning. Warnings only — a Z is never closed by
+/// the clock; they tell whoever is at the till that the day was not closed.
+enum ZOpenWarning {
+  /// Open for longer than the admin's limit.
+  openTooLong,
+
+  /// The Z has stayed open across the admin's "should be closed by" time
+  /// (e.g. 04:00).
+  pastCutoff,
+}
+
+/// Which warnings apply to a Z opened at [startedAt], now.
+///
+/// [maxOpenHours] null or <= 0 turns the duration warning off; [cutoff] null
+/// or malformed turns the cutoff warning off.
+///
+/// The cutoff is the first [cutoff] o'clock AFTER the Z was opened, not the
+/// one of its business day: a Z opened at 05:00 with a 04:00 cutoff is due
+/// at 04:00 the next morning. Reading it off the business day put the cutoff
+/// before the opening whenever the day starts at or before it, and the
+/// banner came up the moment the Z was opened. [zDay] and [startHour] are
+/// kept for callers; the rule no longer needs them.
+Set<ZOpenWarning> zOpenWarnings({
+  required DateTime now,
+  required DateTime startedAt,
+  required String zDay,
+  required int startHour,
+  int? maxOpenHours,
+  String? cutoff,
+}) {
+  final out = <ZOpenWarning>{};
+  if (maxOpenHours != null &&
+      maxOpenHours > 0 &&
+      now.difference(startedAt) >= Duration(hours: maxOpenHours)) {
+    out.add(ZOpenWarning.openTooLong);
+  }
+  final at = nextCutoffAfter(startedAt, cutoff);
+  if (at != null && !now.isBefore(at)) out.add(ZOpenWarning.pastCutoff);
+  return out;
+}
+
+/// The first [hhmm] o'clock strictly after [from], or null when [hhmm] is
+/// null or malformed.
+DateTime? nextCutoffAfter(DateTime from, String? hhmm) {
+  final minutes = parseHhmm(hhmm);
+  if (minutes == null) return null;
+  final local = from.toLocal();
+  var at = DateTime(
+    local.year,
+    local.month,
+    local.day,
+    minutes ~/ 60,
+    minutes % 60,
+  );
+  if (!at.isAfter(local)) {
+    at = DateTime(at.year, at.month, at.day + 1, at.hour, at.minute);
+  }
+  return at;
+}

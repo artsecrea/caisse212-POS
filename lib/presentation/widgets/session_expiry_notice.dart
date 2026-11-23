@@ -28,10 +28,16 @@ class SessionExpiryNotice extends ConsumerStatefulWidget {
 
 class _SessionExpiryNoticeState extends ConsumerState<SessionExpiryNotice> {
   Timer? _ticker;
+  StreamSubscription<void>? _expirySub;
 
   @override
   void initState() {
     super.initState();
+    // Redraw the moment the expiry moves — a re-auth should clear the notice
+    // now, not at the next tick.
+    _expirySub = ref.read(apiServiceProvider).expiryChanges.listen((_) {
+      if (mounted) setState(() {});
+    });
     // A till can sit on the login screen all night. Without this the day count
     // would be whatever it was when the screen opened.
     _ticker = Timer.periodic(const Duration(minutes: 5), (_) {
@@ -42,6 +48,7 @@ class _SessionExpiryNoticeState extends ConsumerState<SessionExpiryNotice> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _expirySub?.cancel();
     super.dispose();
   }
 

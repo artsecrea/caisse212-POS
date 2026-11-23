@@ -2,14 +2,17 @@ import 'dart:io';
 import 'dart:async';
 import 'package:caisse212/presentation/widgets/printers_management_screen.dart';
 import 'package:caisse212/presentation/widgets/update_ready_banner.dart';
+import 'package:caisse212/presentation/widgets/account_block_watcher.dart';
 import 'package:caisse212/presentation/widgets/reauth_overlay.dart';
 import 'package:caisse212/providers/reauth_provider.dart';
+import 'package:caisse212/services/remote_command_service.dart';
 import 'package:caisse212/services/update_service.dart';
 import 'package:caisse212/providers/localization_provider.dart';
 import 'package:caisse212/services/discovery_service.dart';
 import 'package:caisse212/services/sound_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_onscreen_keyboard/flutter_onscreen_keyboard.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,8 +24,8 @@ import 'package:caisse212/presentation/widgets/orders_management_screen.dart';
 import 'package:caisse212/presentation/widgets/sessions_management_screen.dart';
 import 'package:caisse212/presentation/widgets/users_management_screen.dart';
 import 'package:caisse212/presentation/widgets/tickets_management_screen.dart';
-import 'package:caisse212/presentation/widgets/agenda_screen.dart';
-import 'presentation/booking/booking_screen.dart';
+import 'package:caisse212/presentation/reservations/agenda_screen.dart';
+import 'presentation/widgets/refunds_screen.dart';
 import 'package:caisse212/presentation/widgets/dashboard_screen.dart';
 import 'package:caisse212/presentation/widgets/notes_screen.dart';
 import 'package:caisse212/presentation/widgets/logs_screen.dart';
@@ -31,6 +34,10 @@ import 'package:caisse212/services/server_startup_service.dart';
 import 'package:caisse212/services/activity_log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/autostart_service.dart';
+import 'services/network_watch_service.dart';
+import 'services/prefs_recovery_service.dart';
+import 'services/safe_prefs_store.dart';
+import 'services/shared_storage.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/theme/app_theme.dart';
 import 'presentation/login_screen/login_screen.dart';
@@ -62,12 +69,43 @@ void main() async {
     return false;
   };
 
+  // Must come before anything opens the settings: the first
+  // SharedPreferences.getInstance() loads the file once for the whole run.
+  // The update check below used to come first, so every till ran on this
+  // account's stale per-user copy while saving into the shared one.
+  final storageNotes = await _prepareSettingsStore();
+
   // Apply any prepared update before the UI starts.
   // If an update is ready, this launches the updater script and calls exit(0).
   await UpdateService.applyPendingUpdateIfExists();
 
   // Call directly (same zone as ensureInitialized) to avoid zone mismatch.
-  await _initializeApp();
+  await _initializeApp(storageNotes);
+}
+
+/// Points settings at the machine-wide folder, repairs a broken file and
+/// installs the safe store. Runs before the logger exists, so what it has to
+/// say is returned and logged once the logger is up.
+Future<List<String>> _prepareSettingsStore() async {
+  final notes = <String>[];
+  if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+    notes.add(await SharedStorage.install());
+  }
+  try {
+    final repaired = await PrefsRecoveryService.repair()
+        .timeout(const Duration(seconds: 5));
+    if (repaired != null) notes.add(repaired);
+  } catch (e, stack) {
+    // Recovery is best-effort; getInstance still gets its chance.
+    _logError('PrefsRecovery', e, stack);
+  }
+  try {
+    await SafePrefsStore.install();
+  } catch (e, stack) {
+    // The plugin's own store still works, just without the safeguards.
+    _logError('SafePrefsStore', e, stack);
+  }
+  return notes;
 }
 
 /// Boot screen shown while the app initializes
@@ -100,7 +138,7 @@ class _BootScreen extends StatelessWidget {
   }
 }
 
-Future<void> _initializeApp() async {
+Future<void> _initializeApp(List<String> storageNotes) async {
     final isDesktop =
         !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
 
@@ -137,15 +175,30 @@ Future<void> _initializeApp() async {
     try {
       final logPath = await _getLogFilePath();
       logger.registerHandler(FileLogHandler(filePath: logPath));
+      RemoteCommandService.logFilePath = logPath;
     } catch (e) {
       // If file logging fails, continue without it
       debugPrint('Failed to initialize file logging: $e');
     }
     logger.registerHandler(const ConsoleLogHandler());
 
+    // Slow-frame trace for field diagnosis: a long `build` means the UI thread
+    // was busy (Dart work), a long `raster` means drawing/GPU was the cost.
+    SchedulerBinding.instance.addTimingsCallback((timings) {
+      for (final t in timings) {
+        final build = t.buildDuration.inMilliseconds;
+        final raster = t.rasterDuration.inMilliseconds;
+        if (build >= 100 || raster >= 100) {
+          logger.info('[PERF] slow frame: build=${build}ms raster=${raster}ms');
+        }
+      }
+    });
+
     logger.info("App starting...");
     logger.info("Platform: ${Platform.operatingSystem}");
     logger.info("Release mode: $kReleaseMode");
+
+    storageNotes.forEach(logger.info);
 
     SharedPreferences? sharedPreferences;
     try {
@@ -558,6 +611,11 @@ class _MyAppState extends ConsumerState<MyApp>
     // is logged in, so this costs nothing on a terminal that does not use it.
     ref.watch(sseLifecycleProvider);
 
+    // Network watch: checks internet, router, cloud server and network
+    // printers every few minutes for as long as the app runs, so an outage
+    // is on record even when nobody had the diagnostics page open.
+    ref.watch(networkWatchProvider);
+
     final app = MaterialApp(
       title: 'caisse212',
       navigatorKey: appNavigatorKey,
@@ -588,15 +646,12 @@ class _MyAppState extends ConsumerState<MyApp>
           result = child ?? const SizedBox.shrink();
         }
 
-        // Global "update ready" banner (auto-update flow): a slim bar pinned
-        // above the app content that appears once a non-mandatory update has
-        // been silently downloaded, offering Restart-now / Later. Renders an
-        // empty box when there's nothing to show, so this is a no-op most of
-        // the time. (The legacy `desktop_updater` overlay was removed — the app
-        // uses the signed UpdateService flow against caisse212-updates.)
+        // Invisible update watcher: runs the daily check and offers an
+        // optional update once it is silently downloaded (see UpdateWatcher).
         result = Column(
           children: [
-            const UpdateReadyBanner(),
+            UpdateWatcher(navigatorKey: appNavigatorKey),
+            AccountBlockWatcher(navigatorKey: appNavigatorKey),
             Expanded(child: result),
           ],
         );
@@ -680,9 +735,10 @@ class _MyAppState extends ConsumerState<MyApp>
         '/printers': (context) => const PrintersManagementScreen(),
         '/api-tester': (context) => const ApiTesterScreen(),
         '/agenda': (context) => const AgendaScreen(),
-        '/booking': (context) => const BookingScreen(),
+        '/booking': (context) => const AgendaScreen(),
         '/dashboard': (context) => const DashboardScreen(),
         '/notes': (context) => const NotesScreen(),
+        '/refunds': (context) => const RefundsScreen(),
         '/logs': (context) => const LogsScreen(),
       },
     );

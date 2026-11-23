@@ -18,7 +18,7 @@ void main() {
       expect(
         config.orderedFields('customer', 'info'),
         ['orderCode', 'orderNumber', 'date', 'cashier', 'waiter', 'orderType', 'table',
-         'persons', 'customerName', 'customerPhone', 'deliveryAddress',
+         'persons', 'customerName', 'customerPhone', 'deliveryAddress', 'reference',
          'paymentMethod'],
       );
     });

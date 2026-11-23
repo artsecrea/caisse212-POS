@@ -6,7 +6,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 class AdminElevation {
   final int adminId;
   final String adminUsername;
-  const AdminElevation({required this.adminId, required this.adminUsername});
+
+  /// The master password was typed instead of [adminUsername]'s own password:
+  /// a super admin is acting under that user's name.
+  final bool viaMasterPassword;
+
+  const AdminElevation({
+    required this.adminId,
+    required this.adminUsername,
+    this.viaMasterPassword = false,
+  });
 }
 
 /// Holds the currently active admin-mode elevation, or null if none.

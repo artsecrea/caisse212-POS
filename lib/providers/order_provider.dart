@@ -1,12 +1,18 @@
 import 'dart:async';
+import '../utils/order_reference.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import '../domain/models/order_course.dart';
 import '../domain/models/order_models.dart';
+import '../domain/models/order_tag_codec.dart';
+import '../domain/models/line_payment.dart';
+import '../domain/models/split_bill.dart';
 import '../domain/models/table_occupancy.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/order_events.dart';
+import '../services/kitchen_timing.dart';
+import '../services/line_cancellation.dart';
 import '../services/pending_operations_service.dart';
 import '../services/data_sync_service.dart';
 import '../services/order_log_service.dart';
@@ -101,9 +107,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       state = state.copyWith(items: items);
     } else {
       // Add as new item
-      state = state.copyWith(
-        items: [...state.items, item],
-      );
+      state = state.copyWith(items: [...state.items, item]);
     }
   }
 
@@ -187,9 +191,11 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       }
 
       // Check if notes match (both null or same string)
-      final notesMatch = (existingItem.note == null && newItem.note == null) ||
-                         (existingItem.note != null && newItem.note != null &&
-                          existingItem.note == newItem.note);
+      final notesMatch =
+          (existingItem.note == null && newItem.note == null) ||
+          (existingItem.note != null &&
+              newItem.note != null &&
+              existingItem.note == newItem.note);
 
       if (!notesMatch) {
         continue;
@@ -209,7 +215,10 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
 
   /// Check if two component lists are identical
   /// They match if they have the same components with the same quantities
-  bool _componentsMatch(List<OrderItemComponent> list1, List<OrderItemComponent> list2) {
+  bool _componentsMatch(
+    List<OrderItemComponent> list1,
+    List<OrderItemComponent> list2,
+  ) {
     // Different number of components
     if (list1.length != list2.length) {
       return false;
@@ -284,13 +293,14 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
   }
 
   void clearTable() {
-    state = state.copyWith(
-      tableId: null,
-      tableName: null,
-    );
+    state = state.copyWith(tableId: null, tableName: null);
   }
 
-  void setCustomer(int? customerId, String? customerName, {String? customerPhone}) {
+  void setCustomer(
+    int? customerId,
+    String? customerName, {
+    String? customerPhone,
+  }) {
     state = state.copyWith(
       customerId: customerId,
       customerName: customerName,
@@ -301,6 +311,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
   void clearCustomer() {
     state = CurrentOrder(
       orderId: state.orderId,
+      tagIds: state.tagIds,
       orderCode: state.orderCode,
       sessionOrderNo: state.sessionOrderNo,
       items: state.items,
@@ -321,16 +332,21 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       // These rebuilds drop every field they don't name. Carrying the fee
       // explicitly stops "clear the customer" from silently erasing it.
       deliveryFee: state.deliveryFee,
+      reservationCode: state.reservationCode,
     );
   }
 
   void setCommercial(int? commercialId, String? commercialName) {
-    state = state.copyWith(commercialId: commercialId, commercialName: commercialName);
+    state = state.copyWith(
+      commercialId: commercialId,
+      commercialName: commercialName,
+    );
   }
 
   void clearCommercial() {
     state = CurrentOrder(
       orderId: state.orderId,
+      tagIds: state.tagIds,
       orderCode: state.orderCode,
       sessionOrderNo: state.sessionOrderNo,
       items: state.items,
@@ -350,6 +366,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       // These rebuilds drop every field they don't name. Carrying the fee
       // explicitly stops "clear the customer" from silently erasing it.
       deliveryFee: state.deliveryFee,
+      reservationCode: state.reservationCode,
     );
   }
 
@@ -360,6 +377,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
   void clearWaiter() {
     state = CurrentOrder(
       orderId: state.orderId,
+      tagIds: state.tagIds,
       orderCode: state.orderCode,
       sessionOrderNo: state.sessionOrderNo,
       items: state.items,
@@ -379,6 +397,7 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
       // These rebuilds drop every field they don't name. Carrying the fee
       // explicitly stops "clear the customer" from silently erasing it.
       deliveryFee: state.deliveryFee,
+      reservationCode: state.reservationCode,
     );
   }
 
@@ -388,11 +407,18 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
 
   /// Order-level kitchen note. `copyWith` treats null as "keep", so clearing
   /// the note has to rebuild the state explicitly.
+  /// The order tags on the cart. Saved with the order; for an order already
+  /// saved, [OrderRepository.setOrderTags] writes and queues them too.
+  void setTagIds(List<int> ids) {
+    state = state.copyWith(tagIds: List.unmodifiable(ids));
+  }
+
   void setNote(String? note) {
     final trimmed = (note == null || note.trim().isEmpty) ? null : note.trim();
     state = trimmed == null
         ? CurrentOrder(
             orderId: state.orderId,
+            tagIds: state.tagIds,
             orderCode: state.orderCode,
             sessionOrderNo: state.sessionOrderNo,
             items: state.items,
@@ -411,7 +437,9 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
             discountReason: state.discountReason,
             type: state.type,
             deliveryAddress: state.deliveryAddress,
+            reference: state.reference,
             numberOfPersons: state.numberOfPersons,
+            reservationCode: state.reservationCode,
             tip: state.tip,
             deliveryFee: state.deliveryFee,
           )
@@ -420,16 +448,26 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
 
   void setDiscountReason(String? reason) {
     state = state.copyWith(
-        discountReason:
-            (reason == null || reason.trim().isEmpty) ? null : reason.trim());
+      discountReason: (reason == null || reason.trim().isEmpty)
+          ? null
+          : reason.trim(),
+    );
   }
 
   void setOrderType(String type) {
-    state = state.copyWith(type: type);
+    // A table needs no pickup reference; leaving one would print it.
+    state = type == 'DINE_IN'
+        ? state.copyWith(type: type, reference: '')
+        : state.copyWith(type: type);
   }
 
   void setDeliveryAddress(String? address) {
     state = state.copyWith(deliveryAddress: address);
+  }
+
+  /// Set the take-away / delivery reference; blank clears it.
+  void setReference(String? reference) {
+    state = state.copyWith(reference: reference?.trim() ?? '');
   }
 
   /// Record (or clear) the delivery charge. Passing `null` clears it back to
@@ -471,11 +509,8 @@ class OrderNotifier extends StateNotifier<CurrentOrder> {
   }
 
   void mergeItems(List<OrderItem> newItems) {
-    state = state.copyWith(
-      items: [...state.items, ...newItems],
-    );
+    state = state.copyWith(items: [...state.items, ...newItems]);
   }
-
 
   void holdOrder() {
     // Save to held orders - will be implemented in repository
@@ -487,6 +522,28 @@ final orderProvider = StateNotifierProvider<OrderNotifier, CurrentOrder>((ref) {
 });
 
 // Order Repository
+/// Whether [order] answers the resume panel's search box.
+///
+/// * `#12` or `12` — the per-session order number (exact);
+/// * any text — part of the order code, of the take-away / delivery
+///   reference, or of the customer's name or phone (case-insensitive).
+bool orderMatchesSearch(Order order, String search, {Customer? customer}) {
+  final q = search.trim().toLowerCase();
+  if (q.isEmpty) return true;
+  final number = int.tryParse(q.startsWith('#') ? q.substring(1) : q);
+  if (number != null && order.sessionOrderNo == number) return true;
+  bool has(String? field) => (field ?? '').toLowerCase().contains(q);
+  if (has(order.code) || has(order.reference)) return true;
+  if (customer != null) {
+    final name = '${customer.firstName} ${customer.lastName}';
+    if (has(name) || has(customer.phone)) return true;
+  }
+  return false;
+}
+
+String? _blankToNull(String? s) =>
+    (s == null || s.trim().isEmpty) ? null : s.trim();
+
 class OrderRepository {
   final AppDatabase _database;
   final Ref? _ref;
@@ -531,9 +588,11 @@ class OrderRepository {
   static const Duration _promptPushDeadline = Duration(seconds: 6);
 
   void _detach(String label, Future<void> Function() work) {
-    unawaited(work().catchError((Object e) {
-      _logger.error('$label failed — the sync sweep will retry: $e');
-    }));
+    unawaited(
+      work().catchError((Object e) {
+        _logger.error('$label failed — the sync sweep will retry: $e');
+      }),
+    );
   }
 
   OrderRepository(this._database, [this._ref]) {
@@ -541,25 +600,35 @@ class OrderRepository {
   }
 
   /// Records a user-action audit entry for the current actor (if available).
-  void _audit(void Function(ActivityLogService log, int? userId, String? username) action) {
+  void _audit(
+    void Function(ActivityLogService log, int? userId, String? username) action,
+  ) {
     final ref = _ref;
     if (ref == null) return;
     try {
       final actor = ref.read(currentUserProvider);
-      action(ref.read(activityLogServiceProvider), actor?.id, actor?.effectiveDisplayName);
+      action(
+        ref.read(activityLogServiceProvider),
+        actor?.id,
+        actor?.effectiveDisplayName,
+      );
     } catch (e) {
       _logger.error('Activity log failed: $e');
     }
   }
 
   /// Set sync service for auto-syncing completed orders
-  void setSyncService(DataSyncService syncService, bool Function() isOnlineCallback) {
+  void setSyncService(
+    DataSyncService syncService,
+    bool Function() isOnlineCallback,
+  ) {
     _syncService = syncService;
     _isOnlineCallback = isOnlineCallback;
   }
 
   // Event stream for socket service integration
-  final StreamController<OrderEvent> _eventController = StreamController<OrderEvent>.broadcast();
+  final StreamController<OrderEvent> _eventController =
+      StreamController<OrderEvent>.broadcast();
 
   /// Stream of order events (insert, update, delete, status changes, etc.)
   Stream<OrderEvent> get events => _eventController.stream;
@@ -593,6 +662,55 @@ class OrderRepository {
       await ZDayResolver(_database).forSessionOrCurrent(sessionId) ??
       _currentZDay();
 
+  /// The order's paid split-by-amount parts (AMOUNT/EQUAL tickets that
+  /// claim no line) of splits still open, oldest first — money already taken
+  /// towards lines still unpaid.
+  ///
+  /// A split is finished once a ticket names it in `closesGroups`, or a money
+  /// ticket of that group claims lines (how a closing part looked before
+  /// `closesGroups` existed). Its parts paid for lines that are now settled,
+  /// so they are no longer credit — counting them would discount another
+  /// ticket of the same order.
+  Future<List<Ticket>> moneySplitParts(int orderId) async {
+    final rows =
+        await (_database.select(_database.tickets)
+              ..where(
+                (t) =>
+                    t.orderId.equals(orderId) &
+                    t.isCancelled.equals(false) &
+                    t.isPaid.equals(true) &
+                    t.splitDetails.isNotNull(),
+              )
+              ..orderBy([(t) => OrderingTerm(expression: t.id)]))
+            .get();
+    if (rows.isEmpty) return const [];
+    final lineTicketIds =
+        (await (_database.select(_database.orderProducts)..where(
+                  (p) => p.orderId.equals(orderId) & p.ticketId.isNotNull(),
+                ))
+                .get())
+            .map((p) => p.ticketId!)
+            .toSet();
+    final closed = <String>{};
+    for (final r in rows) {
+      final split = SplitDetails.decode(r.splitDetails);
+      if (split == null) continue;
+      closed.addAll(split.closesGroups);
+      if (split.mode.isMoney && lineTicketIds.contains(r.id)) {
+        closed.add(split.groupId);
+      }
+    }
+    return [
+      for (final r in rows)
+        if (!lineTicketIds.contains(r.id))
+          if (SplitDetails.decode(r.splitDetails) case final split?)
+            if (split.mode.isMoney &&
+                split.closesGroups.isEmpty &&
+                !closed.contains(split.groupId))
+              r,
+    ];
+  }
+
   /// Settle one order fully as cash: insert a CASH ticket covering the
   /// remaining [due], mark every still-unpaid line PAID + attach the ticket
   /// (in one transaction), then move the order to [paidStatus]. Used by the
@@ -605,6 +723,7 @@ class OrderRepository {
     double due, {
     int? sessionId,
     required String paidStatus,
+
     /// Force the Z-day the ticket is accounted to, overriding the one implied
     /// by [sessionId].
     ///
@@ -621,16 +740,18 @@ class OrderRepository {
     late final int ticketId;
     late final String ticketNumStr;
     await _database.transaction(() async {
-      final existing = await (_database.select(_database.tickets)
-            ..where((t) => t.orderId.equals(orderId)))
-          .get();
+      final existing = await (_database.select(
+        _database.tickets,
+      )..where((t) => t.orderId.equals(orderId))).get();
       final maxNum = existing.isEmpty
           ? 0
           : existing
-              .map((t) => int.tryParse(t.num) ?? 0)
-              .reduce((a, b) => a > b ? a : b);
+                .map((t) => int.tryParse(t.num) ?? 0)
+                .reduce((a, b) => a > b ? a : b);
       ticketNumStr = (maxNum + 1).toString().padLeft(4, '0');
-      ticketId = await _database.into(_database.tickets).insert(
+      ticketId = await _database
+          .into(_database.tickets)
+          .insert(
             TicketsCompanion.insert(
               num: ticketNumStr,
               orderId: orderId,
@@ -643,16 +764,23 @@ class OrderRepository {
               date: Value(DateTime.now()),
             ),
           );
-      // Attach the ticket to every not-yet-paid line; leave already-PAID lines
-      // (partials) untouched.
-      await (_database.update(_database.orderProducts)
-            ..where((p) =>
-                p.orderId.equals(orderId) & p.state.isNotValue('PAID')))
-          .write(OrderProductsCompanion(
-        ticketId: Value(ticketId),
-        state: const Value('PAID'),
-        updatedAt: Value(DateTime.now()),
-      ));
+      // Attach the ticket to every not-yet-paid line; leave already-paid lines
+      // (partials) untouched. `state` is the kitchen's and stays as it is.
+      await (_database.update(_database.orderProducts)..where(
+            (p) =>
+                p.orderId.equals(orderId) &
+                p.ticketId.isNull() &
+                p.state.isNotValue('PAID'),
+          ))
+          .write(
+            OrderProductsCompanion(
+              ticketId: Value(ticketId),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+      if (_ref?.read(settingsProvider).paymentCompletesKitchen ?? false) {
+        await completeKitchenForTicket(_database, ticketId);
+      }
     });
 
     // Status change carries its own Z-report guard + logging + isSynced flip.
@@ -661,9 +789,9 @@ class OrderRepository {
     // Free the table this order occupied so the floor shows it empty once the
     // order is settled (mirrors the cashier payment-screen flow). Without this,
     // paying orders at session close left their tables stuck showing "busy".
-    final settled = await (_database.select(_database.orders)
-          ..where((t) => t.id.equals(orderId)))
-        .getSingleOrNull();
+    final settled = await (_database.select(
+      _database.orders,
+    )..where((t) => t.id.equals(orderId))).getSingleOrNull();
     if (settled?.tableId != null) {
       await clearTableOrder(settled!.tableId!);
     }
@@ -685,25 +813,34 @@ class OrderRepository {
   Future<void> _assertActiveSession(int? sessionId) async {
     if (sessionId == null) {
       throw Exception(
-          'Cannot save an order without an active cash session. Open a session first.');
+        'Cannot save an order without an active cash session. Open a session first.',
+      );
     }
-    final s = await (_database.select(_database.cashSessions)
-          ..where((t) => t.id.equals(sessionId)))
-        .getSingleOrNull();
+    final s = await (_database.select(
+      _database.cashSessions,
+    )..where((t) => t.id.equals(sessionId))).getSingleOrNull();
     if (s == null) {
       throw Exception(
-          'Cannot save an order: cash session #$sessionId no longer exists. Open a session first.');
+        'Cannot save an order: cash session #$sessionId no longer exists. Open a session first.',
+      );
     }
     if (s.status != 'active') {
       throw Exception(
-          'Cannot save an order: the cash session is "${s.status}". Resume or open an active session first.');
+        'Cannot save an order: the cash session is "${s.status}". Resume or open an active session first.',
+      );
     }
   }
 
-  Future<int> saveOrder(CurrentOrder order, int userId, {String status = 'PENDING', int? sessionId}) async {
-
+  Future<int> saveOrder(
+    CurrentOrder order,
+    int userId, {
+    String status = 'PENDING',
+    int? sessionId,
+  }) async {
     if (order.orderId != null) {
-      throw Exception("Order already has an order code, use updateOrder instead.");
+      throw Exception(
+        "Order already has an order code, use updateOrder instead.",
+      );
     }
 
     // Check if order has items
@@ -715,16 +852,20 @@ class OrderRepository {
     // (See [_assertActiveSession].)
     await _assertActiveSession(sessionId);
 
-    _logger.debug('saveOrder: ${order.items.length} items, first item: ${order.items.first.toJson()}');
+    _logger.debug(
+      'saveOrder: ${order.items.length} items, first item: ${order.items.first.toJson()}',
+    );
     // Generate order code — short uppercase alphanumeric (e.g. RGH7IE3H3LR),
     // consistent with the waiter-app path. Uniqueness is checked just below.
     final orderCode = order.orderCode ?? generateOrderCode();
 
     // check if the order with that code exists
-    final existingOrder = await (_database.select(_database.orders)..where((tbl) => tbl.code.equals(orderCode))).getSingleOrNull();
-      if (existingOrder != null) {
-        throw Exception("Order with code $orderCode already exists.");
-      }
+    final existingOrder = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.code.equals(orderCode))).getSingleOrNull();
+    if (existingOrder != null) {
+      throw Exception("Order with code $orderCode already exists.");
+    }
 
     // Derive z_day from THIS order's session (the sessionId being saved) so it
     // belongs to the correct Z-report even if created after midnight.
@@ -732,116 +873,140 @@ class OrderRepository {
     // Held carts stay ONHOLD; everything else enters the kitchen at the
     // configured default KDS state (the live kitchen flow runs on products —
     // the order header itself is born [status], typically COMPLETED).
-    final defaultKdsState = _ref?.read(settingsProvider).defaultKdsState ?? 'PENDING';
+    final defaultKdsState =
+        _ref?.read(settingsProvider).defaultKdsState ?? 'PENDING';
     final itemState = status == 'ONHOLD' ? 'ONHOLD' : defaultKdsState;
 
     // Order header + products + components are written atomically. Without a
     // transaction an app-kill mid-write could leave an order row with missing
     // or zero products (a half-written order).
     final orderId = await _database.transaction<int>(() async {
-      final newOrderId = await _database.into(_database.orders).insert(
-        OrdersCompanion.insert(
-          code: orderCode,
-          status: Value(status),
-          type: Value(order.type),
-          priority: Value(0),
-          note: Value(order.note),
-          discountReason: Value(order.discountReason),
-          address: Value(order.deliveryAddress),
-          tableId: Value(order.tableId),
-          source: Value('POS'),
-          sourceId: Value(null),
-          discountPercentage: Value(order.discountPercentage),
-          // Only persist a tip when the cashier actually entered one — keeps
-          // the column null for the "no tip recorded" case, matching the
-          // backend's `tip: null` semantic.
-          tip: order.tip > 0 ? Value(order.tip) : const Value.absent(),
-          // Absent, not Value(null), when no fee was recorded — an explicit 0
-          // has to survive as 0 ("free delivery"), so the test is on the
-          // nullable field itself and never on `> 0`.
-          deliveryFee: order.hasDeliveryFee
-              ? Value(order.deliveryFee)
-              : const Value.absent(),
-          createdBy: Value(userId),
-          takenBy: Value(userId),
-          waiterId: Value(order.waiterId),
-          persons: Value(order.numberOfPersons),
-          clientId: Value(order.customerId),
-          commercialId: Value(order.commercialId),
-          sessionId: Value(sessionId),
-          sessionOrderNo: Value(await _database.nextSessionOrderNo(sessionId,
-              mode: _ref?.read(settingsProvider).orderNumberResetMode ??
-                  'session')),
-          zDay: Value(zDay),
-          date: Value(DateTime.now()),
-          createdAt: Value(DateTime.now()),
-          updatedAt: Value(DateTime.now()),
-        ),
-      );
+      final newOrderId = await _database
+          .into(_database.orders)
+          .insert(
+            OrdersCompanion.insert(
+              code: orderCode,
+              status: Value(status),
+              type: Value(order.type),
+              priority: Value(0),
+              note: Value(order.note),
+              discountReason: Value(order.discountReason),
+              // Tags chosen on the basket go up once the order itself has.
+              tagIds: Value(encodeTagIds(order.tagIds)),
+              tagsSynced: Value(order.tagIds.isEmpty),
+              address: Value(order.deliveryAddress),
+              reference: Value(_blankToNull(order.reference)),
+              reservationCode: Value(order.reservationCode),
+              tableId: Value(order.tableId),
+              source: Value('POS'),
+              sourceId: Value(null),
+              discountPercentage: Value(order.discountPercentage),
+              // Only persist a tip when the cashier actually entered one — keeps
+              // the column null for the "no tip recorded" case, matching the
+              // backend's `tip: null` semantic.
+              tip: order.tip > 0 ? Value(order.tip) : const Value.absent(),
+              // Absent, not Value(null), when no fee was recorded — an explicit 0
+              // has to survive as 0 ("free delivery"), so the test is on the
+              // nullable field itself and never on `> 0`.
+              deliveryFee: order.hasDeliveryFee
+                  ? Value(order.deliveryFee)
+                  : const Value.absent(),
+              createdBy: Value(userId),
+              takenBy: Value(userId),
+              waiterId: Value(order.waiterId),
+              persons: Value(order.numberOfPersons),
+              clientId: Value(order.customerId),
+              commercialId: Value(order.commercialId),
+              sessionId: Value(sessionId),
+              sessionOrderNo: Value(
+                await _database.nextSessionOrderNo(
+                  sessionId,
+                  mode:
+                      _ref?.read(settingsProvider).orderNumberResetMode ??
+                      'session',
+                ),
+              ),
+              zDay: Value(zDay),
+              date: Value(DateTime.now()),
+              createdAt: Value(DateTime.now()),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
       final costResolver = ProductCostResolver(_database);
       for (final item in order.items) {
-        final orderProductId = await _database.into(_database.orderProducts).insert(
-          OrderProductsCompanion.insert(
-            orderId: newOrderId,
-            productId: item.productId,
-            variantId: Value(item.variantId),
-            quantity: Value(item.quantity),
-            unitaryPrice: item.finalPrice,
-            // Cost snapshotted at ring-up, so margin is fixed at the sale.
-            cost: await costResolver.resolveValue(
-                productId: item.productId, variantId: item.variantId),
-            serialId: Value(item.serialId),
-            unitaryDiscount: Value(item.discount),
-            manualDiscount: Value(item.manualDiscount),
-            note: Value(item.note),
-            unitaryTva: Value(item.tva),
-            state: Value(itemState),
-            zDay: Value(zDay),
-            planStartAt: Value(item.planStartAt),
-            planEndAt: Value(item.planEndAt),
-            planWaiterId: Value(item.planWaiterId),
-            planResourceId: Value(item.planResourceId),
-            kdsPrintedAt: Value(item.kdsPrintedAt),
-            kdsPrintedQuantity: Value(item.kdsPrintedQuantity),
-            // Carried through on every write: omitting it would let the
-            // column default (0.0) win on an update and make every line
-            // look unprinted to the additions-only order ticket.
-            orderTicketPrintedQuantity:
-                Value(item.orderTicketPrintedQuantity),
-            courseNo: Value(item.courseNo),
-          ),
-        );
+        final orderProductId = await _database
+            .into(_database.orderProducts)
+            .insert(
+              OrderProductsCompanion.insert(
+                orderId: newOrderId,
+                productId: item.productId,
+                variantId: Value(item.variantId),
+                quantity: Value(item.quantity),
+                unitaryPrice: item.finalPrice,
+                // Cost snapshotted at ring-up, so margin is fixed at the sale.
+                cost: await costResolver.resolveValue(
+                  productId: item.productId,
+                  variantId: item.variantId,
+                ),
+                serialId: Value(item.serialId),
+                unitaryDiscount: Value(item.discount),
+                manualDiscount: Value(item.manualDiscount),
+                note: Value(item.note),
+                unitaryTva: Value(item.tva),
+                state: Value(itemState),
+                zDay: Value(zDay),
+                kdsPrintedAt: Value(item.kdsPrintedAt),
+                kdsPrintedQuantity: Value(item.kdsPrintedQuantity),
+                // Carried through on every write: omitting it would let the
+                // column default (0.0) win on an update and make every line
+                // look unprinted to the additions-only order ticket.
+                orderTicketPrintedQuantity: Value(
+                  item.orderTicketPrintedQuantity,
+                ),
+                courseNo: Value(item.courseNo),
+              ),
+            );
 
         // Insert order product components
         for (final component in item.components) {
-          await _database.into(_database.orderProductComponents).insert(
-            OrderProductComponentsCompanion.insert(
-              componentId: component.componentId,
-              orderProductId: orderProductId,
-              quantity: Value(component.quantity),
-              price: Value(component.price),
-              isSpecial: Value(component.isSpecial),
-              // Snapshot the name as sold — a later rename or 86 must not
-              // rewrite what an already-printed ticket said.
-              name: Value(component.name),
-              removalCharge: Value(component.removalCharge),
-            ),
-          );
+          await _database
+              .into(_database.orderProductComponents)
+              .insert(
+                OrderProductComponentsCompanion.insert(
+                  componentId: component.componentId,
+                  orderProductId: orderProductId,
+                  quantity: Value(component.quantity),
+                  price: Value(component.price),
+                  isSpecial: Value(component.isSpecial),
+                  // Snapshot the name as sold — a later rename or 86 must not
+                  // rewrite what an already-printed ticket said.
+                  name: Value(component.name),
+                  removalCharge: Value(component.removalCharge),
+                ),
+              );
         }
       }
       return newOrderId;
     });
 
     // Emit event
-    _emitEvent(OrderInsertedEvent(
-      orderId: orderId,
-      orderCode: orderCode,
-      status: status,
-    ));
+    _emitEvent(
+      OrderInsertedEvent(
+        orderId: orderId,
+        orderCode: orderCode,
+        status: status,
+      ),
+    );
 
     // Log order creation
-    await _logService.logOrderCreated(orderId, 'Order created with code $orderCode, status $status');
-    _audit((log, uid, uname) => log.logOrderCreated(orderCode, userId: uid, username: uname));
+    await _logService.logOrderCreated(
+      orderId,
+      'Order created with code $orderCode, status $status',
+    );
+    _audit(
+      (log, uid, uname) =>
+          log.logOrderCreated(orderCode, userId: uid, username: uname),
+    );
     final reader = _ref;
     if (reader != null) {
       notifyDiscounts(reader.read, orderCode: orderCode, order: order);
@@ -852,14 +1017,20 @@ class OrderRepository {
     // wait on the network to get the till back. See [_detach].
     if (_syncService != null && _isOnlineCallback != null) {
       final isOnline = _isOnlineCallback!();
-      _logger.debug('Auto-sync on create: online=$isOnline orderCode=$orderCode');
+      _logger.debug(
+        'Auto-sync on create: online=$isOnline orderCode=$orderCode',
+      );
       if (isOnline) {
         _detach('Auto-sync of new order code=$orderCode', () async {
-          final orderSynced = await _syncService!
-              .syncSingleOrder(orderId, deadline: _promptPushDeadline);
+          final orderSynced = await _syncService!.syncSingleOrder(
+            orderId,
+            deadline: _promptPushDeadline,
+          );
           if (orderSynced) {
-            await _syncService!.syncTicketsForOrder(orderId,
-                deadline: _promptPushDeadline);
+            await _syncService!.syncTicketsForOrder(
+              orderId,
+              deadline: _promptPushDeadline,
+            );
           }
           _logger.info('Auto-synced new $status order code=$orderCode');
         });
@@ -869,7 +1040,11 @@ class OrderRepository {
     return orderId;
   }
 
-  Future<int> holdOrder(CurrentOrder order, int userId, {int? sessionId}) async {
+  Future<int> holdOrder(
+    CurrentOrder order,
+    int userId, {
+    int? sessionId,
+  }) async {
     // Check if order is already saved (has orderId)
     if (order.isSaved()) {
       // Check if there are new items added (items without IDs are new)
@@ -878,7 +1053,9 @@ class OrderRepository {
       if (hasNewItems) {
         // Cannot hold an order that has new unsaved items
         // User must press "Proceed" first to save those items
-        throw Exception('Cannot hold order with new items. Press Proceed first to save them.');
+        throw Exception(
+          'Cannot hold order with new items. Press Proceed first to save them.',
+        );
       }
 
       // No new items, just update status to ONHOLD
@@ -888,39 +1065,40 @@ class OrderRepository {
       // Update all unpaid items to ONHOLD state
       for (final item in order.items) {
         if (item.id != null && item.ticketId == null) {
-          await (_database.update(_database.orderProducts)
-            ..where((tbl) => tbl.id.equals(item.id!)))
-            .write(OrderProductsCompanion(
+          await (_database.update(
+            _database.orderProducts,
+          )..where((tbl) => tbl.id.equals(item.id!))).write(
+            OrderProductsCompanion(
               state: const Value('ONHOLD'),
               updatedAt: Value(DateTime.now()),
-            ));
+            ),
+          );
         }
       }
 
-      final savedOrder = await (_database.select(_database.orders)
-        ..where((tbl) => tbl.id.equals(orderId)))
-          .getSingle();
+      final savedOrder = await (_database.select(
+        _database.orders,
+      )..where((tbl) => tbl.id.equals(orderId))).getSingle();
 
       // Emit hold event
-      _emitEvent(OrderHeldEvent(
-        orderId: orderId,
-        orderCode: savedOrder.code,
-      ));
+      _emitEvent(OrderHeldEvent(orderId: orderId, orderCode: savedOrder.code));
       return order.orderId!;
     }
 
     // Save new order as ONHOLD — must still belong to an active session
     // (saveOrder enforces this via _assertActiveSession).
-    final orderId = await saveOrder(order, userId, status: 'ONHOLD', sessionId: sessionId);
-    final savedOrder = await (_database.select(_database.orders)
-      ..where((tbl) => tbl.id.equals(orderId)))
-        .getSingle();
+    final orderId = await saveOrder(
+      order,
+      userId,
+      status: 'ONHOLD',
+      sessionId: sessionId,
+    );
+    final savedOrder = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).getSingle();
 
     // Emit hold event
-    _emitEvent(OrderHeldEvent(
-      orderId: orderId,
-      orderCode: savedOrder.code,
-    ));
+    _emitEvent(OrderHeldEvent(orderId: orderId, orderCode: savedOrder.code));
 
     return orderId;
   }
@@ -937,13 +1115,16 @@ class OrderRepository {
   /// stick. Doing it in the repository also means the guarantee does not depend
   /// on the panel having disabled the right buttons: even a cart whose items
   /// were somehow altered cannot write a line through this path.
-  Future<void> updateOrder(CurrentOrder order,
-      {bool queueSyncOperation = true, bool headerOnly = false}) async {
+  Future<void> updateOrder(
+    CurrentOrder order, {
+    bool queueSyncOperation = true,
+    bool headerOnly = false,
+  }) async {
     int orderId = order.orderId!;
 
-    final existingOrder = await (_database.select(_database.orders)
-      ..where((tbl) => tbl.id.equals(orderId)))
-      .getSingleOrNull();
+    final existingOrder = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
 
     // An order left over from a closed shift is not frozen — it is a table
     // with people at it. Move it onto the open session and today's Z-day
@@ -958,11 +1139,12 @@ class OrderRepository {
         final session = existingOrder.sessionId == null
             ? null
             : await (_database.select(_database.cashSessions)
-                  ..where((tbl) => tbl.id.equals(existingOrder.sessionId!)))
-                .getSingleOrNull();
+                    ..where((tbl) => tbl.id.equals(existingOrder.sessionId!)))
+                  .getSingleOrNull();
         if (session?.status == 'ended') {
           throw Exception(
-              'Cannot modify order from a closed (Z-report) session');
+            'Cannot modify order from a closed (Z-report) session',
+          );
         }
       }
     }
@@ -977,17 +1159,24 @@ class OrderRepository {
     // Last resort resolves through the order's OWN session, not the clock: an
     // order with no z_day yet still knows which shift it belongs to, and that
     // shift is the answer even when the save happens after midnight.
-    final orderZDay = rehomedZDay ??
+    final orderZDay =
+        rehomedZDay ??
         existingOrder?.zDay ??
         await _zDayForSessionId(existingOrder?.sessionId);
 
     // Count unpaid items to be updated
-    final unpaidItems = order.items.where((item) => item.ticketId == null).toList();
-    _logger.debug('updateOrder: total items=${order.items.length}, unpaid items=${unpaidItems.length}');
-    
+    final unpaidItems = order.items
+        .where((item) => item.ticketId == null)
+        .toList();
+    _logger.debug(
+      'updateOrder: total items=${order.items.length}, unpaid items=${unpaidItems.length}',
+    );
+
     // If there are no unpaid items and no items at all, something is wrong
     if (order.items.isEmpty && unpaidItems.isEmpty) {
-      _logger.warning('updateOrder called with zero items - this should not happen');
+      _logger.warning(
+        'updateOrder called with zero items - this should not happen',
+      );
     }
 
     // Snapshot of the existing UNPAID lines (filled inside the transaction
@@ -1019,100 +1208,129 @@ class OrderRepository {
     // committed: a cancellation ticket must never be the thing that rolls
     // back the edit it is announcing.
     final cancelledForKitchen = <OrderItem>[];
+    // The cart lines this save actually wrote. A line removed or paid since
+    // the cart was read is not among them, and must not count as surviving.
+    final written = <OrderItem>[];
 
-    // Header update + delete-unpaid + re-insert run atomically. Without a
-    // transaction, a crash after the delete but before the re-insert would
-    // permanently lose the unpaid items.
+    // Header and line writes commit together: a crash part-way must not leave
+    // the header saying one thing and the lines another.
     await _database.transaction(() async {
       // Update order details
-      await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(OrdersCompanion(
-        tableId: Value(order.tableId),
-        clientId: Value(order.customerId),
-        commercialId: Value(order.commercialId),
-        waiterId: Value(order.waiterId),
-        discountPercentage: Value(order.discountPercentage),
-        // Tip — passes `null` when cleared (cashier picked "No tip" on the
-        // dialog), so the server's clear-semantic round-trips correctly via
-        // the normal order update path.
-        tip: Value(order.tip > 0 ? order.tip : null),
-        // Written unconditionally so clearing the fee round-trips: `null`
-        // here means the cashier removed it, `0.0` means free delivery.
-        deliveryFee: Value(order.deliveryFee),
-        persons: Value(order.numberOfPersons),
-        type: Value(order.type),
-        note: Value(order.note),
-        discountReason: Value(order.discountReason),
-        address: Value(order.deliveryAddress),
-        // The header's z_day was computed above but only ever written onto the
-        // lines, so an order that arrived without one (a delivery-queue order,
-        // a legacy row) kept a null header z_day while its lines carried the
-        // right day — and the header is what the order push sends. Written
-        // only when it actually moves: re-homing out of a closed shift, or
-        // filling in a null. An order already sitting on its own day is left
-        // exactly where it is.
-        zDay: rehomedZDay != null || existingOrder?.zDay == null
-            ? Value(orderZDay)
-            : const Value<DateTime?>.absent(),
-        updatedAt: Value(DateTime.now()),
+      await (_database.update(
+        _database.orders,
+      )..where((tbl) => tbl.id.equals(orderId))).write(
+        OrdersCompanion(
+          tableId: Value(order.tableId),
+          clientId: Value(order.customerId),
+          commercialId: Value(order.commercialId),
+          waiterId: Value(order.waiterId),
+          discountPercentage: Value(order.discountPercentage),
+          // Tip — passes `null` when cleared (cashier picked "No tip" on the
+          // dialog), so the server's clear-semantic round-trips correctly via
+          // the normal order update path.
+          tip: Value(order.tip > 0 ? order.tip : null),
+          // Written unconditionally so clearing the fee round-trips: `null`
+          // here means the cashier removed it, `0.0` means free delivery.
+          deliveryFee: Value(order.deliveryFee),
+          persons: Value(order.numberOfPersons),
+          type: Value(order.type),
+          note: Value(order.note),
+          discountReason: Value(order.discountReason),
+          address: Value(order.deliveryAddress),
+          reference: Value(_blankToNull(order.reference)),
+          // Set once by conversion; an edit never clears it (omitting it from
+          // a push never unlinks either).
+          reservationCode: order.reservationCode == null
+              ? const Value.absent()
+              : Value(order.reservationCode),
+          // The header's z_day was computed above but only ever written onto the
+          // lines, so an order that arrived without one (a delivery-queue order,
+          // a legacy row) kept a null header z_day while its lines carried the
+          // right day — and the header is what the order push sends. Written
+          // only when it actually moves: re-homing out of a closed shift, or
+          // filling in a null. An order already sitting on its own day is left
+          // exactly where it is.
+          zDay: rehomedZDay != null || existingOrder?.zDay == null
+              ? Value(orderZDay)
+              : const Value<DateTime?>.absent(),
+          updatedAt: Value(DateTime.now()),
 
-        // Mark as not synced if changes were made to a previously synced order
-        isSynced: Value(wasAlreadySynced ? false : existingOrder?.isSynced ?? false),
-      ));
+          // Mark as not synced if changes were made to a previously synced order
+          isSynced: Value(
+            wasAlreadySynced ? false : existingOrder?.isSynced ?? false,
+          ),
+        ),
+      );
 
       // Header written, lines untouched — see [headerOnly].
       if (headerOnly) return;
 
-      final allUnpaidRows = await (_database.select(_database.orderProducts)
-            ..where((t) => t.orderId.equals(orderId) & t.ticketId.isNull()))
-          .get();
+      final allUnpaidRows = await (_database.select(
+        _database.orderProducts,
+      )..where((t) => t.orderId.equals(orderId) & t.ticketId.isNull())).get();
 
       // Lines this cart never saw: written into the order AFTER it was loaded,
       // by something that is not this screen — the waiter app's add-product
       // route inserts straight into `order_products` over the LAN, and the
       // cashier's panel is never told.
       //
-      // The save below wipes every unpaid row and re-inserts `order.items`.
-      // That is correct for a line the cart loaded and the cashier then
-      // dropped (a genuine removal), and catastrophic for one the cart never
-      // held: it cannot be asserting the removal of something it does not know
-      // exists. Both look the same by id — absent from `order.items` — so the
-      // load watermark breaks the tie. Without this, every waiter item added
-      // while the cashier had the table open vanished on the next save, after
-      // the kitchen had already cooked it.
-      //
-      // No watermark (a cart that was never loaded from the database) means no
-      // foreign rows, which is exactly the old behaviour.
+      // A line absent from `order.items` is either one the cart loaded and the
+      // cashier then dropped (a genuine removal) or one the cart never held,
+      // which it cannot be asserting the removal of. [CurrentOrder.loadedLineIds]
+      // tells them apart exactly. Carts without it fall back to the load
+      // timestamp, and carts with neither (never loaded from the database)
+      // have no foreign rows at all, which is the oldest behaviour.
       final cartRowIds = {
         for (final item in order.items)
           if (item.ticketId == null && item.id != null) item.id!,
       };
+      final loadedIds = order.loadedLineIds;
       final loadedAt = order.loadedAt;
       final foreignRows = <OrderProduct>[];
       final existingUnpaidRows = <OrderProduct>[];
       for (final row in allUnpaidRows) {
-        // `>=`, not `>`: Windows hands out the same `DateTime.now()` for calls
-        // milliseconds apart (measured: two ticks in five collide), so a
-        // strict comparison threw away the line it was written to save. A row
-        // the cart genuinely loaded existed before the read that loaded it and
-        // is excluded by id above, so the tie can only be a row written in the
-        // same tick — and keeping food nobody cancelled is the safe way to be
-        // wrong.
-        final isForeign = loadedAt != null &&
-            !cartRowIds.contains(row.id) &&
-            !row.updatedAt.isBefore(loadedAt);
+        final bool isForeign;
+        if (cartRowIds.contains(row.id)) {
+          isForeign = false;
+        } else if (loadedIds != null) {
+          isForeign = !loadedIds.contains(row.id);
+        } else {
+          // `>=`, not `>`: Windows hands out the same `DateTime.now()` for
+          // calls milliseconds apart, so a strict comparison threw away the
+          // line it was written to save.
+          isForeign = loadedAt != null && !row.updatedAt.isBefore(loadedAt);
+        }
         (isForeign ? foreignRows : existingUnpaidRows).add(row);
       }
       final foreignIds = [for (final row in foreignRows) row.id];
       if (foreignIds.isNotEmpty) {
         _logger.info(
-            'updateOrder: preserving ${foreignIds.length} line(s) added to '
-            'order $orderId since the cart was loaded');
+          'updateOrder: preserving ${foreignIds.length} line(s) added to '
+          'order $orderId since the cart was loaded',
+        );
+      }
+
+      // The tombstone's price is what one unit was billed at — options in,
+      // manual discount out — so the Z's cancelled-lines row reads what the
+      // customer would have paid, not the bare catalogue price.
+      final removedCompPerUnit = <int, double>{};
+      if (existingUnpaidRows.isNotEmpty) {
+        final comps = await (_database.select(_database.orderProductComponents)
+              ..where((c) => c.orderProductId
+                  .isIn(existingUnpaidRows.map((r) => r.id).toList())))
+            .get();
+        for (final c in comps) {
+          removedCompPerUnit[c.orderProductId] =
+              (removedCompPerUnit[c.orderProductId] ?? 0) + c.price * c.quantity;
+        }
       }
 
       for (final row in existingUnpaidRows) {
         final key = '${row.productId}:${row.variantId ?? -1}';
         removedSnapshot[key] = (removedSnapshot[key] ?? 0) + row.quantity;
-        removedPrices[key] = row.unitaryPrice;
+        removedPrices[key] = row.unitaryPrice +
+            (removedCompPerUnit[row.id] ?? 0) -
+            row.manualDiscount;
         previousLineDiscount[key] = row.manualDiscount;
         // What the KITCHEN was told, which is a different question from what
         // the bill said: a line can be rung up and pulled before it is ever
@@ -1122,108 +1340,235 @@ class OrderRepository {
         }
       }
 
-      // The payment screen's draft ticket division points at order_products
-      // BY ROW ID, and every unpaid row is about to be deleted and re-inserted
-      // with a fresh id. Take the claims out first, then put them back against
-      // the new ids at the end of the transaction — otherwise every update
-      // silently collapsed a divided bill back into one ticket, because
-      // `reconstructUnpaidTickets` drops a claim naming a row that is gone.
-      final draftClaims = await (_database.select(_database.ticketDraftSplits)
-            ..where((t) => t.orderId.equals(orderId)))
-          .get();
-      if (draftClaims.isNotEmpty) {
-        await (_database.delete(_database.ticketDraftSplits)
-              ..where((t) => t.orderId.equals(orderId)))
-            .go();
-      }
-      // Old row id -> the id that row's line is re-inserted under. A line the
-      // cashier only just added has no old id and therefore no claim, which
-      // is correct: it joins the first ticket as a leftover.
-      final rowIdRemap = <int, int>{};
+      // Cart lines whose row is no longer an unpaid line of this order: it was
+      // removed (by the waiter, another screen, a server deletion) or paid
+      // since this cart was read. Re-inserting them is what brought a line a
+      // waiter had pulled back onto the bill, so only a line that now belongs
+      // to ANOTHER order is still written — that is a line being moved here.
+      final rowById = {for (final r in existingUnpaidRows) r.id: r};
+      final goneIds = [
+        for (final item in order.items)
+          if (item.ticketId == null &&
+              item.id != null &&
+              !rowById.containsKey(item.id))
+            item.id!,
+      ];
+      final goneRows = goneIds.isEmpty
+          ? const <OrderProduct>[]
+          : await (_database.select(
+              _database.orderProducts,
+            )..where((t) => t.id.isIn(goneIds))).get();
+      final goneById = {for (final r in goneRows) r.id: r};
 
-      // Delete existing unpaid order products (keep paid ones, and keep the
-      // lines added behind this cart's back — see `foreignRows` above).
-      final wipe = _database.delete(_database.orderProducts)
-        ..where((tbl) => tbl.orderId.equals(orderId))
-        ..where((tbl) => tbl.ticketId.isNull());
-      if (foreignIds.isNotEmpty) {
-        wipe.where((tbl) => tbl.id.isNotIn(foreignIds));
-      }
-      await wipe.go();
-
-      // Insert new order products
+      // Lines are updated IN PLACE, never deleted and re-inserted. A line
+      // keeps its id across saves, so a cart that was not reloaded after an
+      // earlier save (the waiter button, a held cart resumed later) still
+      // points at the right rows. With delete-and-reinsert its ids went stale,
+      // the rows it had just written looked like somebody else's, and the next
+      // save kept them AND wrote the cart again — every line doubled.
       final costResolver = ProductCostResolver(_database);
+      final now = DateTime.now();
+      final updatedIds = <int>{};
+      var skippedGone = 0;
+
+      Future<void> writeComponents(int orderProductId, OrderItem item) async {
+        for (final component in item.components) {
+          await _database
+              .into(_database.orderProductComponents)
+              .insert(
+                OrderProductComponentsCompanion.insert(
+                  componentId: component.componentId,
+                  orderProductId: orderProductId,
+                  quantity: Value(component.quantity),
+                  price: Value(component.price),
+                  isSpecial: Value(component.isSpecial),
+                  // Snapshot the name as sold — a later rename or 86 must not
+                  // rewrite what an already-printed ticket said.
+                  name: Value(component.name),
+                  removalCharge: Value(component.removalCharge),
+                ),
+              );
+        }
+      }
+
       for (final item in order.items) {
         if (item.ticketId != null) {
           // Skip items that are already ticketed
-          _logger.debug("Skipping ticketed item");
           continue;
         }
-        final orderProductId = await _database.into(_database.orderProducts).insert(
-          OrderProductsCompanion.insert(
-            orderId: orderId,
-            productId: item.productId,
-            variantId: Value(item.variantId),
-            quantity: Value(item.quantity),
-            unitaryPrice: item.finalPrice,
-            cost: await costResolver.resolveValue(
-                productId: item.productId, variantId: item.variantId),
-            serialId: Value(item.serialId),
-            unitaryDiscount: Value(item.discount),
-            manualDiscount: Value(item.manualDiscount),
-            note: Value(item.note),
-            unitaryTva: Value(item.tva),
-            state: Value('PENDING'),
-            // The row is being re-created, not re-sold: hand back the id the
-            // backend knows it by, or the next push invents a second line.
-            serverId: Value(item.serverId),
-            zDay: Value(orderZDay),
-            planStartAt: Value(item.planStartAt),
-            planEndAt: Value(item.planEndAt),
-            planWaiterId: Value(item.planWaiterId),
-            planResourceId: Value(item.planResourceId),
-            kdsPrintedAt: Value(item.kdsPrintedAt),
-            kdsPrintedQuantity: Value(item.kdsPrintedQuantity),
-            // Carried through on every write: omitting it would let the
-            // column default (0.0) win on an update and make every line
-            // look unprinted to the additions-only order ticket.
-            orderTicketPrintedQuantity:
-                Value(item.orderTicketPrintedQuantity),
-            courseNo: Value(item.courseNo),
-          ),
+        final before = item.id == null ? null : rowById[item.id];
+
+        if (before == null && item.id != null) {
+          final gone = goneById[item.id];
+          if (gone == null || gone.orderId == orderId) {
+            skippedGone++;
+            continue;
+          }
+        }
+
+        final kitchen = carriedKitchenProgress(
+          before: before,
+          quantity: item.quantity,
+          now: now,
+          orderCreatedAt: existingOrder?.createdAt,
         );
 
-        if (item.id != null) rowIdRemap[item.id!] = orderProductId;
-
-        // Insert order product components
-        for (final component in item.components) {
-          await _database.into(_database.orderProductComponents).insert(
-            OrderProductComponentsCompanion.insert(
-              componentId: component.componentId,
-              orderProductId: orderProductId,
-              quantity: Value(component.quantity),
-              price: Value(component.price),
-              isSpecial: Value(component.isSpecial),
-              // Snapshot the name as sold — a later rename or 86 must not
-              // rewrite what an already-printed ticket said.
-              name: Value(component.name),
-              removalCharge: Value(component.removalCharge),
+        if (before != null) {
+          final sameGoods =
+              before.productId == item.productId &&
+              before.variantId == item.variantId;
+          await (_database.update(
+            _database.orderProducts,
+          )..where((t) => t.id.equals(before.id))).write(
+            OrderProductsCompanion(
+              productId: Value(item.productId),
+              variantId: Value(item.variantId),
+              quantity: Value(item.quantity),
+              unitaryPrice: Value(item.finalPrice),
+              // Cost was snapshotted at ring-up; only a change of goods resets it.
+              cost: sameGoods && before.cost != null
+                  ? const Value.absent()
+                  : await costResolver.resolveValue(
+                      productId: item.productId,
+                      variantId: item.variantId,
+                    ),
+              serialId: Value(item.serialId),
+              unitaryDiscount: Value(item.discount),
+              manualDiscount: Value(item.manualDiscount),
+              note: Value(item.note),
+              unitaryTva: Value(item.tva),
+              // The kitchen's work on the line stands: adding a drink to a
+              // table must not send every dish back to PENDING on the KDS.
+              state: Value(kitchen.state),
+              preparingAt: Value(kitchen.preparingAt),
+              readyAt: Value(kitchen.readyAt),
+              servedAt: Value(kitchen.servedAt),
+              kitchenAt: Value(kitchen.kitchenAt),
+              zDay: Value(orderZDay),
+              // The row's own print stamps win over a cart that read them
+              // before the print landed — writing the cart's older zeros back
+              // made the kitchen get the whole order again next round. A
+              // quantity cut is clamped below, with its cancellation ticket.
+              kdsPrintedAt: Value(item.kdsPrintedAt ?? before.kdsPrintedAt),
+              kdsPrintedQuantity: Value(
+                item.kdsPrintedQuantity > before.kdsPrintedQuantity
+                    ? item.kdsPrintedQuantity
+                    : before.kdsPrintedQuantity,
+              ),
+              orderTicketPrintedQuantity: Value(
+                item.orderTicketPrintedQuantity >
+                        before.orderTicketPrintedQuantity
+                    ? item.orderTicketPrintedQuantity
+                    : before.orderTicketPrintedQuantity,
+              ),
+              courseNo: Value(item.courseNo),
+              // A quantity cut is a cancellation of those units: a running total
+              // on the live line, sent with the v2 push. [quantity] stays the
+              // sold amount, so no total reads this.
+              canceledQuantity: item.quantity < before.quantity - 1e-9
+                  ? Value(
+                      before.canceledQuantity +
+                          (before.quantity - item.quantity),
+                    )
+                  : const Value.absent(),
+              canceledAt: item.quantity < before.quantity - 1e-9
+                  ? Value(now)
+                  : const Value.absent(),
+              canceledBy: item.quantity < before.quantity - 1e-9
+                  ? Value(_ref?.read(currentUserProvider)?.id)
+                  : const Value.absent(),
+              updatedAt: Value(now),
             ),
           );
+          await (_database.delete(
+            _database.orderProductComponents,
+          )..where((c) => c.orderProductId.equals(before.id))).go();
+          await writeComponents(before.id, item);
+          updatedIds.add(before.id);
+          written.add(item);
+          continue;
         }
+
+        final orderProductId = await _database
+            .into(_database.orderProducts)
+            .insert(
+              OrderProductsCompanion.insert(
+                orderId: orderId,
+                productId: item.productId,
+                variantId: Value(item.variantId),
+                quantity: Value(item.quantity),
+                unitaryPrice: item.finalPrice,
+                cost: await costResolver.resolveValue(
+                  productId: item.productId,
+                  variantId: item.variantId,
+                ),
+                serialId: Value(item.serialId),
+                unitaryDiscount: Value(item.discount),
+                manualDiscount: Value(item.manualDiscount),
+                note: Value(item.note),
+                unitaryTva: Value(item.tva),
+                state: Value(kitchen.state),
+                preparingAt: Value(kitchen.preparingAt),
+                readyAt: Value(kitchen.readyAt),
+                servedAt: Value(kitchen.servedAt),
+                kitchenAt: Value(kitchen.kitchenAt),
+                zDay: Value(orderZDay),
+                kdsPrintedAt: Value(item.kdsPrintedAt),
+                kdsPrintedQuantity: Value(item.kdsPrintedQuantity),
+                // Carried through on every write: omitting it would let the
+                // column default (0.0) win and make the line look unprinted to
+                // the additions-only order ticket.
+                orderTicketPrintedQuantity: Value(
+                  item.orderTicketPrintedQuantity,
+                ),
+                courseNo: Value(item.courseNo),
+              ),
+            );
+        await writeComponents(orderProductId, item);
+        written.add(item);
+      }
+      if (skippedGone > 0) {
+        _logger.info(
+          'updateOrder: $skippedGone line(s) of order $orderId were '
+          'removed or paid since the cart was loaded — not written back',
+        );
+      }
+
+      // Lines the cart loaded and the cashier dropped. Their draft-division
+      // claims go with them; every other claim still points at a live row.
+      final removedIds = [
+        for (final row in existingUnpaidRows)
+          if (!updatedIds.contains(row.id)) row.id,
+      ];
+      if (removedIds.isNotEmpty) {
+        // Kept for the v2 push before the row goes: a line missing from the
+        // full order is an untracked deletion on the server, a cancelled one
+        // is a cancellation.
+        final by = _ref?.read(currentUserProvider)?.id;
+        for (final row in existingUnpaidRows) {
+          if (removedIds.contains(row.id)) {
+            await keepCancelledLine(_database, row, by: by, at: now);
+          }
+        }
+        await (_database.delete(
+          _database.orderProductComponents,
+        )..where((c) => c.orderProductId.isIn(removedIds))).go();
+        await (_database.delete(
+          _database.ticketDraftSplits,
+        )..where((t) => t.orderProductId.isIn(removedIds))).go();
+        await (_database.delete(
+          _database.orderProducts,
+        )..where((t) => t.id.isIn(removedIds))).go();
       }
 
       // What the kitchen is now cooking for nothing.
       //
-      // Deliberately computed per product+variant rather than per row: the
-      // update deletes and re-inserts every unpaid row, so row identity is
-      // gone by here, and "two of the three steaks were pulled" is a fact
-      // about the product, not about a row id.
+      // Computed per product+variant rather than per row: "two of the three
+      // steaks were pulled" is a fact about the product, not about a row id.
       if (kitchenSent.isNotEmpty) {
         final survivingByKey = <String, double>{};
         final itemByKey = <String, OrderItem>{};
-        for (final item in order.items) {
-          if (item.ticketId != null) continue;
+        for (final item in written) {
           final key = '${item.productId}:${item.variantId ?? -1}';
           survivingByKey[key] = (survivingByKey[key] ?? 0) + item.quantity;
           itemByKey.putIfAbsent(key, () => item);
@@ -1259,38 +1604,25 @@ class OrderRepository {
           final productId = int.parse(parts[0]);
           final variantId = int.parse(parts[1]);
           final clamp = _database.update(_database.orderProducts)
-            ..where((t) =>
-                t.orderId.equals(orderId) &
-                t.ticketId.isNull() &
-                t.productId.equals(productId) &
-                (variantId == -1
-                    ? t.variantId.isNull()
-                    : t.variantId.equals(variantId)) &
-                t.kdsPrintedQuantity.isBiggerThanValue(remaining));
+            ..where(
+              (t) =>
+                  t.orderId.equals(orderId) &
+                  t.ticketId.isNull() &
+                  t.productId.equals(productId) &
+                  (variantId == -1
+                      ? t.variantId.isNull()
+                      : t.variantId.equals(variantId)) &
+                  t.kdsPrintedQuantity.isBiggerThanValue(remaining),
+            );
           // This cart never held the preserved lines, so it has no business
           // rewriting what the kitchen was told about them.
           if (foreignIds.isNotEmpty) {
             clamp.where((t) => t.id.isNotIn(foreignIds));
           }
-          await clamp.write(OrderProductsCompanion(
-            kdsPrintedQuantity: Value(remaining),
-          ));
+          await clamp.write(
+            OrderProductsCompanion(kdsPrintedQuantity: Value(remaining)),
+          );
         }
-      }
-
-      // Re-file the draft division against the new row ids. A claim whose row
-      // did not come back (the cashier deleted that line) is dropped with it.
-      for (final claim in draftClaims) {
-        final newRowId = rowIdRemap[claim.orderProductId];
-        if (newRowId == null) continue;
-        await _database.into(_database.ticketDraftSplits).insert(
-              TicketDraftSplitsCompanion.insert(
-                orderId: orderId,
-                orderProductId: newRowId,
-                draftIndex: claim.draftIndex,
-                quantity: claim.quantity,
-              ),
-            );
       }
     });
 
@@ -1300,22 +1632,30 @@ class OrderRepository {
       if (_syncService != null && _isOnlineCallback != null) {
         final isOnline = _isOnlineCallback!();
         if (isOnline) {
-          _logger.debug('Auto-sync on update: online=$isOnline orderCode=$orderCode');
+          _logger.debug(
+            'Auto-sync on update: online=$isOnline orderCode=$orderCode',
+          );
           // Detached — see [_detach]. The queue-on-failure fallback travels
           // INSIDE the detached job because it is gated on whether the push
           // succeeded; leaving it behind would drop the fallback entirely.
           _detach('Re-sync of updated order code=$orderCode', () async {
             try {
               // Re-sync the entire order with updated products
-              final orderSynced = await _syncService!
-                  .syncSingleOrder(orderId, deadline: _promptPushDeadline);
+              final orderSynced = await _syncService!.syncSingleOrder(
+                orderId,
+                deadline: _promptPushDeadline,
+              );
               if (orderSynced) {
-                await _syncService!.syncTicketsForOrder(orderId,
-                    deadline: _promptPushDeadline);
+                await _syncService!.syncTicketsForOrder(
+                  orderId,
+                  deadline: _promptPushDeadline,
+                );
               }
               _logger.info('Re-synced updated order code=$orderCode');
             } catch (e) {
-              _logger.error('Failed to re-sync updated order, queuing update: $e');
+              _logger.error(
+                'Failed to re-sync updated order, queuing update: $e',
+              );
               // Queue update operation as fallback
               await _queueOrderUpdate(orderId, orderCode, order);
             }
@@ -1343,14 +1683,19 @@ class OrderRepository {
 
     // Emit event
     _emitEvent(OrderUpdatedEvent(orderId: orderId));
-    _emitEvent(OrderItemsChangedEvent(
-      orderId: orderId,
-      itemCount: order.items.length,
-    ));
+    _emitEvent(
+      OrderItemsChangedEvent(orderId: orderId, itemCount: order.items.length),
+    );
 
     // Log order update
-    await _logService.logOrderUpdated(orderId, 'Order updated: code=$orderCode');
-    _audit((log, uid, uname) => log.logOrderUpdated(orderCode, userId: uid, username: uname));
+    await _logService.logOrderUpdated(
+      orderId,
+      'Order updated: code=$orderCode',
+    );
+    _audit(
+      (log, uid, uname) =>
+          log.logOrderUpdated(orderCode, userId: uid, username: uname),
+    );
     final reader = _ref;
     if (reader != null) {
       notifyDiscounts(
@@ -1365,8 +1710,7 @@ class OrderRepository {
     // Subtract the new state from the snapshot — anything left is what got
     // removed (whole line dropped OR quantity reduced). We do this AFTER the
     // re-insert so the snapshot map is still untouched by intermediate state.
-    for (final item in order.items) {
-      if (item.ticketId != null) continue; // paid lines aren't in the snapshot
+    for (final item in written) {
       final key = '${item.productId}:${item.variantId ?? -1}';
       final remaining = (removedSnapshot[key] ?? 0) - item.quantity;
       if (remaining <= 0) {
@@ -1376,8 +1720,13 @@ class OrderRepository {
       }
     }
     if (removedSnapshot.isNotEmpty) {
-      await _logRemovedItems(orderId, orderCode, removedSnapshot,
-          prices: removedPrices, kitchenSent: kitchenSent);
+      await _logRemovedItems(
+        orderId,
+        orderCode,
+        removedSnapshot,
+        prices: removedPrices,
+        kitchenSent: kitchenSent,
+      );
     }
   }
 
@@ -1385,9 +1734,12 @@ class OrderRepository {
   /// writes both the technical (`OrderLogs`) and audit (`ActivityLogs`) lines.
   /// Wrapped in try/catch — a logging failure must never abort an order save.
   Future<void> _logRemovedItems(
-      int orderId, String orderCode, Map<String, double> removed,
-      {Map<String, double> prices = const {},
-      Map<String, double> kitchenSent = const {}}) async {
+    int orderId,
+    String orderCode,
+    Map<String, double> removed, {
+    Map<String, double> prices = const {},
+    Map<String, double> kitchenSent = const {},
+  }) async {
     try {
       final productIds = <int>{};
       final variantIds = <int>{};
@@ -1400,18 +1752,18 @@ class OrderRepository {
 
       final productsById = <int, Product>{};
       if (productIds.isNotEmpty) {
-        final rows = await (_database.select(_database.products)
-              ..where((t) => t.id.isIn(productIds)))
-            .get();
+        final rows = await (_database.select(
+          _database.products,
+        )..where((t) => t.id.isIn(productIds))).get();
         for (final p in rows) {
           productsById[p.id] = p;
         }
       }
       final variantsById = <int, ProductVariant>{};
       if (variantIds.isNotEmpty) {
-        final rows = await (_database.select(_database.productVariants)
-              ..where((t) => t.id.isIn(variantIds)))
-            .get();
+        final rows = await (_database.select(
+          _database.productVariants,
+        )..where((t) => t.id.isIn(variantIds))).get();
         for (final v in rows) {
           variantsById[v.id] = v;
         }
@@ -1424,21 +1776,28 @@ class OrderRepository {
         final vid = int.parse(split[1]);
         final productName = productsById[pid]?.name ?? 'item #$pid';
         final variantName = vid != -1 ? variantsById[vid]?.name : null;
-        final label =
-            variantName != null ? '$productName ($variantName)' : productName;
+        final label = variantName != null
+            ? '$productName ($variantName)'
+            : productName;
         parts.add('$qty× $label');
       });
       final summary = parts.join(', ');
 
       await _logService.logOrderUpdated(orderId, 'Items removed: $summary');
-      _audit((log, uid, uname) =>
-          log.logOrderItemsRemoved(orderCode, summary, userId: uid, username: uname));
+      _audit(
+        (log, uid, uname) => log.logOrderItemsRemoved(
+          orderCode,
+          summary,
+          userId: uid,
+          username: uname,
+        ),
+      );
 
       // Structured tombstones for the Z. The sentence above is for a human to
       // read; these are what the report totals.
-      final orderRow = await (_database.select(_database.orders)
-            ..where((o) => o.id.equals(orderId)))
-          .getSingleOrNull();
+      final orderRow = await (_database.select(
+        _database.orders,
+      )..where((o) => o.id.equals(orderId))).getSingleOrNull();
       final actor = _ref?.read(currentUserProvider);
       await recordRemovedItems([
         for (final entry in removed.entries)
@@ -1456,8 +1815,7 @@ class OrderRepository {
               productId: pid,
               variantId: Value(vid == -1 ? null : vid),
               productName: productName,
-              variantName:
-                  Value(vid != -1 ? variantsById[vid]?.name : null),
+              variantName: Value(vid != -1 ? variantsById[vid]?.name : null),
               quantity: entry.value,
               unitaryPrice: Value(price),
               amount: Value(entry.value * price),
@@ -1470,7 +1828,9 @@ class OrderRepository {
       ]);
 
       // ignore: unawaited_futures
-      _ref?.read(waiterKitchenEventServiceProvider).linesCanceled(
+      _ref
+          ?.read(waiterKitchenEventServiceProvider)
+          .linesCanceled(
             orderId: orderId,
             lines: [
               for (final entry in removed.entries)
@@ -1479,8 +1839,9 @@ class OrderRepository {
                   final pid = int.parse(split[0]);
                   final vid = int.parse(split[1]);
                   final productName = productsById[pid]?.name ?? 'item #$pid';
-                  final variantName =
-                      vid != -1 ? variantsById[vid]?.name : null;
+                  final variantName = vid != -1
+                      ? variantsById[vid]?.name
+                      : null;
                   return CanceledLine(
                     name: variantName != null
                         ? '$productName ($variantName)'
@@ -1498,13 +1859,14 @@ class OrderRepository {
   /// Persist annulment tombstones. Best-effort by design: a failure here must
   /// never abort the save that produced it, and a missing Z line is a smaller
   /// problem than a lost order edit.
-  Future<void> recordRemovedItems(
-      List<RemovedOrderItemsCompanion> rows) async {
+  Future<void> recordRemovedItems(List<RemovedOrderItemsCompanion> rows) async {
     if (rows.isEmpty) return;
     final reader = _ref;
     if (reader != null) notifyRemovedItems(reader.read, rows);
     try {
-      await _database.batch((b) => b.insertAll(_database.removedOrderItems, rows));
+      await _database.batch(
+        (b) => b.insertAll(_database.removedOrderItems, rows),
+      );
     } catch (e) {
       _logger.error('Failed to record removed-item tombstones: $e');
     }
@@ -1522,9 +1884,15 @@ class OrderRepository {
   ///   - `customerPhoneNormalized` replaces the old `customerId` lookup per
   ///     the latest backend contract — server dedups customers by phone,
   ///     ignores ids on the order payload.
-  Future<void> _queueOrderUpdate(int orderId, String orderCode, CurrentOrder order) async {
+  Future<void> _queueOrderUpdate(
+    int orderId,
+    String orderCode,
+    CurrentOrder order,
+  ) async {
     try {
-      final phoneNormalized = await _lookupCustomerPhoneNormalized(order.customerId);
+      final phoneNormalized = await _lookupCustomerPhoneNormalized(
+        order.customerId,
+      );
       final pendingOpsService = PendingOperationsService(_database);
       await pendingOpsService.queueOrderUpdate(
         entityId: orderId,
@@ -1545,6 +1913,8 @@ class OrderRepository {
           'note': order.note,
           'type': order.type,
           'address': order.deliveryAddress,
+          if (referenceForSync(order.reference) case final ref?)
+            'reference': ref,
         },
       );
       _logger.info('Queued update operation for order code=$orderCode');
@@ -1558,37 +1928,63 @@ class OrderRepository {
   /// to build order payloads that key customers by phone instead of by id.
   Future<String?> _lookupCustomerPhoneNormalized(int? customerId) async {
     if (customerId == null) return null;
-    final row = await (_database.select(_database.customers)
-          ..where((c) => c.id.equals(customerId)))
-        .getSingleOrNull();
+    final row = await (_database.select(
+      _database.customers,
+    )..where((c) => c.id.equals(customerId))).getSingleOrNull();
     return row?.phoneNormalized;
   }
 
   Future<CurrentOrder?> getOrderByTable(int tableId) async {
     // Get the most recent ONHOLD order for this table
-    final table = await (_database.select(_database.areaTables)..where((tbl) => tbl.id.equals(tableId))).getSingleOrNull();
+    final table = await (_database.select(
+      _database.areaTables,
+    )..where((tbl) => tbl.id.equals(tableId))).getSingleOrNull();
 
     if (table == null || table.orderId == null) return null;
 
-    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(table.orderId!))).getSingleOrNull();
+    final order = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(table.orderId!))).getSingleOrNull();
 
     if (order == null) return null;
 
     return await loadOrderDetails(order);
   }
 
-  Future<void> updateOrderProductState(int orderId, int productId, String newState) async {
-    await (_database.update(_database.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(orderId) & tbl.id.equals(productId)))
-        .write(OrderProductsCompanion(
-      state: Value(newState),
-      updatedAt: Value(DateTime.now()),
-    ));
+  Future<void> updateOrderProductState(
+    int orderId,
+    int productId,
+    String newState,
+  ) async {
+    await (_database.update(_database.orderProducts)..where(
+          (tbl) => tbl.orderId.equals(orderId) & tbl.id.equals(productId),
+        ))
+        .write(
+          OrderProductsCompanion(
+            state: Value(newState),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+  }
 
+  /// Replaces the tags of a SAVED order and queues the push. Tags never move
+  /// money, so this is allowed on an order of a closed session too.
+  Future<void> setOrderTags(int orderId, List<int> tagIds) async {
+    await (_database.update(
+      _database.orders,
+    )..where((o) => o.id.equals(orderId))).write(
+      OrdersCompanion(
+        tagIds: Value(encodeTagIds(tagIds)),
+        tagsSynced: const Value(false),
+        tagsSyncError: const Value(null),
+      ),
+    );
   }
 
   Future<CurrentOrder?> getOrderById(int orderId) async {
-    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
+    final order = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
 
     if (order == null) return null;
 
@@ -1604,7 +2000,9 @@ class OrderRepository {
   }
 
   Future<CurrentOrder?> getOrderByCode(String orderCode) async {
-    final order = await (_database.select(_database.orders)..where((tbl) => tbl.code.equals(orderCode))).getSingleOrNull();
+    final order = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.code.equals(orderCode))).getSingleOrNull();
 
     if (order == null) return null;
 
@@ -1616,9 +2014,9 @@ class OrderRepository {
     // (one query per item × product / variant / OPCs / per-component) into
     // ~5 IN(...) queries regardless of order size. Saves the
     // "Continue with table's order" lag on big orders.
-    final orderProducts = await (_database.select(_database.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(order.id)))
-        .get();
+    final orderProducts = await (_database.select(
+      _database.orderProducts,
+    )..where((tbl) => tbl.orderId.equals(order.id))).get();
 
     final items = <OrderItem>[];
     if (orderProducts.isNotEmpty) {
@@ -1632,17 +2030,17 @@ class OrderRepository {
       // 1) All products in one IN(...) query
       final products = productIds.isEmpty
           ? const <Product>[]
-          : await (_database.select(_database.products)
-                ..where((t) => t.id.isIn(productIds)))
-              .get();
+          : await (_database.select(
+              _database.products,
+            )..where((t) => t.id.isIn(productIds))).get();
       final productById = {for (final p in products) p.id: p};
 
       // 2) All variants in one IN(...) query
       final productVariantById = <int, ProductVariant>{};
       if (variantIds.isNotEmpty) {
-        final variants = await (_database.select(_database.productVariants)
-              ..where((t) => t.id.isIn(variantIds)))
-            .get();
+        final variants = await (_database.select(
+          _database.productVariants,
+        )..where((t) => t.id.isIn(variantIds))).get();
         for (final v in variants) {
           productVariantById[v.id] = v;
         }
@@ -1652,9 +2050,9 @@ class OrderRepository {
       //    by orderProductId in memory.
       final allOpcs = orderProductIds.isEmpty
           ? const <OrderProductComponent>[]
-          : await (_database.select(_database.orderProductComponents)
-                ..where((t) => t.orderProductId.isIn(orderProductIds)))
-              .get();
+          : await (_database.select(
+              _database.orderProductComponents,
+            )..where((t) => t.orderProductId.isIn(orderProductIds))).get();
       final opcsByOp = <int, List<OrderProductComponent>>{};
       for (final c in allOpcs) {
         opcsByOp.putIfAbsent(c.orderProductId, () => []).add(c);
@@ -1662,13 +2060,15 @@ class OrderRepository {
 
       // Serial numbers for any serial-tracked line, in one query. Keyed
       // nullably so the lookup below can be unconditional.
-      final serialIds =
-          orderProducts.map((op) => op.serialId).whereType<int>().toSet();
+      final serialIds = orderProducts
+          .map((op) => op.serialId)
+          .whereType<int>()
+          .toSet();
       final serialNumberById = <int?, String?>{};
       if (serialIds.isNotEmpty) {
-        final rows = await (_database.select(_database.serials)
-              ..where((t) => t.id.isIn(serialIds)))
-            .get();
+        final rows = await (_database.select(
+          _database.serials,
+        )..where((t) => t.id.isIn(serialIds))).get();
         for (final r in rows) {
           serialNumberById[r.id] = r.serialNumber;
         }
@@ -1681,9 +2081,9 @@ class OrderRepository {
       final componentIds = allOpcs.map((c) => c.componentId).toSet();
       final componentById = {
         if (componentIds.isNotEmpty)
-          for (final c in await (_database.select(_database.components)
-                ..where((t) => t.id.isIn(componentIds)))
-              .get())
+          for (final c in await (_database.select(
+            _database.components,
+          )..where((t) => t.id.isIn(componentIds))).get())
             c.id: c,
       };
 
@@ -1704,69 +2104,71 @@ class OrderRepository {
         for (final orderComp in opcsByOp[orderProduct.id] ?? const []) {
           final component = componentById[orderComp.componentId];
           if (component != null) {
-            components.add(OrderItemComponent(
-              componentId: component.id,
-              name: component.name,
-              quantity: orderComp.quantity,
-              price: orderComp.price, // Use stored price from order time
-              isSpecial: orderComp.isSpecial,
-              removalCharge: orderComp.removalCharge,
-            ));
+            components.add(
+              OrderItemComponent(
+                componentId: component.id,
+                name: component.name,
+                quantity: orderComp.quantity,
+                price: orderComp.price, // Use stored price from order time
+                isSpecial: orderComp.isSpecial,
+                removalCharge: orderComp.removalCharge,
+              ),
+            );
           }
         }
 
-        items.add(OrderItem(
-          id: orderProduct.id,
-          productId: product.id,
-          productName: product.name,
-          variantId: orderProduct.variantId,
-          variantName: variantName,
-          imageUrl: variantImageUrl ?? product.imageUrl,
-          finalPrice: orderProduct.unitaryPrice,
-          quantity: orderProduct.quantity,
-          // Baseline for the decrement floor — cashier can take back only
-          // what they added on top of this in the current session.
-          savedQuantity: orderProduct.quantity,
-          components: components,
-          note: orderProduct.note,
-          discount: orderProduct.unitaryDiscount,
-          manualDiscount: orderProduct.manualDiscount,
-          tva: orderProduct.unitaryTva,
-          ticketId: orderProduct.ticketId,
-          state: orderProduct.state,
-          planStartAt: orderProduct.planStartAt,
-          planEndAt: orderProduct.planEndAt,
-          planWaiterId: orderProduct.planWaiterId,
-          planResourceId: orderProduct.planResourceId,
-          kdsPrintedAt: orderProduct.kdsPrintedAt,
-          kdsPrintedQuantity: orderProduct.kdsPrintedQuantity,
-          // Counterpart for the customer slip — without it, reopening a table
-          // would make every line look never-printed and the additions-only
-          // order ticket would reprint the whole bill.
-          orderTicketPrintedQuantity: orderProduct.orderTicketPrintedQuantity,
-          // Normalised on the way OUT of the database as well as on the
-          // way in over the wire. Same argument either direction: a
-          // column holding a value every reader has to remember to
-          // ignore is a column that will eventually be read by someone
-          // who forgets. A hand-edited row, or one written by a build
-          // that knew about a fourth course, reads as untagged here.
-          courseNo: normalizeCourseNo(orderProduct.courseNo),
-          // Restore the unit sold, so re-opening a saved order shows the serial
-          // on the line and re-syncing it still carries the same unit. The
-          // number is looked up below rather than stored on the line.
-          serialId: orderProduct.serialId,
-          serialNumber: serialNumberById[orderProduct.serialId],
-          // Round-trips through the delete-and-reinsert in [updateOrder] —
-          // see the field's own doc comment for what dropping it costs.
-          serverId: orderProduct.serverId,
-        ));
+        items.add(
+          OrderItem(
+            id: orderProduct.id,
+            productId: product.id,
+            productName: product.name,
+            variantId: orderProduct.variantId,
+            variantName: variantName,
+            imageUrl: variantImageUrl ?? product.imageUrl,
+            finalPrice: orderProduct.unitaryPrice,
+            quantity: orderProduct.quantity,
+            // Baseline for the decrement floor — cashier can take back only
+            // what they added on top of this in the current session.
+            savedQuantity: orderProduct.quantity,
+            components: components,
+            note: orderProduct.note,
+            discount: orderProduct.unitaryDiscount,
+            manualDiscount: orderProduct.manualDiscount,
+            tva: orderProduct.unitaryTva,
+            ticketId: orderProduct.ticketId,
+            state: orderProduct.state,
+            kdsPrintedAt: orderProduct.kdsPrintedAt,
+            kdsPrintedQuantity: orderProduct.kdsPrintedQuantity,
+            // Counterpart for the customer slip — without it, reopening a table
+            // would make every line look never-printed and the additions-only
+            // order ticket would reprint the whole bill.
+            orderTicketPrintedQuantity: orderProduct.orderTicketPrintedQuantity,
+            // Normalised on the way OUT of the database as well as on the
+            // way in over the wire. Same argument either direction: a
+            // column holding a value every reader has to remember to
+            // ignore is a column that will eventually be read by someone
+            // who forgets. A hand-edited row, or one written by a build
+            // that knew about a fourth course, reads as untagged here.
+            courseNo: normalizeCourseNo(orderProduct.courseNo),
+            // Restore the unit sold, so re-opening a saved order shows the serial
+            // on the line and re-syncing it still carries the same unit. The
+            // number is looked up below rather than stored on the line.
+            serialId: orderProduct.serialId,
+            serialNumber: serialNumberById[orderProduct.serialId],
+            // Round-trips through the delete-and-reinsert in [updateOrder] —
+            // see the field's own doc comment for what dropping it costs.
+            serverId: orderProduct.serverId,
+          ),
+        );
       }
     }
 
     // Get table name
     String? tableName;
     if (order.tableId != null) {
-      final table = await (_database.select(_database.areaTables)..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull();
+      final table = await (_database.select(
+        _database.areaTables,
+      )..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull();
       tableName = table?.name;
     }
 
@@ -1774,7 +2176,9 @@ class OrderRepository {
     String? customerName;
     String? customerPhone;
     if (order.clientId != null) {
-      final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
+      final customer = await (_database.select(
+        _database.customers,
+      )..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
       if (customer != null) {
         customerName = customer.displayLabel;
         customerPhone = customer.phone;
@@ -1784,15 +2188,23 @@ class OrderRepository {
     // Get commercial name
     String? commercialName;
     if (order.commercialId != null) {
-      final commercial = await (_database.select(_database.commercials)..where((tbl) => tbl.id.equals(order.commercialId!))).getSingleOrNull();
-      commercialName = commercial != null ? '${commercial.firstName} ${commercial.lastName}' : null;
+      final commercial = await (_database.select(
+        _database.commercials,
+      )..where((tbl) => tbl.id.equals(order.commercialId!))).getSingleOrNull();
+      commercialName = commercial != null
+          ? '${commercial.firstName} ${commercial.lastName}'
+          : null;
     }
 
     // Get waiter name
     String? waiterName;
     if (order.waiterId != null) {
-      final waiter = await (_database.select(_database.waiters)..where((tbl) => tbl.id.equals(order.waiterId!))).getSingleOrNull();
-      waiterName = waiter != null ? '${waiter.firstName} ${waiter.lastName ?? ''}'.trim() : null;
+      final waiter = await (_database.select(
+        _database.waiters,
+      )..where((tbl) => tbl.id.equals(order.waiterId!))).getSingleOrNull();
+      waiterName = waiter != null
+          ? '${waiter.firstName} ${waiter.lastName ?? ''}'.trim()
+          : null;
     }
 
     int numberOfPersons = order.persons;
@@ -1803,7 +2215,6 @@ class OrderRepository {
       sessionOrderNo: order.sessionOrderNo,
       items: items,
       numberOfPersons: numberOfPersons,
-
 
       tableId: order.tableId,
       tableName: tableName,
@@ -1817,8 +2228,11 @@ class OrderRepository {
       discountPercentage: order.discountPercentage,
       note: order.note,
       discountReason: order.discountReason,
+      tagIds: parseTagIds(order.tagIds),
       type: order.type,
       deliveryAddress: order.address,
+      reference: order.reference,
+      reservationCode: order.reservationCode,
       tip: order.tip ?? 0.0,
       // Straight through — null stays null so "no fee" never becomes "free".
       deliveryFee: order.deliveryFee,
@@ -1830,6 +2244,7 @@ class OrderRepository {
       // seen from lines written into the order behind its back (the waiter
       // app's add-product route). See [CurrentOrder.loadedAt].
       loadedAt: DateTime.now(),
+      loadedLineIds: {for (final op in orderProducts) op.id},
     );
   }
 
@@ -1841,12 +2256,16 @@ class OrderRepository {
     for (final table in tables) {
       if (table.orderId == null) continue;
 
-      final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(table.orderId!))).getSingleOrNull();
+      final order = await (_database.select(
+        _database.orders,
+      )..where((tbl) => tbl.id.equals(table.orderId!))).getSingleOrNull();
 
       if (order == null) continue;
 
       // Calculate total
-      final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
+      final orderProducts = await (_database.select(
+        _database.orderProducts,
+      )..where((tbl) => tbl.orderId.equals(order.id))).get();
 
       double total = 0.0;
       for (final product in orderProducts) {
@@ -1856,23 +2275,29 @@ class OrderRepository {
         total += subtotal - discount + tva;
       }
 
-      result.add(TableWithOrder(
-        table: table,
-        orderCount: 1,
-        total: total,
-        lastUpdated: order.updatedAt,
-      ));
+      result.add(
+        TableWithOrder(
+          table: table,
+          orderCount: 1,
+          total: total,
+          lastUpdated: order.updatedAt,
+        ),
+      );
     }
 
     return result;
   }
 
   Stream<List<Order>> getOrdersByTable(int tableId) {
-    return (_database.select(_database.orders)..where((tbl) => tbl.tableId.equals(tableId))).watch();
+    return (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.tableId.equals(tableId))).watch();
   }
 
   Stream<List<Order>> getPendingOrders() {
-    return (_database.select(_database.orders)..where((tbl) => tbl.status.isNotIn(['DELIVERED', 'CANCELED']))).watch();
+    return (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.status.isNotIn(['DELIVERED', 'CANCELED']))).watch();
   }
 
   // Get all held orders (ONHOLD status)
@@ -1885,12 +2310,16 @@ class OrderRepository {
 
   // Get all orders with full details
   Future<List<OrderWithDetails>> getAllOrdersWithDetails() async {
-    final orders = await (_database.select(_database.orders)..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)])).get();
+    final orders = await (_database.select(
+      _database.orders,
+    )..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)])).get();
 
     final result = <OrderWithDetails>[];
     for (final order in orders) {
       // Get order products count
-      final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
+      final orderProducts = await (_database.select(
+        _database.orderProducts,
+      )..where((tbl) => tbl.orderId.equals(order.id))).get();
 
       // Calculate total
       double total = 0.0;
@@ -1904,24 +2333,38 @@ class OrderRepository {
       // Get table name
       String? tableName;
       if (order.tableId != null) {
-        final table = await (_database.select(_database.areaTables)..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull();
+        final table = await (_database.select(
+          _database.areaTables,
+        )..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull();
         tableName = table?.name;
       }
 
-      result.add(OrderWithDetails(
-        order: order,
-        tableName: tableName,
-        itemCount: orderProducts.length,
-        total: total,
-      ));
+      result.add(
+        OrderWithDetails(
+          order: order,
+          tableName: tableName,
+          itemCount: orderProducts.length,
+          total: total,
+        ),
+      );
     }
 
     return result;
   }
 
-  Future<void> updateOrderStatus(int orderId, String status, {bool queueSyncOperation = true, String? cancellationReason, int? sessionId, int? userId, int? waiterId}) async {
+  Future<void> updateOrderStatus(
+    int orderId,
+    String status, {
+    bool queueSyncOperation = true,
+    String? cancellationReason,
+    int? sessionId,
+    int? userId,
+    int? waiterId,
+  }) async {
     // Get current status before updating
-    final currentOrder = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
+    final currentOrder = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
     final oldStatus = currentOrder?.status ?? '';
     final wasAlreadySynced = currentOrder?.isSynced ?? false;
     final orderCode = currentOrder?.code ?? '';
@@ -1930,7 +2373,8 @@ class OrderRepository {
     // Read BEFORE the status write, because [_allSentToKitchen] reads the
     // lines and a cancel may take them with it, and printed after so a dead
     // printer cannot block the cancellation itself.
-    final cancelledWhole = status == 'CANCELED' &&
+    final cancelledWhole =
+        status == 'CANCELED' &&
             currentOrder != null &&
             currentOrder.status != 'CANCELED'
         ? await _allSentToKitchen(orderId)
@@ -1943,18 +2387,21 @@ class OrderRepository {
     if (currentOrder != null && status != 'COMPLETED') {
       final rehomed = await _rehomeIfSessionClosed(currentOrder);
       if (rehomed == null && currentOrder.sessionId != null) {
-        final session = await (_database.select(_database.cashSessions)
-              ..where((tbl) => tbl.id.equals(currentOrder.sessionId!)))
-            .getSingleOrNull();
+        final session =
+            await (_database.select(_database.cashSessions)
+                  ..where((tbl) => tbl.id.equals(currentOrder.sessionId!)))
+                .getSingleOrNull();
         if (session?.status == 'ended') {
           throw Exception(
-              'Cannot change status of order from a closed (Z-report) session');
+            'Cannot change status of order from a closed (Z-report) session',
+          );
         }
       }
     }
 
     // Stamp sessionId if order has none and caller is providing one (confirmation flow)
-    final sessionIdToStamp = (currentOrder?.sessionId == null && sessionId != null)
+    final sessionIdToStamp =
+        (currentOrder?.sessionId == null && sessionId != null)
         ? Value(sessionId)
         : const Value<int?>.absent();
 
@@ -1965,8 +2412,11 @@ class OrderRepository {
     // after midnight, or ingested from a platform that timestamped it
     // yesterday, is the wrong day.
     final zDayToStamp = sessionIdToStamp.present || currentOrder?.zDay == null
-        ? Value(await _zDayForSessionId(
-            sessionIdToStamp.present ? sessionId : currentOrder?.sessionId))
+        ? Value(
+            await _zDayForSessionId(
+              sessionIdToStamp.present ? sessionId : currentOrder?.sessionId,
+            ),
+          )
         : const Value<DateTime?>.absent();
 
     // On confirmation (ONHOLD → anything else), stamp the confirming user + optional waiter
@@ -1979,7 +2429,9 @@ class OrderRepository {
       // Mark as not synced when status changes (except ONHOLD which doesn't sync)
       isSynced: Value(status == 'ONHOLD'),
       // Set cancellation reason when cancelled, clear it otherwise
-      cancellationReason: Value(status == 'CANCELED' ? cancellationReason : null),
+      cancellationReason: Value(
+        status == 'CANCELED' ? cancellationReason : null,
+      ),
       sessionId: sessionIdToStamp,
       zDay: zDayToStamp,
       createdBy: isConfirming && userId != null
@@ -1993,7 +2445,21 @@ class OrderRepository {
           : const Value<int?>.absent(),
     );
 
-    await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(updateCompanion);
+    await (_database.update(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).write(updateCompanion);
+
+    // A held order reaches the kitchen only now: its lines' KDS clocks start
+    // at the release, not at the moment they were rung up and parked.
+    if (isConfirming) {
+      await (_database.update(_database.orderProducts)..where(
+            (t) =>
+                t.orderId.equals(orderId) &
+                t.ticketId.isNull() &
+                t.preparingAt.isNull(),
+          ))
+          .write(OrderProductsCompanion(kitchenAt: Value(DateTime.now())));
+    }
 
     final reader = _ref;
     if (reader != null && status == 'CANCELED' && oldStatus != 'CANCELED') {
@@ -2025,16 +2491,20 @@ class OrderRepository {
     // Written on the way back out of CANCELED too: un-cancelling an order must
     // put its tickets back in the totals.
     try {
-      await (_database.update(_database.tickets)
-            ..where((t) => t.orderId.equals(orderId)))
-          .write(TicketsCompanion(
-        isCancelled: Value(status == 'CANCELED'),
-        isSynced: const Value(false),
-        updatedAt: Value(DateTime.now()),
-      ));
+      await (_database.update(
+        _database.tickets,
+      )..where((t) => t.orderId.equals(orderId))).write(
+        TicketsCompanion(
+          isCancelled: Value(status == 'CANCELED'),
+          isSynced: const Value(false),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
     } catch (e) {
-      _logger.error('Could not flag tickets of order $orderId as '
-          '${status == 'CANCELED' ? 'cancelled' : 'active'}: $e');
+      _logger.error(
+        'Could not flag tickets of order $orderId as '
+        '${status == 'CANCELED' ? 'cancelled' : 'active'}: $e',
+      );
     }
 
     // Handle sync based on status change (skip ONHOLD)
@@ -2052,13 +2522,19 @@ class OrderRepository {
         if (_syncService != null && _isOnlineCallback != null) {
           final isOnline = _isOnlineCallback!();
           if (isOnline) {
-            _logger.debug('Auto-sync on status change: online=$isOnline orderCode=$orderCode newStatus=$status');
+            _logger.debug(
+              'Auto-sync on status change: online=$isOnline orderCode=$orderCode newStatus=$status',
+            );
             try {
-              final orderSynced = await _syncService!
-                  .syncSingleOrder(orderId, deadline: _promptPushDeadline);
+              final orderSynced = await _syncService!.syncSingleOrder(
+                orderId,
+                deadline: _promptPushDeadline,
+              );
               if (orderSynced) {
-                await _syncService!.syncTicketsForOrder(orderId,
-                    deadline: _promptPushDeadline);
+                await _syncService!.syncTicketsForOrder(
+                  orderId,
+                  deadline: _promptPushDeadline,
+                );
                 syncedSuccessfully = true;
               }
               _logger.info('Synced $status order code=$orderCode');
@@ -2078,10 +2554,13 @@ class OrderRepository {
               orderCode: orderCode,
               updateData: {
                 'status': status,
-                if (cancellationReason != null) 'cancellationReason': cancellationReason,
+                if (cancellationReason != null)
+                  'cancellationReason': cancellationReason,
               },
             );
-            _logger.info('Queued status update operation for order code=$orderCode');
+            _logger.info(
+              'Queued status update operation for order code=$orderCode',
+            );
           } catch (e) {
             _logger.error('Failed to queue status update operation: $e');
           }
@@ -2090,23 +2569,37 @@ class OrderRepository {
     }
 
     // Emit event
-    _emitEvent(OrderStatusChangedEvent(
-      orderId: orderId,
-      oldStatus: oldStatus,
-      newStatus: status,
-    ));
+    _emitEvent(
+      OrderStatusChangedEvent(
+        orderId: orderId,
+        oldStatus: oldStatus,
+        newStatus: status,
+      ),
+    );
 
     // Log order status update
-    await _logService.logOrderUpdated(orderId, 'Order status changed from $oldStatus to $status');
+    await _logService.logOrderUpdated(
+      orderId,
+      'Order status changed from $oldStatus to $status',
+    );
     _audit((log, uid, uname) {
       if (status == 'CANCELED') {
-        log.logOrderCancelled(orderCode,
-            userId: uid, username: uname, reason: cancellationReason);
+        log.logOrderCancelled(
+          orderCode,
+          userId: uid,
+          username: uname,
+          reason: cancellationReason,
+        );
       } else if (isConfirming) {
         log.logOrderConfirmed(orderCode, userId: uid, username: uname);
       } else {
-        log.logOrderStatusChanged(orderCode, oldStatus, status,
-            userId: uid, username: uname);
+        log.logOrderStatusChanged(
+          orderCode,
+          oldStatus,
+          status,
+          userId: uid,
+          username: uname,
+        );
       }
     });
 
@@ -2119,7 +2612,9 @@ class OrderRepository {
         currentOrder != null &&
         currentOrder.status != 'CANCELED') {
       // ignore: unawaited_futures
-      _ref?.read(waiterKitchenEventServiceProvider).linesCanceled(
+      _ref
+          ?.read(waiterKitchenEventServiceProvider)
+          .linesCanceled(
             orderId: orderId,
             wholeOrder: true,
             reason: cancellationReason,
@@ -2138,12 +2633,10 @@ class OrderRepository {
     }
   }
 
-
-
-
-
   Future<void> setTableOrderId(int tableId, int? orderId) async {
-    await (_database.update(_database.areaTables)..where((tbl) => tbl.id.equals(tableId))).write(AreaTablesCompanion(orderId: Value(orderId)));
+    await (_database.update(_database.areaTables)
+          ..where((tbl) => tbl.id.equals(tableId)))
+        .write(AreaTablesCompanion(orderId: Value(orderId)));
   }
 
   // Clear table order assignment (set orderId to null)
@@ -2212,8 +2705,7 @@ class OrderRepository {
     final productId = int.parse(parts[0]);
     final variantId = int.parse(parts[1]);
     final row = before.where((r) {
-      return r.productId == productId &&
-          (r.variantId ?? -1) == variantId;
+      return r.productId == productId && (r.variantId ?? -1) == variantId;
     }).firstOrNull;
     return OrderItem(
       productId: productId,
@@ -2234,8 +2726,10 @@ class OrderRepository {
   /// none. Swallows its own failures: the order has already been changed, and
   /// a dead printer must not surface as a failed edit.
   Future<void> _printKitchenCancellation(
-      int orderId, List<OrderItem> cancelled,
-      {CurrentOrder? snapshot}) async {
+    int orderId,
+    List<OrderItem> cancelled, {
+    CurrentOrder? snapshot,
+  }) async {
     final ref = _ref;
     if (ref == null || cancelled.isEmpty) return;
     try {
@@ -2274,9 +2768,9 @@ class OrderRepository {
         if (i.productName.startsWith('#')) i.productId,
     };
     if (unnamed.isEmpty) return items;
-    final rows = await (_database.select(_database.products)
-          ..where((p) => p.id.isIn(unnamed.toList())))
-        .get();
+    final rows = await (_database.select(
+      _database.products,
+    )..where((p) => p.id.isIn(unnamed.toList()))).get();
     final nameById = {for (final r in rows) r.id: r.name};
     return [
       for (final i in items)
@@ -2289,11 +2783,13 @@ class OrderRepository {
   /// Everything on this order the kitchen has been asked to cook, as
   /// cancellation lines — for a whole-order void or delete.
   Future<List<OrderItem>> _allSentToKitchen(int orderId) async {
-    final rows = await (_database.select(_database.orderProducts)
-          ..where((t) =>
-              t.orderId.equals(orderId) &
-              t.kdsPrintedQuantity.isBiggerThanValue(0.0)))
-        .get();
+    final rows =
+        await (_database.select(_database.orderProducts)..where(
+              (t) =>
+                  t.orderId.equals(orderId) &
+                  t.kdsPrintedQuantity.isBiggerThanValue(0.0),
+            ))
+            .get();
     return _namedForKitchen([
       for (final r in rows)
         OrderItem(
@@ -2317,14 +2813,16 @@ class OrderRepository {
       final user = ref.read(currentUserProvider);
       if (user == null) return false;
 
-      final order = await (_database.select(_database.orders)
-            ..where((o) => o.id.equals(orderId)))
-          .getSingleOrNull();
+      final order = await (_database.select(
+        _database.orders,
+      )..where((o) => o.id.equals(orderId))).getSingleOrNull();
       if (order == null) return false;
 
       final session = ref.read(currentSessionProvider);
       final sessionMoves =
-          session != null && session.status == 'active' && order.sessionId != session.id;
+          session != null &&
+          session.status == 'active' &&
+          order.sessionId != session.id;
       if (order.takenBy == user.id && !sessionMoves) return false;
 
       // An order changing hands across a session boundary has to change
@@ -2339,27 +2837,33 @@ class OrderRepository {
       // `_zDayForSessionId` resolves that through the session's Z the same
       // way saveOrder does. Matches `_rehomeIfSessionClosed`, which has
       // always moved both.
-      final movedZDay =
-          sessionMoves ? await _zDayForSessionId(session.id) : null;
+      final movedZDay = sessionMoves
+          ? await _zDayForSessionId(session.id)
+          : null;
 
-      await (_database.update(_database.orders)
-            ..where((o) => o.id.equals(orderId)))
-          .write(OrdersCompanion(
-        takenBy: Value(user.id),
-        // Absent, not null: "leave the session alone" has to stay
-        // distinguishable from "clear it".
-        sessionId:
-            sessionMoves ? Value(session.id) : const Value.absent(),
-        zDay: movedZDay == null ? const Value.absent() : Value(movedZDay),
-        isSynced: const Value(false),
-        updatedAt: Value(DateTime.now()),
-      ));
+      await (_database.update(
+        _database.orders,
+      )..where((o) => o.id.equals(orderId))).write(
+        OrdersCompanion(
+          takenBy: Value(user.id),
+          // Absent, not null: "leave the session alone" has to stay
+          // distinguishable from "clear it".
+          sessionId: sessionMoves ? Value(session.id) : const Value.absent(),
+          zDay: movedZDay == null ? const Value.absent() : Value(movedZDay),
+          isSynced: const Value(false),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
 
       if (order.takenBy != user.id) {
-        _logger.info('Order #$orderId claimed by user ${user.id} '
-            '(was ${order.takenBy})');
+        _logger.info(
+          'Order #$orderId claimed by user ${user.id} '
+          '(was ${order.takenBy})',
+        );
         await _logService.logOrderUpdated(
-            orderId, 'Order claimed by user ${user.id}');
+          orderId,
+          'Order claimed by user ${user.id}',
+        );
       }
       return true;
     } catch (e) {
@@ -2387,31 +2891,37 @@ class OrderRepository {
   /// and the caller must then still refuse, because there is no shift to
   /// account the change to.
   Future<({int sessionId, DateTime zDay})?> _rehomeIfSessionClosed(
-      Order existing) async {
+    Order existing,
+  ) async {
     if (existing.sessionId == null) return null;
-    final session = await (_database.select(_database.cashSessions)
-          ..where((t) => t.id.equals(existing.sessionId!)))
-        .getSingleOrNull();
+    final session = await (_database.select(
+      _database.cashSessions,
+    )..where((t) => t.id.equals(existing.sessionId!))).getSingleOrNull();
     if (session == null || session.status != 'ended') return null;
 
     final open = _ref?.read(currentSessionProvider);
     if (open == null || open.status != 'active') return null;
 
     final zDay = _currentZDay();
-    await (_database.update(_database.orders)
-          ..where((o) => o.id.equals(existing.id)))
-        .write(OrdersCompanion(
-      sessionId: Value(open.id),
-      zDay: Value(zDay),
-      isSynced: const Value(false),
-      updatedAt: Value(DateTime.now()),
-    ));
-    _logger.info('Order #${existing.id} re-homed from closed session '
-        '${existing.sessionId} to ${open.id} (z-day $zDay)');
+    await (_database.update(
+      _database.orders,
+    )..where((o) => o.id.equals(existing.id))).write(
+      OrdersCompanion(
+        sessionId: Value(open.id),
+        zDay: Value(zDay),
+        isSynced: const Value(false),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+    _logger.info(
+      'Order #${existing.id} re-homed from closed session '
+      '${existing.sessionId} to ${open.id} (z-day $zDay)',
+    );
     await _logService.logOrderUpdated(
-        existing.id,
-        'Order moved from closed session ${existing.sessionId} '
-        'to open session ${open.id}');
+      existing.id,
+      'Order moved from closed session ${existing.sessionId} '
+      'to open session ${open.id}',
+    );
     return (sessionId: open.id, zDay: zDay);
   }
 
@@ -2421,14 +2931,18 @@ class OrderRepository {
     required bool clearTable,
   }) async {
     return _database.transaction(() async {
-      final products = await (_database.select(_database.orderProducts)
-            ..where((p) => p.orderId.equals(orderId)))
-          .get();
+      final products = await (_database.select(
+        _database.orderProducts,
+      )..where((p) => p.orderId.equals(orderId))).get();
       if (products.isEmpty) return false;
 
       // Same predicate the floor sweep uses, so the two can never disagree
       // about what "settled" means.
-      if (!isOrderSettled(products.map((p) => p.state))) return false;
+      if (!isOrderSettled(
+        products.map((p) => settlementState(p.state, p.ticketId)),
+      )) {
+        return false;
+      }
 
       await updateOrderStatus(orderId, paidStatus, queueSyncOperation: false);
       if (clearTable) {
@@ -2464,23 +2978,25 @@ class OrderRepository {
   /// off, a paid table stays held on purpose — the customers are still sitting
   /// there — and only dangling or cancelled orders are swept.
   Future<int> reconcileTableOccupancy({required bool freeOnPayment}) async {
-    final held = await (_database.select(_database.areaTables)
-          ..where((t) => t.orderId.isNotNull()))
-        .get();
+    final held = await (_database.select(
+      _database.areaTables,
+    )..where((t) => t.orderId.isNotNull())).get();
     if (held.isEmpty) return 0;
 
     final orderIds = held.map((t) => t.orderId!).toSet();
-    final orders = await (_database.select(_database.orders)
-          ..where((o) => o.id.isIn(orderIds)))
-        .get();
+    final orders = await (_database.select(
+      _database.orders,
+    )..where((o) => o.id.isIn(orderIds))).get();
     final orderById = {for (final o in orders) o.id: o};
 
-    final lines = await (_database.select(_database.orderProducts)
-          ..where((p) => p.orderId.isIn(orderIds)))
-        .get();
+    final lines = await (_database.select(
+      _database.orderProducts,
+    )..where((p) => p.orderId.isIn(orderIds))).get();
     final statesByOrder = <int, List<String>>{};
     for (final line in lines) {
-      (statesByOrder[line.orderId] ??= []).add(line.state);
+      (statesByOrder[line.orderId] ??= []).add(
+        settlementState(line.state, line.ticketId),
+      );
     }
 
     final release = <int>[];
@@ -2494,8 +3010,10 @@ class OrderRepository {
       );
       if (reason != null) {
         release.add(table.id);
-        _logger.info('Releasing table ${table.name} held by order '
-            '${table.orderId}: ${reason.name}');
+        _logger.info(
+          'Releasing table ${table.name} held by order '
+          '${table.orderId}: ${reason.name}',
+        );
       }
     }
     if (release.isEmpty) return 0;
@@ -2511,10 +3029,9 @@ class OrderRepository {
   /// covers orders paid earlier in the shift (when "auto-clear table on pay" is
   /// off) as well as ones just settled at close.
   Future<void> clearTablesForSession(int sessionId) async {
-    final orderIds = await (_database.select(_database.orders)
-          ..where((o) => o.sessionId.equals(sessionId)))
-        .map((o) => o.id)
-        .get();
+    final orderIds = await (_database.select(
+      _database.orders,
+    )..where((o) => o.sessionId.equals(sessionId))).map((o) => o.id).get();
     if (orderIds.isEmpty) return;
     await (_database.update(_database.areaTables)
           ..where((t) => t.orderId.isIn(orderIds)))
@@ -2522,7 +3039,11 @@ class OrderRepository {
   }
 
   // Transfer order from one table to another
-  Future<void> transferOrderToTable(int orderId, int oldTableId, int newTableId) async {
+  Future<void> transferOrderToTable(
+    int orderId,
+    int oldTableId,
+    int newTableId,
+  ) async {
     // Move both table pointers and the order's tableId atomically so a crash
     // can't leave the old table freed while the order still points at it, or
     // two tables pointing at one order.
@@ -2543,43 +3064,64 @@ class OrderRepository {
       // Checked INSIDE the transaction, like the waiter-order table check, so
       // two tills transferring onto the same free table cannot both pass a
       // pre-check and then both write.
-      final target = await (_database.select(_database.areaTables)
-            ..where((t) => t.id.equals(newTableId)))
-          .getSingleOrNull();
+      final target = await (_database.select(
+        _database.areaTables,
+      )..where((t) => t.id.equals(newTableId))).getSingleOrNull();
       if (target?.orderId != null && target!.orderId != orderId) {
         throw Exception(
-            'Table ${target.name} already has an open order — settle or move it first');
+          'Table ${target.name} already has an open order — settle or move it first',
+        );
       }
 
       await clearTableOrder(oldTableId);
       await setTableOrderId(newTableId, orderId);
-      await (_database.update(_database.orders)..where((tbl) => tbl.id.equals(orderId))).write(OrdersCompanion(
-        tableId: Value(newTableId),
-        isSynced: const Value(false),
-        updatedAt: Value(DateTime.now()),
-      ));
+      await (_database.update(
+        _database.orders,
+      )..where((tbl) => tbl.id.equals(orderId))).write(
+        OrdersCompanion(
+          tableId: Value(newTableId),
+          isSynced: const Value(false),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
     });
 
     // Log the transfer
-    await _logService.logOrderUpdated(orderId, 'Order transferred from table $oldTableId to table $newTableId');
-    final transferred = await (_database.select(_database.orders)
-          ..where((tbl) => tbl.id.equals(orderId)))
-        .getSingleOrNull();
+    await _logService.logOrderUpdated(
+      orderId,
+      'Order transferred from table $oldTableId to table $newTableId',
+    );
+    final transferred = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
     final transferCode = transferred?.code ?? '#$orderId';
-    _audit((log, uid, uname) => log.logOrderTransferred(
-        transferCode, '$oldTableId', '$newTableId', userId: uid, username: uname));
+    _audit(
+      (log, uid, uname) => log.logOrderTransferred(
+        transferCode,
+        '$oldTableId',
+        '$newTableId',
+        userId: uid,
+        username: uname,
+      ),
+    );
 
     // Push immediately when online; the isSynced=false flag above guarantees
     // the periodic sweep retries if this fails or we're offline. Detached, like
     // every other prompt push here — the table has already moved locally, so
     // the cashier must not watch a network round-trip to see it. See [_detach].
-    if (_syncService != null && _isOnlineCallback != null && _isOnlineCallback!()) {
+    if (_syncService != null &&
+        _isOnlineCallback != null &&
+        _isOnlineCallback!()) {
       _detach('Transfer sync for order #$orderId', () async {
-        final synced = await _syncService!
-            .syncSingleOrder(orderId, deadline: _promptPushDeadline);
+        final synced = await _syncService!.syncSingleOrder(
+          orderId,
+          deadline: _promptPushDeadline,
+        );
         if (synced) {
-          await _syncService!
-              .syncTicketsForOrder(orderId, deadline: _promptPushDeadline);
+          await _syncService!.syncTicketsForOrder(
+            orderId,
+            deadline: _promptPushDeadline,
+          );
         }
       });
     }
@@ -2587,15 +3129,10 @@ class OrderRepository {
 
   // Get all orders with full details including user, products, discounts, TVA, and paid amounts
   Future<List<OrderFullDetails>> getAllOrdersWithFullDetails() async {
-    final orders = await (_database.select(_database.orders)..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)])).get();
-
-    final result = <OrderFullDetails>[];
-    for (final order in orders) {
-      final fullDetails = await _buildOrderFullDetails(order);
-      result.add(fullDetails);
-    }
-
-    return result;
+    final orders = await (_database.select(
+      _database.orders,
+    )..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)])).get();
+    return _buildOrderFullDetailsBatch(orders);
   }
 
   /// Local calendar day as 'YYYY-MM-DD' — the stable prefix shared by every
@@ -2608,11 +3145,15 @@ class OrderRepository {
       '${d.day.toString().padLeft(2, '0')}';
 
   Expression<bool> _dateOnOrAfterDay(
-          GeneratedColumn<DateTime> col, DateTime day) =>
+    GeneratedColumn<DateTime> col,
+    DateTime day,
+  ) =>
       CustomExpression<bool>("substr(${col.name}, 1, 10) >= '${_dayStr(day)}'");
 
   Expression<bool> _dateOnOrBeforeDay(
-          GeneratedColumn<DateTime> col, DateTime day) =>
+    GeneratedColumn<DateTime> col,
+    DateTime day,
+  ) =>
       CustomExpression<bool>("substr(${col.name}, 1, 10) <= '${_dayStr(day)}'");
 
   // Get paginated orders with full details - real database-level pagination
@@ -2638,108 +3179,45 @@ class OrderRepository {
     int? tableId,
     int? waiterId,
     int? sessionId,
+    // Several sessions at once — the Z close asks about all of its sessions.
+    Iterable<int>? sessionIds,
     DateTime? startDate,
     DateTime? endDate,
     String sortColumn = 'createdAt',
     bool sortAscending = false,
+    // Order tags: keep orders carrying ANY of [tagIds], plus untagged orders
+    // when [untagged]. Both empty/false = no tag filter.
+    Set<int> tagIds = const {},
+    bool untagged = false,
   }) async {
-    // Build the base query with filters
-    var totalCount = 0;
-    // Get total count with filters
-    {
-      var query = _database.select(_database.orders);
+    final orders = _database.orders;
+    // Every filter is SQL, so the count and the page are both answered by the
+    // database: the history is never loaded to show ten rows of it.
+    final filter = await _ordersFilter(
+      statusFilter: statusFilter,
+      typeFilter: typeFilter,
+      unpaidOnly: unpaidOnly,
+      searchQuery: searchQuery,
+      customerId: customerId,
+      cashierId: cashierId,
+      tableId: tableId,
+      waiterId: waiterId,
+      sessionIds: {
+        if (sessionId != null) sessionId,
+        ...?sessionIds,
+      },
+      startDate: startDate,
+      endDate: endDate,
+      tagIds: tagIds,
+      untagged: untagged,
+    );
 
-      if (statusFilter != null && statusFilter != 'ALL') {
-        query = query..where((tbl) => tbl.status.equals(statusFilter));
-      }
-
-      if (typeFilter != null && typeFilter != 'ALL') {
-        query = query..where((tbl) => tbl.type.equals(typeFilter));
-      }
-
-      if (customerId != null) {
-        query = query..where((tbl) => tbl.clientId.equals(customerId));
-      }
-
-      if (cashierId != null) {
-        query = query..where((tbl) => tbl.takenBy.equals(cashierId));
-      }
-
-      if (tableId != null) {
-        query = query..where((tbl) => tbl.tableId.equals(tableId));
-      }
-
-      if (waiterId != null) {
-        query = query..where((tbl) => tbl.waiterId.equals(waiterId));
-      }
-
-      if (sessionId != null) {
-        query = query..where((tbl) => tbl.sessionId.equals(sessionId));
-      }
-
-      // Day-prefix comparison — dates are stored as TEXT and legacy rows may
-      // use the UTC/space encoding that sorts before 'T', which would drop
-      // same-day orders on the range's start day. See _dayStr / ticket filter.
-      if (startDate != null) {
-        query = query..where((tbl) => _dateOnOrAfterDay(tbl.date, startDate));
-      }
-
-      if (endDate != null) {
-        query = query..where((tbl) => _dateOnOrBeforeDay(tbl.date, endDate));
-      }
-
-      final allOrders = await query.get();
-
-      // Filter by search query in memory (code and userName need joins)
-      List<Order> postSqlOrders = allOrders;
-      if (searchQuery != null && searchQuery.isNotEmpty) {
-        final searchLower = searchQuery.toLowerCase();
-        final searchNo = _searchedOrderNo(searchQuery);
-        final filteredOrders = <Order>[];
-        for (final order in allOrders) {
-          if (order.code.toLowerCase().contains(searchLower) ||
-              (searchNo != null && order.sessionOrderNo == searchNo)) {
-            filteredOrders.add(order);
-            continue;
-          }
-          // Check user name
-          if (order.takenBy != null) {
-            final user = await (_database.select(_database.users)..where((tbl) => tbl.id.equals(order.takenBy!))).getSingleOrNull();
-            if (user?.username.toLowerCase().contains(searchLower) == true) {
-              filteredOrders.add(order);
-              continue;
-            }
-          }
-          // Check customer name
-          if (order.clientId != null) {
-            final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
-            if (customer != null) {
-              final fullName = customer.displayLabel.toLowerCase();
-              if (fullName.contains(searchLower)) {
-                filteredOrders.add(order);
-              }
-            }
-          }
-        }
-        postSqlOrders = filteredOrders;
-      }
-
-      // Unpaid-only filter — applied in memory because it compares
-      // computed sums (ticket payments vs order line-item totals). Done
-      // here in the count phase so totalCount + pagination math match
-      // what the data phase will produce.
-      if (unpaidOnly) {
-        final unpaidOrders = <Order>[];
-        for (final order in postSqlOrders) {
-          if (await _isOrderUnpaid(order)) {
-            unpaidOrders.add(order);
-          }
-        }
-        totalCount = unpaidOrders.length;
-      } else {
-        totalCount = postSqlOrders.length;
-      }
-    }
+    final count = orders.id.count();
+    final totalCount = await (_database.selectOnly(orders)
+          ..addColumns([count])
+          ..where(filter))
+        .map((r) => r.read(count) ?? 0)
+        .getSingle();
 
     final totalPages = (totalCount / pageSize).ceil();
     if (totalPages == 0) {
@@ -2752,144 +3230,44 @@ class OrderRepository {
       );
     }
 
-    // Build the paginated query
-    var query = _database.select(_database.orders);
-
-    // Apply filters
-    if (statusFilter != null && statusFilter != 'ALL') {
-      query = query..where((tbl) => tbl.status.equals(statusFilter));
-    }
-
-    if (typeFilter != null && typeFilter != 'ALL') {
-      query = query..where((tbl) => tbl.type.equals(typeFilter));
-    }
-
-    if (customerId != null) {
-      query = query..where((tbl) => tbl.clientId.equals(customerId));
-    }
-
-    if (cashierId != null) {
-      query = query..where((tbl) => tbl.takenBy.equals(cashierId));
-    }
-
-    if (tableId != null) {
-      query = query..where((tbl) => tbl.tableId.equals(tableId));
-    }
-
-    if (waiterId != null) {
-      query = query..where((tbl) => tbl.waiterId.equals(waiterId));
-    }
-
-    if (sessionId != null) {
-      query = query..where((tbl) => tbl.sessionId.equals(sessionId));
-    }
-
-    if (startDate != null) {
-      query = query..where((tbl) => _dateOnOrAfterDay(tbl.date, startDate));
-    }
-
-    if (endDate != null) {
-      query = query..where((tbl) => _dateOnOrBeforeDay(tbl.date, endDate));
-    }
-
-    // Apply sorting
-    query = query..orderBy([(tbl) {
-      switch (sortColumn) {
-        case 'id':
-          return sortAscending ? OrderingTerm.asc(tbl.id) : OrderingTerm.desc(tbl.id);
-        case 'code':
-          return sortAscending ? OrderingTerm.asc(tbl.code) : OrderingTerm.desc(tbl.code);
-        case 'status':
-          return sortAscending ? OrderingTerm.asc(tbl.status) : OrderingTerm.desc(tbl.status);
-        case 'date':
-        case 'createdAt':
-        default:
-          return sortAscending ? OrderingTerm.asc(tbl.createdAt) : OrderingTerm.desc(tbl.createdAt);
-      }
-    }]);
-
-    // Get all filtered orders (we need to filter by search in memory)
-    final allFilteredOrders = await query.get();
-
-    // Apply search filter in memory
-    List<Order> ordersToProcess;
-    if (searchQuery != null && searchQuery.isNotEmpty) {
-      final searchLower = searchQuery.toLowerCase();
-      final searchNo = _searchedOrderNo(searchQuery);
-      ordersToProcess = [];
-      for (final order in allFilteredOrders) {
-        if (order.code.toLowerCase().contains(searchLower) ||
-            (searchNo != null && order.sessionOrderNo == searchNo)) {
-          ordersToProcess.add(order);
-          continue;
-        }
-        // Check user name
-        if (order.takenBy != null) {
-          final user = await (_database.select(_database.users)..where((tbl) => tbl.id.equals(order.takenBy!))).getSingleOrNull();
-          if (user?.username.toLowerCase().contains(searchLower) == true) {
-            ordersToProcess.add(order);
-            continue;
-          }
-        }
-        // Check customer name
-        if (order.clientId != null) {
-          final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
-          if (customer != null) {
-            final fullName = customer.displayLabel.toLowerCase();
-            if (fullName.contains(searchLower)) {
-              ordersToProcess.add(order);
-            }
-          }
-        }
-      }
-    } else {
-      ordersToProcess = allFilteredOrders;
-    }
-
-    // Apply unpaid-only filter (in memory — same reasoning as the count
-    // phase). Done BEFORE pagination so the page slicing is over the
-    // already-filtered set.
-    if (unpaidOnly) {
-      final unpaidOrders = <Order>[];
-      for (final order in ordersToProcess) {
-        if (await _isOrderUnpaid(order)) {
-          unpaidOrders.add(order);
-        }
-      }
-      ordersToProcess = unpaidOrders;
-    }
-
-    // Apply pagination in memory after search
-    final start = page * pageSize;
-    final end = (start + pageSize).clamp(0, ordersToProcess.length);
-    final paginatedOrders = start < ordersToProcess.length
-        ? ordersToProcess.sublist(start, end)
-        : <Order>[];
+    final mode = sortAscending ? OrderingMode.asc : OrderingMode.desc;
+    final Expression sortBy = switch (sortColumn) {
+      'id' => orders.id,
+      'code' => orders.code,
+      'status' => orders.status,
+      _ => orders.createdAt,
+    };
+    final pageOrders = await (_database.select(orders)
+          ..where((_) => filter)
+          ..orderBy([
+            (_) => OrderingTerm(expression: sortBy, mode: mode),
+            // Ties (same second, same status) would otherwise move between
+            // pages from one query to the next.
+            (tbl) => OrderingTerm(expression: tbl.id, mode: mode),
+          ])
+          ..limit(pageSize, offset: page * pageSize))
+        .get();
 
     // Batch Z-lock: one query for all session IDs on this page (like tickets' _enrichTickets)
-    final sessionIds = paginatedOrders
-        .where((o) => o.sessionId != null)
-        .map((o) => o.sessionId!)
-        .toSet();
+    final pageSessionIds = {
+      for (final o in pageOrders)
+        if (o.sessionId != null) o.sessionId!,
+    };
     final endedSessionIds = <int>{};
-    if (sessionIds.isNotEmpty) {
-      final sessions = await (_database.select(_database.cashSessions)
-            ..where((s) => s.id.isIn(sessionIds.toList())))
-          .get();
+    if (pageSessionIds.isNotEmpty) {
+      final sessions = await (_database.select(
+        _database.cashSessions,
+      )..where((s) => s.id.isIn(pageSessionIds))).get();
       for (final s in sessions) {
         if (s.status == 'ended') endedSessionIds.add(s.id);
       }
     }
 
-    // Build full details for each order
-    final result = <OrderFullDetails>[];
-    for (final order in paginatedOrders) {
-      final fullDetails = await _buildOrderFullDetails(order, endedSessionIds: endedSessionIds);
-      result.add(fullDetails);
-    }
-
     return PaginatedOrders(
-      orders: result,
+      orders: await _buildOrderFullDetailsBatch(
+        pageOrders,
+        endedSessionIds: endedSessionIds,
+      ),
       totalCount: totalCount,
       page: page,
       pageSize: pageSize,
@@ -2897,12 +3275,116 @@ class OrderRepository {
     );
   }
 
+  /// `%`, `_` and the escape itself taken literally in a LIKE pattern.
+  static String _likeContains(String needle) =>
+      '%${needle.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_')}%';
+
+  /// The orders list's filters as one SQL predicate on `orders`.
+  ///
+  /// Search keeps the meaning it had when it ran in Dart: a substring of the
+  /// code, the reference, the cashier's username or the customer's display
+  /// label, or the per-session number. Users and customers are matched in Dart
+  /// (their labels have fallbacks SQL would have to duplicate) and passed in as
+  /// id lists — both tables are small next to the orders.
+  Future<Expression<bool>> _ordersFilter({
+    String? statusFilter,
+    String? typeFilter,
+    bool unpaidOnly = false,
+    bool excludeCanceled = false,
+    String? searchQuery,
+    int? customerId,
+    int? cashierId,
+    int? tableId,
+    int? waiterId,
+    Set<int> sessionIds = const {},
+    DateTime? startDate,
+    DateTime? endDate,
+    Set<int> tagIds = const {},
+    bool untagged = false,
+  }) async {
+    final t = _database.orders;
+    final parts = <Expression<bool>>[
+      if (statusFilter != null && statusFilter != 'ALL')
+        t.status.equals(statusFilter),
+      if (excludeCanceled) t.status.equals('CANCELED').not(),
+      if (typeFilter != null && typeFilter != 'ALL') t.type.equals(typeFilter),
+      if (customerId != null) t.clientId.equals(customerId),
+      if (cashierId != null) t.takenBy.equals(cashierId),
+      if (tableId != null) t.tableId.equals(tableId),
+      if (waiterId != null) t.waiterId.equals(waiterId),
+      if (sessionIds.isNotEmpty) t.sessionId.isIn(sessionIds),
+      // Day-prefix comparison — dates are stored as TEXT and legacy rows may
+      // use the UTC/space encoding that sorts before 'T', which would drop
+      // same-day orders on the range's start day. See _dayStr / ticket filter.
+      if (startDate != null) _dateOnOrAfterDay(t.date, startDate),
+      if (endDate != null) _dateOnOrBeforeDay(t.date, endDate),
+      if (unpaidOnly) unpaidOrderSql,
+    ];
+
+    if (tagIds.isNotEmpty || untagged) {
+      // tag_ids is a comma list ("1,4"); fenced with commas so 1 never
+      // matches 12.
+      const fenced =
+          "(',' || REPLACE(COALESCE(orders.tag_ids, ''), ' ', '') || ',')";
+      parts.add(CustomExpression<bool>('(${[
+        if (untagged) "TRIM(COALESCE(orders.tag_ids, '')) = ''",
+        for (final id in tagIds) "$fenced LIKE '%,$id,%'",
+      ].join(' OR ')})'));
+    }
+
+    if (searchQuery != null && searchQuery.isNotEmpty) {
+      final needle = searchQuery.toLowerCase();
+      final pattern = _likeContains(searchQuery);
+      final searchNo = _searchedOrderNo(searchQuery);
+      final userIds = [
+        for (final u in await _database.select(_database.users).get())
+          if (u.username.toLowerCase().contains(needle)) u.id,
+      ];
+      final customerIds = [
+        for (final c in await _database.select(_database.customers).get())
+          if (c.displayLabel.toLowerCase().contains(needle)) c.id,
+      ];
+      parts.add(Expression.or([
+        t.code.like(pattern, escapeChar: r'\'),
+        t.reference.like(pattern, escapeChar: r'\'),
+        if (searchNo != null) t.sessionOrderNo.equals(searchNo),
+        if (userIds.isNotEmpty) t.takenBy.isIn(userIds),
+        if (customerIds.isNotEmpty) t.clientId.isIn(customerIds),
+      ]));
+    }
+
+    return Expression.and(parts);
+  }
+
+  /// "Is this order unpaid?" — the canonical check behind the orders-screen
+  /// unpaid chip, the resume picker and the close-time unpaid gate.
+  ///
+  /// Same formula as [getOrderTotals] (lines with their components, less
+  /// manual discounts, less the order's discount %), against the paid,
+  /// uncancelled tickets; an empty order and a CANCELED one are not unpaid.
+  /// The 0.005 epsilon keeps rounding from flagging a fully-paid order.
+  /// Correlated on `orders.id`, so it filters inside the query.
+  static final Expression<bool> unpaidOrderSql = CustomExpression<bool>(
+    "(orders.status <> 'CANCELED' AND $_orderTotalSql > 0 AND "
+    '(SELECT COALESCE(SUM(t.amount), 0) FROM tickets t '
+    'WHERE t.order_id = orders.id AND t.is_paid = 1 AND t.is_cancelled = 0)'
+    ' + 0.005 < $_orderTotalSql)',
+  );
+
+  static const _orderLinesSql =
+      '(SELECT COALESCE(SUM(((op.unitary_price + COALESCE((SELECT SUM(c.price * c.quantity) '
+      'FROM order_product_components c WHERE c.order_product_id = op.id), 0))'
+      ' - op.manual_discount) * op.quantity), 0) '
+      'FROM order_products op WHERE op.order_id = orders.id)';
+
+  static const _orderTotalSql =
+      '($_orderLinesSql * (1 - COALESCE(orders.discount_percentage, 0) / 100.0))';
+
   /// Fetches the small ranked list of orders that the cashier can
   /// "resume" from the empty cart panel.
   ///
   /// Inclusion rule = "the cashier might want to pick this back up":
-  ///   * status NOT IN (`COMPLETED`, `CANCELED`)
-  ///   * AND ([_isOrderUnpaid] returns true) — i.e. line items haven't
+  ///   * [unpaidOrderSql] holds (which also rules out `CANCELED`) — i.e. line items haven't
   ///     been fully covered by paid tickets yet. `ONHOLD` orders pass
   ///     this naturally since they have no tickets.
   ///
@@ -2912,6 +3394,8 @@ class OrderRepository {
   /// concatenated first + last name; an empty / null value means "no
   /// customer filter".
   ///
+  /// [search] is the panel's single search box — see [orderMatchesSearch].
+  ///
   /// Cap defaults to 50 — the dialog this feeds is meant for "pick the
   /// one you were just working on", not for browsing a long history.
   /// The orders-management screen handles the deep-browse case.
@@ -2919,51 +3403,62 @@ class OrderRepository {
     String? typeFilter,
     int? tableId,
     String? customerQuery,
+    String? search,
     int? cashierId,
     int limit = 50,
   }) async {
-    // Coarse pre-filter: only CANCELED orders are definitively not resumable.
-    // We deliberately do NOT exclude COMPLETED here: orders are born COMPLETED
-    // (that's the cloud-terminal order status — payment is tracked on the
-    // PRODUCTS / tickets, not order.status), so a COMPLETED order may still be
-    // unpaid. The authoritative paid/unpaid decision is [_isOrderUnpaid] below.
-    var query = _database.select(_database.orders)
-      ..where((tbl) => tbl.status.equals('CANCELED').not())
-      ..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)]);
+    // Orders are born COMPLETED (that's the cloud-terminal order status —
+    // payment is tracked on the PRODUCTS / tickets, not order.status), so
+    // status says nothing here: the unpaid test runs in SQL, and only what is
+    // still owed ever leaves the database. CANCELED is excluded by it.
+    final searching = (search ?? '').trim().isNotEmpty;
+    final needle = (customerQuery ?? '').trim().toLowerCase();
+    final filteredInDart = searching || needle.isNotEmpty;
 
+    final query = _database.select(_database.orders)
+      ..where((_) => unpaidOrderSql)
+      ..orderBy([(tbl) => OrderingTerm.desc(tbl.createdAt)]);
     if (typeFilter != null && typeFilter != 'ALL') {
-      query = query..where((tbl) => tbl.type.equals(typeFilter));
+      query.where((tbl) => tbl.type.equals(typeFilter));
     }
-    if (tableId != null) {
-      query = query..where((tbl) => tbl.tableId.equals(tableId));
-    }
-    if (cashierId != null) {
-      query = query..where((tbl) => tbl.takenBy.equals(cashierId));
-    }
+    if (tableId != null) query.where((tbl) => tbl.tableId.equals(tableId));
+    if (cashierId != null) query.where((tbl) => tbl.takenBy.equals(cashierId));
+    if (!filteredInDart) query.limit(limit);
 
     final candidates = await query.get();
+    if (!filteredInDart) return candidates;
 
-    final needle = (customerQuery ?? '').trim().toLowerCase();
+    // The candidates are only the unpaid orders, so matching customers in
+    // Dart (one batched load) stays cheap and keeps [orderMatchesSearch].
+    final customers = <int, Customer>{};
+    final ids = {
+      for (final o in candidates)
+        if (o.clientId != null) o.clientId!,
+    };
+    if (ids.isNotEmpty) {
+      for (final c in await (_database.select(
+        _database.customers,
+      )..where((c) => c.id.isIn(ids))).get()) {
+        customers[c.id] = c;
+      }
+    }
+
     final result = <Order>[];
     for (final order in candidates) {
-      // Customer-name filter — needs a customers join we can't do in the
-      // base select without restructuring, so it runs in memory. Cheap
-      // because the SQL where clauses above have already pruned the
-      // candidate set.
+      final customer =
+          order.clientId == null ? null : customers[order.clientId!];
+      if (searching &&
+          !orderMatchesSearch(order, search!, customer: customer)) {
+        continue;
+      }
       if (needle.isNotEmpty) {
-        if (order.clientId == null) continue;
-        final customer = await (_database.select(_database.customers)
-              ..where((c) => c.id.equals(order.clientId!)))
-            .getSingleOrNull();
         if (customer == null) continue;
-        final fullName =
-            '${customer.firstName} ${customer.lastName}'.toLowerCase();
+        final fullName = '${customer.firstName} ${customer.lastName}'
+            .toLowerCase();
         if (!fullName.contains(needle)) continue;
       }
-      if (await _isOrderUnpaid(order)) {
-        result.add(order);
-        if (result.length >= limit) break;
-      }
+      result.add(order);
+      if (result.length >= limit) break;
     }
     return result;
   }
@@ -3000,17 +3495,17 @@ class OrderRepository {
   }) async {
     if (orderIds.isEmpty) return const {};
 
-    final lines = await (_database.select(_database.orderProducts)
-          ..where((p) => p.orderId.isIn(orderIds)))
-        .get();
+    final lines = await (_database.select(
+      _database.orderProducts,
+    )..where((p) => p.orderId.isIn(orderIds))).get();
     if (lines.isEmpty) {
       return {for (final id in orderIds) id: const OrderContentSummary()};
     }
 
     final productIds = lines.map((l) => l.productId).toSet().toList();
-    final products = await (_database.select(_database.products)
-          ..where((p) => p.id.isIn(productIds)))
-        .get();
+    final products = await (_database.select(
+      _database.products,
+    )..where((p) => p.id.isIn(productIds))).get();
     final nameById = {for (final p in products) p.id: p.name};
 
     final byOrder = <int, List<OrderProduct>>{};
@@ -3034,8 +3529,7 @@ class OrderRepository {
         units: units,
         lineCount: own.length,
         preview: names,
-        hiddenLines:
-            own.length > previewLimit ? own.length - previewLimit : 0,
+        hiddenLines: own.length > previewLimit ? own.length - previewLimit : 0,
       );
     }
     return result;
@@ -3044,24 +3538,24 @@ class OrderRepository {
   Future<Map<int, double>> getOrderTotals(List<int> orderIds) async {
     if (orderIds.isEmpty) return const {};
 
-    final orders = await (_database.select(_database.orders)
-          ..where((o) => o.id.isIn(orderIds)))
-        .get();
+    final orders = await (_database.select(
+      _database.orders,
+    )..where((o) => o.id.isIn(orderIds))).get();
     final discountPctById = {
       for (final o in orders) o.id: o.discountPercentage,
     };
 
-    final products = await (_database.select(_database.orderProducts)
-          ..where((p) => p.orderId.isIn(orderIds)))
-        .get();
+    final products = await (_database.select(
+      _database.orderProducts,
+    )..where((p) => p.orderId.isIn(orderIds))).get();
     if (products.isEmpty) {
       return {for (final id in orderIds) id: 0.0};
     }
 
     final productIds = products.map((p) => p.id).toList();
-    final allComps = await (_database.select(_database.orderProductComponents)
-          ..where((c) => c.orderProductId.isIn(productIds)))
-        .get();
+    final allComps = await (_database.select(
+      _database.orderProductComponents,
+    )..where((c) => c.orderProductId.isIn(productIds))).get();
     final compsByProductId = <int, List<OrderProductComponent>>{};
     for (final c in allComps) {
       compsByProductId.putIfAbsent(c.orderProductId, () => []).add(c);
@@ -3076,8 +3570,7 @@ class OrderRepository {
       );
       final itemTotal =
           ((p.unitaryPrice + componentTotal) - p.manualDiscount) * p.quantity;
-      beforeDiscount[p.orderId] =
-          (beforeDiscount[p.orderId] ?? 0) + itemTotal;
+      beforeDiscount[p.orderId] = (beforeDiscount[p.orderId] ?? 0) + itemTotal;
     }
 
     final result = <int, double>{};
@@ -3089,198 +3582,268 @@ class OrderRepository {
     return result;
   }
 
-  /// "Is this order unpaid?" — the canonical check used by the orders-
-  /// management unpaid-filter chip and by the resume-order picker.
-  ///
-  /// Cancelled orders report as paid (so the filter doesn't surface
-  /// them as "needs payment" — they're done). Uses [getOrderTotals]
-  /// internally so the math matches what the payment screen, the cart,
-  /// and the printed receipt all see.
-  Future<bool> _isOrderUnpaid(Order order) async {
-    if (order.status == 'CANCELED') return false;
-    final totals = await getOrderTotals([order.id]);
-    final total = totals[order.id] ?? 0.0;
-    if (total <= 0) return false; // empty order isn't "unpaid"
-    final tickets = await (_database.select(_database.tickets)
-          ..where((t) =>
-              t.orderId.equals(order.id) &
-              t.isPaid.equals(true) &
-              t.isCancelled.equals(false)))
-        .get();
-    final totalPaid =
-        tickets.fold<double>(0.0, (sum, t) => sum + t.amount);
-    // Tiny epsilon so floating-point rounding doesn't classify a fully-
-    // paid order as unpaid by a penny.
-    return totalPaid + 0.005 < total;
+  // Helper method to build OrderFullDetails from an Order
+  Future<OrderFullDetails> _buildOrderFullDetails(
+    Order order, {
+    Set<int>? endedSessionIds,
+  }) async =>
+      (await _buildOrderFullDetailsBatch(
+        [order],
+        endedSessionIds: endedSessionIds,
+      )).single;
+
+  /// `isIn` in slices, under SQLite's bound-variable limit.
+  static Future<List<R>> _fetchIn<R>(
+    Iterable<int> ids,
+    Future<List<R>> Function(List<int> slice) fetch,
+  ) async {
+    final all = ids.toSet().toList();
+    final out = <R>[];
+    for (var i = 0; i < all.length; i += 900) {
+      out.addAll(await fetch(
+          all.sublist(i, i + 900 > all.length ? all.length : i + 900)));
+    }
+    return out;
   }
 
-  // Helper method to build OrderFullDetails from an Order
-  Future<OrderFullDetails> _buildOrderFullDetails(Order order, {Set<int>? endedSessionIds}) async {
-    // Get order products
-    final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(order.id))).get();
+  /// [OrderFullDetails] for a list of orders, in that order. One query per
+  /// table for the whole list — a page of the orders screen used to cost a
+  /// query per line, per component and per ticket.
+  Future<List<OrderFullDetails>> _buildOrderFullDetailsBatch(
+    List<Order> orders, {
+    Set<int>? endedSessionIds,
+  }) async {
+    if (orders.isEmpty) return const [];
+    final db = _database;
 
-    // Get user name
-    String? userName;
-    if (order.takenBy != null) {
-      final user = await (_database.select(_database.users)..where((tbl) => tbl.id.equals(order.takenBy!))).getSingleOrNull();
-      userName = user?.username;
+    final lines = await _fetchIn(
+      orders.map((o) => o.id),
+      (ids) => (db.select(db.orderProducts)
+            ..where((t) => t.orderId.isIn(ids))
+            ..orderBy([(t) => OrderingTerm.asc(t.id)]))
+          .get(),
+    );
+    final linesByOrder = <int, List<OrderProduct>>{};
+    for (final l in lines) {
+      linesByOrder.putIfAbsent(l.orderId, () => []).add(l);
     }
 
-    // Get table name
-    String? tableName;
-    if (order.tableId != null) {
-      final table = await (_database.select(_database.areaTables)..where((tbl) => tbl.id.equals(order.tableId!))).getSingleOrNull();
-      tableName = table?.name;
+    final orderComponents = await _fetchIn(
+      lines.map((l) => l.id),
+      (ids) => (db.select(db.orderProductComponents)
+            ..where((t) => t.orderProductId.isIn(ids))
+            ..orderBy([(t) => OrderingTerm.asc(t.id)]))
+          .get(),
+    );
+    final compsByLine = <int, List<OrderProductComponent>>{};
+    for (final c in orderComponents) {
+      compsByLine.putIfAbsent(c.orderProductId, () => []).add(c);
     }
 
-    // Get customer name and phone
-    String? customerName;
-    String? customerPhone;
-    int? customerId;
-    if (order.clientId != null) {
-      final customer = await (_database.select(_database.customers)..where((tbl) => tbl.id.equals(order.clientId!))).getSingleOrNull();
-      if (customer != null) {
-        customerName = customer.displayLabel;
-        customerPhone = customer.phone;
-        customerId = customer.id;
-      }
-    }
+    final users = {
+      for (final u in await _fetchIn(
+        orders.where((o) => o.takenBy != null).map((o) => o.takenBy!),
+        (ids) => (db.select(db.users)..where((t) => t.id.isIn(ids))).get(),
+      ))
+        u.id: u,
+    };
+    final tables = {
+      for (final t in await _fetchIn(
+        orders.where((o) => o.tableId != null).map((o) => o.tableId!),
+        (ids) =>
+            (db.select(db.areaTables)..where((t) => t.id.isIn(ids))).get(),
+      ))
+        t.id: t,
+    };
+    final customers = {
+      for (final c in await _fetchIn(
+        orders.where((o) => o.clientId != null).map((o) => o.clientId!),
+        (ids) =>
+            (db.select(db.customers)..where((t) => t.id.isIn(ids))).get(),
+      ))
+        c.id: c,
+    };
+    final products = {
+      for (final p in await _fetchIn(
+        lines.map((l) => l.productId),
+        (ids) => (db.select(db.products)..where((t) => t.id.isIn(ids))).get(),
+      ))
+        p.id: p,
+    };
+    final variants = {
+      for (final v in await _fetchIn(
+        lines.where((l) => l.variantId != null).map((l) => l.variantId!),
+        (ids) => (db.select(db.productVariants)..where((t) => t.id.isIn(ids)))
+            .get(),
+      ))
+        v.id: v,
+    };
+    final components = {
+      for (final c in await _fetchIn(
+        orderComponents.map((c) => c.componentId),
+        (ids) =>
+            (db.select(db.components)..where((t) => t.id.isIn(ids))).get(),
+      ))
+        c.id: c,
+    };
+    final tickets = {
+      for (final t in await _fetchIn(
+        lines.where((l) => l.ticketId != null).map((l) => l.ticketId!),
+        (ids) => (db.select(db.tickets)..where((t) => t.id.isIn(ids))).get(),
+      ))
+        t.id: t,
+    };
+    final ended = endedSessionIds ??
+        {
+          for (final s in await _fetchIn(
+            orders.where((o) => o.sessionId != null).map((o) => o.sessionId!),
+            (ids) => (db.select(db.cashSessions)..where((t) => t.id.isIn(ids)))
+                .get(),
+          ))
+            if (s.status == 'ended') s.id,
+        };
 
-    // Calculate totals
-    double subtotal = 0.0;
-    double itemDiscount = 0.0;
-    double totalTva = 0.0;
-    double totalPaid = 0.0;
-    final seenTicketIds = <int>{};
+    final result = <OrderFullDetails>[];
+    for (final order in orders) {
+      final orderProducts = linesByOrder[order.id] ?? const <OrderProduct>[];
+      final customer =
+          order.clientId == null ? null : customers[order.clientId!];
 
-    final itemDetails = <OrderItemDetails>[];
-    for (final product in orderProducts) {
-      final productDetail = await (_database.select(_database.products)
-        ..where((tbl) => tbl.id.equals(product.productId)))
-          .getSingleOrNull();
+      // Calculate totals
+      double subtotal = 0.0;
+      double itemDiscount = 0.0;
+      double totalTva = 0.0;
+      double totalPaid = 0.0;
+      final seenTicketIds = <int>{};
 
-      // Get variant details if variantId exists
-      String? variantName;
-      if (product.variantId != null) {
-        final variant = await (_database.select(_database.productVariants)..where((tbl) => tbl.id.equals(product.variantId!))).getSingleOrNull();
-        variantName = variant?.name;
-      }
-
-      // Get components
-      final orderComponents = await (_database.select(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).get();
-
-      // Calculate component total using stored prices
-      double componentTotal = 0.0;
-      final components = <ComponentDetails>[];
-      for (final orderComp in orderComponents) {
-        componentTotal += orderComp.price * orderComp.quantity;
-
-        final component = await (_database.select(_database.components)..where((tbl) => tbl.id.equals(orderComp.componentId))).getSingleOrNull();
-        if (component != null) {
-          components.add(ComponentDetails(
-            name: component.name,
-            quantity: orderComp.quantity,
-            price: orderComp.price
-          ));
+      final itemDetails = <OrderItemDetails>[];
+      for (final product in orderProducts) {
+        // Calculate component total using stored prices
+        double componentTotal = 0.0;
+        final componentDetails = <ComponentDetails>[];
+        for (final orderComp
+            in compsByLine[product.id] ?? const <OrderProductComponent>[]) {
+          componentTotal += orderComp.price * orderComp.quantity;
+          final component = components[orderComp.componentId];
+          if (component != null) {
+            componentDetails.add(
+              ComponentDetails(
+                name: component.name,
+                quantity: orderComp.quantity,
+                price: orderComp.price,
+              ),
+            );
+          }
         }
-      }
 
-      // unitaryPrice = basePrice + tva - preDiscount (all baked in).
-      // Subtract unitaryTva so subtotal is tax-exclusive (HT); totalTva is added
-      // back later in the final total formula to avoid double-counting.
-      // productDiscount covers both the pre-discount and any manual discount.
-      // totalPrice = itemSubtotal + totalTva - productDiscount
-      //            = (unitaryPrice - unitaryTva + unitaryDiscount + componentTotal) * qty + tva*qty - (unitaryDiscount + manualDiscount) * qty
-      //            = (unitaryPrice + componentTotal - manualDiscount) * qty  ✓
-      final productDiscount = (product.unitaryDiscount + product.manualDiscount) * product.quantity;
-      final itemSubtotal = (product.unitaryPrice - product.unitaryTva + product.unitaryDiscount + componentTotal) * product.quantity;
-      final itemTva = product.unitaryTva * product.quantity;
+        // unitaryPrice = basePrice + tva - preDiscount (all baked in).
+        // Subtract unitaryTva so subtotal is tax-exclusive (HT); totalTva is added
+        // back later in the final total formula to avoid double-counting.
+        // productDiscount covers both the pre-discount and any manual discount.
+        // totalPrice = itemSubtotal + totalTva - productDiscount
+        //            = (unitaryPrice - unitaryTva + unitaryDiscount + componentTotal) * qty + tva*qty - (unitaryDiscount + manualDiscount) * qty
+        //            = (unitaryPrice + componentTotal - manualDiscount) * qty  ✓
+        final productDiscount =
+            (product.unitaryDiscount + product.manualDiscount) *
+                product.quantity;
+        final itemSubtotal =
+            (product.unitaryPrice -
+                product.unitaryTva +
+                product.unitaryDiscount +
+                componentTotal) *
+            product.quantity;
+        final itemTva = product.unitaryTva * product.quantity;
 
-      subtotal += itemSubtotal;
-      itemDiscount += productDiscount;
-      totalTva += itemTva;
+        subtotal += itemSubtotal;
+        itemDiscount += productDiscount;
+        totalTva += itemTva;
 
-      // Check if item is paid (has a ticket)
-      bool isPaid = product.ticketId != null;
-      String? ticketNum;
-      if (isPaid) {
-        final ticket = await (_database.select(_database.tickets)..where((tbl) => tbl.id.equals(product.ticketId!))).getSingleOrNull();
-        ticketNum = ticket?.num;
-        if (ticket != null && !seenTicketIds.contains(ticket.id)) {
-          seenTicketIds.add(ticket.id);
-          totalPaid += ticket.amount;
+        // Check if item is paid (has a ticket)
+        final isPaid = product.ticketId != null;
+        String? ticketNum;
+        if (isPaid) {
+          final ticket = tickets[product.ticketId!];
+          ticketNum = ticket?.num;
+          if (ticket != null && seenTicketIds.add(ticket.id)) {
+            totalPaid += ticket.amount;
+          }
         }
+
+        itemDetails.add(
+          OrderItemDetails(
+            productName: products[product.productId]?.name ?? 'Unknown Product',
+            variantId: product.variantId,
+            variantName: product.variantId == null
+                ? null
+                : variants[product.variantId!]?.name,
+            quantity: product.quantity,
+            totalPrice: itemSubtotal + itemTva - productDiscount,
+            isPaid: isPaid,
+            ticketNum: ticketNum,
+            components: componentDetails,
+            kitchenState: product.state,
+            kitchenAt: kitchenSince(product, fallback: order.createdAt),
+            preparingAt: product.preparingAt,
+            kitchenDoneAt: product.readyAt ?? product.servedAt,
+          ),
+        );
       }
 
-      itemDetails.add(OrderItemDetails(
-        productName: productDetail?.name ?? 'Unknown Product',
-        variantId: product.variantId,
-        variantName: variantName,
-        quantity: product.quantity,
-        totalPrice: itemSubtotal + itemTva - productDiscount,
-        isPaid: isPaid,
-        ticketNum: ticketNum,
-        components: components,
+      // Calculate manual discount from percentage
+      final discountPercentage = order.discountPercentage;
+      final manualDiscountAmount =
+          (subtotal + totalTva - itemDiscount) * (discountPercentage / 100);
+      final totalDiscount = itemDiscount + manualDiscountAmount;
+
+      // Calculate final total
+      final total = subtotal + totalTva - totalDiscount;
+
+      result.add(OrderFullDetails(
+        order: order,
+        userName: order.takenBy == null ? null : users[order.takenBy!]?.username,
+        tableName: order.tableId == null ? null : tables[order.tableId!]?.name,
+        customerName: customer?.displayLabel,
+        customerPhone: customer?.phone,
+        customerId: customer?.id,
+        productCount: orderProducts.length,
+        subtotal: subtotal,
+        itemDiscount: itemDiscount,
+        discountPercentage: discountPercentage,
+        manualDiscountAmount: manualDiscountAmount,
+        totalDiscount: totalDiscount,
+        totalTva: totalTva,
+        total: total,
+        totalPaid: totalPaid,
+        deliveryFee: order.deliveryFee ?? 0.0,
+        items: itemDetails,
+        isZLocked: order.sessionId != null && ended.contains(order.sessionId!),
       ));
     }
-
-    // Calculate manual discount from percentage
-    final discountPercentage = order.discountPercentage;
-    final manualDiscountAmount = (subtotal + totalTva - itemDiscount) * (discountPercentage / 100);
-    final totalDiscount = itemDiscount + manualDiscountAmount;
-
-    // Calculate final total
-    final total = subtotal + totalTva - totalDiscount;
-
-    bool isZLocked = false;
-    if (order.sessionId != null) {
-      if (endedSessionIds != null) {
-        isZLocked = endedSessionIds.contains(order.sessionId!);
-      } else {
-        final session = await (_database.select(_database.cashSessions)
-              ..where((tbl) => tbl.id.equals(order.sessionId!)))
-            .getSingleOrNull();
-        isZLocked = session?.status == 'ended';
-      }
-    }
-
-    return OrderFullDetails(
-      order: order,
-      userName: userName,
-      tableName: tableName,
-      customerName: customerName,
-      customerPhone: customerPhone,
-      customerId: customerId,
-      productCount: orderProducts.length,
-      subtotal: subtotal,
-      itemDiscount: itemDiscount,
-      discountPercentage: discountPercentage,
-      manualDiscountAmount: manualDiscountAmount,
-      totalDiscount: totalDiscount,
-      totalTva: totalTva,
-      total: total,
-      totalPaid: totalPaid,
-      deliveryFee: order.deliveryFee ?? 0.0,
-      items: itemDetails,
-      isZLocked: isZLocked,
-    );
+    return result;
   }
 
   // Get full details for a specific order
   Future<OrderFullDetails> getOrderFullDetails(int orderId) async {
-    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingle();
+    final order = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).getSingle();
     return _buildOrderFullDetails(order);
   }
 
   // Delete an order
-  Future<void> deleteOrder(int orderId, {bool queueSyncOperation = true}) async {
-    final order = await (_database.select(_database.orders)..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
+  Future<void> deleteOrder(
+    int orderId, {
+    bool queueSyncOperation = true,
+  }) async {
+    final order = await (_database.select(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
 
     // Z-report guard: refuse deletes on orders from a closed session
     if (order?.sessionId != null) {
-      final session = await (_database.select(_database.cashSessions)
-            ..where((tbl) => tbl.id.equals(order!.sessionId!)))
-          .getSingleOrNull();
+      final session = await (_database.select(
+        _database.cashSessions,
+      )..where((tbl) => tbl.id.equals(order!.sessionId!))).getSingleOrNull();
       if (session?.status == 'ended') {
         throw Exception('Cannot delete order from a closed (Z-report) session');
       }
@@ -3290,9 +3853,22 @@ class OrderRepository {
     // cannot leave the order half-deleted. The order itself is snapshotted
     // too: by print time there is no row left to look its code up from.
     final sentToKitchen = await _allSentToKitchen(orderId);
-    final deletedSnapshot =
-        sentToKitchen.isEmpty ? null : await getOrderById(orderId);
-
+    final deletedSnapshot = sentToKitchen.isEmpty
+        ? null
+        : await getOrderById(orderId);
+    // An order already CANCELED has had its notification; an empty one took
+    // nothing off the books.
+    final lineCount =
+        await (_database.selectOnly(_database.orderProducts)
+              ..addColumns([_database.orderProducts.id.count()])
+              ..where(_database.orderProducts.orderId.equals(orderId)))
+            .map((r) => r.read(_database.orderProducts.id.count()) ?? 0)
+            .getSingle();
+    final notifyDeleted =
+        order != null && order.status != 'CANCELED' && lineCount > 0;
+    final deletedAmount = notifyDeleted
+        ? (await getOrderTotals([orderId]))[orderId] ?? 0.0
+        : 0.0;
 
     if (order != null && order.isSynced && queueSyncOperation) {
       // Try to delete from server if online, otherwise queue
@@ -3320,42 +3896,77 @@ class OrderRepository {
         await _queueOrderDelete(orderId, order.code);
       }
     } else if (order != null && !order.isSynced) {
-      _logger.info('Deleting local-only order #$orderId (not synced, no queue needed)');
+      _logger.info(
+        'Deleting local-only order #$orderId (not synced, no queue needed)',
+      );
     }
 
     // CASCADE DELETE: Delete all tickets associated with this order
-    final tickets = await (_database.select(_database.tickets)..where((tbl) => tbl.orderId.equals(orderId))).get();
+    final tickets = await (_database.select(
+      _database.tickets,
+    )..where((tbl) => tbl.orderId.equals(orderId))).get();
     for (final ticket in tickets) {
-
       // Delete the ticket
-      await (_database.delete(_database.tickets)..where((tbl) => tbl.id.equals(ticket.id))).go();
-      _logger.info('Deleted ticket #${ticket.id} (num=${ticket.num}) for order #$orderId');
+      await (_database.delete(
+        _database.tickets,
+      )..where((tbl) => tbl.id.equals(ticket.id))).go();
+      _logger.info(
+        'Deleted ticket #${ticket.id} (num=${ticket.num}) for order #$orderId',
+      );
     }
 
     // Delete order product components first
-    final orderProducts = await (_database.select(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))).get();
+    final orderProducts = await (_database.select(
+      _database.orderProducts,
+    )..where((tbl) => tbl.orderId.equals(orderId))).get();
     for (final product in orderProducts) {
-      await (_database.delete(_database.orderProductComponents)..where((tbl) => tbl.orderProductId.equals(product.id))).go();
+      await (_database.delete(
+        _database.orderProductComponents,
+      )..where((tbl) => tbl.orderProductId.equals(product.id))).go();
     }
 
     // Delete order products
-    await (_database.delete(_database.orderProducts)..where((tbl) => tbl.orderId.equals(orderId))).go();
+    await (_database.delete(
+      _database.orderProducts,
+    )..where((tbl) => tbl.orderId.equals(orderId))).go();
 
     // Log order deletion BEFORE deleting the order
     if (order != null) {
-      await _logService.logOrderDeleted(orderId, 'Order deleted: code=${order.code}');
+      await _logService.logOrderDeleted(
+        orderId,
+        'Order deleted: code=${order.code}',
+      );
     }
 
     // Delete the order
-    await (_database.delete(_database.orders)..where((tbl) => tbl.id.equals(orderId))).go();
+    await (_database.delete(
+      _database.orders,
+    )..where((tbl) => tbl.id.equals(orderId))).go();
 
     // Emit event
     _emitEvent(OrderDeletedEvent(orderId: orderId));
 
+    final reader = _ref;
+    if (notifyDeleted && reader != null) {
+      final actor = reader.read(currentUserProvider);
+      notifyOrderCancelled(
+        reader.read,
+        orderCode: order.code,
+        amount: deletedAmount,
+        byName: actor?.effectiveDisplayName,
+        byId: actor?.id,
+        afterKitchen: sentToKitchen.isNotEmpty,
+        deleted: true,
+      );
+    }
+
     // The order is gone from the till; the food is still on the pass.
     if (sentToKitchen.isNotEmpty) {
-      await _printKitchenCancellation(orderId, sentToKitchen,
-          snapshot: deletedSnapshot);
+      await _printKitchenCancellation(
+        orderId,
+        sentToKitchen,
+        snapshot: deletedSnapshot,
+      );
     }
   }
 
@@ -3382,14 +3993,23 @@ final orderRepositoryProvider = Provider<OrderRepository>((ref) {
   // Use ref.read inside the callback so it always returns the CURRENT online state,
   // rather than capturing a stale value at provider creation time.
   final syncService = ref.watch(dataSyncServiceProvider);
-  repository.setSyncService(syncService, () => ref.read(lastKnownOnlineStatusProvider));
+  repository.setSyncService(
+    syncService,
+    () => ref.read(lastKnownOnlineStatusProvider),
+  );
 
   return repository;
 });
 
-
-
-
-
-
-
+/// The backend's payment position for an order: what has been collected and
+/// what is still owed. Watched rather than computed locally because the
+/// server owns the sum — a service order is routinely part-paid across tills.
+final orderPaymentPositionProvider = StreamProvider.family<Order?, int>((
+  ref,
+  orderId,
+) {
+  final db = ref.watch(databaseProvider);
+  return (db.select(
+    db.orders,
+  )..where((o) => o.id.equals(orderId))).watchSingleOrNull();
+});

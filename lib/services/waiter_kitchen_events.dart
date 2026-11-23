@@ -15,8 +15,8 @@ import 'waiter_notification_inbox.dart';
 /// A line's kitchen progress as the waiter should read it.
 ///
 /// Derived from the stage timestamps as much as from `state`, because `state`
-/// is shared with the till: a paid line is overwritten to `PAID`, which says
-/// nothing about whether the kitchen has sent it out. The timestamps are
+/// can still read `PAID` on rows paid before payment stopped overwriting it,
+/// which says nothing about whether the kitchen has sent it out. The timestamps are
 /// write-once, so they survive that.
 String kitchenStateOf({
   required String state,

@@ -3,37 +3,58 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/update_provider.dart';
 import '../../utils/app_localizations.dart';
 
-class UpdateDialog extends ConsumerWidget {
+/// Translates the notifier's error: either an l10n key it set itself, or a
+/// raw exception from the download.
+String updateErrorText(AppLocalizations l10n, String error) =>
+    error.startsWith('update_')
+        ? l10n.translate(error)
+        : '${l10n.translate('update_download_failed')}\n$error';
+
+class UpdateDialog extends ConsumerStatefulWidget {
   final bool isMandatory;
 
-  const UpdateDialog({
-    Key? key,
-    required this.isMandatory,
-  }) : super(key: key);
+  const UpdateDialog({super.key, required this.isMandatory});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<UpdateDialog> createState() => _UpdateDialogState();
+}
+
+class _UpdateDialogState extends ConsumerState<UpdateDialog> {
+  bool _closing = false;
+
+  void _close() {
+    if (_closing) return;
+    _closing = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).pop();
+    });
+  }
+
+  void _install() => ref.read(updateProvider.notifier).installNow();
+
+  @override
+  Widget build(BuildContext context) {
     final updateState = ref.watch(updateProvider);
     final updateInfo = updateState.availableUpdate;
+    final version = updateState.version;
     final l10n = AppLocalizations.of(context)!;
     final cs = Theme.of(context).colorScheme;
     final screenH = MediaQuery.sizeOf(context).height;
+    final isMandatory = widget.isMandatory;
 
-    if (updateInfo == null) return const SizedBox.shrink();
+    // The release was withdrawn while the dialog was open. Close it rather
+    // than leave an empty, undismissable barrier over the till.
+    if (version == null || (!updateState.hasUpdate && !updateState.updateReady)) {
+      _close();
+      return const SizedBox.shrink();
+    }
 
-    // The download finished while this dialog is still open — which only
-    // happens for a foreground "Update Now" (or a mandatory forced download).
-    // Apply immediately: close the app and relaunch into the new version.
-    // The "Later" path closes the dialog first, so this never fires there and
-    // the update just waits for the next manual launch.
-    ref.listen<UpdateState>(updateProvider, (prev, next) {
-      if (prev?.updateReady == false && next.updateReady) {
-        ref.read(updateProvider.notifier).applyNow();
-      }
-    });
+    // A mandatory update can't be put off — unless installing it failed
+    // (UAC refused, download host unreachable): the till must still sell.
+    final canEscape = !isMandatory || updateState.error != null;
 
     return PopScope(
-      canPop: !isMandatory,
+      canPop: canEscape,
       child: Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         clipBehavior: Clip.antiAlias,
@@ -46,24 +67,22 @@ class UpdateDialog extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ── Header ──────────────────────────────────────────────────────
-              _Header(isMandatory: isMandatory, version: updateInfo.version),
-
-              // ── Scrollable body ──────────────────────────────────────────────
+              _Header(
+                isMandatory: isMandatory,
+                version: version,
+                l10n: l10n,
+              ),
               Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Mandatory notice
                       if (isMandatory) ...[
                         _MandatoryBanner(l10n: l10n),
                         const SizedBox(height: 16),
                       ],
-
-                      // Release notes
-                      if ((updateInfo.releaseNotes ?? '').isNotEmpty) ...[
+                      if ((updateInfo?.releaseNotes ?? '').isNotEmpty) ...[
                         Text(
                           l10n.translate('update_whats_new'),
                           style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -72,11 +91,9 @@ class UpdateDialog extends ConsumerWidget {
                               ),
                         ),
                         const SizedBox(height: 8),
-                        _ReleaseNotes(notes: updateInfo.releaseNotes!),
+                        _ReleaseNotes(notes: updateInfo!.releaseNotes!),
                         const SizedBox(height: 16),
                       ],
-
-                      // Download progress
                       if (updateState.isDownloading) ...[
                         _DownloadProgress(
                           progress: updateState.downloadProgress,
@@ -84,23 +101,36 @@ class UpdateDialog extends ConsumerWidget {
                         ),
                         const SizedBox(height: 16),
                       ],
-
-                      // Error
+                      if (updateState.updateReady &&
+                          !updateState.installRequested &&
+                          !updateState.isApplying) ...[
+                        Text(
+                          l10n.translate('update_ready_restart_hint'),
+                          style: TextStyle(
+                              fontSize: 13, color: cs.onSurfaceVariant),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       if (updateState.error != null) ...[
-                        _ErrorBanner(message: updateState.error!),
+                        _ErrorBanner(
+                            message:
+                                updateErrorText(l10n, updateState.error!)),
                         const SizedBox(height: 16),
                       ],
                     ],
                   ),
                 ),
               ),
-
-              // ── Actions ──────────────────────────────────────────────────────
               _Actions(
+                canLater: canEscape,
                 isMandatory: isMandatory,
-                isDownloading: updateState.isDownloading,
-                isApplying: updateState.updateReady,
+                state: updateState,
                 l10n: l10n,
+                onInstall: _install,
+                onLater: () {
+                  ref.read(updateProvider.notifier).dismiss();
+                  Navigator.of(context).pop();
+                },
               ),
             ],
           ),
@@ -115,18 +145,19 @@ class UpdateDialog extends ConsumerWidget {
 class _Header extends StatelessWidget {
   final bool isMandatory;
   final String version;
+  final AppLocalizations l10n;
 
-  const _Header({required this.isMandatory, required this.version});
+  const _Header({
+    required this.isMandatory,
+    required this.version,
+    required this.l10n,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final bgColor =
-        isMandatory ? const Color(0xFFFFF3E0) : cs.primaryContainer;
-    final iconColor =
-        isMandatory ? Colors.orange[700]! : cs.onPrimaryContainer;
-    final textColor =
-        isMandatory ? Colors.orange[900]! : cs.onPrimaryContainer;
+    final bgColor = isMandatory ? cs.errorContainer : cs.primaryContainer;
+    final fgColor = isMandatory ? cs.onErrorContainer : cs.onPrimaryContainer;
 
     return Container(
       color: bgColor,
@@ -137,14 +168,14 @@ class _Header extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.12),
+              color: fgColor.withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
             child: Icon(
               isMandatory
                   ? Icons.system_update_alt_rounded
                   : Icons.new_releases_rounded,
-              color: iconColor,
+              color: fgColor,
               size: 26,
             ),
           ),
@@ -154,25 +185,26 @@ class _Header extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isMandatory ? 'Update required' : 'Update available',
+                  l10n.translate(isMandatory
+                      ? 'update_required_title'
+                      : 'update_available_title'),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: textColor,
+                        color: fgColor,
                         fontWeight: FontWeight.bold,
                       ),
                 ),
                 const SizedBox(height: 4),
-                // Version badge
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
-                    color: iconColor.withValues(alpha: 0.15),
+                    color: fgColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
                     'v$version',
                     style: TextStyle(
-                      color: iconColor,
+                      color: fgColor,
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 0.3,
@@ -194,24 +226,24 @@ class _MandatoryBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.orange.withValues(alpha: 0.08),
+        color: cs.errorContainer.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+        border: Border.all(color: cs.error.withValues(alpha: 0.4)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: Colors.orange, size: 18),
+          Icon(Icons.warning_amber_rounded, color: cs.error, size: 18),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               l10n.translate('update_mandatory_notice'),
-              style: const TextStyle(
-                color: Colors.orange,
+              style: TextStyle(
+                color: cs.onErrorContainer,
                 fontSize: 13,
                 height: 1.4,
               ),
@@ -238,7 +270,6 @@ class _ReleaseNotes extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: cs.outlineVariant),
       ),
-      // Text itself is flexible — no fixed height, scrolls via parent scroll view.
       child: SelectableText(
         notes,
         style: TextStyle(
@@ -269,7 +300,7 @@ class _DownloadProgress extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              l10n.translate('update_downloading_pct').replaceAll('{0}', '').trimRight(),
+              l10n.translate('update_downloading_pct').replaceAll('{0}', '').replaceAll('%', '').trimRight(),
               style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
             ),
             Text(
@@ -332,24 +363,44 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-class _Actions extends ConsumerWidget {
+class _Actions extends StatelessWidget {
+  final bool canLater;
   final bool isMandatory;
-  final bool isDownloading;
-  final bool isApplying;
+  final UpdateState state;
   final AppLocalizations l10n;
+  final VoidCallback onInstall;
+  final VoidCallback onLater;
 
   const _Actions({
+    required this.canLater,
     required this.isMandatory,
-    required this.isDownloading,
-    required this.isApplying,
+    required this.state,
     required this.l10n,
+    required this.onInstall,
+    required this.onLater,
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    // Busy = download in flight OR the app is about to close & relaunch.
-    final busy = isDownloading || isApplying;
+    // Busy = download in flight, or install asked for and on its way.
+    final busy = state.isApplying ||
+        state.isDownloading && state.installRequested;
+
+    final String label;
+    if (state.isApplying) {
+      label = l10n.translate('update_restarting');
+    } else if (state.isDownloading) {
+      label = l10n
+          .translate('update_downloading_pct')
+          .replaceAll('{0}', (state.downloadProgress * 100).toStringAsFixed(0));
+    } else if (state.updateReady) {
+      label = l10n.translate('update_restart_now');
+    } else if (state.error != null) {
+      label = l10n.translate('update_retry');
+    } else {
+      label = l10n.translate('update_now');
+    }
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -359,45 +410,24 @@ class _Actions extends ConsumerWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          if (!isMandatory && !busy) ...[
+          if (canLater && !state.isApplying) ...[
             TextButton(
-              onPressed: () {
-                // dismissUpdate() starts background download then clears dialog
-                // state — the download continues silently and applies on the
-                // next launch (no auto-restart).
-                ref.read(updateProvider.notifier).dismissUpdate();
-                Navigator.of(context).pop();
-              },
+              onPressed: onLater,
               child: Text(l10n.translate('update_later')),
             ),
             const SizedBox(width: 8),
           ],
           FilledButton.icon(
-            onPressed: busy
-                ? null
-                : () {
-                    // Download in the foreground; when it completes the dialog's
-                    // listener applies it immediately (close + relaunch).
-                    ref.read(updateProvider.notifier).startDownload();
-                  },
+            onPressed: busy ? null : onInstall,
             icon: busy
-                ? const SizedBox(
+                ? SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
+                        strokeWidth: 2, color: cs.onPrimary),
                   )
                 : const Icon(Icons.download_rounded, size: 18),
-            label: Text(
-              isApplying
-                  ? l10n.translate('update_restarting')
-                  : isDownloading
-                      ? l10n
-                          .translate('update_downloading_pct')
-                          .replaceAll('{0}', '')
-                          .trimRight()
-                      : l10n.translate('update_now'),
-            ),
+            label: Text(label),
           ),
         ],
       ),
@@ -405,10 +435,20 @@ class _Actions extends ConsumerWidget {
   }
 }
 
-void showUpdateDialog(BuildContext context, {required bool isMandatory}) {
-  showDialog(
+/// Shows the dialog unless one is already up; returns when it closes — also
+/// when it was already up, so a caller waits for the one on screen (the
+/// UpdateWatcher may open it a moment earlier for the same update).
+Future<void>? _openDialog;
+
+Future<void> showUpdateDialog(BuildContext context,
+    {required bool isMandatory}) {
+  final open = _openDialog;
+  if (open != null) return open;
+  final shown = showDialog<void>(
     context: context,
     barrierDismissible: !isMandatory,
     builder: (context) => UpdateDialog(isMandatory: isMandatory),
-  );
+  ).whenComplete(() => _openDialog = null);
+  _openDialog = shown;
+  return shown;
 }

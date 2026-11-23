@@ -56,10 +56,19 @@ enum TransactionType {
   card('CARD'),
   cash('CASH'),
   mobile('MOBILE'),
-  other('OTHER');
+  other('OTHER'),
+
+  /// Credit from goods brought back in an exchange, spent on the new order.
+  /// Never offered to the cashier as a way to pay: only the exchange flow
+  /// writes it, and it moves no money — it cancels against the exchange part
+  /// of the matching refund, so the Z nets out and the drawer is untouched.
+  exchange('EXCHANGE');
 
   final String value;
   const TransactionType(this.value);
+
+  /// The methods a cashier can choose on the payment screen.
+  static const pickable = [card, cash, mobile, other];
 
   static TransactionType fromString(String value) {
     return TransactionType.values.firstWhere(

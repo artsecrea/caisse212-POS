@@ -7,9 +7,9 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
-import '../../utils/responsive_utils.dart';
 import '../../data/database/app_database.dart' as db;
 import 'call_waiter_dialog.dart';
+import 'keypad_field.dart';
 import '../../utils/snackbar_helper.dart';
 
 class TableSelectionDialog extends ConsumerStatefulWidget {
@@ -64,6 +64,14 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
   /// tap.
   bool _transferMode = false;
 
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -73,12 +81,15 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
     final isSavedOrder = currentOrder.orderId != null;
     final l10n = AppLocalizations.of(context)!;
 
+    final screen = MediaQuery.sizeOf(context);
+
     return Dialog(
       backgroundColor: Theme.of(context).dialogBackgroundColor,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      insetPadding: EdgeInsets.zero,
       child: Container(
-        width: dialogWidth(context, 800),
-        height: 650,
+        width: screen.width * 0.85,
+        height: screen.height * 0.85,
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -275,7 +286,11 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
             Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  // Table names are numbers on almost every floor, so the
+                  // search gets the anchored digit pad rather than nothing at
+                  // all on a touch-only till.
+                  child: KeypadField(
+                    controller: _searchController,
                     style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
                     decoration: InputDecoration(
                       hintText: l10n.translate('search_tables'),

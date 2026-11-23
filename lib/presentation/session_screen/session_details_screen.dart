@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/pos_notifications.dart' show notifySessionPauseChange;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
@@ -73,7 +74,10 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     try {
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
-      await sessionService.pauseSession(_currentSession!.id);
+      final id = _currentSession!.id;
+      if (await sessionService.pauseSession(id)) {
+        await notifySessionPauseChange(ref.read, id);
+      }
       await _loadCurrentSession();
       if (mounted) {
         SnackBarHelper.showToast('Session paused', kind: ToastKind.warning);
@@ -91,7 +95,11 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     try {
       final database = ref.read(databaseProvider);
       final sessionService = SessionService(database);
-      await sessionService.resumeSession(_currentSession!.id);
+      final id = _currentSession!.id;
+      final pausedAt = await sessionService.resumeSession(id);
+      if (pausedAt != null) {
+        await notifySessionPauseChange(ref.read, id, pausedAt: pausedAt);
+      }
       await _loadCurrentSession();
       if (mounted) {
         SnackBarHelper.showToast('Session resumed', kind: ToastKind.success);
