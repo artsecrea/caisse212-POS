@@ -2,7 +2,6 @@ import '../utils/pos_log.dart';
 import 'package:loggecrea/loggecrea.dart';
 // import 'dart:async';
 //
-// import 'package:cmdecrea/cmdecrea.dart';
 // import 'package:flutter_riverpod/flutter_riverpod.dart';
 // import 'package:caisse212/data/database/app_database.dart';
 // import 'package:uuid/uuid.dart';

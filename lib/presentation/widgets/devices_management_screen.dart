@@ -1,6 +1,5 @@
 // filepath: /home/arecrea/prj/posecrea/lib/presentation/widgets/devices_management_screen.dart
 
-import 'package:cmdecrea/cmdecrea.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart' as widgets;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -358,13 +357,6 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
         setState(() => _isScanning = false);
       }
     }
-  }
-
-  void _showDiscoveredDevicesDialog(List<DeviceInfo> devices) {
-    showDialog(
-      context: context,
-      builder: (context) => _DiscoveredDevicesDialog(devices: devices),
-    );
   }
 
   /// Returns true if the user has [permission]; otherwise shows a snackbar.
@@ -984,74 +976,3 @@ class _DeviceDetailsDialog
     );
   }
 }
-
-// Discovered Devices Dialog
-class _DiscoveredDevicesDialog extends ConsumerWidget {
-  final List<DeviceInfo> devices;
-
-  const _DiscoveredDevicesDialog({required this.devices});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final deviceRepo = ref.read(deviceRepositoryProvider);
-    return Dialog(
-      child: Container(
-        width: 600,
-        constraints: const BoxConstraints(maxHeight: 500),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.radar, size: 32),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    'Discovered Devices',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-            const Divider(height: 32),
-            Expanded(
-              child: ListView.builder(
-                itemCount: devices.length,
-                itemBuilder: (context, index) {
-                  final device = devices[index];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: ListTile(
-                      leading: const Icon(Icons.devices),
-                      title: Text(device.toString()),
-                      trailing: ElevatedButton(
-                        onPressed: () async {
-                          // Add device logic here
-                          posLog(device.metadata);
-                          await deviceRepo.addDevice(
-                              ip: device.address,
-                              port: device.port,
-                              name: device.name,
-                              type: "KDS"
-                          );
-
-                        },
-                        child: const Text('Add'),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-

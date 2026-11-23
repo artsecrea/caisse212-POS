@@ -6,9 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **caisse212** — Flutter POS (Point-of-Sale) desktop/mobile app. Targets Linux, Windows, macOS, Android, iOS. App runs as both a client (syncs to a central server via REST) and an embedded HTTP server (serves KDS/kiosk devices over LAN via Shelf). Supports multi-language (AR/FR/EN), thermal printing, barcode scanning, table management, cash sessions, and offline-first operation with queued sync.
 
-Local sibling packages:
-- `../cmdecrea` — custom commands/utilities package
-- `../loggecrea` — custom structured logger (`Logger.instance`)
+In-repo package:
+- `packages/loggecrea` — custom structured logger (`Logger.instance`); vendored from the former `el-aoutmanie/loggecrea` repo, edit it here
 
 ---
 
