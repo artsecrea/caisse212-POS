@@ -68,11 +68,17 @@ class RemoteSupportService {
 
   /// Starts the tool detached, so closing or updating the POS never cuts a
   /// support session. False when it is not installed.
+  ///
+  /// Once the service is installed the client window must be the installed
+  /// exe: the service only answers IPC from its own executable path, so the
+  /// portable copy next to the POS is turned away and sits on "Not ready".
   static Future<bool> launch({bool tech = false}) async {
-    final exe = _exe(tech ? techExe : clientExe);
+    final exe = tech
+        ? _exe(techExe)
+        : (installed ? installedExe : _exe(clientExe));
     if (!Platform.isWindows || !exe.existsSync()) return false;
     await Process.start(exe.path, const [],
-        workingDirectory: folder.path, mode: ProcessStartMode.detached);
+        workingDirectory: exe.parent.path, mode: ProcessStartMode.detached);
     return true;
   }
 

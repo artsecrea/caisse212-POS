@@ -1138,30 +1138,39 @@ class _ProductCard extends ConsumerWidget {
         ? priceOverride
         : basePrice;
 
-    final orderItem = OrderItem(
-      productId: product.id,
-      productName: product.name,
-      serialId: serialId,
-      serialNumber: serialNumber,
-      variantId: variantId,
-      variantName: variantName,
-      imageUrl: variantImageUrl ?? product.imageUrl,
-      finalPrice: unitPrice,
-      quantity: quantity,
-      components: components,
-      tva: lineUnitTva(
-        catalogPrice: basePrice,
-        catalogTva: variantTva ?? product.tvaAmount,
-        unitPrice: unitPrice,
-        zeroPriceRate: ref.read(settingsProvider).zeroPriceTvaRate,
-      ),
-      discount: discount,
-      manualDiscount: manualDiscount,
-      note: note,
-      unitName: product.unitName,
+    final tva = lineUnitTva(
+      catalogPrice: basePrice,
+      catalogTva: variantTva ?? product.tvaAmount,
+      unitPrice: unitPrice,
+      zeroPriceRate: ref.read(settingsProvider).zeroPriceTvaRate,
     );
+    OrderItem line(String? note, double quantity) => OrderItem(
+          productId: product.id,
+          productName: product.name,
+          serialId: serialId,
+          serialNumber: serialNumber,
+          variantId: variantId,
+          variantName: variantName,
+          imageUrl: variantImageUrl ?? product.imageUrl,
+          finalPrice: unitPrice,
+          quantity: quantity,
+          components: components,
+          tva: tva,
+          discount: discount,
+          manualDiscount: manualDiscount,
+          note: note,
+          unitName: product.unitName,
+        );
 
-    ref.read(orderProvider.notifier).addItem(orderItem);
+    final notifier = ref.read(orderProvider.notifier);
+    notifier.addItem(line(note, quantity));
+    // Units the cashier put under notes of their own, one line per note.
+    for (final split in (modifications['noteSplits'] as List?) ?? const []) {
+      notifier.addItem(line(
+        split['note'] as String,
+        (split['quantity'] as num).toDouble(),
+      ));
+    }
 
     // Same anti-fraud trail the edit path keeps: an override typed on the way
     // into the basket has to be as traceable as one typed afterwards.

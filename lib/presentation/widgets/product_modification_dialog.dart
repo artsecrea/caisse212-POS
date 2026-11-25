@@ -86,7 +86,26 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   /// lives in reservations now, never on the order line.
   bool _isPlannable = false;
 
+  /// Units carved off this line under a note of their own ("2 without
+  /// onion"). Each becomes a separate order line on save; the main line keeps
+  /// whatever quantity is left.
+  final List<({String note, int quantity})> _noteSplits = [];
+  bool _noteWritten = false;
+
   // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  int get _splitQuantity =>
+      _noteSplits.fold(0, (sum, s) => sum + s.quantity);
+
+  double get _mainQuantity => _quantity - _splitQuantity;
+
+  /// A serial line is one physical unit and a weighed line's quantity is a
+  /// weight, so neither can be shared out between notes.
+  bool get _canSplitByNote {
+    if (_isSerialTracked) return false;
+    final product = widget.product;
+    return !(product is OrderItem && product.isWeighedItem);
+  }
 
   /// Whether this product (or the chosen variant) needs a serial. Read
   /// synchronously off the already-loaded rows so the panel can switch on the
@@ -135,7 +154,15 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   void initState() {
     super.initState();
     _manualDiscountController = TextEditingController();
-    _noteController = TextEditingController();
+    // Rebuild when the note goes from empty to written (or back), so the
+    // "another note" button follows it — whichever keyboard typed it.
+    _noteController = TextEditingController()
+      ..addListener(() {
+        final written = _noteController.text.trim().isNotEmpty;
+        if (written != _noteWritten && mounted) {
+          setState(() => _noteWritten = written);
+        }
+      });
     _quantityController = TextEditingController(text: '1');
     _priceController = TextEditingController();
     _discountFocusNode = FocusNode();
@@ -164,6 +191,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         _manualDiscountController.text = item.manualDiscount.toStringAsFixed(2);
       }
       if (item.note != null) {
+        // Set first so the listener sees no change and skips setState here.
+        _noteWritten = item.note!.trim().isNotEmpty;
         _noteController.text = item.note!;
       }
       if (item.variantId != null) {
@@ -633,6 +662,16 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       return;
     }
 
+    // The quantity can be lowered after notes took their share; the main line
+    // must still keep at least one unit.
+    final splits = _canSplitByNote ? _noteSplits : const <({String note, int quantity})>[];
+    final mainQuantity = quantity - splits.fold(0, (sum, s) => sum + s.quantity);
+    if (mainQuantity < 1) {
+      SnackBarHelper.showErrorSnackBar(
+          context, ref, l10n.translate('note_splits_exceed_quantity'));
+      return;
+    }
+
     final componentsAsync = ref.read(productComponentsProvider(_productId));
     if (!componentsAsync.hasValue) {
       SnackBarHelper.showWarningSnackBar(
@@ -810,7 +849,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       'discount': _productDiscount,
       'manualDiscount': manualDiscount,
       'note': _noteController.text.isEmpty ? null : _noteController.text,
-      'quantity': quantity,
+      'quantity': mainQuantity,
+      // Extra lines, identical to this one except for note and quantity.
+      'noteSplits': [
+        for (final s in splits)
+          {'note': s.note, 'quantity': s.quantity.toDouble()},
+      ],
       // Manual unit-price override (null unless a permitted user changed it).
       'priceOverride': _customPrice,
       'variantId': variantId,
@@ -882,12 +926,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      insetPadding: const EdgeInsets.all(16),
       child: Container(
-        width: MediaQuery.of(context).size.width * 0.85,
+        width: MediaQuery.of(context).size.width * 0.94,
         constraints: BoxConstraints(
-          maxWidth: 1100,
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxWidth: 1320,
+          maxHeight: MediaQuery.of(context).size.height * 0.95,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -909,14 +953,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // LEFT: Variants, Discount, Note, Preview.
+                  // LEFT: Variants, Quantity, Price, Discount, Note.
                   //
                   // Variants live here, inside the scrolling column, rather
                   // than above both columns: up there a product with several
                   // attributes took most of the height and squeezed the
                   // components list down to a line.
                   Expanded(
-                    flex: 4,
+                    flex: 3,
                     child: SingleChildScrollView(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -964,7 +1008,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               decoration: BoxDecoration(
                 border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
               ),
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
                   Expanded(
@@ -1011,14 +1055,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         final maxDiscountValue =
             _isPercentageDiscount ? 100.0 : (priceWithComponents - _productDiscount);
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+        return Padding(
+          padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── Quantity ──
               _buildQuantityRow(context, componentsAsync, basePrice, currencyFormatter, l10n),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
               // ── Unit price override (permission-gated; admins bypass) ──
               PermissionGuard(
@@ -1149,35 +1193,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               ),
 
               // ── Note ──
-              Text(
-                l10n.translate('note'),
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 6),
-              AdaptiveKeyboardTextField(
-                controller: _noteController,
-                decoration: InputDecoration(
-                  labelText: l10n.translate('add_note'),
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.note),
-                  isDense: true,
-                ),
-                maxLines: 2,
-              ),
-              const SizedBox(height: 16),
-
-              // ── Preview ──
-              _buildPreviewCard(
-                basePrice: basePrice,
-                componentTotal: componentTotal,
-                priceWithComponents: priceWithComponents,
-                currencyFormatter: currencyFormatter,
-                l10n: l10n,
-              ),
+              _buildNoteSection(l10n),
             ],
           ),
         );
@@ -1416,9 +1432,14 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
                 componentsAsync.maybeWhen(
                   data: (componentsData) {
                     final componentTotal = _calculateComponentTotal(componentsData);
-                    final total = (productPrice + componentTotal) * _quantity;
+                    // The header is the only price summary left, so it
+                    // carries the manual discount the old preview card showed.
+                    final manualDiscount =
+                        _calculateManualDiscount(productPrice + componentTotal);
+                    final total =
+                        (productPrice + componentTotal - manualDiscount) * _quantity;
                     return Text(
-                      '${currencyFormatter.format(productPrice)}${componentTotal > 0 ? '  +${currencyFormatter.format(componentTotal)}' : ''}  ×${_fmtQtyLocal(_quantity)}  =  ${currencyFormatter.format(total)}',
+                      '${currencyFormatter.format(productPrice)}${componentTotal > 0 ? '  +${currencyFormatter.format(componentTotal)}' : ''}${manualDiscount > 0 ? '  −${currencyFormatter.format(manualDiscount)}' : ''}  ×${_fmtQtyLocal(_quantity)}  =  ${currencyFormatter.format(total)}',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -2330,119 +2351,267 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     );
   }
 
-  // ─── Preview card ────────────────────────────────────────────────────────────
+  // ─── Note + note splits ──────────────────────────────────────────────────────
 
-  Widget _buildPreviewCard({
-    required double basePrice,
-    required double componentTotal,
-    required double priceWithComponents,
-    required CurrencyFormatter currencyFormatter,
-    required AppLocalizations l10n,
-  }) {
-    final totalBase = basePrice * _quantity;
-    final totalComponents = componentTotal * _quantity;
-    final totalProductDiscount = _productDiscount * _quantity;
-    final manualDiscount = _calculateManualDiscount(priceWithComponents);
-    final finalPrice =
-        (priceWithComponents - _productDiscount - manualDiscount) * _quantity;
+  Widget _buildNoteSection(AppLocalizations l10n) {
+    final scheme = Theme.of(context).colorScheme;
+    final hasSplits = _canSplitByNote && _noteSplits.isNotEmpty;
+    final overSplit = hasSplits && _mainQuantity < 1;
 
-    return Card(
-      color: Theme.of(context).colorScheme.tertiaryContainer.withValues(alpha: 0.3),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  l10n.translate('preview'),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l10n.translate('note'),
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: scheme.onSurface,
+          ),
+        ),
+        const SizedBox(height: 6),
+        AdaptiveKeyboardTextField(
+          controller: _noteController,
+          decoration: InputDecoration(
+            labelText: l10n.translate('add_note'),
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.note),
+            // With splits on screen, say how many units this note still holds.
+            suffixText: hasSplits ? '×${_fmtQtyLocal(_mainQuantity)}' : null,
+            suffixStyle: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: overSplit ? scheme.error : scheme.primary,
+            ),
+            errorText:
+                overSplit ? l10n.translate('note_splits_exceed_quantity') : null,
+            isDense: true,
+          ),
+          maxLines: 2,
+        ),
+        if (hasSplits)
+          for (var i = 0; i < _noteSplits.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: _buildNoteSplitTile(i, l10n),
+            ),
+        if (_noteWritten && _canSplitByNote) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => _editNoteSplit(l10n),
+            icon: const Icon(Icons.add_comment_outlined),
+            label: Text(l10n.translate('add_another_note')),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(44),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildNoteSplitTile(int index, AppLocalizations l10n) {
+    final scheme = Theme.of(context).colorScheme;
+    final split = _noteSplits[index];
+
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _editNoteSplit(l10n, index),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '×${split.quantity}',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onSurface,
+                    color: scheme.onPrimaryContainer,
                   ),
                 ),
-                if (_quantity > 1) ...[
-                  const Spacer(),
-                  Container(
-                    padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      'x${_fmtQtyLocal(_quantity)}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const Divider(),
-            _buildPreviewRow(l10n.translate('base_price'), totalBase, currencyFormatter),
-            if (totalComponents > 0)
-              _buildPreviewRow(
-                  l10n.translate('components'), totalComponents, currencyFormatter),
-            if (totalProductDiscount > 0)
-              _buildPreviewRow(l10n.translate('product_discount'), totalProductDiscount,
-                  currencyFormatter,
-                  isDiscount: true),
-            if (_manualDiscountController.text.isNotEmpty && manualDiscount > 0)
-              _buildPreviewRow(l10n.translate('added_discount'),
-                  manualDiscount * _quantity, currencyFormatter,
-                  isDiscount: true),
-            const Divider(),
-            _buildPreviewRow(
-                l10n.translate('final_price'), finalPrice, currencyFormatter,
-                isFinal: true),
-          ],
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  split.note,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                ),
+              ),
+              IconButton(
+                onPressed: () => setState(() => _noteSplits.removeAt(index)),
+                icon: Icon(Icons.delete_outline, color: scheme.error),
+                tooltip: l10n.translate('delete'),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildPreviewRow(
-      String label,
-      double value,
-      CurrencyFormatter currencyFormatter, {
-        bool isDiscount = false,
-        bool isFinal = false,
-      }) {
-    final discountColor = Theme.of(context).colorScheme.error;
+  /// Add a note split, or edit the one at [index].
+  Future<void> _editNoteSplit(AppLocalizations l10n, [int? index]) async {
+    final existing = index == null ? null : _noteSplits[index];
+    // The main line always keeps one unit; a split can take the rest, plus
+    // whatever it already holds when it is being edited.
+    final available = (_mainQuantity - 1 + (existing?.quantity ?? 0)).floor();
+    if (available < 1) {
+      SnackBarHelper.showWarningSnackBar(
+          context, ref, l10n.translate('note_split_needs_quantity'));
+      return;
+    }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: isFinal ? 16 : 14,
-              fontWeight: isFinal ? FontWeight.bold : FontWeight.normal,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-          ),
-          Text(
-            '${isDiscount ? '-' : ''}${currencyFormatter.format(value)}',
-            style: TextStyle(
-              fontSize: isFinal ? 18 : 14,
-              fontWeight: isFinal ? FontWeight.bold : FontWeight.w600,
-              color: isDiscount
-                  ? discountColor
-                  : isFinal
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.onSurface,
-            ),
-          ),
-        ],
+    final result = await showDialog<({String note, int quantity})>(
+      context: context,
+      builder: (_) => _NoteSplitDialog(
+        initialNote: existing?.note ?? '',
+        initialQuantity: (existing?.quantity ?? 1).clamp(1, available),
+        maxQuantity: available,
       ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      if (index == null) {
+        _noteSplits.add(result);
+      } else {
+        _noteSplits[index] = result;
+      }
+    });
+  }
+}
+
+/// Asks for one more note and how many units of the line it applies to.
+class _NoteSplitDialog extends StatefulWidget {
+  final String initialNote;
+  final int initialQuantity;
+  final int maxQuantity;
+
+  const _NoteSplitDialog({
+    required this.initialNote,
+    required this.initialQuantity,
+    required this.maxQuantity,
+  });
+
+  @override
+  State<_NoteSplitDialog> createState() => _NoteSplitDialogState();
+}
+
+class _NoteSplitDialogState extends State<_NoteSplitDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialNote);
+  late int _quantity = widget.initialQuantity;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final note = _controller.text.trim();
+    if (note.isEmpty) return;
+    Navigator.of(context).pop((note: note, quantity: _quantity));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+
+    return AlertDialog(
+      title: Text(l10n.translate('another_note')),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AdaptiveKeyboardTextField(
+              controller: _controller,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: l10n.translate('note'),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.note),
+                isDense: true,
+              ),
+              maxLines: 2,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Text(
+                  '${l10n.translate('quantity')}:',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  onPressed:
+                      _quantity > 1 ? () => setState(() => _quantity--) : null,
+                  icon: const Icon(Icons.remove_circle),
+                  color: scheme.error,
+                  iconSize: 34,
+                ),
+                SizedBox(
+                  width: 56,
+                  child: Text(
+                    '$_quantity',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _quantity < widget.maxQuantity
+                      ? () => setState(() => _quantity++)
+                      : null,
+                  icon: const Icon(Icons.add_circle),
+                  color: scheme.primary,
+                  iconSize: 34,
+                ),
+                Text(
+                  '/ ${widget.maxQuantity}',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.translate('cancel')),
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _controller,
+          builder: (context, value, _) => ElevatedButton(
+            onPressed: value.text.trim().isEmpty ? null : _save,
+            child: Text(l10n.translate('save')),
+          ),
+        ),
+      ],
     );
   }
 }

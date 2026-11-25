@@ -2482,6 +2482,10 @@ class AppLocalizations {
       // Notes - English
       'notes': 'Notes',
       'add_note': 'Add Note',
+      'add_another_note': 'Add another note',
+      'another_note': 'Another note',
+      'note_split_needs_quantity': 'Increase the quantity to give another note its own units',
+      'note_splits_exceed_quantity': 'The notes take more units than the quantity',
       'edit_note': 'Edit Note',
       'delete_note': 'Delete Note',
       'clear_all_notes': 'Clear All Notes',
@@ -5322,6 +5326,10 @@ class AppLocalizations {
       // Notes - Arabic
       'notes': 'الملاحظات',
       'add_note': 'إضافة ملاحظة',
+      'add_another_note': 'إضافة ملاحظة أخرى',
+      'another_note': 'ملاحظة أخرى',
+      'note_split_needs_quantity': 'زد الكمية لتخصيص وحدات لملاحظة أخرى',
+      'note_splits_exceed_quantity': 'الملاحظات تأخذ وحدات أكثر من الكمية',
       'edit_note': 'تعديل الملاحظة',
       'delete_note': 'حذف الملاحظة',
       'clear_all_notes': 'حذف كل الملاحظات',
@@ -8190,6 +8198,10 @@ class AppLocalizations {
       // Notes - French
       'notes': 'Notes',
       'add_note': 'Ajouter une note',
+      'add_another_note': 'Ajouter une autre note',
+      'another_note': 'Autre note',
+      'note_split_needs_quantity': 'Augmentez la quantité pour donner des unités à une autre note',
+      'note_splits_exceed_quantity': 'Les notes prennent plus d\'unités que la quantité',
       'edit_note': 'Modifier la note',
       'delete_note': 'Supprimer la note',
       'clear_all_notes': 'Tout effacer',
@@ -11043,6 +11055,10 @@ class AppLocalizations {
       // Notes - Spanish
       'notes': 'Notas',
       'add_note': 'Añadir nota',
+      'add_another_note': 'Añadir otra nota',
+      'another_note': 'Otra nota',
+      'note_split_needs_quantity': 'Aumente la cantidad para dar unidades a otra nota',
+      'note_splits_exceed_quantity': 'Las notas ocupan más unidades que la cantidad',
       'edit_note': 'Editar la nota',
       'delete_note': 'Eliminar la nota',
       'clear_all_notes': 'Borrar todas las notas',

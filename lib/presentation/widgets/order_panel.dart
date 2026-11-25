@@ -276,7 +276,16 @@ class OrderPanel extends ConsumerWidget {
       // but not item:remove could otherwise type a smaller qty here and slip
       // a below-baseline reduction past the gate.
       final newQty = (result['quantity'] as num?)?.toDouble() ?? item.quantity;
-      if (newQty != item.quantity && !_canSetQuantity(ref, item, newQty)) {
+      final noteSplits = (result['noteSplits'] as List?) ?? const [];
+      // Units split off under other notes leave this line but stay on the
+      // order: the line's own quantity is held to the removal floor, the
+      // total to the add gate. Otherwise a split of a saved line would be a
+      // way to move units onto a fresh line that can be deleted freely.
+      final totalQty = newQty +
+          noteSplits.fold<double>(
+              0, (sum, s) => sum + (s['quantity'] as num).toDouble());
+      if ((newQty != item.quantity && !_canSetQuantity(ref, item, newQty)) ||
+          (totalQty != item.quantity && !_canSetQuantity(ref, item, totalQty))) {
         if (context.mounted) _showPermissionDenied(context, ref);
         return;
       }
@@ -339,7 +348,28 @@ class OrderPanel extends ConsumerWidget {
             );
       }
 
-      ref.read(orderProvider.notifier).updateItem(index, updatedItem);
+      final notifier = ref.read(orderProvider.notifier);
+      notifier.updateItem(index, updatedItem);
+      // Each split is a brand-new line: no ids, nothing sent to the kitchen or
+      // printed yet, so it goes out as fresh food under its own note.
+      for (final split in noteSplits) {
+        notifier.addItem(OrderItem(
+          productId: updatedItem.productId,
+          productName: updatedItem.productName,
+          variantId: updatedItem.variantId,
+          variantName: updatedItem.variantName,
+          imageUrl: updatedItem.imageUrl,
+          finalPrice: updatedItem.finalPrice,
+          quantity: (split['quantity'] as num).toDouble(),
+          components: updatedItem.components,
+          note: split['note'] as String,
+          courseNo: updatedItem.courseNo,
+          discount: updatedItem.discount,
+          manualDiscount: updatedItem.manualDiscount,
+          tva: updatedItem.tva,
+          unitName: updatedItem.unitName,
+        ));
+      }
     }
   }
 
