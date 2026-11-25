@@ -151,4 +151,47 @@ the order is cancelled.
   longer has (waiter payment was removed). It answers `404` with the JSON
   body `{"error": "Endpoint not found"}`. Remove the call.
 - `chargeOnRemoval` stays read-only: there is still no way to send a charged
-  removal from the app (see `waiter_api_reference.md` §7).
+  removal from the app (see `waiter_api_reference.md` §7). Open, see §8.
+
+## 8. To decide later: charged removals ("no cheese" still billed)
+
+**Status:** not changed in this round, on purpose. To be discussed.
+
+**What the till does.** A product link can carry `chargeOnRemoval: true` with
+a `defaultQuantity` of 1 or more. Taking that default off on the till still
+bills it: the line gets a zero-quantity row for the component (the kitchen
+reads it as "remove"), plus a money row at the catalogue price for the units
+taken off (`removalCharge`, never sent to the server). The rules are
+`RemovalCandidate` / `removalRowsFor` / `removalChargePerParentUnit` in
+`component_rules.dart`.
+
+**What the waiter API does.**
+
+- `priceOptions` prices only what was picked. A default the tablet leaves out
+  bills nothing.
+- A zero-quantity entry is stored as a zero row at 0.00.
+- A `removalCharge` flag on an entry is not read.
+
+So a waiter line with a charged default removed costs less than the same line
+rung up on the till.
+
+**Why it was not just switched on.**
+
+- The POS cannot tell "removed" from "never chosen" unless the tablet seeds
+  the defaults and sends what it left on.
+- Billing a removal for every default absent from the request would overcharge
+  every client that does not send defaults today.
+
+**Options to choose from.**
+
+1. The app sends every default it took off as a zero-quantity entry. The POS
+   bills `deficit × price` for links with `chargeOnRemoval`, exactly as the
+   till does. This needs the app to seed defaults (`defaultQuantity`) the way
+   the till's dialog does.
+2. The app sends the full selection, defaults included. The POS computes
+   removals as `defaultQuantity − sent` for every charged link. This is
+   simpler for the server, but a missing entry then means "removed".
+3. Keep removals unbillable from the app, and have the app not offer removing
+   a charged default (the current advice).
+
+Until this is decided, keep option 3 in the app.
