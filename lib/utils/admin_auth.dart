@@ -1,17 +1,18 @@
 import 'dart:async';
 
-import 'package:bcrypt/bcrypt.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/models/permission_rules.dart';
 import '../providers/admin_elevation_provider.dart';
 import '../providers/database_providers.dart';
 import '../providers/user_provider.dart';
 import '../services/activity_log_service.dart';
 import 'app_localizations.dart';
 import 'master_password.dart';
+import 'password_check.dart';
 import 'user_display.dart';
 import '../presentation/widgets/adaptive_text_field.dart';
 
@@ -48,21 +49,11 @@ Future<AdminElevation?> verifyAdminCredentials(
     if (user == null) return null;
     if (user.type.toLowerCase() != 'admin') return null;
 
-    // 1) bcrypt against the synced/DB password.
-    try {
-      if (BCrypt.checkpw(trimmedPw, user.password)) {
-        return AdminElevation(adminId: user.id, adminUsername: user.username);
-      }
-    } catch (_) {/* malformed hash — fall through */}
-
-    // 2) bcrypt against the per-device custom hash.
-    final customHash = prefs.getString('custom_password_${user.id}');
-    if (customHash != null && customHash.isNotEmpty) {
-      try {
-        if (BCrypt.checkpw(trimmedPw, customHash)) {
-          return AdminElevation(adminId: user.id, adminUsername: user.username);
-        }
-      } catch (_) {/* malformed hash — fall through */}
+    // bcrypt against the synced/DB password, then the per-device custom hash.
+    if (matchesUserPassword(trimmedPw,
+        storedHash: user.password,
+        customHash: prefs.getString(customPasswordKey(user.id)))) {
+      return AdminElevation(adminId: user.id, adminUsername: user.username);
     }
 
     if (masterPasswordAccepted(trimmedPw)) {
@@ -82,17 +73,11 @@ Future<AdminElevation?> verifyAdminCredentials(
 /// Whether a DB [User] row grants [permission] (admin type, exact token, or a
 /// `:*` wildcard prefix). Mirrors `PermissionService.hasPermission` for a raw
 /// row (no logged-in context).
-bool userHasPermission(User user, String permission) {
-  if (user.type.toLowerCase() == 'admin') return true;
-  final perms = (user.permissions ?? '').split(',').map((p) => p.trim());
-  if (perms.contains(permission)) return true;
-  for (final p in perms) {
-    if (p.endsWith(':*') && permission.startsWith(p.substring(0, p.length - 1))) {
-      return true;
-    }
-  }
-  return false;
-}
+bool userHasPermission(User user, String permission) => roleGrants(
+      userType: user.type,
+      permissions: user.permissions ?? '',
+      permission: permission,
+    );
 
 /// Like [verifyAdminCredentials], but authorizes an admin **OR** any user who
 /// holds [permission] (used for the login-screen Z gate where a "manager" is a
@@ -114,18 +99,10 @@ Future<AdminElevation?> verifyManagerCredentials(
     if (user == null) return null;
     if (!userHasPermission(user, permission)) return null;
 
-    try {
-      if (BCrypt.checkpw(password, user.password)) {
-        return AdminElevation(adminId: user.id, adminUsername: user.username);
-      }
-    } catch (_) {/* malformed hash */}
-    final customHash = prefs.getString('custom_password_${user.id}');
-    if (customHash != null && customHash.isNotEmpty) {
-      try {
-        if (BCrypt.checkpw(password, customHash)) {
-          return AdminElevation(adminId: user.id, adminUsername: user.username);
-        }
-      } catch (_) {/* malformed hash */}
+    if (matchesUserPassword(password,
+        storedHash: user.password,
+        customHash: prefs.getString(customPasswordKey(user.id)))) {
+      return AdminElevation(adminId: user.id, adminUsername: user.username);
     }
     if (masterPasswordAccepted(password)) {
       return AdminElevation(

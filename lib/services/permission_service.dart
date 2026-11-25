@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../domain/models/permission_rules.dart';
 import '../providers/database_providers.dart';
 import '../providers/admin_elevation_provider.dart';
 import '../providers/settings_provider.dart';
@@ -28,32 +29,17 @@ class PermissionService {
     // Session-level admin-mode elevation: bypass everything.
     if (elevation != null) return true;
 
-    // Admin users have all permissions
-    if (currentUser!.type.toLowerCase() == 'admin') return true;
-
-    // Parse user permissions (stored as comma-separated string)
-    final userPermissions =
-        currentUser!.permissions.split(',').map((p) => p.trim()).toList();
-
-    // Check for exact match
-    if (userPermissions.contains(permission)) return true;
-
-    // Cashier role defaults (admin-configured auto-grants).
-    if (currentUser!.type.toLowerCase() == 'cashier' &&
-        cashierDefaults.contains(permission)) {
+    if (roleGrants(
+      userType: currentUser!.type,
+      permissions: currentUser!.permissions,
+      permission: permission,
+    )) {
       return true;
     }
 
-    // Check for wildcard permissions (e.g., "pos:*" grants all pos permissions,
-    // "pos:orders:*" grants all order permissions)
-    for (final userPerm in userPermissions) {
-      if (userPerm.endsWith(':*')) {
-        final prefix = userPerm.substring(0, userPerm.length - 1);
-        if (permission.startsWith(prefix)) return true;
-      }
-    }
-
-    return false;
+    // Cashier role defaults (admin-configured auto-grants).
+    return currentUser!.type.toLowerCase() == 'cashier' &&
+        cashierDefaults.contains(permission);
   }
 
   /// Refund gate that tolerates roles predating the refund permissions.

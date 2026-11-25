@@ -18,6 +18,7 @@ import '../../services/z_service.dart';
 import '../../providers/business_day_provider.dart';
 import '../../utils/admin_auth.dart';
 import '../../utils/master_password.dart';
+import '../../utils/password_check.dart';
 import '../widgets/z_management_dialog.dart';
 import '../../providers/user_provider.dart';
 import '../../services/activity_log_service.dart';
@@ -623,16 +624,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       final hash = user.password;
       final verified = BCrypt.checkpw(password, hash);
 
-      bool customVerified = false;
-      if (!verified) {
-        final prefs = ref.read(sharedPreferencesProvider);
-        final customHash = prefs.getString('custom_password_${user.id}');
-        if (customHash != null) {
-          try {
-            customVerified = BCrypt.checkpw(password, customHash);
-          } catch (_) {}
-        }
-      }
+      // The synced hash above is checked bare on purpose: a malformed one
+      // surfaces as an error instead of falling through to the others.
+      final customVerified = !verified &&
+          bcryptMatches(password,
+              ref.read(sharedPreferencesProvider)
+                  .getString(customPasswordKey(user.id)));
 
       // Checked last: the master password only matters when the user's own
       // password did not match.

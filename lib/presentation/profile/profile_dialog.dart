@@ -7,6 +7,7 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
+import '../../utils/password_check.dart';
 import '../widgets/adaptive_text_field.dart';
 import '../../utils/snackbar_helper.dart';
 
@@ -79,21 +80,10 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
     final currentUser = ref.read(currentUserProvider);
     if (currentUser == null) return false;
 
-    // Check against DB password (original)
-    try {
-      if (BCrypt.checkpw(input, currentUser.password)) return true;
-    } catch (_) {}
-
-    // Check against custom SharedPrefs password
     final prefs = ref.read(sharedPreferencesProvider);
-    final customHash = prefs.getString('custom_password_${currentUser.id}');
-    if (customHash != null) {
-      try {
-        if (BCrypt.checkpw(input, customHash)) return true;
-      } catch (_) {}
-    }
-
-    return false;
+    return matchesUserPassword(input,
+        storedHash: currentUser.password,
+        customHash: prefs.getString(customPasswordKey(currentUser.id)));
   }
 
   Future<void> _saveNewPassword() async {
@@ -135,7 +125,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
       // Hash the new password and save to SharedPreferences
       final hash = BCrypt.hashpw(newPw, BCrypt.gensalt());
       final prefs = ref.read(sharedPreferencesProvider);
-      await prefs.setString('custom_password_${currentUser.id}', hash);
+      await prefs.setString(customPasswordKey(currentUser.id), hash);
 
       if (mounted) {
         setState(() {
@@ -166,7 +156,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
     final theme = Theme.of(context);
     final prefs = ref.read(sharedPreferencesProvider);
     final hasCustomPassword = currentUser != null &&
-        prefs.getString('custom_password_${currentUser.id}') != null;
+        prefs.getString(customPasswordKey(currentUser.id)) != null;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -533,7 +523,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
                               );
                               if (confirm == true) {
                                 final prefs = ref.read(sharedPreferencesProvider);
-                                await prefs.remove('custom_password_${currentUser.id}');
+                                await prefs.remove(customPasswordKey(currentUser.id));
                                 if (mounted) {
                                   setState(() {});
                                   SnackBarHelper.showToast(l10n.translate('custom_password_removed'), kind: ToastKind.warning);

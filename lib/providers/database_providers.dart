@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:drift/drift.dart' hide Column show OrderingTerm, BooleanExpressionOperators;
 import '../domain/models/component_rules.dart';
+import '../domain/models/permission_rules.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -274,14 +275,10 @@ class CurrentUser{
   final DateTime updatedAt;
   final DateTime? lastLogin;
 
-  late final List<String> _perms;
-
   CurrentUser(this.id, this.username, this.password, this.firstName,
       this.lastName, this.type, this.imageUrl, this.accessToken,
       this.refreshToken, this.permissions, this.createdAt, this.updatedAt,
-      this.lastLogin, {this.displayName}){
-    _perms = permissions.split(",");
-  }
+      this.lastLogin, {this.displayName});
 
   String get effectiveDisplayName {
     if (displayName != null && displayName!.isNotEmpty) return displayName!;
@@ -314,17 +311,8 @@ class CurrentUser{
 
   /// Whether this user has [perm]. Mirrors PermissionService: admin bypass,
   /// exact match, and prefix wildcards (e.g. "pos:*", "pos:orders:*").
-  bool hasPermission(String perm){
-    if (type.toLowerCase() == 'admin') return true;
-    final perms = _perms.map((p) => p.trim());
-    if (perms.contains(perm)) return true;
-    for (final p in perms) {
-      if (p.endsWith(':*') && perm.startsWith(p.substring(0, p.length - 1))) {
-        return true;
-      }
-    }
-    return false;
-  }
+  bool hasPermission(String perm) =>
+      roleGrants(userType: type, permissions: permissions, permission: perm);
 
   CurrentUser copyWith({String? displayName}) {
     return CurrentUser(
