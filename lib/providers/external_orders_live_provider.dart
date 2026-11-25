@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/models/order_money.dart';
+import '../domain/models/order_money_rows.dart';
 import 'database_providers.dart';
 
 /// Delivery states we set ourselves. The column also carries states the server
@@ -28,10 +30,14 @@ class LiveExternalOrder {
   final Map<int, String> productNames;
   final Customer? customer;
 
+  /// What each line's options add to one unit of it, by line id.
+  final Map<int, double> componentsPerUnit;
+
   const LiveExternalOrder({
     required this.order,
     required this.lines,
     required this.productNames,
+    this.componentsPerUnit = const {},
     this.customer,
   });
 
@@ -40,10 +46,15 @@ class LiveExternalOrder {
 
   int get itemCount => lines.fold<int>(0, (sum, l) => sum + l.quantity.round());
 
-  double get total => lines.fold<double>(
-      0,
-      (sum, l) =>
-          sum + (l.unitaryPrice - l.manualDiscount) * l.quantity);
+  /// Same figure as the till's order total: owed lines with their options,
+  /// less the order percentage.
+  double get total => applyOrderDiscount(
+      lines.where((l) => lineIsOwed(l.state)).fold<double>(
+          0,
+          (sum, l) =>
+              sum +
+              l.amounts(componentsPerUnit: componentsPerUnit[l.id] ?? 0).net),
+      order.discountPercentage);
 }
 
 /// Orders already accepted into the POS from an external platform.
@@ -80,6 +91,20 @@ final liveExternalOrdersProvider =
           ..where((p) => p.orderId.isIn(orderIds)))
         .get();
 
+    final components = lines.isEmpty
+        ? const <OrderProductComponent>[]
+        : await (db.select(db.orderProductComponents)
+              ..where((c) => c.orderProductId.isIn([for (final l in lines) l.id])))
+            .get();
+    final componentsByLine = <int, List<OrderProductComponent>>{};
+    for (final c in components) {
+      componentsByLine.putIfAbsent(c.orderProductId, () => []).add(c);
+    }
+    final perUnit = {
+      for (final e in componentsByLine.entries)
+        e.key: componentsPerUnitOf(e.value),
+    };
+
     final productIds = lines.map((l) => l.productId).toSet().toList();
     final products = productIds.isEmpty
         ? const <Product>[]
@@ -106,6 +131,7 @@ final liveExternalOrdersProvider =
           order: o,
           lines: byOrder[o.id] ?? const [],
           productNames: names,
+          componentsPerUnit: perUnit,
           customer: o.clientId == null ? null : byClient[o.clientId!],
         ),
     ];
