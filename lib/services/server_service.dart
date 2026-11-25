@@ -945,98 +945,102 @@ class ServerService {
           await ZDayResolver(database).forSession(createSession?.id) ??
               _ref.read(currentZDayProvider);
 
-      // Convert to database order
-      final orderId = await database.into(database.orders).insert(
-        OrdersCompanion.insert(
-          code: socketOrder.code,
-          status: drift.Value(socketOrder.status),
-          type: drift.Value(socketOrder.type),
-          priority: drift.Value(socketOrder.priority),
-          persons: drift.Value(socketOrder.persons),
-          tableId: drift.Value(socketOrder.tableId),
-          clientId: drift.Value(socketOrder.clientId),
-          waiterId: drift.Value(waiterId),
-          createdBy: drift.Value(createdBy),
-          takenBy: drift.Value(takenBy),
-          note: drift.Value(socketOrder.note),
-          sessionId: drift.Value(createSession?.id),
-          sessionOrderNo: drift.Value(await database.nextSessionOrderNo(
-              createSession?.id,
-              mode: _ref.read(settingsProvider).orderNumberResetMode)),
-          zDay: drift.Value(createZDay),
-          createdAt: drift.Value(socketOrder.date),
-          updatedAt: drift.Value(DateTime.now()),
-        ),
-      );
-
-      // If DINE_IN with a table, link the order to the table
-      if (socketOrder.tableId != null) {
-        await (database.update(database.areaTables)
-          ..where((t) => t.id.equals(socketOrder.tableId!)))
-          .write(AreaTablesCompanion(orderId: drift.Value(orderId)));
-      }
-
-      // Insert products
-      for (final product in socketOrder.products) {
-        // Resolve authoritative price from DB for the variant (prevents price manipulation)
-        double unitPrice = product.unitaryPrice;
-        double unitTva = product.tvaAmount ?? 0.0;
-        double unitDiscount = product.discountAmount ?? 0.0;
-
-        if (product.variantId != null) {
-          final variant = await (database.select(database.productVariants)
-            ..where((v) => v.id.equals(product.variantId!)))
-            .getSingleOrNull();
-          if (variant != null) {
-            unitPrice = variant.price;
-            unitTva = variant.tvaAmount;
-          }
-        } else {
-          final dbProduct = await (database.select(database.products)
-            ..where((p) => p.id.equals(product.productId)))
-            .getSingleOrNull();
-          if (dbProduct != null) {
-            unitPrice = dbProduct.finalPrice;
-            unitTva = dbProduct.tvaAmount;
-            unitDiscount = dbProduct.discountAmount;
-          }
-        }
-
-        final orderProductId = await database.into(database.orderProducts).insert(
-          OrderProductsCompanion.insert(
-            orderId: orderId,
-            productId: product.productId,
-            variantId: drift.Value(product.variantId),
-            quantity: drift.Value(product.quantity),
-            unitaryPrice: unitPrice,
-            // Cost stamped for LAN-created orders too, so a waiter-app sale
-            // reports the same margin as one rung up on the till.
-            cost: drift.Value(await ProductCostResolver(database)
-                .resolve(
-                    productId: product.productId,
-                    variantId: product.variantId)),
-            unitaryDiscount: drift.Value(unitDiscount),
-            unitaryTva: drift.Value(unitTva),
-            note: drift.Value(product.note),
-            state: drift.Value(product.state),
+      // Header, table link, lines and options commit together: a crash
+      // mid-write must not leave a half-written order on the floor.
+      final orderId = await database.transaction<int>(() async {
+        final newOrderId = await database.into(database.orders).insert(
+          OrdersCompanion.insert(
+            code: socketOrder.code,
+            status: drift.Value(socketOrder.status),
+            type: drift.Value(socketOrder.type),
+            priority: drift.Value(socketOrder.priority),
+            persons: drift.Value(socketOrder.persons),
+            tableId: drift.Value(socketOrder.tableId),
+            clientId: drift.Value(socketOrder.clientId),
+            waiterId: drift.Value(waiterId),
+            createdBy: drift.Value(createdBy),
+            takenBy: drift.Value(takenBy),
+            note: drift.Value(socketOrder.note),
+            sessionId: drift.Value(createSession?.id),
+            sessionOrderNo: drift.Value(await database.nextSessionOrderNo(
+                createSession?.id,
+                mode: _ref.read(settingsProvider).orderNumberResetMode)),
             zDay: drift.Value(createZDay),
+            createdAt: drift.Value(socketOrder.date),
+            updatedAt: drift.Value(DateTime.now()),
           ),
         );
 
-        // Insert components
-        for (final component in product.components) {
-          await database.into(database.orderProductComponents).insert(
-            OrderProductComponentsCompanion.insert(
-              orderProductId: orderProductId,
-              componentId: component.componentId,
-              quantity: drift.Value(component.quantity),
-              price: drift.Value(component.extraPrice ?? 0.0),
-              isSpecial: drift.Value(component.isSpecial),
-              name: drift.Value(component.componentName),
+        // If DINE_IN with a table, link the order to the table
+        if (socketOrder.tableId != null) {
+          await (database.update(database.areaTables)
+            ..where((t) => t.id.equals(socketOrder.tableId!)))
+            .write(AreaTablesCompanion(orderId: drift.Value(newOrderId)));
+        }
+
+        // Insert products
+        for (final product in socketOrder.products) {
+          // Resolve authoritative price from DB for the variant (prevents price manipulation)
+          double unitPrice = product.unitaryPrice;
+          double unitTva = product.tvaAmount ?? 0.0;
+          double unitDiscount = product.discountAmount ?? 0.0;
+
+          if (product.variantId != null) {
+            final variant = await (database.select(database.productVariants)
+              ..where((v) => v.id.equals(product.variantId!)))
+              .getSingleOrNull();
+            if (variant != null) {
+              unitPrice = variant.price;
+              unitTva = variant.tvaAmount;
+            }
+          } else {
+            final dbProduct = await (database.select(database.products)
+              ..where((p) => p.id.equals(product.productId)))
+              .getSingleOrNull();
+            if (dbProduct != null) {
+              unitPrice = dbProduct.finalPrice;
+              unitTva = dbProduct.tvaAmount;
+              unitDiscount = dbProduct.discountAmount;
+            }
+          }
+
+          final orderProductId = await database.into(database.orderProducts).insert(
+            OrderProductsCompanion.insert(
+              orderId: newOrderId,
+              productId: product.productId,
+              variantId: drift.Value(product.variantId),
+              quantity: drift.Value(product.quantity),
+              unitaryPrice: unitPrice,
+              // Cost stamped for LAN-created orders too, so a waiter-app sale
+              // reports the same margin as one rung up on the till.
+              cost: drift.Value(await ProductCostResolver(database)
+                  .resolve(
+                      productId: product.productId,
+                      variantId: product.variantId)),
+              unitaryDiscount: drift.Value(unitDiscount),
+              unitaryTva: drift.Value(unitTva),
+              note: drift.Value(product.note),
+              state: drift.Value(product.state),
+              zDay: drift.Value(createZDay),
             ),
           );
+
+          // Insert components
+          for (final component in product.components) {
+            await database.into(database.orderProductComponents).insert(
+              OrderProductComponentsCompanion.insert(
+                orderProductId: orderProductId,
+                componentId: component.componentId,
+                quantity: drift.Value(component.quantity),
+                price: drift.Value(component.extraPrice ?? 0.0),
+                isSpecial: drift.Value(component.isSpecial),
+                name: drift.Value(component.componentName),
+              ),
+            );
+          }
         }
-      }
+        return newOrderId;
+      });
 
       // Log order creation
       await logService.logOrderCreated(orderId, 'Order created via API: code=${socketOrder.code}');
