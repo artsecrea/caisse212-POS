@@ -835,10 +835,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     );
 
     if (success) {
-      await database.customStatement(
-        'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-        [ticket.id],
-      );
+      await ref.read(ticketRepositoryProvider).incrementPrintCount(ticket.id);
     }
     return success;
   }
@@ -1279,10 +1276,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
 
       if (success) {
         // Update print count in database
-        await database.customStatement(
-          'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-          [ticket.id],
-        );
+        await ref.read(ticketRepositoryProvider).incrementPrintCount(ticket.id);
 
         if (context.mounted) {
           SnackBarHelper.showToast('Ticket #${ticket.num} printed successfully${ticket.isPaid ? " (Paid)" : " (Unpaid)"}', kind: ToastKind.success);

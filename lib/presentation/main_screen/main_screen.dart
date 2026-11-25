@@ -10,6 +10,7 @@ import '../../core/enums.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/ticket_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/kitchen_timing.dart' show completeKitchenForTicket;
 import '../../domain/models/app_settings.dart';
@@ -2412,10 +2413,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             numberOfPersons: reloadedOrder.numberOfPersons,
           );
 
-          await database.customStatement(
-            'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-            [ticketId],
-          );
+          await ref.read(ticketRepositoryProvider).incrementPrintCount(ticketId);
         } catch (e) {
           _logger.error('Print failed: $e');
         }

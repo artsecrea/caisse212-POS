@@ -7,6 +7,7 @@ import '../../domain/models/order_models.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/ticket_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/kitchen_timing.dart' show completeKitchenForTicket;
 import '../../providers/sync_manager_provider.dart';
@@ -302,10 +303,7 @@ class _WaiterSettlementDialogState
             tableName: o.tableName,
             numberOfPersons: o.order.persons,
           );
-          await database.customStatement(
-            'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-            [ticketId],
-          );
+          await ref.read(ticketRepositoryProvider).incrementPrintCount(ticketId);
         } catch (e) {
           // Non-fatal — payment is committed; cashier can reprint.
           // ignore: avoid_print

@@ -17,6 +17,7 @@ import '../../domain/models/order_models.dart';
 import '../../domain/models/split_bill.dart';
 import '../../core/enums.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/ticket_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/kitchen_timing.dart' show completeKitchenForTicket;
 import '../../providers/sync_manager_provider.dart';
@@ -3455,10 +3456,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             numberOfPersons: widget.order.numberOfPersons,
           );
 
-          await database.customStatement(
-            'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-            [ticketId],
-          );
+          await ref.read(ticketRepositoryProvider).incrementPrintCount(ticketId);
         } catch (e) {
           _logger.error('Print failed: $e');
         }
@@ -3690,10 +3688,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             tableName: widget.order.tableName,
             numberOfPersons: widget.order.numberOfPersons,
           );
-          await database.customStatement(
-            'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-            [ticketId],
-          );
+          await ref.read(ticketRepositoryProvider).incrementPrintCount(ticketId);
         } catch (e) {
           _logger.error('Print failed: $e');
         }
@@ -4676,10 +4671,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         isReprint: true,
       );
 
-      await database.customStatement(
-        'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-        [ticket.ticketId!],
-      );
+      await ref.read(ticketRepositoryProvider).incrementPrintCount(ticket.ticketId!);
     } catch (e) {
       _logger.error('Reprint failed: $e');
       if (mounted) {

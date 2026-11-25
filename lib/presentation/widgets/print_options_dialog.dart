@@ -107,7 +107,6 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
 
       if (mounted) {
         if (receiptSuccess && kdsSuccess) {
-          await _incrementPrintCount();
           widget.onPrintComplete?.call();
           Navigator.of(context).pop(true);
           SnackBarHelper.showToast(l10n.translate('printed_successfully'), kind: ToastKind.success, duration: Duration(seconds: 2));
@@ -125,18 +124,6 @@ class _PrintOptionsDialogState extends ConsumerState<PrintOptionsDialog> {
     } catch (e) {
       if (mounted) setState(() { _isPrinting = false; _error = '${l10n.translate('error')}: $e'; });
     }
-  }
-
-  Future<void> _incrementPrintCount() async {
-    final orderId = widget.order.orderId;
-    if (orderId == null) return;
-    try {
-      final db = ref.read(databaseProvider);
-      await db.customStatement(
-        'UPDATE orders SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-        [orderId],
-      );
-    } catch (_) {}
   }
 
   @override

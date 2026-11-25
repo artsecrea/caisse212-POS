@@ -382,17 +382,13 @@ class TicketRepository {
         ));
   }
 
-  // Increment print count
+  /// Raw SQL on purpose: a reprint must not touch `updatedAt` or wake the
+  /// ticket streams, so the row is not re-pushed as edited.
   Future<void> incrementPrintCount(int ticketId) async {
-    final ticket = await getTicketById(ticketId);
-    if (ticket != null) {
-      await (_database.update(_database.tickets)
-            ..where((tbl) => tbl.id.equals(ticketId)))
-          .write(TicketsCompanion(
-            printCount: Value(ticket.printCount + 1),
-            updatedAt: Value(DateTime.now()),
-          ));
-    }
+    await _database.customStatement(
+      'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
+      [ticketId],
+    );
   }
 }
 

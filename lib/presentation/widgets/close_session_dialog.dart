@@ -6,6 +6,7 @@ import 'package:loggecrea/loggecrea.dart';
 import 'package:uuid/uuid.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/ticket_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/unpaid_orders_service.dart';
 import '../../domain/models/order_models.dart';
@@ -267,7 +268,6 @@ Future<bool> _settleUnpaidAsCash(
       BlockingProgress.show(context, l10n.translate('settling_orders'));
   try {
     final printing = printReceipts ? ref.read(printingServiceProvider) : null;
-    final database = ref.read(databaseProvider);
     final cashier = ref.read(currentUserProvider);
     final prefs = ref.read(sharedPreferencesProvider);
     final businessName = prefs.getString('business_name');
@@ -321,10 +321,7 @@ Future<bool> _settleUnpaidAsCash(
             tableName: o.tableName,
             numberOfPersons: o.order.persons,
           );
-          await database.customStatement(
-            'UPDATE tickets SET print_count = COALESCE(print_count, 0) + 1 WHERE id = ?',
-            [res.ticketId],
-          );
+          await ref.read(ticketRepositoryProvider).incrementPrintCount(res.ticketId);
         } catch (_) {/* print non-fatal — payment already committed */}
       }
     }
