@@ -7,6 +7,8 @@ import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
 import 'package:intl/intl.dart';
 import '../../data/database/app_database.dart';
+import '../../domain/models/order_money.dart';
+import '../../domain/models/order_money_rows.dart';
 import '../../providers/database_providers.dart';
 import '../../utils/currency_formatter.dart';
 import 'kds_stats_dialog.dart';
@@ -154,10 +156,8 @@ final _dashboardStatsProvider =
   // unitaryPrice is already post-auto-discount (finalPrice stored at order time).
   // manualDiscount is an additional cashier-applied discount per unit.
   // Do NOT subtract unitaryDiscount again here — it is already baked into unitaryPrice.
-  double opLineTotal(OrderProduct op) {
-    final compTotal = componentCostById[op.id] ?? 0.0;
-    return ((op.unitaryPrice - op.manualDiscount) + compTotal) * op.quantity;
-  }
+  double opLineTotal(OrderProduct op) =>
+      op.amounts(componentsPerUnit: componentCostById[op.id] ?? 0.0).net;
 
   // Map orderId → Order for discount-percentage lookup
   final orderById = {for (final o in allOrders) o.id: o};
@@ -177,7 +177,7 @@ final _dashboardStatsProvider =
   for (final orderId in unpaidOrderIds) {
     final lineTotal = orderLineSubtotals[orderId] ?? 0.0;
     final pct = orderById[orderId]?.discountPercentage ?? 0.0;
-    unpaidRev += lineTotal * (1 - pct / 100);
+    unpaidRev += applyOrderDiscount(lineTotal, pct);
   }
   unpaid = unpaidOrderIds.length;
 
@@ -195,7 +195,8 @@ final _dashboardStatsProvider =
     if (order.status == 'CANCELED') continue;
     if (order.discountPercentage > 0) {
       final lineTotal = orderLineSubtotals[order.id] ?? 0.0;
-      orderPercentDisc += lineTotal * (order.discountPercentage / 100);
+      orderPercentDisc +=
+          orderDiscountAmount(lineTotal, order.discountPercentage);
     }
   }
 

@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/models/order_money_rows.dart';
 import '../domain/models/line_payment.dart' show settlementState;
 import '../domain/models/order_tag_codec.dart' show parseTagIds;
 import '../domain/models/table_occupancy.dart' show isOrderSettled;
@@ -216,9 +217,9 @@ class LineMoney {
     double componentsPerUnit = 0,
     double orderDiscountPercentage = 0,
   }) {
-    final q = line.quantity;
-    final gross = (line.unitaryPrice + line.unitaryDiscount + componentsPerUnit) * q;
-    final lineDiscount = (line.unitaryDiscount + line.manualDiscount) * q;
+    final amounts = line.amounts(componentsPerUnit: componentsPerUnit);
+    final gross = amounts.gross;
+    final lineDiscount = amounts.lineDiscount;
     final afterLine = gross - lineDiscount;
     final orderLevel = orderDiscountPercentage > 0
         ? afterLine * (orderDiscountPercentage / 100)

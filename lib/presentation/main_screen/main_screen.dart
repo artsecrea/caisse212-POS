@@ -61,6 +61,7 @@ import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
 import '../../services/scale_barcode_service.dart';
 import '../../domain/models/scale_config.dart';
+import '../../domain/models/order_money.dart';
 import '../../domain/models/split_bill.dart';
 import '../../providers/scale_config_provider.dart';
 import '../widgets/adaptive_text_field.dart';
@@ -2269,9 +2270,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
       // Calculate total only from unpaid items (apply order-level discount proportionally)
       final unpaidTotal = unpaidItems.fold(0.0, (sum, item) => sum + item.totalPrice);
-      final fullTotal = reloadedOrder.discountPercentage > 0
-          ? unpaidTotal * (1 - reloadedOrder.discountPercentage / 100)
-          : unpaidTotal;
+      final fullTotal =
+          applyOrderDiscount(unpaidTotal, reloadedOrder.discountPercentage);
       // Parts already paid by amount (split bill) come off: this payment
       // closes that split, so it carries its `split` too.
       final moneyParts = await ref

@@ -5,6 +5,8 @@ import 'cash_report_sections.dart';
 import 'package:uuid/uuid.dart';
 import '../core/enums.dart';
 import '../data/database/app_database.dart';
+import '../domain/models/order_money.dart';
+import '../domain/models/order_money_rows.dart';
 import '../utils/user_display.dart';
 import 'cash_movement_service.dart';
 import 'refund_service.dart';
@@ -700,9 +702,7 @@ class DailySummaryService {
         ..where((op) => op.orderId.equals(order.id)))
           .get();
 
-      double subtotal = 0.0;
-      double itemDiscount = 0.0;
-      double totalTva = 0.0;
+      double linesNet = 0.0;
 
       for (final product in orderProducts) {
         // Get components for this order product
@@ -710,32 +710,12 @@ class DailySummaryService {
           ..where((tbl) => tbl.orderProductId.equals(product.id)))
             .get();
 
-        // Calculate component total using stored prices
-        double componentTotal = 0.0;
-        for (final orderComp in orderComponents) {
-          componentTotal += orderComp.price * orderComp.quantity;
-        }
-
-        // Calculate product discount (manual + unitary)
-        final productDiscount = (product.manualDiscount + product.unitaryDiscount) * product.quantity;
-
-        // Calculate item subtotal: (unitaryPrice - unitaryTva + unitaryDiscount + componentTotal) * quantity
-        // This matches the logic in _buildOrderFullDetails
-        final itemSubtotal = ((product.unitaryPrice - product.unitaryTva + product.unitaryDiscount) + componentTotal) * product.quantity;
-        final itemTva = product.unitaryTva * product.quantity;
-
-        subtotal += itemSubtotal;
-        itemDiscount += productDiscount;
-        totalTva += itemTva;
+        linesNet += product
+            .amounts(componentsPerUnit: componentsPerUnitOf(orderComponents))
+            .net;
       }
 
-      // Calculate manual discount from percentage
-      final discountPercentage = order.discountPercentage;
-      final manualDiscountAmount = (subtotal + totalTva - itemDiscount) * (discountPercentage / 100);
-      final totalDiscount = itemDiscount + manualDiscountAmount;
-
-      // Calculate final total
-      final orderTotal = subtotal + totalTva - totalDiscount;
+      final orderTotal = applyOrderDiscount(linesNet, order.discountPercentage);
 
       expectedFromOrders += orderTotal;
       deliveryFees += order.deliveryFee ?? 0.0;
@@ -1001,7 +981,7 @@ class DailySummaryService {
   /// arithmetic in [_getSessionSummary]. Keeping all three in step is what lets
   /// the printed summary reconcile with the Z report and the dashboard.
   static double _opLineTotal(OrderProduct op, double compCost) =>
-      ((op.unitaryPrice - op.manualDiscount) + compCost) * op.quantity;
+      op.amounts(componentsPerUnit: compCost).net;
 
   /// Per-order list for the "orders done" ticket.
   /// [discountedOnly] narrows the list to orders something came off — the
@@ -1037,7 +1017,7 @@ class DailySummaryService {
         itemCount += op.quantity;
         lineDiscount += (op.unitaryDiscount + op.manualDiscount) * op.quantity;
       }
-      final total = lineTotal * (1 - o.discountPercentage / 100);
+      final total = applyOrderDiscount(lineTotal, o.discountPercentage);
       final orderLevelDiscount = lineTotal - total;
       final discount = lineDiscount + orderLevelDiscount;
       if (discountedOnly && discount.abs() <= 0.005) continue;
@@ -1135,10 +1115,10 @@ class DailySummaryService {
       a.quantity += op.quantity;
       // `unitaryPrice` already has the catalogue discount off; adding it back
       // is what makes gross - discount = net on the printed row.
-      a.gross +=
-          (op.unitaryPrice + op.unitaryDiscount + compCost) * op.quantity;
-      a.discount += (op.unitaryDiscount + op.manualDiscount) * op.quantity;
-      a.net += _opLineTotal(op, compCost);
+      final money = op.amounts(componentsPerUnit: compCost);
+      a.gross += money.gross;
+      a.discount += money.lineDiscount;
+      a.net += money.net;
     }
 
     // Names + categories in two batched lookups.
@@ -1255,7 +1235,7 @@ class DailySummaryService {
         net += _opLineTotal(op, data.compCostByOpId[op.id] ?? 0.0);
         units += op.quantity;
       }
-      net -= net * (o.discountPercentage / 100);
+      net = applyOrderDiscount(net, o.discountPercentage);
 
       final prev = buckets[staffId];
       buckets[staffId] = StaffSalesEntry(

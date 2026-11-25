@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import '../domain/models/order_course.dart';
 import '../domain/models/order_models.dart';
+import '../domain/models/order_money.dart';
+import '../domain/models/order_money_rows.dart';
 import '../domain/models/order_tag_codec.dart';
 import '../domain/models/line_payment.dart';
 import '../domain/models/split_bill.dart';
@@ -3564,20 +3566,15 @@ class OrderRepository {
     final beforeDiscount = <int, double>{};
     for (final p in products) {
       final comps = compsByProductId[p.id] ?? const <OrderProductComponent>[];
-      final componentTotal = comps.fold<double>(
-        0.0,
-        (sum, c) => sum + (c.price * c.quantity),
-      );
       final itemTotal =
-          ((p.unitaryPrice + componentTotal) - p.manualDiscount) * p.quantity;
+          p.amounts(componentsPerUnit: componentsPerUnitOf(comps)).net;
       beforeDiscount[p.orderId] = (beforeDiscount[p.orderId] ?? 0) + itemTotal;
     }
 
     final result = <int, double>{};
     for (final id in orderIds) {
-      final before = beforeDiscount[id] ?? 0;
-      final pct = discountPctById[id] ?? 0;
-      result[id] = before - (before * pct / 100);
+      result[id] = applyOrderDiscount(
+          beforeDiscount[id] ?? 0, discountPctById[id] ?? 0);
     }
     return result;
   }
@@ -3713,6 +3710,7 @@ class OrderRepository {
       double subtotal = 0.0;
       double itemDiscount = 0.0;
       double totalTva = 0.0;
+      double linesNet = 0.0;
       double totalPaid = 0.0;
       final seenTicketIds = <int>{};
 
@@ -3736,27 +3734,11 @@ class OrderRepository {
           }
         }
 
-        // unitaryPrice = basePrice + tva - preDiscount (all baked in).
-        // Subtract unitaryTva so subtotal is tax-exclusive (HT); totalTva is added
-        // back later in the final total formula to avoid double-counting.
-        // productDiscount covers both the pre-discount and any manual discount.
-        // totalPrice = itemSubtotal + totalTva - productDiscount
-        //            = (unitaryPrice - unitaryTva + unitaryDiscount + componentTotal) * qty + tva*qty - (unitaryDiscount + manualDiscount) * qty
-        //            = (unitaryPrice + componentTotal - manualDiscount) * qty  ✓
-        final productDiscount =
-            (product.unitaryDiscount + product.manualDiscount) *
-                product.quantity;
-        final itemSubtotal =
-            (product.unitaryPrice -
-                product.unitaryTva +
-                product.unitaryDiscount +
-                componentTotal) *
-            product.quantity;
-        final itemTva = product.unitaryTva * product.quantity;
-
-        subtotal += itemSubtotal;
-        itemDiscount += productDiscount;
-        totalTva += itemTva;
+        final money = product.amounts(componentsPerUnit: componentTotal);
+        subtotal += money.unitSubtotalHt * product.quantity;
+        itemDiscount += money.lineDiscount;
+        totalTva += money.tva;
+        linesNet += money.net;
 
         // Check if item is paid (has a ticket)
         final isPaid = product.ticketId != null;
@@ -3777,7 +3759,7 @@ class OrderRepository {
                 ? null
                 : variants[product.variantId!]?.name,
             quantity: product.quantity,
-            totalPrice: itemSubtotal + itemTva - productDiscount,
+            totalPrice: money.net,
             isPaid: isPaid,
             ticketNum: ticketNum,
             components: componentDetails,
@@ -3792,11 +3774,10 @@ class OrderRepository {
       // Calculate manual discount from percentage
       final discountPercentage = order.discountPercentage;
       final manualDiscountAmount =
-          (subtotal + totalTva - itemDiscount) * (discountPercentage / 100);
+          orderDiscountAmount(linesNet, discountPercentage);
       final totalDiscount = itemDiscount + manualDiscountAmount;
 
-      // Calculate final total
-      final total = subtotal + totalTva - totalDiscount;
+      final total = applyOrderDiscount(linesNet, discountPercentage);
 
       result.add(OrderFullDetails(
         order: order,

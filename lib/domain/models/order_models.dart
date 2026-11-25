@@ -1,6 +1,7 @@
 // Model for current order item in cart
 
 import '../../data/database/app_database.dart';
+import 'order_money.dart';
 
 class OrderItem {
   final int? id;
@@ -110,27 +111,26 @@ class OrderItem {
     return components.fold(0.0, (sum, comp) => sum + (comp.price * comp.quantity));
   }
 
+  LineAmounts get amounts => LineAmounts(
+        unitPrice: finalPrice,
+        quantity: quantity,
+        componentsPerUnit: componentTotal,
+        manualDiscount: manualDiscount,
+        unitDiscount: discount,
+        unitTva: tva,
+      );
+
   // Base price per item without tax or any discount (but with components)
-  // finalPrice = basePrice + tva - prediscount, so: basePrice = finalPrice - tva + prediscount
-  double get subtotalPerItem {
-    return ((finalPrice - tva) + discount) + componentTotal;
-  }
+  double get subtotalPerItem => amounts.unitSubtotalHt;
 
   // Price per item with all discounts applied (including manual discount)
-  // finalPrice already has tva and prediscount applied, add components, then subtract manual discount
-  double get totalPrice {
-    return ((finalPrice + componentTotal) - manualDiscount) * quantity;
-  }
+  double get totalPrice => amounts.net;
 
   // Total discount per all quantities (pre-discount + manual discount)
-  double get totalDiscount {
-    return (discount + manualDiscount) * quantity;
-  }
+  double get totalDiscount => amounts.lineDiscount;
 
   // Total TVA for all quantities
-  double get totalTva {
-    return tva * quantity;
-  }
+  double get totalTva => amounts.tva;
 
   /// True when this line names a specific physical unit.
   bool get isSerialLine => serialId != null;
@@ -458,14 +458,11 @@ class CurrentOrder {
   }
 
   // Order-level discount amount calculated from percentage
-  double get discountAmount {
-    return totalBeforeDiscount * (discountPercentage / 100);
-  }
+  double get discountAmount =>
+      orderDiscountAmount(totalBeforeDiscount, discountPercentage);
 
   // Final total with order-level discount applied
-  double get total {
-    return totalBeforeDiscount - discountAmount;
-  }
+  double get total => applyOrderDiscount(totalBeforeDiscount, discountPercentage);
 
   /// What the customer actually hands over: the products [total] plus the
   /// non-product extras. Kept separate from [total] so nothing that reports

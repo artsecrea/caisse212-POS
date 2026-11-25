@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/models/order_money.dart';
+import '../domain/models/order_money_rows.dart';
 
 /// One unpaid order, with who is currently carrying it.
 class UnpaidOrderEntry {
@@ -162,8 +164,7 @@ class UnpaidOrdersService {
     for (final l in lines) {
       if (l.state == 'CANCELED') continue;
       totalByOrder[l.orderId] = (totalByOrder[l.orderId] ?? 0.0) +
-          ((l.unitaryPrice - l.manualDiscount) + (compCost[l.id] ?? 0.0)) *
-              l.quantity;
+          l.amounts(componentsPerUnit: compCost[l.id] ?? 0.0).net;
     }
 
     final tickets = await (_db.select(_db.tickets)
@@ -221,7 +222,7 @@ class UnpaidOrdersService {
     for (final o in orders) {
       final total = totalByOrder[o.id] ?? 0.0;
       if (total <= 0) continue;
-      final withDiscount = total - total * (o.discountPercentage / 100);
+      final withDiscount = applyOrderDiscount(total, o.discountPercentage);
       final paid = paidByOrder[o.id] ?? 0.0;
       // Epsilon so a fully-paid table is not offered for handover over a
       // rounding penny.

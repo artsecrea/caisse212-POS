@@ -19,6 +19,7 @@ import '../data/database/app_database.dart';
 import '../domain/models/component_rules.dart' show decodeVisibleWhen;
 import '../domain/models/line_payment.dart';
 import '../domain/models/order_course.dart';
+import '../domain/models/order_money_rows.dart';
 import '../domain/models/socket_models.dart';
 import '../providers/database_providers.dart';
 import '../providers/order_provider.dart' show orderRepositoryProvider;
@@ -1815,13 +1816,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
   /// it again double-discounted the line. Order-level `discountPercentage` is
   /// applied by the caller where relevant (waiter orders default to 0).
   double _waiterLineTotal(
-      OrderProduct p, Iterable<OrderProductComponent> comps) {
-    var componentTotal = 0.0;
-    for (final c in comps) {
-      componentTotal += c.price * c.quantity;
-    }
-    return (p.unitaryPrice + componentTotal - p.manualDiscount) * p.quantity;
-  }
+          OrderProduct p, Iterable<OrderProductComponent> comps) =>
+      p.amounts(componentsPerUnit: componentsPerUnitOf(comps)).net;
 
   /// Terminal (done) order/product states — the only ones that mark an order
   /// for cloud sync from the KDS path. Everything else (PENDING, PREPARING,

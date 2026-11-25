@@ -14,6 +14,7 @@ import 'package:caisse212/utils/error_text.dart';
 import 'package:caisse212/utils/currency_formatter.dart';
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/order_models.dart';
+import '../../domain/models/order_money.dart';
 import '../../domain/models/split_bill.dart';
 import '../../core/enums.dart';
 import '../../providers/order_provider.dart';
@@ -596,14 +597,17 @@ class TicketData {
   double get totalTva =>
       items.fold<double>(0.0, (sum, l) => sum + l.item.totalTva);
 
+  double get _linesNet =>
+      items.fold<double>(0.0, (sum, l) => sum + l.item.totalPrice);
+
   double get manualDiscountAmount {
-    final base = (subtotal + totalTva - itemDiscount);
+    final base = _linesNet;
     if (base <= 0 || discountPercentage <= 0) return 0.0;
-    return base * (discountPercentage / 100.0);
+    return orderDiscountAmount(base, discountPercentage);
   }
 
   double get total {
-    final result = (subtotal + totalTva - itemDiscount) - manualDiscountAmount;
+    final result = _linesNet - manualDiscountAmount;
     return result < 0 ? 0.0 : result;
   }
 }

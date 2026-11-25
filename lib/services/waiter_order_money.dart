@@ -1,4 +1,6 @@
 import '../data/database/app_database.dart';
+import '../domain/models/order_money.dart';
+import '../domain/models/order_money_rows.dart';
 
 double _r2(double v) => (v * 100).roundToDouble() / 100;
 
@@ -17,12 +19,9 @@ class WaiterLineMoney {
 
   factory WaiterLineMoney.of(
       OrderProduct p, Iterable<OrderProductComponent> comps) {
-    var componentTotal = 0.0;
-    for (final c in comps) {
-      componentTotal += c.price * c.quantity;
-    }
-    final net = (p.unitaryPrice + componentTotal - p.manualDiscount) * p.quantity;
-    final discount = (p.unitaryDiscount + p.manualDiscount) * p.quantity;
+    final money = p.amounts(componentsPerUnit: componentsPerUnitOf(comps));
+    final net = money.net;
+    final discount = money.lineDiscount;
     return WaiterLineMoney(gross: net + discount, discount: discount, net: net);
   }
 }
@@ -68,12 +67,12 @@ class WaiterOrderMoney {
         unpaidNet += m.net;
       }
     }
-    final orderDiscount = net * pct / 100;
+    final orderDiscount = orderDiscountAmount(net, pct);
     return WaiterOrderMoney(
       subtotal: gross,
       discount: lineDiscount + orderDiscount,
-      total: net - orderDiscount,
-      balance: unpaidNet * (1 - pct / 100),
+      total: applyOrderDiscount(net, pct),
+      balance: applyOrderDiscount(unpaidNet, pct),
       allPaid: allPaid,
       discountPercentage: pct,
       discountReason: order.discountReason,
