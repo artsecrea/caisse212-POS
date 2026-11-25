@@ -725,6 +725,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           var newSession = await sessionService.startSession(
             cashierId: user.id,
             moneyAtStart: startingBalance,
+            posId: ref.read(apiServiceProvider).getPosId(),
             // Each cashier brings their own float for now; nothing carries
             // over from the previous session.
             moneyEntered: startingBalance,

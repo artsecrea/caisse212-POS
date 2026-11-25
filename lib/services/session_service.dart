@@ -252,11 +252,15 @@ class SessionService {
   /// [moneyEntered] is the cash the cashier brought in, [moneyCarriedOver]
   /// what was left from the previous session — both POS-counted and sent as
   /// is; the server only sums them per Z.
+  /// [posId] is this terminal's id with the backend (`ApiService.getPosId`).
+  /// It goes into the session code so two tills can never mint the same one;
+  /// null on a till that was never registered.
   Future<CashSession> startSession({
     required int cashierId,
     required double moneyAtStart,
     double? moneyEntered,
     double? moneyCarriedOver,
+    int? posId,
   }) async {
     // Check if there's an active session for this user
     final existingSession = await getActiveSession(cashierId);
@@ -264,7 +268,7 @@ class SessionService {
       throw Exception('User already has an active session');
     }
 
-    final sessionCode = await _uniqueSessionCode(DateTime.now());
+    final sessionCode = await _uniqueSessionCode(DateTime.now(), posId: posId);
 
     final id = await _database.into(_database.cashSessions).insert(
       CashSessionsCompanion.insert(
@@ -286,14 +290,16 @@ class SessionService {
 
   static final _random = Random.secure();
 
-  /// `CS-YYYYMMDD-HHMMSS-XXX`. The suffix used to be the clock's milliseconds,
-  /// so two sessions opened in the same millisecond got the same code and
-  /// the second insert failed; it is now drawn at random and re-drawn on a
-  /// clash with a session this till already has.
-  Future<String> _uniqueSessionCode(DateTime now) async {
+  /// `CS-YYYYMMDD-<posId>-HHMMSS-XXX`, or `CS-YYYYMMDD-HHMMSS-XXX` on a till
+  /// with no POS id. The POS id keeps two tills from ever minting the same
+  /// code. The random suffix, re-drawn on a clash with a session this till
+  /// already has, keeps two sessions of one till in the same second apart; it
+  /// used to be the clock's milliseconds, and the second insert failed.
+  Future<String> _uniqueSessionCode(DateTime now, {int? posId}) async {
     String two(int v) => v.toString().padLeft(2, '0');
-    final stamp = '${now.year}${two(now.month)}${two(now.day)}-'
-        '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+    final day = '${now.year}${two(now.month)}${two(now.day)}';
+    final time = '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+    final stamp = posId == null ? '$day-$time' : '$day-$posId-$time';
     Future<bool> free(String code) async =>
         await (_database.select(_database.cashSessions)
               ..where((s) => s.code.equals(code)))

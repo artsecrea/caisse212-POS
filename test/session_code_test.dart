@@ -23,4 +23,12 @@ void main() {
     }
     expect(codes, hasLength(40));
   });
+
+  test("the POS id sits after the date, so two tills never share a code",
+      () async {
+    final service = SessionService(db);
+    final s = await service.startSession(
+        cashierId: 1, moneyAtStart: 0, posId: 12);
+    expect(s.code, matches(RegExp(r'^CS-\d{8}-12-\d{6}-\d{3}$')));
+  });
 }
