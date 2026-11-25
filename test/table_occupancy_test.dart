@@ -97,5 +97,25 @@ void main() {
       expect(reason(status: 'PENDING', lines: ['PAID']),
           TableReleaseReason.orderSettled);
     });
+
+    test('every line cancelled, the order still COMPLETED: released', () {
+      // The web cancels lines one by one and leaves the order's status alone.
+      expect(reason(lines: ['CANCELED', 'CANCELLED'], freeOnPayment: false),
+          TableReleaseReason.orderCancelled);
+    });
+  });
+
+  group('does it block a new order on its table', () {
+    bool blocks(List<String> lines, {String status = 'COMPLETED'}) =>
+        orderBlocksTable(orderStatus: status, lineStates: lines);
+
+    test('a just-opened order does', () => expect(blocks([]), isTrue));
+    test('food still owed does', () => expect(blocks(['PAID', 'PENDING']), isTrue));
+    test('everything paid or cancelled does not', () {
+      expect(blocks(['PAID', 'CANCELED']), isFalse);
+      expect(blocks(['CANCELED']), isFalse);
+    });
+    test('a cancelled order does not',
+        () => expect(blocks(['PENDING'], status: 'CANCELED'), isFalse));
   });
 }

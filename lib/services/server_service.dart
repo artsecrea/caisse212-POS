@@ -22,8 +22,10 @@ import '../domain/models/order_course.dart';
 import '../domain/models/order_money.dart';
 import '../domain/models/order_money_rows.dart';
 import '../domain/models/socket_models.dart';
+import '../domain/models/table_occupancy.dart' show orderBlocksTable;
 import '../providers/database_providers.dart';
-import '../providers/order_provider.dart' show orderRepositoryProvider;
+import '../providers/order_provider.dart'
+    show OrderRepository, orderRepositoryProvider;
 import '../providers/settings_provider.dart' show settingsProvider;
 import '../providers/network_provider.dart' show lastKnownOnlineStatusProvider;
 import '../providers/sync_manager_provider.dart' show syncManagerProvider;
@@ -43,7 +45,6 @@ import 'waiter_notification_inbox.dart';
 import 'waiter_request_replay.dart';
 import 'line_cancellation.dart';
 import 'printing_service.dart' show PrintOutput, KdsPrintMode;
-import '../utils/order_code.dart';
 import 'package:drift/drift.dart' as drift;
 import '../utils/pos_log.dart';
 import 'package:loggecrea/loggecrea.dart';
@@ -2912,7 +2913,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       // Generate a short uppercase alphanumeric order code (e.g. RGH7IE3H3LR),
       // verified unique against existing orders.
       final now = DateTime.now();
-      final orderCode = await _generateUniqueOrderCode(database);
+      final orderCode = await OrderRepository.uniqueOrderCode(database);
 
       // Create order. `source: 'WAITER'` lets the print-rule engine filter
       // this row out (or in) per cashier config — see [PrintRule.sources].
@@ -2981,15 +2982,14 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
               // it: an order is done when it is cancelled, or when every line has
               // been paid for.
               var stillLive = false;
-              if (existing != null && existing.status != 'CANCELED') {
+              if (existing != null) {
                 final lines = await (database.select(database.orderProducts)
                       ..where((op) => op.orderId.equals(existing.id)))
                     .get();
-                // No lines yet = a just-opened order, definitely live.
-                stillLive = lines.isEmpty ||
-                    lines.any((l) =>
-                        !isLinePaid(l.state, l.ticketId) &&
-                        l.state != 'CANCELED');
+                stillLive = orderBlocksTable(
+                  orderStatus: existing.status,
+                  lineStates: lines.map((l) => settlementState(l.state, l.ticketId)),
+                );
               }
               // A live order blocks the table, whoever raised it.
               //
@@ -3151,20 +3151,6 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         headers: {'Content-Type': 'application/json'},
       );
     }
-  }
-
-  /// Generate a unique order code (see [generateOrderCode]) by re-rolling on
-  /// the astronomically rare chance the random code already exists. Falls back
-  /// to a timestamp-suffixed code after a few tries to guarantee termination.
-  Future<String> _generateUniqueOrderCode(AppDatabase database) async {
-    for (var attempt = 0; attempt < 8; attempt++) {
-      final code = generateOrderCode();
-      final existing = await (database.select(database.orders)
-            ..where((o) => o.code.equals(code)))
-          .getSingleOrNull();
-      if (existing == null) return code;
-    }
-    return 'O${DateTime.now().millisecondsSinceEpoch}';
   }
 
   /// Background auto-print for a freshly created waiter order. Reads the

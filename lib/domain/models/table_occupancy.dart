@@ -65,8 +65,34 @@ TableReleaseReason? tableReleaseReason({
   if (_kDeadStatuses.contains(orderStatus.toUpperCase())) {
     return TableReleaseReason.orderCancelled;
   }
-  if (!freeOnPayment) return null;
   final states = lineStates.toList();
+  // Every line cancelled (the web cancels lines one by one, and the order
+  // keeps its status): as dead as a cancelled order, whatever the settings.
+  if (states.isNotEmpty && states.every(_isCancelledLine)) {
+    return TableReleaseReason.orderCancelled;
+  }
+  if (!freeOnPayment) return null;
   if (states.isEmpty) return null;
   return isOrderSettled(states) ? TableReleaseReason.orderSettled : null;
+}
+
+bool _isCancelledLine(String state) =>
+    state == 'CANCELED' || state == 'CANCELLED';
+
+/// Whether an order still blocks a NEW order on its table: it is not
+/// cancelled, and it has no lines yet (just opened) or something on it is
+/// neither paid nor cancelled. [lineStates] go through `settlementState`
+/// first, so a paid line reads `PAID`.
+///
+/// Not the same question as [tableReleaseReason]: a fully paid order stops
+/// blocking a new one even where the till keeps the table held for the
+/// customers still sitting.
+bool orderBlocksTable({
+  required String orderStatus,
+  required Iterable<String> lineStates,
+}) {
+  if (_kDeadStatuses.contains(orderStatus.toUpperCase())) return false;
+  final states = lineStates.toList();
+  if (states.isEmpty) return true;
+  return states.any((s) => s != 'PAID' && !_isCancelledLine(s));
 }
