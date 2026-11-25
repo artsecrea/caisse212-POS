@@ -31,6 +31,9 @@ import 'discovery_service.dart' show DiscoveryService;
 import 'lan_notification_hub.dart';
 import 'waiter_call_service.dart' show waiterCallServiceProvider;
 import 'kds_feed_scope.dart';
+import 'kds_live_service.dart';
+import '../presentation/widgets/settings_lock_dialog.dart'
+    show settingsCodeAccepted;
 import 'waiter_kitchen_events.dart';
 import 'waiter_order_money.dart';
 import 'waiter_live_updates.dart';
@@ -83,6 +86,9 @@ class ServerService {
   /// See [_fireKdsForWaiterAddedProduct] and [AppSettings.waiterKdsBatchSeconds].
   final Map<int, Timer> _pendingWaiterKds = {};
 
+  /// Failed `/kds-api/settings-code` guesses per address.
+  final AttemptLimiter _settingsCodeAttempts = AttemptLimiter();
+
   /// Stored answers for retried / double-tapped waiter writes.
   final WaiterRequestReplay _waiterReplay = WaiterRequestReplay();
 
@@ -109,6 +115,7 @@ class ServerService {
       _server = await shelf_io.serve(handler, InternetAddress.anyIPv4, _port);
       _isRunning = true;
       _ref.read(waiterLiveUpdateServiceProvider).start();
+      _ref.read(kdsChangeSignalProvider).start();
       // The server binds to 0.0.0.0 (all interfaces); log the REACHABLE LAN URL
       // instead of 0.0.0.0 so the console shows what a KDS/waiter should connect
       // to.
@@ -127,6 +134,7 @@ class ServerService {
     // A ticket sitting in a timer when the POS closes is food nobody cooks.
     await _flushPendingWaiterKds();
     await _ref.read(waiterLiveUpdateServiceProvider).stop();
+    await _ref.read(kdsChangeSignalProvider).stop();
     if (_server != null) {
       await _server!.close(force: true);
       _server = null;
@@ -144,6 +152,11 @@ class ServerService {
 
     // Order endpoints
     router.get('/orders', _getOrders);
+    // Kitchen screens: a push nudge instead of polling every 2 s.
+    router.post('/orders/events/ticket', _kdsEventsTicket);
+    router.get('/orders/events', _kdsEvents);
+    // A kitchen screen set to "use the till's PIN" for its settings lock.
+    router.post('/kds-api/settings-code', _kdsSettingsCode);
     router.post('/orders', _createOrder);
     router.put('/orders/<orderId>', _updateOrder);
     router.put('/orders/products/<id>', _updateOrderProduct);
@@ -228,6 +241,12 @@ class ServerService {
         if (p == 'health' || p == 'kds' || p.startsWith('kds/')) {
           return innerHandler(request);
         }
+        // The KDS event stream: a browser's EventSource cannot send the
+        // password header, so the handler checks the header OR a one-time
+        // ticket fetched with it.
+        if (p == 'orders/events' && request.method == 'GET') {
+          return innerHandler(request);
+        }
 
         // Tenant / business / terminal deactivated: the waiter app may not
         // keep selling through this till. The KDS keeps working so the
@@ -264,7 +283,7 @@ class ServerService {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers':
-            'Origin, Content-Type, Accept, X-Server-Password, Last-Event-ID, Idempotency-Key',
+            'Origin, Content-Type, Accept, X-Server-Password, Last-Event-ID, Idempotency-Key, X-KDS-Name, X-KDS-Stations, X-KDS-Version',
       };
 
   // ==================== ENDPOINT HANDLERS ====================
@@ -440,6 +459,10 @@ class ServerService {
       final database = _ref.read(databaseProvider);
       final logService = OrderLogService(database);
       final q = request.url.queryParameters;
+      _noteKdsRequest(request);
+      // Read before any query: a write while this request runs moves it on,
+      // so the screen's next poll does the full work.
+      final feedVersion = _ref.read(kdsChangeSignalProvider).version;
 
       // ── 1. Parse params ─────────────────────────────────────────────────
       final afterId = int.tryParse(q['after_id'] ?? '');
@@ -515,15 +538,27 @@ class ServerService {
       }
 
       // ── 2. Resolve station → set of order IDs ───────────────────────────
-      Future<Response> emptyResponse() async {
+      Future<Response> emptyResponse({String? version}) async {
         final lastLogId = await logService.getLastUpdateLogId();
         return Response.ok(
           jsonEncode({
             'orders': [], 'orders_updated': [], 'orders_deleted': [],
             'last_log_id': lastLogId, 'count': 0, 'updated_count': 0, 'deleted_count': 0,
+            'version': version ?? feedVersion,
           }),
           headers: {'Content-Type': 'application/json'},
         );
+      }
+
+      // Nothing the board is built from was written since this screen's
+      // last answer: skip the scope queries (the station join grows with the
+      // shift). Only for an incremental poll (both cursors), and the version
+      // rolls over every 30 s, so a write the change feed cannot see still
+      // shows up as fast as the screen's safety poll.
+      if (afterId != null &&
+          updatedAfterLogId != null &&
+          q['known_version'] == feedVersion) {
+        return emptyResponse(version: feedVersion);
       }
 
       // Session scope (default). Resolved here so emptyResponse is in scope.
@@ -706,6 +741,7 @@ class ServerService {
           'count': socketNew.length,
           'updated_count': socketUpdated.length,
           'deleted_count': deletedOrderIds.length,
+          'version': feedVersion,
         }),
         headers: {'Content-Type': 'application/json'},
       );
@@ -717,6 +753,147 @@ class ServerService {
         headers: {'Content-Type': 'application/json'},
       );
     }
+  }
+
+  /// Records which kitchen screen is asking (`X-KDS-Name`, `X-KDS-Stations`,
+  /// `X-KDS-Version`), for the devices screen. Old screens send none.
+  void _noteKdsRequest(Request request) {
+    final name = request.headers['x-kds-name'];
+    if (name == null || name.trim().isEmpty) return;
+    _ref.read(kdsPresenceProvider).seen(
+          name,
+          stations: parseKdsStations(request.headers['x-kds-stations']),
+          version: request.headers['x-kds-version'],
+          address: _remoteAddress(request),
+        );
+  }
+
+  static String? _remoteAddress(Request request) {
+    final info = request.context['shelf.io.connection_info'];
+    return info is HttpConnectionInfo ? info.remoteAddress.address : null;
+  }
+
+  /// POST /orders/events/ticket — a one-time ticket to open
+  /// `GET /orders/events` with. Behind the normal password check.
+  Future<Response> _kdsEventsTicket(Request request) async {
+    _noteKdsRequest(request);
+    final ticket = _ref.read(kdsStreamTicketsProvider).issue();
+    return Response.ok(
+      jsonEncode({
+        'ticket': ticket,
+        'expiresInSeconds':
+            _ref.read(kdsStreamTicketsProvider).ttl.inSeconds,
+      }),
+      headers: {'Content-Type': 'application/json', 'Cache-Control': 'no-store'},
+    );
+  }
+
+  /// GET /orders/events?ticket=…&name=…&stations=a,b&version=…
+  ///
+  /// Server-Sent Events for kitchen screens: `connected` (with the
+  /// heartbeat period), then `orders-changed` whenever the board's tables
+  /// change (throttled), plus `: hb` comments every 20 s. A nudge to fetch
+  /// `/orders` with the screen's own cursors, never order data.
+  ///
+  /// Authenticated by the password header (native screens may send it) or a
+  /// ticket from `POST /orders/events/ticket` (the browser screen). 403
+  /// otherwise — and an old till answers 404, which tells the screen to keep
+  /// polling.
+  Future<Response> _kdsEvents(Request request) async {
+    final q = request.url.queryParameters;
+    final password = _serverPassword;
+    if (password != null && password.isNotEmpty) {
+      final byHeader = request.headers['x-server-password'] == password;
+      if (!byHeader &&
+          !_ref.read(kdsStreamTicketsProvider).redeem(q['ticket'])) {
+        return Response.forbidden(
+          jsonEncode({'error': 'Invalid or missing ticket'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+    }
+
+    final name = (q['name'] ?? request.headers['x-kds-name'] ?? '').trim();
+    final label = name.isEmpty ? 'unnamed' : name;
+    final presence = _ref.read(kdsPresenceProvider);
+    final stations = parseKdsStations(q['stations']);
+    final version = q['version'];
+    final address = _remoteAddress(request);
+
+    final hub = _ref.read(lanNotificationHubProvider);
+    final inner = hub.subscribe(
+      kdsChannel(label),
+      hello: {
+        'name': label,
+        'heartbeatSeconds': LanNotificationHub.heartbeatInterval.inSeconds,
+      },
+    );
+    presence.streamOpened(label,
+        stations: stations, version: version, address: address);
+    // The hub learns of a gone client on its next write; the presence entry
+    // must follow the same moment, once.
+    var closed = false;
+    void leave() {
+      if (closed) return;
+      closed = true;
+      presence.streamClosed(label);
+    }
+
+    // Completes when the client goes (cancel) or the hub closes it (done).
+    final controller = StreamController<List<int>>(onCancel: leave);
+    controller.addStream(inner).whenComplete(() {
+      leave();
+      if (!controller.isClosed) controller.close();
+    });
+
+    return Response.ok(
+      controller.stream,
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+      context: {'shelf.io.buffer_output': false},
+    );
+  }
+
+  /// POST /kds-api/settings-code `{ "code": "1234" }` →
+  /// `{ "accepted": bool, "tillPinSet": bool }`.
+  ///
+  /// Lets a kitchen screen accept the till's own settings PIN (or the daily
+  /// master code), so one PIN guards every screen and is changed in one
+  /// place — without the PIN ever leaving the till. Rate limited per
+  /// address: a 4-digit PIN is otherwise a few minutes of guessing.
+  Future<Response> _kdsSettingsCode(Request request) async {
+    final address = _remoteAddress(request) ?? '?';
+    if (!_settingsCodeAttempts.allow(address)) {
+      return Response(429,
+          body: jsonEncode({'error': 'too_many_attempts'}),
+          headers: {'Content-Type': 'application/json'});
+    }
+    String code = '';
+    try {
+      final body = jsonDecode(await request.readAsString());
+      if (body is Map) code = '${body['code'] ?? ''}';
+    } catch (_) {
+      return Response.badRequest(
+          body: jsonEncode({'error': 'invalid_json'}),
+          headers: {'Content-Type': 'application/json'});
+    }
+    final settings = _ref.read(settingsProvider);
+    final pin = settings.settingsLockEnabled ? settings.settingsPin : '';
+    final accepted =
+        settingsCodeAccepted(code, pin: pin, now: DateTime.now());
+    if (accepted) {
+      _settingsCodeAttempts.reset(address);
+    } else {
+      _settingsCodeAttempts.fail(address);
+    }
+    return Response.ok(
+      jsonEncode({'accepted': accepted, 'tillPinSet': pin.isNotEmpty}),
+      headers: {'Content-Type': 'application/json'},
+    );
   }
 
   /// POST /orders/ - Create new order
@@ -4404,6 +4581,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
     allComponents,
     allStations,
     allProductStations,
+    waiter,
     ] = await Future.wait([
       // Get table
       order.tableId != null
@@ -4434,6 +4612,13 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       (database.select(database.productStations)
         ..where((tbl) => tbl.productId.isIn(orderProducts.map((p) => p.productId).toList())))
           .get(),
+
+      // The waiter who took it, for the pass.
+      order.waiterId != null
+          ? (database.select(database.waiters)
+                ..where((tbl) => tbl.id.equals(order.waiterId!)))
+              .getSingleOrNull()
+          : Future.value(null),
     ]);
 
     // Create maps for quick lookup
@@ -4523,6 +4708,10 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
             final comps = componentsByOrderProduct[orderProduct.id] ?? const [];
             for (var k = 0; k < comps.length; k++) {
               final comp = comps[k];
+              // A removed or zero-quantity option is nothing to make.
+              if (comp.removalCharge == true || (comp.quantity as num) <= 0) {
+                continue;
+              }
               final lp = linkedByComponent[comp.componentId];
               if (lp == null) continue;
               final station = matchingStation(linkedStations[lp] ?? const {});
@@ -4577,8 +4766,18 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       final productComponents = componentsByOrderProduct[orderProduct.id] ?? [];
 
       final socketComponents = <SocketOrderProductComponentModel>[];
+      final removed = <String>[];
       for (final comp in productComponents) {
         final component = componentsMap[comp.componentId];
+
+        // Same rules as the kitchen ticket: a removal-charge row is "NO x",
+        // and a zero-quantity row is a signal for the server, not an option.
+        if (comp.removalCharge == true) {
+          final n = (comp.name as String?) ?? component?.name;
+          if (n != null && n.isNotEmpty) removed.add(n);
+          continue;
+        }
+        if ((comp.quantity as num) <= 0) continue;
 
         if (component != null) {
           socketComponents.add(SocketOrderProductComponentModel(
@@ -4614,6 +4813,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         preparingAt: orderProduct.preparingAt,
         doneAt: kitchenDoneAt(orderProduct),
         prepMinutes: product.preparingDuration as int?,
+        removedComponents: removed,
       ));
     }
 
@@ -4645,6 +4845,11 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       courseLines: coursesOn
           ? kdsCourseLines(orderProducts, fallback: order.createdAt)
           : const [],
+      source: order.source,
+      waiterName: waiter == null
+          ? null
+          : '${(waiter as Waiter).firstName} ${waiter.lastName ?? ''}'.trim(),
+      externalOrderCode: order.externalOrderCode,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     );

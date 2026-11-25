@@ -11,6 +11,7 @@ import '../../providers/socket_order_providers.dart';
 import '../../data/database/app_database.dart';
 import '../../services/socket_service.dart';
 import '../../providers/database_providers.dart';
+import '../../services/kds_live_service.dart';
 import '../../services/permission_service.dart';
 import '../../utils/pos_log.dart';
 import '../../utils/snackbar_helper.dart';
@@ -37,6 +38,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
       body: Column(
         children: [
           _buildActionsBar(),
+          const _LiveKdsPanel(),
           Expanded(
             child: kdsListAsync.when(
               data: (kdsList) => kioskListAsync.when(
@@ -158,7 +160,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
         DataCell(Text(device.ip ?? 'N/A')),
         DataCell(Text(device.port?.toString() ?? 'N/A')),
         DataCell(Text(device.location ?? 'N/A')),
-        DataCell(_buildStatusChip(device.isConnected)),
+        DataCell(_liveStatusChip(device)),
         DataCell(
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -203,6 +205,18 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
         ),
       ),
     );
+  }
+
+  /// A KDS row is connected when a screen of that name is talking to this
+  /// till right now (the name typed on the screen, matched case-insensitively).
+  /// Its own consumer, so presence ticks do not rebuild the table.
+  Widget _liveStatusChip(DeviceRowData device) {
+    if (device.type != 'KDS') return _buildStatusChip(device.isConnected);
+    return Consumer(builder: (context, ref, _) {
+      ref.watch(kdsPresenceSnapshotProvider);
+      return _buildStatusChip(
+          ref.read(kdsPresenceProvider).isOnline(device.name));
+    });
   }
 
   Widget _buildStatusChip(bool isConnected) {
@@ -970,6 +984,104 @@ class _DeviceDetailsDialog
               value,
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The kitchen screens talking to this till right now, whether or not they
+/// are registered as devices: name, stations, address, live (event stream)
+/// or polling, and when they were last heard from. Hidden until one shows up.
+class _LiveKdsPanel extends ConsumerWidget {
+  const _LiveKdsPanel();
+
+  static String _ago(Duration d) {
+    if (d.inSeconds < 60) return '${d.inSeconds}s ago';
+    if (d.inMinutes < 60) return '${d.inMinutes} min ago';
+    return '${d.inHours} h ago';
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final screens = ref.watch(kdsPresenceSnapshotProvider).valueOrNull ?? const [];
+    if (screens.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Kitchen screens on this till',
+              style: TextStyle(
+                  fontWeight: FontWeight.w700, color: scheme.onSurface)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final s in screens)
+                Builder(builder: (context) {
+                  final online = s.onlineAt(now);
+                  final color = !online
+                      ? scheme.onSurfaceVariant
+                      : s.live
+                          ? Colors.green
+                          : Colors.orange;
+                  final mode = !online
+                      ? 'Offline'
+                      : s.live
+                          ? 'Live'
+                          : 'Polling';
+                  return Tooltip(
+                    message: [
+                      if (s.address != null) s.address!,
+                      if (s.version != null) 'v${s.version}',
+                      'Last seen ${_ago(now.difference(s.lastSeen))}',
+                    ].join(' · '),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: color),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                              s.live
+                                  ? Icons.bolt_rounded
+                                  : Icons.sync_rounded,
+                              size: 16,
+                              color: color),
+                          const SizedBox(width: 6),
+                          Text(s.name,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w700)),
+                          if (s.stations.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            Text(s.stations.join(', '),
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.onSurfaceVariant)),
+                          ],
+                          const SizedBox(width: 8),
+                          Text(mode,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: color)),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+            ],
           ),
         ],
       ),

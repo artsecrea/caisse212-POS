@@ -114,3 +114,43 @@ Metrics: avg/median prep time, avg pickup wait, items served, live backlog (fire
 | `lib/presentation/widgets/dashboard_screen.dart` | stats entry point |
 
 **Reminder:** run `flutter pub run build_runner build --delete-conflicting-outputs` after the schema change (already done for v27).
+
+---
+
+## 5. Push instead of 2 s polling, and who is connected (2026-11-25)
+
+The KDS no longer has to poll every 2 s. The till nudges it; the KDS then fetches with its own cursors. Everything is additive: an old KDS polls exactly as before, a new KDS against an old till falls back to polling.
+
+### Events
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /orders/events/ticket` | Behind the password header. → `{ "ticket": "…", "expiresInSeconds": 60 }`. One-time ticket, because a browser's EventSource cannot send headers and the password must not go in a URL (request log). |
+| `GET /orders/events?ticket=…&name=…&stations=a,b&version=…` | `text/event-stream`. Authenticated by the password header **or** a ticket (403 otherwise). Events: `connected` (`{name, heartbeatSeconds}`), `orders-changed` (`{seq}`), plus `: hb` comments every 20 s. An old till answers 404 → keep polling. |
+
+`orders-changed` is a **nudge, never data**: each screen has its own stations / filters and fetches its share with its cursors. It is sent when any table the board is built from is written (orders, lines, components, order logs, cancelled lines, sessions, catalogue/stations), throttled to one per 250 ms, and only when a screen is listening. A lost nudge costs nothing: the KDS keeps a 20 s safety poll while live, and goes back to its normal poll interval (2 s) the moment the stream drops.
+
+### "Nothing new" short answer
+
+Every `GET /orders` answer now carries `version` (opaque string). A KDS echoes it as `known_version` on its next **incremental** poll (both `after_id` and `updated_after_log_id` present, same scope). If nothing the board is built from was written since, the till answers the empty response without running the scope queries. The version also rolls over every 30 s, so a write that bypasses drift's change feed (raw SQL) is never hidden longer than that. First fetches and the 30 s reconcile never send it.
+
+### Identity and presence
+
+A KDS sends `X-KDS-Name`, `X-KDS-Stations`, `X-KDS-Version` on every request (same-origin only on web, to avoid CORS preflights against an older till). The till keeps an in-memory registry (`KdsPresenceRegistry`): **Live** (holding the event stream), **Polling** (asked within 45 s), **Offline**. Shown in Devices management (live status per registered KDS by name, plus a "Kitchen screens on this till" panel that also lists unregistered screens).
+
+### Settings lock: till PIN
+
+`POST /kds-api/settings-code { "code": "…" }` → `{ "accepted": bool, "tillPinSet": bool }`. Lets a KDS set to "use the till's PIN" accept the till's own settings PIN or the daily master code without the PIN leaving the till. 5 wrong codes per address per minute → 429.
+
+### Payload additions (KDS feed)
+
+| Where | Key | Meaning |
+|---|---|---|
+| line | `prepMinutes` | product preparation time (back-office), minutes; absent = not configured |
+| line | `doneAt` | when the line was finished (ready, else served); absent while open |
+| line | `removedComponents` | paid defaults the customer took off ("NO onion"). **No longer in `components`**, where an old KDS showed them as options to make |
+| line | `components` | zero-quantity signal rows are no longer sent |
+| order | `courseLines` | every course-tagged line of the order across all stations `{id, courseNo, state, kitchenAt, doneAt}` (courses on only) |
+| order | `source`, `waiterName`, `externalOrderCode` | who rang it up |
+
+Linked option lines (`linked=1`) now carry the parent's `kitchenAt` / `preparingAt` / `doneAt`, and a removed linked option no longer creates a line on the other station.

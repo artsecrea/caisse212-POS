@@ -33,6 +33,15 @@ class SocketOrderModel {
   /// dessert screen can tell when the entrée cooked elsewhere is done. Empty
   /// when courses are off or nothing is tagged (and then left off the wire).
   final List<KdsCourseLine> courseLines;
+
+  /// Who / what rang it up: `POS`, `WAITER`, `KIOSK`, `EXTERNAL`.
+  final String? source;
+
+  /// The waiter who took it, when one did.
+  final String? waiterName;
+
+  /// A delivery platform's own order code (Glovo…), for the pass.
+  final String? externalOrderCode;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -54,6 +63,9 @@ class SocketOrderModel {
     this.reference,
     this.orderNumber,
     this.courseLines = const [],
+    this.source,
+    this.waiterName,
+    this.externalOrderCode,
     this.createdAt,
     this.updatedAt,
   });
@@ -78,6 +90,10 @@ class SocketOrderModel {
       if ((reference ?? '').isNotEmpty) 'reference': reference,
       if (courseLines.isNotEmpty)
         'courseLines': courseLines.map((l) => l.toJson()).toList(),
+      if ((source ?? '').isNotEmpty) 'source': source,
+      if ((waiterName ?? '').isNotEmpty) 'waiterName': waiterName,
+      if ((externalOrderCode ?? '').isNotEmpty)
+        'externalOrderCode': externalOrderCode,
     };
   }
 
@@ -160,6 +176,11 @@ class SocketOrderProductModel {
   /// not configured.
   final int? prepMinutes;
 
+  /// Paid-for defaults the customer had taken off ("NO onion"). Kept out of
+  /// [components] on purpose: a KDS too old to know this key would show them
+  /// as options to make; it now shows nothing, the new one "NO onion".
+  final List<String> removedComponents;
+
   SocketOrderProductModel({
     required this.id,
     required this.productId,
@@ -182,6 +203,7 @@ class SocketOrderProductModel {
     this.preparingAt,
     this.doneAt,
     this.prepMinutes,
+    this.removedComponents = const [],
   });
 
   Map<String, dynamic> toJson() {
@@ -208,6 +230,7 @@ class SocketOrderProductModel {
       if (preparingAt != null) 'preparingAt': preparingAt!.toIso8601String(),
       if (doneAt != null) 'doneAt': doneAt!.toIso8601String(),
       if (prepMinutes != null) 'prepMinutes': prepMinutes,
+      if (removedComponents.isNotEmpty) 'removedComponents': removedComponents,
     };
   }
 
@@ -237,6 +260,10 @@ class SocketOrderProductModel {
       preparingAt: DateTime.tryParse(json['preparingAt'] as String? ?? ''),
       doneAt: DateTime.tryParse(json['doneAt'] as String? ?? ''),
       prepMinutes: (json['prepMinutes'] as num?)?.toInt(),
+      removedComponents: (json['removedComponents'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
     );
   }
 }
