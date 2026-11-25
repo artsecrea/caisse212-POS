@@ -4,16 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart' as widgets;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
-import 'package:loggecrea/loggecrea.dart';
 import 'package:drift/drift.dart' as drift;
 import '../../providers/device_providers.dart';
-import '../../providers/socket_order_providers.dart';
 import '../../data/database/app_database.dart';
-import '../../services/socket_service.dart';
 import '../../providers/database_providers.dart';
 import '../../services/kds_live_service.dart';
 import '../../services/permission_service.dart';
-import '../../utils/pos_log.dart';
 import '../../utils/snackbar_helper.dart';
 
 class DevicesManagementScreen extends ConsumerStatefulWidget {

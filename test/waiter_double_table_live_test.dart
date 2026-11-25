@@ -12,7 +12,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/providers/server_provider.dart';
-import 'package:caisse212/providers/settings_provider.dart';
 import 'package:caisse212/services/server_service.dart';
 
 /// One table, one live order — whoever is asking.

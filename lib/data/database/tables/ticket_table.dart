@@ -1,5 +1,4 @@
 import 'package:drift/drift.dart';
-import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/data/database/tables/order_table.dart';
 
 class Tickets extends Table {

@@ -7,7 +7,6 @@ import '../../utils/error_text.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/data_sync_service.dart';
-import 'package:caisse212/utils/sample_data_generator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
@@ -114,7 +113,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       await apiService.setDemoMode(false);
 
       // Attempt login
-      var data = await apiService.login(
+      await apiService.login(
         username: _usernameController.text.trim(),
         password: _passwordController.text.trim(),
         posName: _posNameController.text.trim(),
@@ -190,65 +189,6 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
       setState(() {
         _errorMessage = errorMsg;
         _isLoading = false;
-        _isLoadingData = false;
-      });
-    }
-  }
-
-  Future<void> _handleDemoMode() async {
-    setState(() {
-      _isLoadingData = true;
-      _loadingMessage = 'Generating demo data...';
-      _loadingProgress = 0.0;
-    });
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final apiService = ApiService(prefs);
-
-      // Set demo mode
-      await apiService.setDemoMode(true);
-      await apiService.setTenantId(0); // Demo tenant ID is 0
-      await apiService.setPosName('DEMO-POS');
-      await apiService.setBusinessName('Demo Restaurant'); // Set default business name for demo
-
-      final database = ref.read(databaseProvider);
-
-      // Clear existing data
-      setState(() {
-        _loadingMessage = 'Clearing existing data...';
-        _loadingProgress = 0.1;
-      });
-
-      final syncService = DataSyncService(database, apiService);
-      await syncService.clearAllData();
-
-      // Generate sample data
-      setState(() {
-        _loadingMessage = 'Generating sample data...';
-        _loadingProgress = 0.5;
-      });
-
-      final generator = SampleDataGenerator(database);
-      await generator.generateAll();
-
-      setState(() {
-        _loadingMessage = 'Demo setup complete!';
-        _loadingProgress = 1.0;
-      });
-
-      // Check for updates (demo mode typically skips server calls, but we can still check)
-      if (mounted) {
-        await _checkForUpdates();
-      }
-
-      // Navigate to login screen
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/login');
-      }
-    } catch (e) {
-      setState(() {
-        _errorMessage = errorText(e, AppLocalizations.of(context)!);
         _isLoadingData = false;
       });
     }

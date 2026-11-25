@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:caisse212/core/enums.dart';
 import 'package:caisse212/domain/models/order_models.dart';
 import 'package:caisse212/presentation/paymen_screen/payment_screen.dart';
 

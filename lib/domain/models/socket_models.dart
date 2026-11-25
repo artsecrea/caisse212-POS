@@ -1,7 +1,5 @@
 // Models for socket communication
 
-import '../../core/enums.dart';
-import '../../data/database/app_database.dart';
 import 'kds-models.dart';
 import 'order_course.dart';
 import 'order_models.dart';

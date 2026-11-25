@@ -348,7 +348,7 @@ class _TopBarState extends ConsumerState<TopBar> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: color ?? Colors.white, size: 20),
+            Icon(icon, color: color, size: 20),
             const SizedBox(width: 6),
             Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
           ],
@@ -1045,43 +1045,6 @@ class _TopBarState extends ConsumerState<TopBar> {
     } catch (e) {
       if (mounted) {
         SnackBarHelper.showToast('${l10n?.translate('sync_failed') ?? 'Sync failed'}: $e', kind: ToastKind.error);
-      }
-    }
-  }
-
-  Future<void> _pauseCurrentSession(int sessionId) async {
-    final l10n = AppLocalizations.of(context);
-    try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
-      if (await sessionService.pauseSession(sessionId)) {
-        await notifySessionPauseChange(ref.read, sessionId);
-      }
-      if (mounted) {
-        SnackBarHelper.showToast(l10n?.translate('session_paused') ?? 'Session paused', kind: ToastKind.warning);
-      }
-    } catch (e) {
-      if (mounted) {
-        SnackBarHelper.showToast('${l10n?.translate('failed_to_pause_session') ?? 'Failed to pause session'}: $e', kind: ToastKind.error);
-      }
-    }
-  }
-
-  Future<void> _resumeCurrentSession(int sessionId) async {
-    final l10n = AppLocalizations.of(context);
-    try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
-      final pausedAt = await sessionService.resumeSession(sessionId);
-      if (pausedAt != null) {
-        await notifySessionPauseChange(ref.read, sessionId, pausedAt: pausedAt);
-      }
-      if (mounted) {
-        SnackBarHelper.showToast(l10n?.translate('session_resumed') ?? 'Session resumed', kind: ToastKind.success);
-      }
-    } catch (e) {
-      if (mounted) {
-        SnackBarHelper.showToast('${l10n?.translate('failed_to_resume_session') ?? 'Failed to resume session'}: $e', kind: ToastKind.error);
       }
     }
   }

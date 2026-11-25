@@ -78,7 +78,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   Map<int, int> _selectedAttributeValues = {};
   Map<String, dynamic>? _selectedVariant;
   double? _variantPrice;
-  double? _variantTva;
   String? _variantImageUrl;
   String? _variantName;
 
@@ -262,7 +261,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       setState(() {
         _selectedVariant = vData;
         _variantPrice = variant.price;
-        _variantTva = variant.tvaAmount;
         _variantImageUrl = variant.imageUrl;
         _variantName = variant.name;
       });
@@ -302,7 +300,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           setState(() {
             _selectedVariant = vData;
             _variantPrice = variant.price;
-            _variantTva = variant.tvaAmount;
             _variantImageUrl = variant.imageUrl;
             _variantName = variant.name;
           });
@@ -313,7 +310,6 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       setState(() {
         _selectedVariant = null;
         _variantPrice = null;
-        _variantTva = null;
         _variantImageUrl = null;
         _variantName = null;
       });

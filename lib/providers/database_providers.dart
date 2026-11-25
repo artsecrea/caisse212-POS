@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:drift/drift.dart' hide Column show OrderingTerm, BooleanExpressionOperators;
+import 'package:drift/drift.dart' show OrderingTerm, BooleanExpressionOperators;
 import '../domain/models/component_rules.dart';
 import '../domain/models/permission_rules.dart';
 import '../domain/models/order_money.dart';

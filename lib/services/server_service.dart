@@ -42,7 +42,7 @@ import 'waiter_live_updates.dart';
 import 'waiter_notification_inbox.dart';
 import 'waiter_request_replay.dart';
 import 'line_cancellation.dart';
-import 'printing_service.dart' show PrintOutput, KdsPrintMode, printingServiceProvider;
+import 'printing_service.dart' show PrintOutput, KdsPrintMode;
 import '../utils/order_code.dart';
 import 'package:drift/drift.dart' as drift;
 import '../utils/pos_log.dart';
@@ -4645,7 +4645,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
     }
 
     // Batch-load component details to avoid N+1 per component
-    final allComponentIds = (allComponents as List)
+    final allComponentIds = allComponents
         .map((c) => c.componentId as int)
         .toSet()
         .toList();

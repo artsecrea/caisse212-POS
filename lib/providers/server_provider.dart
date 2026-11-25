@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/server_service.dart';
 import 'settings_provider.dart';
-import '../utils/pos_log.dart';
 import 'package:loggecrea/loggecrea.dart';
 
 /// Provider for the HTTP server service

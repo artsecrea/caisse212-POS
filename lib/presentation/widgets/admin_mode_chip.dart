@@ -66,7 +66,6 @@ class AdminModeChip extends ConsumerWidget {
     // a now-deactivated InheritedElement chain and trip a
     // _dependents.isEmpty assertion the next frame.
     final l10n = AppLocalizations.of(context)!;
-    final messenger = ScaffoldMessenger.of(context);
     final result = await showAdminCredentialDialog(context, ref);
     if (result == null) return;
 
@@ -90,7 +89,6 @@ class AdminModeChip extends ConsumerWidget {
 
   Future<void> _revoke(BuildContext context, WidgetRef ref) async {
     final l10n = AppLocalizations.of(context)!;
-    final messenger = ScaffoldMessenger.of(context);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(adminElevationProvider.notifier).state = null;
       final actor = ref.read(currentUserProvider);

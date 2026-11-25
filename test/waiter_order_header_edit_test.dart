@@ -3,7 +3,6 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
-import 'package:caisse212/domain/models/order_models.dart';
 import 'package:caisse212/providers/order_provider.dart';
 
 /// What a cashier may do to a WAITER's order.

@@ -1391,7 +1391,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   /// the open session's, its Z's, or the manual counter, per the mode.
   Future<void> _confirmResetOrderNumber(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
-    final messenger = ScaffoldMessenger.of(context);
     final db = ref.read(databaseProvider);
     final mode = ref.read(settingsProvider).orderNumberResetMode;
     final session = await ZDayResolver(db).activeSession();

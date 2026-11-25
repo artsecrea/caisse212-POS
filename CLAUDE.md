@@ -80,8 +80,6 @@ lib/
 │   ├── order_confirmation/     # Post-payment confirmation
 │   ├── profile/                # User profile
 │   ├── settings/settings_screen.dart  # App settings UI (ACTIVE — used by top_bar.dart)
-│   │   # settings_screen_backup.dart / settings_screen_new.dart are dead files
-│   │   # settings_page/ directory is also unused — do not edit those files
 │   └── widgets/                # Management screens and reusable dialogs
 │       # OrdersManagement, UsersManagement, DevicesManagement,
 │       # SessionsManagement, TicketsManagement, PrintersManagement,
@@ -96,7 +94,6 @@ lib/
 │   ├── settings_provider.dart  # Language, dark mode, server port, onscreen keyboard, etc.
 │   │                           # Also exposes: showOnscreenKeyboardProvider, onscreenKeyboardWidthFractionProvider
 │   ├── server_provider.dart    # ServerService lifecycle
-│   ├── socket_order_providers.dart # Real-time order push via SocketService
 │   ├── sync_manager_provider.dart  # Orchestrates sync on connectivity change
 │   ├── user_provider.dart      # Logged-in user state
 │   ├── device_providers.dart   # KDS/kiosk device state
@@ -114,7 +111,6 @@ lib/
 │   ├── server_service.dart     # Shelf HTTP server for KDS/kiosk (CORS + auth middleware)
 │   ├── server_startup_service.dart # Coordinates ServerService + DiscoveryService startup
 │   ├── discovery_service.dart  # Bonsoir LAN advertisement/discovery
-│   ├── socket_service.dart     # WebSocket client for real-time order push from server
 │   ├── data_sync_service.dart  # Full sync: remote API → local DB (master data + orders)
 │   ├── sync_job_service.dart   # Periodic sync scheduler
 │   ├── pending_operations_service.dart # Queue offline mutations; flush on reconnect
@@ -160,7 +156,7 @@ UI → `OrderRepository` → writes to local Drift DB → `PendingOperationsServ
 `ServerStartupService.start()` calls `ServerService.start()` (Shelf on LAN IP) then `DiscoveryService.advertise()` (Bonsoir mDNS) so KDS/kiosk devices can discover the POS automatically.
 
 ## Real-Time Orders
-`SocketService` maintains a WebSocket connection to the remote server. Incoming order events are surfaced via `socket_order_providers.dart` stream providers, consumed by KDS/order screens.
+Pushed by the cloud over SSE (`sse_service.dart`, dispatched by `sse_provider.dart`). The old WebSocket `SocketService` and `socket_order_providers.dart` were dead and have been removed.
 
 ## External Order Queue (DealUp / WhatsApp)
 `ExternalOrderQueueService` polls the remote server for pending external orders. `ExternalOrderNotifier` (`external_order_provider.dart`) holds `ExternalOrderState` (items, loading, error, confirming set). `ExternalOrdersTab` renders these as the second tab inside `OrdersManagementScreen`. Confirming an item converts it to a local `Order` via `OrderRepository`.

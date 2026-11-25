@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shelf/shelf.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
-import 'package:caisse212/domain/models/order_models.dart';
 import 'package:caisse212/providers/order_provider.dart';
 import 'package:caisse212/services/api_service.dart';
 import 'package:caisse212/services/data_sync_service.dart';

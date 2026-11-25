@@ -338,7 +338,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     if (verified != true) {
       if (mounted) {
         final l10n = AppLocalizations.of(context)!;
-        final cs = Theme.of(context).colorScheme;
         SnackBarHelper.showToast(l10n.translate('invalid_password_date'), kind: ToastKind.error);
       }
       return;

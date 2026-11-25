@@ -2585,8 +2585,6 @@ class _OrdersManagementScreenState
         if (mounted) Navigator.of(context).pop(); // Close loading dialog
 
         final order = localOrders.first;
-        final orderRepo = ref.read(orderRepositoryProvider);
-        final fullDetails = await orderRepo.getOrderFullDetails(order.id);
 
         if (mounted) {
           _showOrderDetails(order);
