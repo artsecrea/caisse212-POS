@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:drift/drift.dart';
 import '../core/enums.dart';
 import '../data/database/app_database.dart';
@@ -263,12 +264,7 @@ class SessionService {
       throw Exception('User already has an active session');
     }
 
-    // Generate unique session code (format: CS-YYYYMMDD-HHMMSS-XXX)
-    final now = DateTime.now();
-    final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-    final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
-    final randomSuffix = now.microsecond.toString().padLeft(3, '0').substring(0, 3);
-    final sessionCode = 'CS-$dateStr-$timeStr-$randomSuffix';
+    final sessionCode = await _uniqueSessionCode(DateTime.now());
 
     final id = await _database.into(_database.cashSessions).insert(
       CashSessionsCompanion.insert(
@@ -286,6 +282,27 @@ class SessionService {
     return (await _database.select(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(id)))
       .getSingle();
+  }
+
+  static final _random = Random.secure();
+
+  /// `CS-YYYYMMDD-HHMMSS-XXX`. The suffix used to be the clock's milliseconds,
+  /// so two sessions opened in the same millisecond got the same code and
+  /// the second insert failed; it is now drawn at random and re-drawn on a
+  /// clash with a session this till already has.
+  Future<String> _uniqueSessionCode(DateTime now) async {
+    String two(int v) => v.toString().padLeft(2, '0');
+    final stamp = '${now.year}${two(now.month)}${two(now.day)}-'
+        '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+    var code = '';
+    for (var attempt = 0; attempt < 20; attempt++) {
+      code = 'CS-$stamp-${_random.nextInt(1000).toString().padLeft(3, '0')}';
+      final taken = await (_database.select(_database.cashSessions)
+            ..where((s) => s.code.equals(code)))
+          .getSingleOrNull();
+      if (taken == null) return code;
+    }
+    return code;
   }
 
   /// End a cash session - calculates money at end from tickets.
