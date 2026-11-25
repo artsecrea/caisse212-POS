@@ -77,8 +77,11 @@ void main() {
             tvaAmount: const Value(10.0),
           ));
     }
-    await db.into(db.components).insert(
-        ComponentsCompanion.insert(id: const Value(9), name: 'Extra'));
+    await db.into(db.components).insert(ComponentsCompanion.insert(
+        id: const Value(9), name: 'Extra', price: const Value(3.0)));
+    // The option has to be on offer for the product: the till checks it.
+    await db.into(db.productComponents).insert(
+        ProductComponentsCompanion.insert(productId: 101, componentId: 9));
 
     server = container.read(serverServiceProvider);
     await server.start(port: port);
@@ -240,6 +243,7 @@ void main() {
     expect(comps, hasLength(1));
     expect(comps.single.componentId, 9);
     expect(comps.single.quantity, 2);
+    expect(comps.single.price, 3.0, reason: 'the catalogue price');
   });
 
   test('an unknown product is reported, not fatal to the round', () async {

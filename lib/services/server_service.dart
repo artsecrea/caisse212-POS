@@ -16,7 +16,7 @@ import 'package:archive/archive.dart' show ZipDecoder;
 import 'package:crypto/crypto.dart' show md5;
 import 'package:path_provider/path_provider.dart' show getTemporaryDirectory;
 import '../data/database/app_database.dart';
-import '../domain/models/component_rules.dart' show decodeVisibleWhen;
+import '../domain/models/component_rules.dart';
 import '../domain/models/line_payment.dart';
 import '../domain/models/order_course.dart';
 import '../domain/models/order_money.dart';
@@ -68,8 +68,31 @@ class _WaiterConflict implements Exception {
   /// error and no way forward.
   final String? orderCode;
 
-  const _WaiterConflict(this.status, this.code, this.message, {this.orderCode});
+  /// Extra fields for the response body (which product, option or group).
+  final Map<String, Object?> details;
+
+  const _WaiterConflict(this.status, this.code, this.message,
+      {this.orderCode, this.details = const {}});
+
+  Response toResponse() => Response(
+        status,
+        body: jsonEncode({
+          'error': code,
+          'message': message,
+          if (orderCode != null) 'orderCode': orderCode,
+          ...details,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
 }
+
+/// One option row to store on a waiter line, priced by the till.
+typedef _PricedOption = ({
+  int componentId,
+  int quantity,
+  double price,
+  String? name,
+});
 
 class ServerService {
   final Ref _ref;
@@ -994,6 +1017,8 @@ class ServerService {
             if (variant != null) {
               unitPrice = variant.price;
               unitTva = variant.tvaAmount;
+              // A variant has its own price and no catalogue discount.
+              unitDiscount = 0.0;
             }
           } else {
             final dbProduct = await (database.select(database.products)
@@ -3048,15 +3073,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           return newOrderId;
         });
       } on _WaiterConflict catch (e) {
-        return Response(
-          e.status,
-          body: jsonEncode({
-            'error': e.code,
-            'message': e.message,
-            if (e.orderCode != null) 'orderCode': e.orderCode,
-          }),
-          headers: {'Content-Type': 'application/json'},
-        );
+        return e.toResponse();
       }
 
       // Waiter orders are ALWAYS created open/unpaid. All payment happens on
@@ -3387,6 +3404,10 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       }
     }
 
+    // Checked before anything is written: a refusal throws, and the caller's
+    // transaction takes the rest of the round back with it.
+    final options = await _priceWaiterOptions(database, productId, components);
+
     final orderProductId = await database.into(database.orderProducts).insert(
           OrderProductsCompanion.insert(
             orderId: orderId,
@@ -3405,24 +3426,114 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           ),
         );
 
-    for (final compJson in components) {
-      final componentId = compJson['componentId'] as int;
-      final compQuantity = compJson['quantity'] as int? ?? 1;
-      final price = (compJson['price'] as num?)?.toDouble() ?? 0.0;
-
+    for (final option in options) {
       await database.into(database.orderProductComponents).insert(
             OrderProductComponentsCompanion.insert(
               orderProductId: orderProductId,
-              componentId: componentId,
-              quantity: drift.Value(compQuantity),
-              price: drift.Value(price),
+              componentId: option.componentId,
+              quantity: drift.Value(option.quantity),
+              price: drift.Value(option.price),
               isSpecial: const drift.Value(false),
-              name: drift.Value(compJson['name'] as String?),
+              name: drift.Value(option.name),
             ),
           );
     }
 
     return orderProductId;
+  }
+
+  /// The option rows for a waiter line, checked and priced as the till's
+  /// product dialog would: only options this product offers, only in groups
+  /// the selection makes visible, within each group's min/max, at the
+  /// catalogue price with the group's free allowance applied. Any `price` the
+  /// tablet sent is ignored. Throws [_WaiterConflict] (400) when the selection
+  /// is not one the till would accept.
+  ///
+  /// Entries are summed per component first, so a tablet that already split
+  /// a component into a free and a charged row gets the same result as one
+  /// that sent it once. Zero-quantity entries are kept as zero rows.
+  Future<List<_PricedOption>> _priceWaiterOptions(
+      AppDatabase database, int productId, List<dynamic> components) async {
+    if (components.isEmpty) return const [];
+
+    final links = await (database.select(database.productComponents)
+          ..where((pc) => pc.productId.equals(productId)))
+        .get();
+    final linkByComponent = {for (final l in links) l.componentId: l};
+    final offered = links.isEmpty
+        ? const <Component>[]
+        : await (database.select(database.components)
+              ..where((c) =>
+                  c.id.isIn(linkByComponent.keys) & c.isActive.equals(true)))
+            .get();
+    final catalogue = {
+      for (final c in offered)
+        c.id: linkByComponent[c.id]!.defaultPrice ?? c.price,
+    };
+    final groupOf = {for (final c in offered) c.id: c.componentGroupId};
+    final nameOf = {for (final c in offered) c.id: c.name};
+
+    final picked = <int, int>{};
+    final zeroRows = <int>[];
+    for (final raw in components) {
+      final json = (raw as Map).cast<String, dynamic>();
+      final id = json['componentId'] as int;
+      final qty = json['quantity'] as int? ?? 1;
+      if (qty > 0) {
+        picked[id] = (picked[id] ?? 0) + qty;
+      } else if (catalogue.containsKey(id) && !zeroRows.contains(id)) {
+        zeroRows.add(id);
+      }
+    }
+
+    final pricing = priceOptions(
+      picked: picked,
+      catalogue: catalogue,
+      groupOf: groupOf,
+      rules: await loadComponentGroupRules(database, productId),
+    );
+    final problem = pricing.problem;
+    if (problem != null) {
+      final group = pricing.group;
+      final (code, message) = switch (problem) {
+        OptionProblem.notOffered => (
+            'option_not_offered',
+            'Option ${pricing.componentId} is not available on product $productId.'
+          ),
+        OptionProblem.hiddenGroup => (
+            'option_group_hidden',
+            'Option ${pricing.componentId} belongs to a group this selection does not show.'
+          ),
+        OptionProblem.tooFew => (
+            'option_group_too_few',
+            'Group "${group?.name}" needs at least ${group?.minSelection} option(s).'
+          ),
+        OptionProblem.tooMany => (
+            'option_group_too_many',
+            'Group "${group?.name}" allows at most ${group?.maxSelection} option(s).'
+          ),
+      };
+      throw _WaiterConflict(400, code, message, details: {
+        'productId': productId,
+        if (pricing.componentId != null) 'componentId': pricing.componentId,
+        if (group != null) 'componentGroupId': group.groupId,
+        if (group != null) 'minSelection': group.minSelection,
+        if (group?.maxSelection != null) 'maxSelection': group!.maxSelection,
+      });
+    }
+
+    return [
+      for (final line in pricing.lines)
+        (
+          componentId: line.componentId,
+          quantity: line.quantity,
+          price: line.unitPrice,
+          name: nameOf[line.componentId],
+        ),
+      for (final id in zeroRows)
+        if (!picked.containsKey(id))
+          (componentId: id, quantity: 0, price: 0.0, name: nameOf[id]),
+    ];
   }
 
   /// PUT /waiters/orders/`<code>`/add-products — add SEVERAL products at once.
@@ -3493,19 +3604,28 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
 
       final skipped = <Map<String, dynamic>>[];
       var added = 0;
-      await database.transaction(() async {
-        for (var index = 0; index < products.length; index++) {
-          final map = (products[index] as Map).cast<String, dynamic>();
-          final inserted = await _insertWaiterLine(
-            database,
-            order.id,
-            map,
-            // Matches the single-product route exactly.
-            state: 'PENDING',
-            // Inherited from the order, so a round lands in the same Z as the
-            // order it was added to.
-            zDay: order.zDay,
-          );
+      try {
+        await database.transaction(() async {
+          for (var index = 0; index < products.length; index++) {
+            final map = (products[index] as Map).cast<String, dynamic>();
+            final int? inserted;
+            try {
+              inserted = await _insertWaiterLine(
+                database,
+                order.id,
+                map,
+                // Matches the single-product route exactly.
+                state: 'PENDING',
+                // Inherited from the order, so a round lands in the same Z as
+                // the order it was added to.
+                zDay: order.zDay,
+              );
+            } on _WaiterConflict catch (e) {
+              // Refused options fail the whole round, which the transaction
+              // takes back; the index says which line to fix.
+              throw _WaiterConflict(e.status, e.code, e.message,
+                  details: {...e.details, 'index': index});
+            }
           if (inserted == null) {
             skipped.add({
               'index': index,
@@ -3524,7 +3644,10 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           updatedAt: drift.Value(DateTime.now()),
           isSynced: const drift.Value(false),
         ));
-      });
+        });
+      } on _WaiterConflict catch (e) {
+        return e.toResponse();
+      }
 
       if (added == 0) {
         return Response.badRequest(
@@ -4300,15 +4423,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           ));
         });
       } on _WaiterConflict catch (e) {
-        return Response(
-          e.status,
-          body: jsonEncode({
-            'error': e.code,
-            'message': e.message,
-            if (e.orderCode != null) 'orderCode': e.orderCode,
-          }),
-          headers: {'Content-Type': 'application/json'},
-        );
+        return e.toResponse();
       }
 
       await logService.logOrderUpdated(order.id,
@@ -4404,13 +4519,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       final json = jsonDecode(body) as Map<String, dynamic>;
 
       final waiterId = json['waiterId'] as int?;
+      // The line itself (variant, quantity, note, course, options) is read
+      // by _insertWaiterLine, the same as on the create and batch routes.
       final productId = json['productId'] as int?;
-      final variantId = json['variantId'] as int?;
-      final quantity = (json['quantity'] as num?)?.toDouble() ?? 1.0;
-      final productNote = json['note'] as String?;
-      // Normalised at the boundary — see the create handler.
-      final productCourse = normalizeCourseNo(json['courseNo']);
-      final components = json['components'] as List<dynamic>? ?? [];
 
       if (waiterId == null || productId == null) {
         return Response.badRequest(
@@ -4452,22 +4563,6 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         );
       }
 
-      // Use variant price/TVA if a variantId is provided
-      double unitPrice = product.finalPrice;
-      double unitTva = product.tvaAmount;
-      double unitDiscount = product.discountAmount;
-
-      if (variantId != null) {
-        final variant = await (database.select(database.productVariants)
-          ..where((v) => v.id.equals(variantId)))
-          .getSingleOrNull();
-        if (variant != null) {
-          unitPrice = variant.price;
-          unitTva = variant.tvaAmount;
-          unitDiscount = 0.0;
-        }
-      }
-
       // A line added to an existing order takes that order's z_day — the same
       // rule `_insertWaiterLine` follows on the create path, which this one
       // did not, so a course added later carried a null z_day while its
@@ -4476,52 +4571,31 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       final addZDay = order.zDay ??
           await ZDayResolver(database).forSessionOrCurrent(order.sessionId);
 
-      // Insert product
-      final orderProductId = await database.into(database.orderProducts).insert(
-        OrderProductsCompanion.insert(
-          orderId: order.id,
-          productId: productId,
-          variantId: drift.Value(variantId),
-          quantity: drift.Value(quantity),
-          unitaryPrice: unitPrice,
-          cost: drift.Value(await ProductCostResolver(database)
-              .resolve(productId: productId, variantId: variantId)),
-          unitaryDiscount: drift.Value(unitDiscount),
-          unitaryTva: drift.Value(unitTva),
-          note: drift.Value(productNote),
-          courseNo: drift.Value(productCourse),
-          state: const drift.Value('PENDING'),
-          zDay: drift.Value(addZDay),
-        ),
-      );
-
-      // Insert components
-      for (final compJson in components) {
-        final componentId = compJson['componentId'] as int;
-        final compQuantity = compJson['quantity'] as int? ?? 1;
-        final price = (compJson['price'] as num?)?.toDouble() ?? 0.0;
-
-        await database.into(database.orderProductComponents).insert(
-          OrderProductComponentsCompanion.insert(
-            orderProductId: orderProductId,
-            componentId: componentId,
-            quantity: drift.Value(compQuantity),
-            price: drift.Value(price),
-            isSpecial: const drift.Value(false),
-            name: drift.Value(compJson['name'] as String?),
-          ),
-        );
+      // The same line write as the create and batch routes: catalogue price,
+      // options checked and priced by the till. One transaction with the
+      // order's `isSynced: false` flip — the load-bearing half, since
+      // `syncSingleOrder` returns early on an already-synced order, so
+      // without it the new line never reaches the backend and the next
+      // order delta, whose snapshot lacks it, deletes it again locally.
+      try {
+        await database.transaction(() async {
+          await _insertWaiterLine(
+            database,
+            order.id,
+            json,
+            state: 'PENDING',
+            zDay: addZDay,
+          );
+          await (database.update(database.orders)
+                ..where((o) => o.id.equals(order.id)))
+              .write(OrdersCompanion(
+            updatedAt: drift.Value(DateTime.now()),
+            isSynced: const drift.Value(false),
+          ));
+        });
+      } on _WaiterConflict catch (e) {
+        return e.toResponse();
       }
-
-      // Update order timestamp. `isSynced: false` is the load-bearing half:
-      // `syncSingleOrder` returns early on an already-synced order, so without
-      // this flip the new line never reaches the backend — and the next order
-      // delta, whose snapshot lacks it, deletes it again locally.
-      await (database.update(database.orders)..where((o) => o.id.equals(order.id)))
-        .write(OrdersCompanion(
-        updatedAt: drift.Value(DateTime.now()),
-        isSynced: const drift.Value(false),
-      ));
 
       // Order-level log + cross-cutting activity log. Same shape as
       // _waiterCreateOrder above: waiter name resolved once, then both

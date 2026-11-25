@@ -526,3 +526,107 @@ double chargedTotalFor(Iterable<ChargedComponentLine> lines, int componentId) =>
 /// cheese each is `(burger + cheese) * 2`, not `burger * 2 + cheese`.
 double optionTotalPerParentUnit(Iterable<ChargedComponentLine> lines) =>
     lines.fold(0.0, (sum, l) => sum + l.total);
+
+
+/// Why a set of options sent for a line was refused.
+enum OptionProblem {
+  /// Not offered on this product, or 86'd.
+  notOffered,
+
+  /// Picked in a group the rest of the selection keeps hidden.
+  hiddenGroup,
+
+  /// Fewer units than the group's minimum.
+  tooFew,
+
+  /// More units than the group's maximum.
+  tooMany,
+}
+
+/// The outcome of [priceOptions]: the rows to store, or why there are none.
+class OptionPricing {
+  const OptionPricing._(this.lines, this.problem, this.componentId, this.group);
+
+  const OptionPricing.ok(List<ChargedComponentLine> lines)
+      : this._(lines, null, null, null);
+
+  const OptionPricing.refused(OptionProblem problem,
+      {int? componentId, ComponentGroupRule? group})
+      : this._(const [], problem, componentId, group);
+
+  /// One row per priced slice, as [allocateFreeAllowance] cuts them.
+  final List<ChargedComponentLine> lines;
+  final OptionProblem? problem;
+
+  /// The component at fault, for [OptionProblem.notOffered] and
+  /// [OptionProblem.hiddenGroup].
+  final int? componentId;
+
+  /// The group at fault, for [OptionProblem.tooFew] and [OptionProblem.tooMany].
+  final ComponentGroupRule? group;
+
+  bool get isOk => problem == null;
+}
+
+/// Check and price a line's options the way the till's product dialog does,
+/// for a selection made somewhere else (the waiter app). Whatever price the
+/// sender attached is not an input: the catalogue decides.
+///
+/// [picked] is units per parent unit, summed by component. [catalogue] holds
+/// the components on offer for this product with their resolved price (the
+/// product link's override, else the component's own), and [groupOf] their
+/// group. Rules are checked only for groups that have something on offer and
+/// that the selection makes visible — exactly the groups the dialog shows.
+OptionPricing priceOptions({
+  required Map<int, int> picked,
+  required Map<int, double> catalogue,
+  required Map<int, int?> groupOf,
+  required Map<int?, ComponentGroupRule> rules,
+}) {
+  final chosen = {
+    for (final e in picked.entries)
+      if (e.value > 0) e.key: e.value,
+  };
+  for (final id in chosen.keys) {
+    if (!catalogue.containsKey(id)) {
+      return OptionPricing.refused(OptionProblem.notOffered, componentId: id);
+    }
+  }
+
+  final visible = visibleGroupIds(
+    rules: rules,
+    groupOfComponent: groupOf,
+    selectedComponentIds: chosen.keys.toSet(),
+  );
+  for (final id in chosen.keys) {
+    if (!visible.contains(groupOf[id])) {
+      return OptionPricing.refused(OptionProblem.hiddenGroup, componentId: id);
+    }
+  }
+
+  final picksByGroup = <int?, List<ComponentPick>>{
+    for (final g in groupOf.values.toSet()) g: [],
+  };
+  for (final e in chosen.entries) {
+    picksByGroup[groupOf[e.key]]!.add(ComponentPick(
+        componentId: e.key, quantity: e.value, unitPrice: catalogue[e.key]!));
+  }
+
+  final lines = <ChargedComponentLine>[];
+  for (final entry in picksByGroup.entries) {
+    if (!visible.contains(entry.key)) continue;
+    final rule = rules[entry.key];
+    if (rule != null) {
+      final problem = validateGroup(rule, entry.value);
+      if (problem != null) {
+        return OptionPricing.refused(
+            problem.problem == GroupProblem.tooFew
+                ? OptionProblem.tooFew
+                : OptionProblem.tooMany,
+            group: rule);
+      }
+    }
+    lines.addAll(allocateFreeAllowance(entry.value, rule?.freeQuantity ?? 0));
+  }
+  return OptionPricing.ok(lines);
+}
