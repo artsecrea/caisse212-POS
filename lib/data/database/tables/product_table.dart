@@ -49,6 +49,10 @@ class Products extends Table {
   BoolColumn get refundable => boolean().withDefault(const Constant(true))();
   BoolColumn get isPlannable => boolean().withDefault(const Constant(false))();
   IntColumn get planDurationMinutes => integer().nullable()(); // Default plan duration in minutes
+  /// SERVER-owned (schema v67): kitchen preparation time in minutes, set in
+  /// the back-office. Null = not configured — never read it as 0. Not the
+  /// booking length ([planDurationMinutes]).
+  IntColumn get preparingDuration => integer().nullable()();
   /// MBW / PLU code used for scale-barcode lookup (nullable — only set for weighed products).
   TextColumn get mbwCode => text().nullable()();
   /// Price per kg stored in centimes (nullable — only set for weighed products).

@@ -25,6 +25,15 @@ import 'notification_outbox.dart';
 import 'z_day_resolver.dart';
 import 'z_rules.dart' show formatZDay, formatLocalMillis;
 
+/// A product's `preparingDuration` as stored: whole minutes, or null when the
+/// back-office has none (missing key, null, <= 0, or not a number).
+int? positivePrepMinutes(Object? raw) {
+  final n = raw is num ? raw : num.tryParse(raw?.toString() ?? '');
+  if (n == null || !n.isFinite) return null;
+  final minutes = n.round();
+  return minutes > 0 ? minutes : null;
+}
+
 /// Data Sync Service for fetching data from API and storing in local database
 class DataSyncService {
   final AppDatabase _database;
@@ -765,6 +774,11 @@ class DataSyncService {
           planDurationMinutes: Value(
               (product['serviceDurationMinutes'] ?? product['planDurationMinutes'])
                   as int?),
+          // Written on every sync, null included: a time cleared in the
+          // back-office must clear here too. Catalogue import doesn't check
+          // the value, so <= 0 counts as not configured.
+          preparingDuration:
+              Value(positivePrepMinutes(product['preparingDuration'])),
           color: Value(product['color']),
           // Scale / weighed-product fields — null when absent in API response.
           mbwCode: Value(product['mbwCode'] as String?),

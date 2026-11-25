@@ -28,6 +28,11 @@ class SocketOrderModel {
   final String? reference;
   /// Per-session order number; only set when the KDS setting is on.
   final int? orderNumber;
+
+  /// Every course-tagged line of the order, whatever its station — so a
+  /// dessert screen can tell when the entrée cooked elsewhere is done. Empty
+  /// when courses are off or nothing is tagged (and then left off the wire).
+  final List<KdsCourseLine> courseLines;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -48,6 +53,7 @@ class SocketOrderModel {
     this.cancellationReason,
     this.reference,
     this.orderNumber,
+    this.courseLines = const [],
     this.createdAt,
     this.updatedAt,
   });
@@ -70,6 +76,8 @@ class SocketOrderModel {
       'note': note,
       'cancellationReason': cancellationReason,
       if ((reference ?? '').isNotEmpty) 'reference': reference,
+      if (courseLines.isNotEmpty)
+        'courseLines': courseLines.map((l) => l.toJson()).toList(),
     };
   }
 
@@ -144,6 +152,14 @@ class SocketOrderProductModel {
   /// When the kitchen started it — the KDS "cooking" clock.
   final DateTime? preparingAt;
 
+  /// When the kitchen finished it (ready, else served); null while it is
+  /// still to make. Starts the next course's clock on the KDS.
+  final DateTime? doneAt;
+
+  /// The product's preparation time from the back-office, in minutes. Null =
+  /// not configured.
+  final int? prepMinutes;
+
   SocketOrderProductModel({
     required this.id,
     required this.productId,
@@ -164,6 +180,8 @@ class SocketOrderProductModel {
     this.paid = false,
     this.kitchenAt,
     this.preparingAt,
+    this.doneAt,
+    this.prepMinutes,
   });
 
   Map<String, dynamic> toJson() {
@@ -188,6 +206,8 @@ class SocketOrderProductModel {
       // Local ISO, like the order's `date`.
       if (kitchenAt != null) 'kitchenAt': kitchenAt!.toIso8601String(),
       if (preparingAt != null) 'preparingAt': preparingAt!.toIso8601String(),
+      if (doneAt != null) 'doneAt': doneAt!.toIso8601String(),
+      if (prepMinutes != null) 'prepMinutes': prepMinutes,
     };
   }
 
@@ -215,8 +235,36 @@ class SocketOrderProductModel {
       paid: json['paid'] as bool? ?? false,
       kitchenAt: DateTime.tryParse(json['kitchenAt'] as String? ?? ''),
       preparingAt: DateTime.tryParse(json['preparingAt'] as String? ?? ''),
+      doneAt: DateTime.tryParse(json['doneAt'] as String? ?? ''),
+      prepMinutes: (json['prepMinutes'] as num?)?.toInt(),
     );
   }
+}
+
+/// One course-tagged line of an order as the KDS needs it to sequence
+/// courses: its course, kitchen state, and when it reached / left the kitchen.
+class KdsCourseLine {
+  final int id;
+  final int courseNo;
+  final String state;
+  final DateTime kitchenAt;
+  final DateTime? doneAt;
+
+  const KdsCourseLine({
+    required this.id,
+    required this.courseNo,
+    required this.state,
+    required this.kitchenAt,
+    this.doneAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'courseNo': courseNo,
+        'state': state,
+        'kitchenAt': kitchenAt.toIso8601String(),
+        if (doneAt != null) 'doneAt': doneAt!.toIso8601String(),
+      };
 }
 
 class SocketOrderProductComponentModel {

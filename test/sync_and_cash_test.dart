@@ -295,7 +295,10 @@ void main() {
       // Conditional modifier groups (v63).
       await db.customStatement('SELECT visible_when_component_ids '
           'FROM product_component_groups LIMIT 0');
-      expect(db.schemaVersion, 66);
+      // Product preparation time (v67).
+      await db.customStatement(
+          'SELECT preparing_duration FROM products LIMIT 0');
+      expect(db.schemaVersion, 67);
     });
   });
 }

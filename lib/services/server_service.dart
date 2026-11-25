@@ -45,7 +45,8 @@ import 'package:loggecrea/loggecrea.dart';
 import 'product_cost_resolver.dart';
 import 'z_day_resolver.dart';
 import 'pos_notifications.dart';
-import 'kitchen_timing.dart' show kitchenSince, kitchenStageStamps;
+import 'kitchen_timing.dart'
+    show kdsCourseLines, kitchenDoneAt, kitchenSince, kitchenStageStamps;
 
 /// Thrown inside a DB transaction to abort it (rolling back all writes) and
 /// surface a specific HTTP error to the client. Lets a race-safe check *inside*
@@ -4470,6 +4471,16 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
     final linkedStations = linkedByComponent.isEmpty
         ? const <int, Set<int>>{}
         : await stationIdsByProduct(database, linkedByComponent.values);
+    // The linked product's own preparation time (the drink, not the menu).
+    final linkedPrep = linkedByComponent.isEmpty
+        ? const <int, int?>{}
+        : {
+            for (final lp in await (database.select(database.products)
+                  ..where((t) => t.id.isIn(linkedByComponent.values.toSet())))
+                .get())
+              lp.id: lp.preparingDuration,
+          };
+    final coursesOn = _ref.read(settingsProvider).coursesEnabled;
     String? matchingStation(Iterable<int> ids) {
       for (final id in ids) {
         final n = stationsMap[id]?.name as String?;
@@ -4530,10 +4541,16 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
                 stationName: station,
                 components: const [],
                 note: '← ${product.name}',
-                courseNo: _ref.read(settingsProvider).coursesEnabled
+                courseNo: coursesOn
                     ? normalizeCourseNo(orderProduct.courseNo)
                     : null,
                 parentLineId: orderProduct.id,
+                // The parent's clocks: the option is made with it.
+                kitchenAt:
+                    kitchenSince(orderProduct, fallback: order.createdAt),
+                preparingAt: orderProduct.preparingAt,
+                doneAt: kitchenDoneAt(orderProduct),
+                prepMinutes: linkedPrep[lp],
               ));
             }
           }
@@ -4592,11 +4609,11 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         discountAmount: orderProduct.unitaryDiscount,
         // Courses off = no sections on the KDS, even for lines tagged while
         // they were on.
-        courseNo: _ref.read(settingsProvider).coursesEnabled
-            ? normalizeCourseNo(orderProduct.courseNo)
-            : null,
+        courseNo: coursesOn ? normalizeCourseNo(orderProduct.courseNo) : null,
         kitchenAt: kitchenSince(orderProduct, fallback: order.createdAt),
         preparingAt: orderProduct.preparingAt,
+        doneAt: kitchenDoneAt(orderProduct),
+        prepMinutes: product.preparingDuration as int?,
       ));
     }
 
@@ -4625,6 +4642,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       orderNumber: _ref.read(settingsProvider).showOrderNumberOnKds
           ? order.sessionOrderNo
           : null,
+      courseLines: coursesOn
+          ? kdsCourseLines(orderProducts, fallback: order.createdAt)
+          : const [],
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     );

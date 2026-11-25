@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/models/order_course.dart';
+import '../domain/models/socket_models.dart' show KdsCourseLine;
 
 /// Kitchen state of an order line, as `updateOrder` re-inserts it.
 class KitchenProgress {
@@ -90,6 +92,36 @@ OrderProductsCompanion kitchenStageStamps(
 /// order's own creation ([fallback]).
 DateTime kitchenSince(OrderProduct line, {required DateTime fallback}) =>
     line.kitchenAt ?? line.kdsPrintedAt ?? fallback;
+
+/// When the kitchen finished [line]: its ready time, else its served time
+/// (a KDS "done" goes straight to COMPLETED, which only stamps servedAt).
+/// Null while the line is still to make — a reopened line has no stamps.
+DateTime? kitchenDoneAt(OrderProduct line) =>
+    _finishedStates.contains(line.state.toUpperCase()) ||
+            line.state.toUpperCase() == 'PAID'
+        ? line.readyAt ?? line.servedAt
+        : null;
+
+/// The order's course-tagged lines for the KDS, across every station, so a
+/// screen can hold a course until the earlier ones are done even when those
+/// are cooked elsewhere. Cancelled and held lines never hold anything back.
+/// Empty when no line has a course.
+List<KdsCourseLine> kdsCourseLines(Iterable<OrderProduct> lines,
+    {required DateTime fallback}) {
+  const ignored = {'CANCELED', 'CANCELLED', 'ONHOLD'};
+  return [
+    for (final l in lines)
+      if (normalizeCourseNo(l.courseNo) case final course?)
+        if (!ignored.contains(l.state.toUpperCase()))
+          KdsCourseLine(
+            id: l.id,
+            courseNo: course,
+            state: l.state.toUpperCase(),
+            kitchenAt: kitchenSince(l, fallback: fallback),
+            doneAt: kitchenDoneAt(l),
+          ),
+  ];
+}
 
 /// Finishes, in the kitchen, the lines [ticketId] has just paid for — for a
 /// till set to treat payment as the end of the kitchen's work

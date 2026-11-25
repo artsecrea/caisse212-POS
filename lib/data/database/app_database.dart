@@ -134,7 +134,7 @@ class AppDatabase extends _$AppDatabase {
   ];
 
   @override
-  int get schemaVersion => 66;
+  int get schemaVersion => 67;
 
   @override
   MigrationStrategy get migration {
@@ -659,6 +659,14 @@ class AppDatabase extends _$AppDatabase {
                   'ALTER TABLE agenda_bookings ADD COLUMN $col;');
             } catch (e) {/* may already exist */}
           }
+        }
+        if (from < 67) {
+          // Per-product kitchen preparation time (`preparingDuration` on
+          // GET /pos/products). Filled by the next product sync.
+          try {
+            await customStatement(
+                'ALTER TABLE products ADD COLUMN preparing_duration INTEGER NULL;');
+          } catch (e) {/* may already exist */}
         }
         if (from < 66) {
           // Cancelled lines (backend v2 order push): every line gets a

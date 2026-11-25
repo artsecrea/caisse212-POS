@@ -1167,6 +1167,17 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _preparingDurationMeta = const VerificationMeta(
+    'preparingDuration',
+  );
+  @override
+  late final GeneratedColumn<int> preparingDuration = GeneratedColumn<int>(
+    'preparing_duration',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _mbwCodeMeta = const VerificationMeta(
     'mbwCode',
   );
@@ -1248,6 +1259,7 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
     refundable,
     isPlannable,
     planDurationMinutes,
+    preparingDuration,
     mbwCode,
     pricePerKg,
     unitName,
@@ -1419,6 +1431,15 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         ),
       );
     }
+    if (data.containsKey('preparing_duration')) {
+      context.handle(
+        _preparingDurationMeta,
+        preparingDuration.isAcceptableOrUnknown(
+          data['preparing_duration']!,
+          _preparingDurationMeta,
+        ),
+      );
+    }
     if (data.containsKey('mbw_code')) {
       context.handle(
         _mbwCodeMeta,
@@ -1549,6 +1570,10 @@ class $ProductsTable extends Products with TableInfo<$ProductsTable, Product> {
         DriftSqlType.int,
         data['${effectivePrefix}plan_duration_minutes'],
       ),
+      preparingDuration: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}preparing_duration'],
+      ),
       mbwCode: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}mbw_code'],
@@ -1618,6 +1643,11 @@ class Product extends DataClass implements Insertable<Product> {
   final bool isPlannable;
   final int? planDurationMinutes;
 
+  /// SERVER-owned (schema v67): kitchen preparation time in minutes, set in
+  /// the back-office. Null = not configured — never read it as 0. Not the
+  /// booking length ([planDurationMinutes]).
+  final int? preparingDuration;
+
   /// MBW / PLU code used for scale-barcode lookup (nullable — only set for weighed products).
   final String? mbwCode;
 
@@ -1651,6 +1681,7 @@ class Product extends DataClass implements Insertable<Product> {
     required this.refundable,
     required this.isPlannable,
     this.planDurationMinutes,
+    this.preparingDuration,
     this.mbwCode,
     this.pricePerKg,
     this.unitName,
@@ -1699,6 +1730,9 @@ class Product extends DataClass implements Insertable<Product> {
     map['is_plannable'] = Variable<bool>(isPlannable);
     if (!nullToAbsent || planDurationMinutes != null) {
       map['plan_duration_minutes'] = Variable<int>(planDurationMinutes);
+    }
+    if (!nullToAbsent || preparingDuration != null) {
+      map['preparing_duration'] = Variable<int>(preparingDuration);
     }
     if (!nullToAbsent || mbwCode != null) {
       map['mbw_code'] = Variable<String>(mbwCode);
@@ -1754,6 +1788,9 @@ class Product extends DataClass implements Insertable<Product> {
       planDurationMinutes: planDurationMinutes == null && nullToAbsent
           ? const Value.absent()
           : Value(planDurationMinutes),
+      preparingDuration: preparingDuration == null && nullToAbsent
+          ? const Value.absent()
+          : Value(preparingDuration),
       mbwCode: mbwCode == null && nullToAbsent
           ? const Value.absent()
           : Value(mbwCode),
@@ -1798,6 +1835,7 @@ class Product extends DataClass implements Insertable<Product> {
       planDurationMinutes: serializer.fromJson<int?>(
         json['planDurationMinutes'],
       ),
+      preparingDuration: serializer.fromJson<int?>(json['preparingDuration']),
       mbwCode: serializer.fromJson<String?>(json['mbwCode']),
       pricePerKg: serializer.fromJson<int?>(json['pricePerKg']),
       unitName: serializer.fromJson<String?>(json['unitName']),
@@ -1831,6 +1869,7 @@ class Product extends DataClass implements Insertable<Product> {
       'refundable': serializer.toJson<bool>(refundable),
       'isPlannable': serializer.toJson<bool>(isPlannable),
       'planDurationMinutes': serializer.toJson<int?>(planDurationMinutes),
+      'preparingDuration': serializer.toJson<int?>(preparingDuration),
       'mbwCode': serializer.toJson<String?>(mbwCode),
       'pricePerKg': serializer.toJson<int?>(pricePerKg),
       'unitName': serializer.toJson<String?>(unitName),
@@ -1862,6 +1901,7 @@ class Product extends DataClass implements Insertable<Product> {
     bool? refundable,
     bool? isPlannable,
     Value<int?> planDurationMinutes = const Value.absent(),
+    Value<int?> preparingDuration = const Value.absent(),
     Value<String?> mbwCode = const Value.absent(),
     Value<int?> pricePerKg = const Value.absent(),
     Value<String?> unitName = const Value.absent(),
@@ -1892,6 +1932,9 @@ class Product extends DataClass implements Insertable<Product> {
     planDurationMinutes: planDurationMinutes.present
         ? planDurationMinutes.value
         : this.planDurationMinutes,
+    preparingDuration: preparingDuration.present
+        ? preparingDuration.value
+        : this.preparingDuration,
     mbwCode: mbwCode.present ? mbwCode.value : this.mbwCode,
     pricePerKg: pricePerKg.present ? pricePerKg.value : this.pricePerKg,
     unitName: unitName.present ? unitName.value : this.unitName,
@@ -1940,6 +1983,9 @@ class Product extends DataClass implements Insertable<Product> {
       planDurationMinutes: data.planDurationMinutes.present
           ? data.planDurationMinutes.value
           : this.planDurationMinutes,
+      preparingDuration: data.preparingDuration.present
+          ? data.preparingDuration.value
+          : this.preparingDuration,
       mbwCode: data.mbwCode.present ? data.mbwCode.value : this.mbwCode,
       pricePerKg: data.pricePerKg.present
           ? data.pricePerKg.value
@@ -1975,6 +2021,7 @@ class Product extends DataClass implements Insertable<Product> {
           ..write('refundable: $refundable, ')
           ..write('isPlannable: $isPlannable, ')
           ..write('planDurationMinutes: $planDurationMinutes, ')
+          ..write('preparingDuration: $preparingDuration, ')
           ..write('mbwCode: $mbwCode, ')
           ..write('pricePerKg: $pricePerKg, ')
           ..write('unitName: $unitName, ')
@@ -2008,6 +2055,7 @@ class Product extends DataClass implements Insertable<Product> {
     refundable,
     isPlannable,
     planDurationMinutes,
+    preparingDuration,
     mbwCode,
     pricePerKg,
     unitName,
@@ -2040,6 +2088,7 @@ class Product extends DataClass implements Insertable<Product> {
           other.refundable == this.refundable &&
           other.isPlannable == this.isPlannable &&
           other.planDurationMinutes == this.planDurationMinutes &&
+          other.preparingDuration == this.preparingDuration &&
           other.mbwCode == this.mbwCode &&
           other.pricePerKg == this.pricePerKg &&
           other.unitName == this.unitName &&
@@ -2070,6 +2119,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
   final Value<bool> refundable;
   final Value<bool> isPlannable;
   final Value<int?> planDurationMinutes;
+  final Value<int?> preparingDuration;
   final Value<String?> mbwCode;
   final Value<int?> pricePerKg;
   final Value<String?> unitName;
@@ -2098,6 +2148,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.refundable = const Value.absent(),
     this.isPlannable = const Value.absent(),
     this.planDurationMinutes = const Value.absent(),
+    this.preparingDuration = const Value.absent(),
     this.mbwCode = const Value.absent(),
     this.pricePerKg = const Value.absent(),
     this.unitName = const Value.absent(),
@@ -2127,6 +2178,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     this.refundable = const Value.absent(),
     this.isPlannable = const Value.absent(),
     this.planDurationMinutes = const Value.absent(),
+    this.preparingDuration = const Value.absent(),
     this.mbwCode = const Value.absent(),
     this.pricePerKg = const Value.absent(),
     this.unitName = const Value.absent(),
@@ -2158,6 +2210,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Expression<bool>? refundable,
     Expression<bool>? isPlannable,
     Expression<int>? planDurationMinutes,
+    Expression<int>? preparingDuration,
     Expression<String>? mbwCode,
     Expression<int>? pricePerKg,
     Expression<String>? unitName,
@@ -2188,6 +2241,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       if (isPlannable != null) 'is_plannable': isPlannable,
       if (planDurationMinutes != null)
         'plan_duration_minutes': planDurationMinutes,
+      if (preparingDuration != null) 'preparing_duration': preparingDuration,
       if (mbwCode != null) 'mbw_code': mbwCode,
       if (pricePerKg != null) 'price_per_kg': pricePerKg,
       if (unitName != null) 'unit_name': unitName,
@@ -2219,6 +2273,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     Value<bool>? refundable,
     Value<bool>? isPlannable,
     Value<int?>? planDurationMinutes,
+    Value<int?>? preparingDuration,
     Value<String?>? mbwCode,
     Value<int?>? pricePerKg,
     Value<String?>? unitName,
@@ -2248,6 +2303,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
       refundable: refundable ?? this.refundable,
       isPlannable: isPlannable ?? this.isPlannable,
       planDurationMinutes: planDurationMinutes ?? this.planDurationMinutes,
+      preparingDuration: preparingDuration ?? this.preparingDuration,
       mbwCode: mbwCode ?? this.mbwCode,
       pricePerKg: pricePerKg ?? this.pricePerKg,
       unitName: unitName ?? this.unitName,
@@ -2325,6 +2381,9 @@ class ProductsCompanion extends UpdateCompanion<Product> {
     if (planDurationMinutes.present) {
       map['plan_duration_minutes'] = Variable<int>(planDurationMinutes.value);
     }
+    if (preparingDuration.present) {
+      map['preparing_duration'] = Variable<int>(preparingDuration.value);
+    }
     if (mbwCode.present) {
       map['mbw_code'] = Variable<String>(mbwCode.value);
     }
@@ -2368,6 +2427,7 @@ class ProductsCompanion extends UpdateCompanion<Product> {
           ..write('refundable: $refundable, ')
           ..write('isPlannable: $isPlannable, ')
           ..write('planDurationMinutes: $planDurationMinutes, ')
+          ..write('preparingDuration: $preparingDuration, ')
           ..write('mbwCode: $mbwCode, ')
           ..write('pricePerKg: $pricePerKg, ')
           ..write('unitName: $unitName, ')
@@ -32819,6 +32879,7 @@ typedef $$ProductsTableCreateCompanionBuilder =
       Value<bool> refundable,
       Value<bool> isPlannable,
       Value<int?> planDurationMinutes,
+      Value<int?> preparingDuration,
       Value<String?> mbwCode,
       Value<int?> pricePerKg,
       Value<String?> unitName,
@@ -32849,6 +32910,7 @@ typedef $$ProductsTableUpdateCompanionBuilder =
       Value<bool> refundable,
       Value<bool> isPlannable,
       Value<int?> planDurationMinutes,
+      Value<int?> preparingDuration,
       Value<String?> mbwCode,
       Value<int?> pricePerKg,
       Value<String?> unitName,
@@ -32972,6 +33034,11 @@ class $$ProductsTableFilterComposer
 
   ColumnFilters<int> get planDurationMinutes => $composableBuilder(
     column: $table.planDurationMinutes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get preparingDuration => $composableBuilder(
+    column: $table.preparingDuration,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -33120,6 +33187,11 @@ class $$ProductsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get preparingDuration => $composableBuilder(
+    column: $table.preparingDuration,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get mbwCode => $composableBuilder(
     column: $table.mbwCode,
     builder: (column) => ColumnOrderings(column),
@@ -33239,6 +33311,11 @@ class $$ProductsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get preparingDuration => $composableBuilder(
+    column: $table.preparingDuration,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get mbwCode =>
       $composableBuilder(column: $table.mbwCode, builder: (column) => column);
 
@@ -33307,6 +33384,7 @@ class $$ProductsTableTableManager
                 Value<bool> refundable = const Value.absent(),
                 Value<bool> isPlannable = const Value.absent(),
                 Value<int?> planDurationMinutes = const Value.absent(),
+                Value<int?> preparingDuration = const Value.absent(),
                 Value<String?> mbwCode = const Value.absent(),
                 Value<int?> pricePerKg = const Value.absent(),
                 Value<String?> unitName = const Value.absent(),
@@ -33335,6 +33413,7 @@ class $$ProductsTableTableManager
                 refundable: refundable,
                 isPlannable: isPlannable,
                 planDurationMinutes: planDurationMinutes,
+                preparingDuration: preparingDuration,
                 mbwCode: mbwCode,
                 pricePerKg: pricePerKg,
                 unitName: unitName,
@@ -33365,6 +33444,7 @@ class $$ProductsTableTableManager
                 Value<bool> refundable = const Value.absent(),
                 Value<bool> isPlannable = const Value.absent(),
                 Value<int?> planDurationMinutes = const Value.absent(),
+                Value<int?> preparingDuration = const Value.absent(),
                 Value<String?> mbwCode = const Value.absent(),
                 Value<int?> pricePerKg = const Value.absent(),
                 Value<String?> unitName = const Value.absent(),
@@ -33393,6 +33473,7 @@ class $$ProductsTableTableManager
                 refundable: refundable,
                 isPlannable: isPlannable,
                 planDurationMinutes: planDurationMinutes,
+                preparingDuration: preparingDuration,
                 mbwCode: mbwCode,
                 pricePerKg: pricePerKg,
                 unitName: unitName,
