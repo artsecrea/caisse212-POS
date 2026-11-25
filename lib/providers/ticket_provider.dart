@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
+import '../domain/models/order_money.dart';
+import '../domain/models/order_money_rows.dart';
 import '../services/pending_operations_service.dart';
 import '../services/ticket_settlement_service.dart';
 import 'database_providers.dart';
@@ -381,6 +383,36 @@ class TicketRepository {
           isPaid: const Value(true),
           updatedAt: Value(DateTime.now()),
         ));
+  }
+
+  /// The reductions printed on [ticketId]'s receipt: each line's catalogue and
+  /// manual discount, plus its share of the order percentage — the same two
+  /// parts the payment screen printed when the ticket was cut.
+  ///
+  /// Every line on the ticket counts, cancelled or not: it was paid for.
+  Future<double> discountTotalOf(
+      int ticketId, double orderDiscountPercentage) async {
+    final lines = await (_database.select(_database.orderProducts)
+          ..where((tbl) => tbl.ticketId.equals(ticketId)))
+        .get();
+    final lineDiscount =
+        lines.fold<double>(0.0, (sum, p) => sum + p.amounts().lineDiscount);
+    if (orderDiscountPercentage <= 0 || lines.isEmpty) return lineDiscount;
+
+    final components = await (_database.select(_database.orderProductComponents)
+          ..where((c) => c.orderProductId.isIn([for (final l in lines) l.id])))
+        .get();
+    final net = lines.fold<double>(
+        0.0,
+        (sum, p) =>
+            sum +
+            p
+                .amounts(
+                    componentsPerUnit: componentsPerUnitOf(
+                        components.where((c) => c.orderProductId == p.id)))
+                .net);
+    if (net <= 0) return lineDiscount;
+    return lineDiscount + orderDiscountAmount(net, orderDiscountPercentage);
   }
 
   /// Raw SQL on purpose: a reprint must not touch `updatedAt` or wake the

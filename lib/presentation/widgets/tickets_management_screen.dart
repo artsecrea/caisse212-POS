@@ -1453,22 +1453,9 @@ Future<double?> _ticketDeliveryFee(
 /// was first rung up — otherwise the reprint quietly shows a smaller reduction
 /// than the original receipt.
 Future<double> _ticketDiscountTotal(
-    AppDatabase database, int ticketId, double orderDiscountPercentage) async {
-  final products = await (database.select(database.orderProducts)
-        ..where((tbl) => tbl.ticketId.equals(ticketId)))
-      .get();
-  final lineDiscount = products.fold<double>(
-      0.0, (sum, p) => sum + ((p.unitaryDiscount + p.manualDiscount) * p.quantity));
-  if (orderDiscountPercentage <= 0) return lineDiscount;
-
-  final base = products.fold<double>(
-        0.0,
-        (sum, p) => sum + ((p.unitaryPrice + p.unitaryTva) * p.quantity),
-      ) -
-      lineDiscount;
-  if (base <= 0) return lineDiscount;
-  return lineDiscount + base * (orderDiscountPercentage / 100.0);
-}
+        AppDatabase database, int ticketId, double orderDiscountPercentage) =>
+    TicketRepository(database)
+        .discountTotalOf(ticketId, orderDiscountPercentage);
 
 Future<double> _ticketTvaTotal(AppDatabase database, int ticketId) async {
   final products = await (database.select(database.orderProducts)
