@@ -2,6 +2,8 @@ import 'package:dio/dio.dart' show DioException, DioExceptionType;
 import '../utils/order_reference.dart';
 import 'package:drift/drift.dart';
 import '../domain/models/component_rules.dart' show encodeVisibleWhen;
+import '../domain/models/order_money.dart';
+import '../domain/models/order_money_rows.dart';
 import '../domain/models/serial_conflict.dart';
 import '../domain/models/reservation_models.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -1361,13 +1363,14 @@ class DataSyncService {
         if (comp.name != null && comp.name!.isNotEmpty) 'name': comp.name,
       }).toList();
 
-      double componentTotal = 0.0;
-      for (final comp in productComponents) {
-        componentTotal += comp.price * comp.quantity;
-      }
-
-      final effectivePerItem = product.unitaryPrice + componentTotal - product.unitaryDiscount - product.manualDiscount;
-      final effectiveTotal = effectivePerItem * product.quantity;
+      // Each line's share of the order percentage follows what the line
+      // costs — the till's own net, so the cloud takes off exactly the
+      // remise the till did. A cancelled line costs nothing and takes none.
+      final effectiveTotal = lineIsOwed(product.state)
+          ? product
+              .amounts(componentsPerUnit: componentsPerUnitOf(productComponents))
+              .net
+          : 0.0;
       effectivePrices.add(effectiveTotal > 0 ? effectiveTotal : 0.0);
 
       // The snapshot taken when the line was rung up wins. The catalogue
