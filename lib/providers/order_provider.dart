@@ -603,6 +603,20 @@ class OrderRepository {
     _logService = OrderLogService(_database);
   }
 
+  /// A fresh order code (see [generateOrderCode]) no order here carries yet,
+  /// re-drawn on the astronomically rare clash. Falls back to a
+  /// timestamp-suffixed code after a few tries so it always ends.
+  static Future<String> uniqueOrderCode(AppDatabase database) async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final code = generateOrderCode();
+      final existing = await (database.select(database.orders)
+            ..where((o) => o.code.equals(code)))
+          .getSingleOrNull();
+      if (existing == null) return code;
+    }
+    return 'O${DateTime.now().millisecondsSinceEpoch}';
+  }
+
   /// Records a user-action audit entry for the current actor (if available).
   void _audit(
     void Function(ActivityLogService log, int? userId, String? username) action,
@@ -829,8 +843,9 @@ class OrderRepository {
       'saveOrder: ${order.items.length} items, first item: ${order.items.first.toJson()}',
     );
     // Generate order code — short uppercase alphanumeric (e.g. RGH7IE3H3LR),
-    // consistent with the waiter-app path. Uniqueness is checked just below.
-    final orderCode = order.orderCode ?? generateOrderCode();
+    // re-drawn on a clash, the same as the waiter path. A code the caller
+    // supplied is checked just below and refused if taken.
+    final orderCode = order.orderCode ?? await uniqueOrderCode(_database);
 
     // check if the order with that code exists
     final existingOrder = await (_database.select(
