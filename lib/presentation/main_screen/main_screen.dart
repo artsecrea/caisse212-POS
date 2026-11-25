@@ -11,8 +11,8 @@ import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
+import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
-import '../../services/kitchen_timing.dart' show completeKitchenForTicket;
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/external_order_models.dart';
 import '../../services/permission_service.dart';
@@ -2192,7 +2192,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     final orderRepo = ref.read(orderRepositoryProvider);
     final currentUser = ref.read(currentUserProvider);
     final settings = ref.read(settingsProvider);
-    final database = ref.read(databaseProvider);
     final session = ref.read(currentSessionProvider);
     final printingService = ref.read(printingServiceProvider);
     final prefs = ref.read(sharedPreferencesProvider);
@@ -2263,11 +2262,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         throw Exception('No unpaid items to pay');
       }
 
-      // Get next ticket number
-      final existingTickets = await (database.select(database.tickets)
-        ..where((t) => t.orderId.equals(orderId))).get();
-      final ticketNumStr = nextTicketNumber(existingTickets.map((t) => t.num));
-
       // Calculate total only from unpaid items (apply order-level discount proportionally)
       final unpaidTotal = unpaidItems.fold(0.0, (sum, item) => sum + item.totalPrice);
       final fullTotal =
@@ -2291,49 +2285,35 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // ticket with still-PENDING items: the order reads as paid on the ticket
       // but unpaid on the lines, so settleOrderAndFreeTable never completes it
       // and the table is never freed.
-      final zDay = ref.read(currentZDayProvider);
-      late final int ticketId;
-      await database.transaction(() async {
-        ticketId = await database.into(database.tickets).insert(
-          TicketsCompanion.insert(
-            num: ticketNumStr,
-            orderId: orderId,
-            paymentMethod: TransactionType.cash.value,
-            amount: total,
-            splitDetails: Value(moneyParts.isEmpty
-                ? null
-                : SplitDetails(
-                    groupId: lastSplit?.groupId ?? 'A-${reloadedOrder.orderCode}',
-                    mode: SplitMode.amount,
-                    part: moneyParts.length + 1,
-                    parts: moneyParts.length + 1,
-                    orderTotal: lastSplit?.orderTotal ?? fullTotal,
-                  ).encode()),
-            sessionId: Value(session.id),
-            // z_day = the session's opening calendar day (constant across midnight).
-            zDay: Value(zDay),
-            isPaid: const Value(true),
-            printCount: const Value(0),
-            date: Value(DateTime.now()),
-          ),
-        );
-
-        // ✅ Update only UNPAID order items (don't touch already-paid items)
-        for (final item in unpaidItems) {
-          if (item.id != null) {
-            await (database.update(database.orderProducts)
-              ..where((tbl) => tbl.id.equals(item.id!))).write(
-              OrderProductsCompanion(
-                ticketId: Value(ticketId),
-                updatedAt: Value(DateTime.now()),
-              ),
-            );
-          }
-        }
-        if (ref.read(settingsProvider).paymentCompletesKitchen) {
-          await completeKitchenForTicket(database, ticketId);
-        }
-      });
+      // Read before the new ticket exists: the fee rides the first one.
+      final existingTickets =
+          await ref.read(ticketRepositoryProvider).getTicketsByOrderId(orderId);
+      final created =
+          await ref.read(ticketSettlementServiceProvider).createPaidTicket(
+        orderId: orderId,
+        paymentMethod: TransactionType.cash.value,
+        amount: total,
+        splitDetails: moneyParts.isEmpty
+            ? null
+            : SplitDetails(
+                groupId: lastSplit?.groupId ?? 'A-${reloadedOrder.orderCode}',
+                mode: SplitMode.amount,
+                part: moneyParts.length + 1,
+                parts: moneyParts.length + 1,
+                orderTotal: lastSplit?.orderTotal ?? fullTotal,
+              ).encode(),
+        sessionId: session.id,
+        // z_day = the session's opening calendar day (constant across midnight).
+        zDay: ref.read(currentZDayProvider),
+        // Only UNPAID order items (don't touch already-paid items).
+        lines: WholeRows([
+          for (final item in unpaidItems)
+            if (item.id != null) item.id!,
+        ]),
+        completeKitchen: ref.read(settingsProvider).paymentCompletesKitchen,
+      );
+      final ticketId = created.ticketId;
+      final ticketNumStr = created.num;
 
       // Everything below builds the paperwork for the items just paid. All of
       // it is read off local state NOW and printed DETACHED further down, so

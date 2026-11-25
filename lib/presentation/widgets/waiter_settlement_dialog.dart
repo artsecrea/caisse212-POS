@@ -1,15 +1,13 @@
-import 'package:drift/drift.dart' show Value, BooleanExpressionOperators;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/database/app_database.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
+import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
-import '../../services/kitchen_timing.dart' show completeKitchenForTicket;
 import '../../providers/sync_manager_provider.dart';
 import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
@@ -157,7 +155,6 @@ class _WaiterSettlementDialogState
     if (selected.isEmpty) return;
 
     setState(() => _isWorking = true);
-    final database = ref.read(databaseProvider);
     final session = ref.read(currentSessionProvider);
     final repo = ref.read(orderRepositoryProvider);
     final paidStatus =
@@ -183,58 +180,21 @@ class _WaiterSettlementDialogState
         final due = _due(o);
         if (due <= 0) continue;
 
-        // Next ticket number for this order — same query the payment
-        // screen does so collisions stay impossible even when an order
-        // already has partial tickets.
-        final existing = await (database.select(database.tickets)
-              ..where((t) => t.orderId.equals(orderId)))
-            .get();
-        final maxNum = existing.isEmpty
-            ? 0
-            : existing
-                .map((t) => int.tryParse(t.num) ?? 0)
-                .reduce((a, b) => a > b ? a : b);
-        final ticketNumStr = (maxNum + 1).toString().padLeft(4, '0');
-
-        // Cash ticket + PAID marking committed atomically — without the
-        // transaction a mid-write failure could leave an orphaned paid ticket
-        // with still-PENDING lines (mirrors payment_screen._processPayment and
-        // _payDirectly).
-        final zDay = ref.read(currentZDayProvider);
-        late final int ticketId;
-        await database.transaction(() async {
-          ticketId = await database.into(database.tickets).insert(
-                TicketsCompanion.insert(
-                  num: ticketNumStr,
+        final created =
+            await ref.read(ticketSettlementServiceProvider).createPaidTicket(
                   orderId: orderId,
                   paymentMethod: 'CASH',
                   amount: due,
-                  sessionId: Value(session?.id),
+                  sessionId: session?.id,
                   // z_day = the session's opening calendar day (falls back to
                   // today's midnight when no session is open).
-                  zDay: Value(zDay),
-                  isPaid: const Value(true),
-                  printCount: const Value(0),
-                  date: Value(DateTime.now()),
-                ),
-              );
-
-          // Attach the new ticket to every UNPAID line on this order.
-          // Anything already paid stays as-is so partials don't get
-          // re-stamped. `state` is the kitchen's and stays as it is.
-          await (database.update(database.orderProducts)
-                ..where((p) =>
-                    p.orderId.equals(orderId) &
-                    p.ticketId.isNull() &
-                    p.state.equals('PAID').not()))
-              .write(OrderProductsCompanion(
-            ticketId: Value(ticketId),
-            updatedAt: Value(DateTime.now()),
-          ));
-          if (ref.read(settingsProvider).paymentCompletesKitchen) {
-            await completeKitchenForTicket(database, ticketId);
-          }
-        });
+                  zDay: ref.read(currentZDayProvider),
+                  lines: UnpaidLinesOf(orderId),
+                  completeKitchen:
+                      ref.read(settingsProvider).paymentCompletesKitchen,
+                );
+        final ticketId = created.ticketId;
+        final ticketNumStr = created.num;
 
         // Mark the order paid AND free its table in one atomic step — the same
         // path the cashier uses, so a waiter-settled order frees its table

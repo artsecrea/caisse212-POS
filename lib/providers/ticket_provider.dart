@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import '../services/pending_operations_service.dart';
+import '../services/ticket_settlement_service.dart';
 import 'database_providers.dart';
 import 'settings_provider.dart';
 import '../utils/pos_log.dart';
@@ -414,6 +415,9 @@ class TicketWithDetails {
   double displayAmount({required bool includeDeliveryFee}) =>
       ticket.amount + (includeDeliveryFee ? deliveryFee : 0.0);
 }
+
+final ticketSettlementServiceProvider = Provider<TicketSettlementService>(
+    (ref) => TicketSettlementService(ref.watch(databaseProvider)));
 
 final ticketRepositoryProvider = Provider<TicketRepository>((ref) {
   final database = ref.watch(databaseProvider);

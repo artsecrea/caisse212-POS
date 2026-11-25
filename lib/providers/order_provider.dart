@@ -14,6 +14,7 @@ import '../domain/models/table_occupancy.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/order_events.dart';
 import '../services/kitchen_timing.dart';
+import '../services/ticket_settlement_service.dart';
 import '../services/line_cancellation.dart';
 import '../services/pending_operations_service.dart';
 import '../services/data_sync_service.dart';
@@ -739,51 +740,18 @@ class OrderRepository {
     // Z-report even when settled right at close/after midnight.
     final zDay = zDayOverride ?? await _zDayForSessionId(sessionId);
 
-    late final int ticketId;
-    late final String ticketNumStr;
-    await _database.transaction(() async {
-      final existing = await (_database.select(
-        _database.tickets,
-      )..where((t) => t.orderId.equals(orderId))).get();
-      final maxNum = existing.isEmpty
-          ? 0
-          : existing
-                .map((t) => int.tryParse(t.num) ?? 0)
-                .reduce((a, b) => a > b ? a : b);
-      ticketNumStr = (maxNum + 1).toString().padLeft(4, '0');
-      ticketId = await _database
-          .into(_database.tickets)
-          .insert(
-            TicketsCompanion.insert(
-              num: ticketNumStr,
-              orderId: orderId,
-              paymentMethod: 'CASH',
-              amount: due,
-              sessionId: Value(sessionId),
-              zDay: Value(zDay),
-              isPaid: const Value(true),
-              printCount: const Value(0),
-              date: Value(DateTime.now()),
-            ),
-          );
-      // Attach the ticket to every not-yet-paid line; leave already-paid lines
-      // (partials) untouched. `state` is the kitchen's and stays as it is.
-      await (_database.update(_database.orderProducts)..where(
-            (p) =>
-                p.orderId.equals(orderId) &
-                p.ticketId.isNull() &
-                p.state.isNotValue('PAID'),
-          ))
-          .write(
-            OrderProductsCompanion(
-              ticketId: Value(ticketId),
-              updatedAt: Value(DateTime.now()),
-            ),
-          );
-      if (_ref?.read(settingsProvider).paymentCompletesKitchen ?? false) {
-        await completeKitchenForTicket(_database, ticketId);
-      }
-    });
+    final created = await TicketSettlementService(_database).createPaidTicket(
+      orderId: orderId,
+      paymentMethod: 'CASH',
+      amount: due,
+      sessionId: sessionId,
+      zDay: zDay,
+      lines: UnpaidLinesOf(orderId),
+      completeKitchen:
+          _ref?.read(settingsProvider).paymentCompletesKitchen ?? false,
+    );
+    final ticketId = created.ticketId;
+    final ticketNumStr = created.num;
 
     // Status change carries its own Z-report guard + logging + isSynced flip.
     await updateOrderStatus(orderId, paidStatus, queueSyncOperation: false);

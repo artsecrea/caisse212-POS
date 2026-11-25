@@ -4,7 +4,6 @@ import 'package:flutter/gestures.dart' show GestureBinding, PointerScrollEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:drift/drift.dart' hide Column;
 import 'package:uuid/uuid.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:caisse212/providers/database_providers.dart';
@@ -19,8 +18,8 @@ import '../../domain/models/split_bill.dart';
 import '../../core/enums.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
+import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
-import '../../services/kitchen_timing.dart' show completeKitchenForTicket;
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../services/permission_service.dart';
@@ -3249,7 +3248,6 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       return;
     }
     setState(() => _isProcessing = true);
-    final database = ref.read(databaseProvider);
     final session = ref.read(currentSessionProvider);
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
@@ -3297,49 +3295,35 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
 
     try {
-      final ticketNumStr = await _mintTicketNum(database, orderId);
+      final ticketNumStr = await _mintTicketNum(orderId);
       final allTickets = ref.read(ticketsProvider);
 
       // Insert ticket + settle its rows atomically — a crash between the two
       // steps would leave an orphaned ticket with products still PENDING, or
       // a division half applied.
-      late final int ticketId;
-      await database.transaction(() async {
-        ticketId = await database
-            .into(database.tickets)
-            .insert(
-              TicketsCompanion.insert(
+      final ticketId = (await ref
+              .read(ticketSettlementServiceProvider)
+              .createPaidTicket(
                 num: ticketNumStr,
                 orderId: orderId,
                 paymentMethod: ticket.paymentMethod.value,
                 amount: due,
-                sessionId: Value(session.id),
+                sessionId: session.id,
                 // z_day = the active Z's opening day (all sessions in a Z share one
                 // z_day). Stays constant even if the ticket is cut after midnight.
-                zDay: Value(ref.read(currentZDayProvider)),
-                isPaid: const Value(true),
-                printCount: const Value(0),
-                date: Value(DateTime.now()),
-              ),
-            );
-
-        final settled = await _materializeTicket(database, ticket, ticketId);
-        final split = _lineTicketSplit(
-          ticket,
-          allTickets,
-          settled,
-          ticketIndex: ticketIndex,
-          credit: credit,
-        );
-        if (split != null) {
-          await (database.update(database.tickets)
-                ..where((t) => t.id.equals(ticketId)))
-              .write(TicketsCompanion(splitDetails: Value(split.encode())));
-        }
-        if (ref.read(settingsProvider).paymentCompletesKitchen) {
-          await completeKitchenForTicket(database, ticketId);
-        }
-      });
+                zDay: ref.read(currentZDayProvider),
+                lines: ClaimedQuantities(_claimsOf(ticket)),
+                splitFromSettled: (settled) => _lineTicketSplit(
+                  ticket,
+                  allTickets,
+                  settled,
+                  ticketIndex: ticketIndex,
+                  credit: credit,
+                )?.encode(),
+                completeKitchen:
+                    ref.read(settingsProvider).paymentCompletesKitchen,
+              ))
+          .ticketId;
 
       // Money changed hands at THIS till, so the order is now this cashier's
       // — including a part payment, where the rest of the bill follows the
@@ -3562,32 +3546,25 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         forLines: await _forLinesOf(ticket),
         closesGroups: closing ? ticket.moneyGroups : const [],
       );
-      final ticketNumStr = await _mintTicketNum(database, orderId);
-      late final int ticketId;
-      await database.transaction(() async {
-        ticketId = await database
-            .into(database.tickets)
-            .insert(
-              TicketsCompanion.insert(
+      final ticketNumStr = await _mintTicketNum(orderId);
+      final ticketId = (await ref
+              .read(ticketSettlementServiceProvider)
+              .createPaidTicket(
                 num: ticketNumStr,
                 orderId: orderId,
                 paymentMethod: ticket.paymentMethod.value,
                 amount: amount,
-                splitDetails: Value(split.encode()),
-                sessionId: Value(session.id),
-                zDay: Value(ref.read(currentZDayProvider)),
-                isPaid: const Value(true),
-                printCount: const Value(0),
-                date: Value(DateTime.now()),
-              ),
-            );
-        if (closing) {
-          await _materializeTicket(database, ticket, ticketId);
-          if (ref.read(settingsProvider).paymentCompletesKitchen) {
-            await completeKitchenForTicket(database, ticketId);
-          }
-        }
-      });
+                splitDetails: split.encode(),
+                sessionId: session.id,
+                zDay: ref.read(currentZDayProvider),
+                // Only the closing part settles the lines and the kitchen.
+                lines: closing
+                    ? ClaimedQuantities(_claimsOf(ticket))
+                    : const NoLines(),
+                completeKitchen: closing &&
+                    ref.read(settingsProvider).paymentCompletesKitchen,
+              ))
+          .ticketId;
 
       await ref.read(orderRepositoryProvider).claimOrderForCurrentUser(orderId);
 
@@ -3810,142 +3787,18 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     return true;
   }
 
-  /// Write the arrangement the cashier built on screen into `order_products`,
-  /// settling everything [ticket] claims onto [ticketId].
-  ///
-  /// This is the *only* place the division work reaches the database, and it
-  /// runs inside the payment transaction. Until a ticket is paid the order
-  /// rows are exactly as they were loaded, so abandoning the screen — or
-  /// paying only part of a divided order — leaves nothing half-cut behind.
-  ///
-  /// Claims are summed per row first, because merging lets one row back
-  /// several lines of the same ticket. A row claimed in full is simply marked
-  /// PAID; a row claimed in part keeps its id on the **unpaid remainder** —
-  /// the other tickets still point at that id — and the paid portion is cut
-  /// onto a row of its own.
-  ///
-  /// Returns, per claimed row, the row that now carries the paid quantity:
-  /// the row itself when claimed whole, the new slice otherwise.
-  Future<Map<int, int>> _materializeTicket(
-    AppDatabase database,
-    TicketData ticket,
-    int ticketId,
-  ) async {
-    final settledRow = <int, int>{};
+  /// What [ticket] claims, summed per row: merging lets one row back several
+  /// lines of the same ticket. The division work reaches the database only
+  /// when the ticket is paid, so abandoning the screen leaves nothing
+  /// half-cut behind.
+  Map<int, double> _claimsOf(TicketData ticket) {
     final claims = <int, double>{};
     for (final line in ticket.items) {
       for (final source in line.sources) {
         claims[source.rowId] = (claims[source.rowId] ?? 0) + source.quantity;
       }
     }
-
-    for (final entry in claims.entries) {
-      final row = await (database.select(
-        database.orderProducts,
-      )..where((t) => t.id.equals(entry.key))).getSingleOrNull();
-      // Gone, or already settled on an earlier ticket — either way this
-      // ticket has no claim left to press.
-      if (row == null || row.ticketId != null) continue;
-
-      final claimed = entry.value;
-      final remainder = row.quantity - claimed;
-
-      if (remainder <= _qtyEpsilon) {
-        await (database.update(
-          database.orderProducts,
-        )..where((t) => t.id.equals(row.id))).write(
-          OrderProductsCompanion(
-            ticketId: Value(ticketId),
-            updatedAt: Value(DateTime.now()),
-          ),
-        );
-        settledRow[row.id] = row.id;
-        continue;
-      }
-
-      // Kitchen credit follows the food: the paid slice takes as much of the
-      // already-sent quantity as it covers, so the remainder can still fire a
-      // modifications-only ticket for what genuinely has not gone through.
-      final printedForSlice = row.kdsPrintedQuantity < claimed
-          ? row.kdsPrintedQuantity
-          : claimed;
-      // Same rule for the customer slip: credit follows the units.
-      final slippedForSlice = row.orderTicketPrintedQuantity < claimed
-          ? row.orderTicketPrintedQuantity
-          : claimed;
-
-      await (database.update(
-        database.orderProducts,
-      )..where((t) => t.id.equals(row.id))).write(
-        OrderProductsCompanion(
-          quantity: Value(remainder),
-          kdsPrintedQuantity: Value(row.kdsPrintedQuantity - printedForSlice),
-          orderTicketPrintedQuantity: Value(
-            row.orderTicketPrintedQuantity - slippedForSlice,
-          ),
-          updatedAt: Value(DateTime.now()),
-        ),
-      );
-
-      final sliceId = await database
-          .into(database.orderProducts)
-          .insert(
-            OrderProductsCompanion.insert(
-              orderId: row.orderId,
-              productId: row.productId,
-              variantId: Value(row.variantId),
-              ticketId: Value(ticketId),
-              quantity: Value(claimed),
-              unitaryPrice: row.unitaryPrice,
-              cost: Value(row.cost),
-              unitaryDiscount: Value(row.unitaryDiscount),
-              unitaryTva: Value(row.unitaryTva),
-              manualDiscount: Value(row.manualDiscount),
-              manualDiscountReason: Value(row.manualDiscountReason),
-              // serverId is deliberately not carried: the backend knows that
-              // id as the original line, and two local rows answering to it
-              // would corrupt the delta push and any refund keyed on it.
-              saleUomId: Value(row.saleUomId),
-              note: Value(row.note),
-              // The paid slice keeps the kitchen's progress; the ticket is
-              // what makes it paid.
-              state: Value(row.state),
-              kdsPrintedAt: Value(row.kdsPrintedAt),
-              kdsPrintedQuantity: Value(printedForSlice),
-              orderTicketPrintedQuantity: Value(slippedForSlice),
-              preparingAt: Value(row.preparingAt),
-              readyAt: Value(row.readyAt),
-              servedAt: Value(row.servedAt),
-              zDay: Value(row.zDay),
-            ),
-          );
-
-      final components = await (database.select(
-        database.orderProductComponents,
-      )..where((c) => c.orderProductId.equals(row.id))).get();
-      for (final component in components) {
-        await database
-            .into(database.orderProductComponents)
-            .insert(
-              OrderProductComponentsCompanion.insert(
-                componentId: component.componentId,
-                orderProductId: sliceId,
-                quantity: Value(component.quantity),
-                price: Value(component.price),
-                isSpecial: Value(component.isSpecial),
-                // Carry the snapshot across the split, not the live name.
-                name: Value(component.name),
-              ),
-            );
-      }
-
-      settledRow[row.id] = sliceId;
-      _logger.info(
-        'Settled $claimed of order_product #${row.id} on ticket #$ticketId '
-        '(new row #$sliceId, ${remainder.toStringAsFixed(3)} left unpaid)',
-      );
-    }
-    return settledRow;
+    return claims;
   }
 
   /// The next ticket number on this order.
@@ -3955,10 +3808,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   /// server keys tickets by (order, number). Offline the server cannot be
   /// asked; the bulk push is then the first place a clash could show.
   /// Local cancelled tickets count too — the query below does not filter.
-  Future<String> _mintTicketNum(AppDatabase database, int orderId) async {
-    final local = await (database.select(
-      database.tickets,
-    )..where((t) => t.orderId.equals(orderId))).get();
+  Future<String> _mintTicketNum(int orderId) async {
     var serverNums = const <String>[];
     final code = widget.order.orderCode;
     if (code != null &&
@@ -3982,7 +3832,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         ];
       }
     }
-    return nextTicketNumber(local.map((t) => t.num), serverNums);
+    return ref
+        .read(ticketSettlementServiceProvider)
+        .nextTicketNum(orderId, serverNums: serverNums);
   }
 
   /// The `split` for a ticket paid by lines, or null when the bill is not
