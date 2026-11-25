@@ -1114,7 +1114,10 @@ class _ProductCard extends ConsumerWidget {
 
   void _addToOrder(BuildContext context, WidgetRef ref, Map<String, dynamic> modifications) {
     final components = modifications['components'] as List<OrderItemComponent>? ?? [];
-    final discount = modifications['discount'] as double? ?? product.discountAmount;
+    // A variant has its own price and no catalogue discount.
+    final discount = modifications['variantId'] != null
+        ? 0.0
+        : modifications['discount'] as double? ?? product.discountAmount;
     final manualDiscount = modifications['manualDiscount'] as double? ?? 0.0;
     final note = modifications['note'] as String?;
     final quantity = (modifications['quantity'] as num?)?.toDouble() ?? 1.0;

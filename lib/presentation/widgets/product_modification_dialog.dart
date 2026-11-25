@@ -65,6 +65,12 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
   bool _isPercentageDiscount = false;
   double _productDiscount = 0.0;
+
+  /// The catalogue discount this line carries. It belongs to the product's own
+  /// price: a variant has its own price and no catalogue discount, so a
+  /// variant line carries none — the waiter API already stored 0 there.
+  double get _lineCatalogueDiscount =>
+      _selectedVariant != null ? 0.0 : _productDiscount;
   double _quantity = 1.0;
   /// Manual unit-price override (permission-gated). Null = use the default
   /// product/variant price. Never negative.
@@ -610,7 +616,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
           _discountError = null;
         }
       } else {
-        final maxDiscount = basePrice - _productDiscount;
+        final maxDiscount = basePrice - _lineCatalogueDiscount;
         if (discountValue > maxDiscount) {
           _discountError = 'Max ${maxDiscount.toStringAsFixed(2)}';
           _manualDiscountController.text = maxDiscount.toStringAsFixed(2);
@@ -842,7 +848,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
       'components': selectedComponents,
       'serialId': _selectedSerial?.id,
       'serialNumber': _selectedSerial?.serialNumber,
-      'discount': _productDiscount,
+      'discount': _lineCatalogueDiscount,
       'manualDiscount': manualDiscount,
       'note': _noteController.text.isEmpty ? null : _noteController.text,
       'quantity': mainQuantity,
@@ -1049,7 +1055,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
         final componentTotal = _calculateComponentTotal(componentsData);
         final priceWithComponents = basePrice + componentTotal;
         final maxDiscountValue =
-            _isPercentageDiscount ? 100.0 : (priceWithComponents - _productDiscount);
+            _isPercentageDiscount ? 100.0 : (priceWithComponents - _lineCatalogueDiscount);
 
         return Padding(
           padding: const EdgeInsets.all(12),
@@ -1108,7 +1114,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
               const SizedBox(height: 16),
 
               // ── Product discount (read-only) ──
-              if (_productDiscount > 0) ...[
+              if (_lineCatalogueDiscount > 0) ...[
                 _buildProductDiscountCard(l10n, currencyFormatter),
                 const SizedBox(height: 12),
               ],
@@ -1201,7 +1207,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
   }
 
   Widget _buildProductDiscountCard(AppLocalizations l10n, CurrencyFormatter currencyFormatter) {
-    final totalProductDiscount = _productDiscount * _quantity;
+    final totalProductDiscount = _lineCatalogueDiscount * _quantity;
     final discountColor = Theme.of(context).brightness == Brightness.dark
         ? Colors.green[400]!
         : Colors.green[700]!;
