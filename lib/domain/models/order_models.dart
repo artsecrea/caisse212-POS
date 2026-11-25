@@ -446,7 +446,8 @@ class CurrentOrder {
   double get deliveryFeeAmount => deliveryFee ?? 0.0;
 
   // Subtotal: sum of all base prices (no tax, no discounts)
-  Iterable<OrderItem> get _owedItems => items.where((item) => item.isOwed);
+  Iterable<OrderItem> get _owedItems => items.where(
+      (item) => lineCountsInTotal(item.state, paid: item.ticketId != null));
 
   double get subtotal {
     return _owedItems.fold(0.0, (sum, item) => sum + (item.subtotalPerItem * item.quantity));

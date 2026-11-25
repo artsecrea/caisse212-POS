@@ -164,9 +164,10 @@ final _dashboardStatsProvider =
 
   // Per-order line subtotals (before order-level %)
   final Map<int, double> orderLineSubtotals = {};
-  // A cancelled line is neither sold nor owed.
-  final owedProducts =
-      orderProducts.where((op) => lineIsOwed(op.state)).toList();
+  // A cancelled line is neither sold nor owed — unless it was paid first.
+  final owedProducts = orderProducts
+      .where((op) => lineCountsInTotal(op.state, paid: op.ticketId != null))
+      .toList();
   for (final op in owedProducts) {
     orderLineSubtotals[op.orderId] =
         (orderLineSubtotals[op.orderId] ?? 0.0) + opLineTotal(op);

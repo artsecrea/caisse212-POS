@@ -979,6 +979,8 @@ class ServerService {
         }
 
         // Insert products
+        // One resolver for the basket: it memoises the catalogue lookups.
+        final costResolver = ProductCostResolver(database);
         for (final product in socketOrder.products) {
           // Resolve authoritative price from DB for the variant (prevents price manipulation)
           double unitPrice = product.unitaryPrice;
@@ -1013,10 +1015,9 @@ class ServerService {
               unitaryPrice: unitPrice,
               // Cost stamped for LAN-created orders too, so a waiter-app sale
               // reports the same margin as one rung up on the till.
-              cost: drift.Value(await ProductCostResolver(database)
-                  .resolve(
-                      productId: product.productId,
-                      variantId: product.variantId)),
+              cost: drift.Value(await costResolver.resolve(
+                  productId: product.productId,
+                  variantId: product.variantId)),
               unitaryDiscount: drift.Value(unitDiscount),
               unitaryTva: drift.Value(unitTva),
               note: drift.Value(product.note),
@@ -1980,7 +1981,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       for (final order in waiterOrders) {
         var orderExpected = 0.0, orderCash = 0.0;
         for (final p in productsByOrderId[order.id] ?? const <OrderProduct>[]) {
-          if (!lineIsOwed(p.state)) continue;
+          if (!lineCountsInTotal(p.state, paid: p.ticketId != null)) continue;
           final item = _waiterLineTotal(p, componentsByOpId[p.id] ?? const []);
           orderExpected += item;
           if (p.ticketId != null) {

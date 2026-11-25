@@ -49,7 +49,9 @@ class LiveExternalOrder {
   /// Same figure as the till's order total: owed lines with their options,
   /// less the order percentage.
   double get total => applyOrderDiscount(
-      lines.where((l) => lineIsOwed(l.state)).fold<double>(
+      lines
+          .where((l) => lineCountsInTotal(l.state, paid: l.ticketId != null))
+          .fold<double>(
           0,
           (sum, l) =>
               sum +

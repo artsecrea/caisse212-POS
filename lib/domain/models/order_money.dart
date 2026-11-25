@@ -43,6 +43,12 @@ class LineAmounts {
 /// kitchen and the cloud can see it, but nobody pays for it.
 bool lineIsOwed(String state) => state != 'CANCELED' && state != 'CANCELLED';
 
+/// Whether a line is part of the order's total: owed, or already paid. A line
+/// cancelled after it was paid stays on the bill — the money was taken, and
+/// giving it back is a refund — so total and paid keep agreeing.
+bool lineCountsInTotal(String state, {required bool paid}) =>
+    paid || lineIsOwed(state);
+
 /// The order-level remise on a total of line nets.
 double orderDiscountAmount(double linesNet, double percentage) =>
     linesNet * (percentage / 100);

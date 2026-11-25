@@ -3,8 +3,7 @@ import 'dart:async';
 import 'package:drift/drift.dart' show OrderingTerm, BooleanExpressionOperators;
 import '../domain/models/component_rules.dart';
 import '../domain/models/permission_rules.dart';
-import '../domain/models/order_money.dart';
-import '../domain/models/order_money_rows.dart';
+import 'order_provider.dart' show OrderRepository;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -900,35 +899,31 @@ final waiterStatsProvider = FutureProvider.autoDispose.family<Map<String, dynami
   final database = ref.watch(databaseProvider);
 
   // Orders are born COMPLETED, so the status says nothing about whether one
-  // is still open: an order is active while it still owes something.
+  // is still open. "Unpaid" is the same test the unpaid chip, the resume
+  // picker and the close gate use, and the balance is what it compares.
   final orders = await (database.select(database.orders)
         ..where((tbl) => tbl.waiterId.equals(waiterId))
-        ..where((tbl) => tbl.status.isNotIn(['CANCELED', 'CANCELLED'])))
+        ..where((_) => OrderRepository.unpaidOrderSql))
       .get();
-  int totalOrders = 0;
+  final orderIds = [for (final o in orders) o.id];
   double unpaidTotal = 0.0;
-
-  for (final order in orders) {
-    final products = await (database.select(database.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(order.id)))
+  if (orderIds.isNotEmpty) {
+    final totals = await OrderRepository(database).getOrderTotals(orderIds);
+    final paidTickets = await (database.select(database.tickets)
+          ..where((t) =>
+              t.orderId.isIn(orderIds) &
+              t.isPaid.equals(true) &
+              t.isCancelled.equals(false)))
         .get();
-
-    var unpaidNet = 0.0;
-    var owesSomething = false;
-    for (final product in products) {
-      if (product.ticketId != null || !lineIsOwed(product.state)) continue;
-      owesSomething = true;
-      final components = await (database.select(database.orderProductComponents)
-            ..where((tbl) => tbl.orderProductId.equals(product.id)))
-          .get();
-      unpaidNet += product
-          .amounts(componentsPerUnit: componentsPerUnitOf(components))
-          .net;
+    final paidByOrder = <int, double>{};
+    for (final t in paidTickets) {
+      paidByOrder[t.orderId] = (paidByOrder[t.orderId] ?? 0) + t.amount;
     }
-    if (!owesSomething) continue;
-    totalOrders++;
-    unpaidTotal += applyOrderDiscount(unpaidNet, order.discountPercentage);
+    for (final id in orderIds) {
+      unpaidTotal += (totals[id] ?? 0) - (paidByOrder[id] ?? 0);
+    }
   }
+  final totalOrders = orderIds.length;
 
   return {
     'totalOrders': totalOrders,

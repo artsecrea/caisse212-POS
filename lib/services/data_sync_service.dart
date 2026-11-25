@@ -1426,10 +1426,11 @@ class DataSyncService {
     if (discountPercentage > 0) {
       final totalEffective = effectivePrices.fold(0.0, (sum, v) => sum + v);
       if (totalEffective > 0) {
-        final orderDiscountAmount = totalEffective * (discountPercentage / 100.0);
+        final orderDiscount =
+            orderDiscountAmount(totalEffective, discountPercentage);
         for (int i = 0; i < productDataList.length; i++) {
           final proportion = effectivePrices[i] / totalEffective;
-          final productShareOfDiscount = orderDiscountAmount * proportion;
+          final productShareOfDiscount = orderDiscount * proportion;
           final qty = (productDataList[i]['quantity'] as num).toDouble();
           final perUnitShare = qty > 0 ? productShareOfDiscount / qty : 0.0;
           final existingManualDiscount = productDataList[i]['manualDiscount'] as double;

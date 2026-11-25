@@ -55,7 +55,11 @@ void main() {
 
     final paid = await order();
     final t = await db.into(db.tickets).insert(TicketsCompanion.insert(
-        num: '0001', orderId: paid, paymentMethod: 'CASH', amount: 20));
+        num: '0001',
+        orderId: paid,
+        paymentMethod: 'CASH',
+        amount: 20,
+        isPaid: const Value(true)));
     await line(paid, 20, ticketId: t);
 
     final cancelled = await order(status: 'CANCELED');

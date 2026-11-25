@@ -294,15 +294,22 @@ class SessionService {
     String two(int v) => v.toString().padLeft(2, '0');
     final stamp = '${now.year}${two(now.month)}${two(now.day)}-'
         '${two(now.hour)}${two(now.minute)}${two(now.second)}';
-    var code = '';
+    Future<bool> free(String code) async =>
+        await (_database.select(_database.cashSessions)
+              ..where((s) => s.code.equals(code)))
+            .getSingleOrNull() ==
+        null;
+    String withSuffix(int n) => 'CS-$stamp-${n.toString().padLeft(3, '0')}';
+
     for (var attempt = 0; attempt < 20; attempt++) {
-      code = 'CS-$stamp-${_random.nextInt(1000).toString().padLeft(3, '0')}';
-      final taken = await (_database.select(_database.cashSessions)
-            ..where((s) => s.code.equals(code)))
-          .getSingleOrNull();
-      if (taken == null) return code;
+      final code = withSuffix(_random.nextInt(1000));
+      if (await free(code)) return code;
     }
-    return code;
+    // Twenty clashes in one second: walk the rest rather than guess again.
+    for (var n = 0; n < 1000; n++) {
+      if (await free(withSuffix(n))) return withSuffix(n);
+    }
+    throw StateError('No free session code left for $stamp');
   }
 
   /// End a cash session - calculates money at end from tickets.

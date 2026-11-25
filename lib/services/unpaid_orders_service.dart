@@ -162,7 +162,7 @@ class UnpaidOrdersService {
     // manual discount off the unit, then the order-level percentage.
     final totalByOrder = <int, double>{};
     for (final l in lines) {
-      if (!lineIsOwed(l.state)) continue;
+      if (!lineCountsInTotal(l.state, paid: l.ticketId != null)) continue;
       totalByOrder[l.orderId] = (totalByOrder[l.orderId] ?? 0.0) +
           l.amounts(componentsPerUnit: compCost[l.id] ?? 0.0).net;
     }

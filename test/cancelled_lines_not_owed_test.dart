@@ -40,6 +40,20 @@ void main() {
     test('there is nothing to pay on a cancelled line', () {
       expect(order.unpaidItems.map((i) => i.productId), [1]);
     });
+
+    test('a line paid and then cancelled still counts: it was paid', () {
+      final paidThenCancelled = CurrentOrder(items: [
+        OrderItem(productId: 1, productName: 'A', finalPrice: 20),
+        OrderItem(
+            productId: 2,
+            productName: 'B',
+            finalPrice: 15,
+            ticketId: 9,
+            state: 'CANCELED'),
+      ]);
+      expect(paidThenCancelled.total, 35);
+      expect(paidThenCancelled.unpaidItems.map((i) => i.productId), [1]);
+    });
   });
 
   group('stored orders', () {
@@ -103,6 +117,35 @@ void main() {
       await line(o, 30, state: 'CANCELED');
       expect((await repo.getOrderTotals([o]))[o], 0);
       expect(await repo.getUnpaidOrdersForResume(), isEmpty);
+    });
+
+    test('a line cancelled after it was paid stays on the bill', () async {
+      // A paid on T1; B still owed. The back office then cancels A.
+      final o = await order();
+      final t1 = await db.into(db.tickets).insert(TicketsCompanion.insert(
+          num: '0001',
+          orderId: o,
+          paymentMethod: 'CASH',
+          amount: 10,
+          isPaid: const Value(true)));
+      await line(o, 10, state: 'CANCELED', ticketId: t1);
+      await line(o, 10);
+
+      // The 10 taken is still part of the bill, so B is still owed.
+      expect((await repo.getOrderTotals([o]))[o], 20);
+      expect((await repo.getUnpaidOrdersForResume()).map((x) => x.id), [o]);
+    });
+
+    test('the waiter API: nothing owed is not the same as paid', () async {
+      final o = await order();
+      await line(o, 30, state: 'CANCELED');
+      final row = await (db.select(db.orders)..where((t) => t.id.equals(o)))
+          .getSingle();
+      final money =
+          WaiterOrderMoney.of(row, await db.select(db.orderProducts).get(), const {});
+      expect(money.total, 0);
+      expect(money.allPaid, isFalse,
+          reason: 'cancelled before anyone paid: never settled');
     });
 
     test('the waiter API leaves it out of total and balance', () async {

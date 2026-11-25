@@ -994,7 +994,8 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
       if (order == null || order.orderId == null) return;
 
       // Check if there are unpaid items
-      final hasUnpaidItems = order.items.any((item) => item.ticketId == null);
+      // A cancelled line is owed by nobody, so it does not hold the table.
+      final hasUnpaidItems = order.unpaidItems.isNotEmpty;
 
       if (hasUnpaidItems) {
         // Show dialog with options to pay or clear

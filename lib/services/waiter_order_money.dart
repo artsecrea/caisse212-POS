@@ -56,18 +56,26 @@ class WaiterOrderMoney {
       Map<int, List<OrderProductComponent>> componentsByLine) {
     final pct = order.discountPercentage.clamp(0.0, 100.0).toDouble();
     var gross = 0.0, lineDiscount = 0.0, net = 0.0, unpaidNet = 0.0;
-    var allPaid = true;
+    var owesSomething = false, paidSomething = false;
     for (final p in lines) {
-      if (!lineIsOwed(p.state)) continue;
+      final paid = p.ticketId != null;
+      if (!lineCountsInTotal(p.state, paid: paid)) continue;
       final m = WaiterLineMoney.of(p, componentsByLine[p.id] ?? const []);
       gross += m.gross;
       lineDiscount += m.discount;
       net += m.net;
-      if (p.ticketId == null) {
-        allPaid = false;
+      if (paid) {
+        paidSomething = true;
+      } else {
+        owesSomething = true;
         unpaidNet += m.net;
       }
     }
+    // Nothing owed is not the same as paid: an order whose every line was
+    // cancelled before anyone paid was never settled. An order with no lines
+    // at all reads as paid, as it always did.
+    final allPaid =
+        !owesSomething && (paidSomething || lines.isEmpty);
     final orderDiscount = orderDiscountAmount(net, pct);
     return WaiterOrderMoney(
       subtotal: gross,

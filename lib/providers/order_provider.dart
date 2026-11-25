@@ -3349,7 +3349,7 @@ class OrderRepository {
       'FROM order_product_components c WHERE c.order_product_id = op.id), 0))'
       ' - op.manual_discount) * op.quantity), 0) '
       'FROM order_products op WHERE op.order_id = orders.id '
-      "AND op.state NOT IN ('CANCELED', 'CANCELLED'))";
+      "AND (op.ticket_id IS NOT NULL OR op.state NOT IN ('CANCELED', 'CANCELLED')))";
 
   static const _orderTotalSql =
       '($_orderLinesSql * (1 - COALESCE(orders.discount_percentage, 0) / 100.0))';
@@ -3537,7 +3537,7 @@ class OrderRepository {
 
     final beforeDiscount = <int, double>{};
     for (final p in products) {
-      if (!lineIsOwed(p.state)) continue;
+      if (!lineCountsInTotal(p.state, paid: p.ticketId != null)) continue;
       final comps = compsByProductId[p.id] ?? const <OrderProductComponent>[];
       final itemTotal =
           p.amounts(componentsPerUnit: componentsPerUnitOf(comps)).net;
@@ -3708,7 +3708,7 @@ class OrderRepository {
         }
 
         final money = product.amounts(componentsPerUnit: componentTotal);
-        if (lineIsOwed(product.state)) {
+        if (lineCountsInTotal(product.state, paid: product.ticketId != null)) {
           subtotal += money.unitSubtotalHt * product.quantity;
           itemDiscount += money.lineDiscount;
           totalTva += money.tva;
