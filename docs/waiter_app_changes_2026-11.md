@@ -8,7 +8,7 @@ match.
 Summary of the work for the app:
 
 1. Stop relying on the option prices it sends. The POS prices them now.
-2. Handle four new `400` errors on create, add-product and add-products.
+2. Handle five new `400` errors on create, add-product and add-products.
 3. Port `priceOptions` into the vendored `component_rules.dart`, so the
    tablet refuses and prices the same selections as the till before it sends.
 4. Expect totals that leave cancelled lines out.
@@ -25,6 +25,9 @@ does. The function is `priceOptions` in `lib/domain/models/component_rules.dart`
 
 - Only options this product offers (`GET /waiters/product-components`) and that
   are not 86'd (`isActive = false`) are accepted.
+- Each option is capped as the till's stepper caps it: its product link's
+  `maxQuantity` in a QUANTITY group or ungrouped (0 = no cap), one in a SINGLE
+  or MULTIPLE group. A per-option `minQuantity` is not enforced.
 - An option in a group the selection keeps hidden (`visibleWhenComponentIds`)
   is refused.
 - Each visible group's `minSelection` / `maxSelection` is enforced. A required
@@ -55,6 +58,7 @@ On `POST /waiters/orders`, `PUT …/add-product` and `PUT …/add-products`:
 | HTTP | `error` | When | Extra fields |
 |---|---|---|---|
 | 400 | `option_not_offered` | The option is not on this product, or is 86'd. | `productId`, `componentId` |
+| 400 | `option_too_many` | More units of one option than its own limit (see §1). | `productId`, `componentId` |
 | 400 | `option_group_hidden` | The option is in a group the rest of the selection hides. | `productId`, `componentId` |
 | 400 | `option_group_too_few` | A visible group has fewer units than its `minSelection`. | `productId`, `componentGroupId`, `minSelection` |
 | 400 | `option_group_too_many` | A visible group has more units than its `maxSelection`. | `productId`, `componentGroupId`, `minSelection`, `maxSelection` |
@@ -107,13 +111,25 @@ the order is cancelled.
   `balanceAmount` or the tables' `totalAmount`.
 - **A line cancelled after it was paid still counts.** The money was taken,
   and giving it back is a refund.
+- `balanceAmount` now takes off the money already taken on an open split by
+  amount (a part paid without settling any line), as the till's quick pay
+  does. `allPaid` stays per line, so it is still `false` until the lines are
+  settled.
 - `allPaid` is now `false` for an order whose every line was cancelled before
   any payment: nothing is owed, but nothing was settled either. An order with
   no lines at all still reads `allPaid: true`, as before.
 - Cancelled lines are still returned in the order detail with their `state`,
   so the app can strike them through.
 
-## 5. Waiter dashboard and tables
+## 5. Tables, the dashboard and cancelled orders
+
+- An order whose every line was cancelled (by the web, one line at a time)
+  keeps its table, as the floor plan shows it: `POST /waiters/orders` on that
+  table answers `409 table_taken_by_other_waiter` (or
+  `table_already_has_your_order`) until the cashier frees it. It used to let a
+  second order silently take the table.
+
+### Figures
 
 - `GET /waiters/dashboard`: `expectedCash` and `totalCash` now take the order's
   discount percentage off and skip cancelled lines. They used to ignore the

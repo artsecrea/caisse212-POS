@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import '../data/database/app_database.dart';
 import '../providers/database_providers.dart';
+import '../providers/order_provider.dart' show OrderRepository;
 import 'lan_notification_hub.dart';
 import 'waiter_order_money.dart';
 
@@ -190,7 +191,9 @@ class WaiterLiveUpdateService {
     final snaps = <int, _OrderSnap>{};
     for (final o in orders) {
       final ls = linesByOrder[o.id] ?? const <OrderProduct>[];
-      final money = WaiterOrderMoney.of(o, ls, compsByLine);
+      final credit = (await OrderRepository(_db).moneySplitParts(o.id))
+          .fold<double>(0.0, (sum, t) => sum + t.amount);
+      final money = WaiterOrderMoney.of(o, ls, compsByLine, credit: credit);
       moneyById[o.id] = money;
       if (o.waiterId == null) continue;
       var lineDiscount = 0.0;

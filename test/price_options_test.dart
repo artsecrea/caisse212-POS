@@ -49,6 +49,28 @@ void main() {
     expect(r.group?.groupId, 3);
   });
 
+  test('one option past its own limit is refused', () {
+    final r = priceOptions(
+      picked: {20: 1, 31: 3},
+      catalogue: catalogue,
+      groupOf: groupOf,
+      rules: rules,
+      maxEach: {31: 2},
+    );
+    expect(r.problem, OptionProblem.tooManyOfOne);
+    expect(r.componentId, 31);
+  });
+
+  test('the stepper limit: link max in a QUANTITY group, one otherwise', () {
+    const stepper = ComponentGroupRule(groupId: 1, name: 'g');
+    const radio = ComponentGroupRule(
+        groupId: 1, name: 'g', selectionType: ComponentSelectionType.single);
+    expect(maxUnitsOf(stepper, 3), 3);
+    expect(maxUnitsOf(stepper, 0), isNull, reason: '0 = no cap');
+    expect(maxUnitsOf(null, 4), 4, reason: 'ungrouped is a stepper');
+    expect(maxUnitsOf(radio, 3), 1);
+  });
+
   test('zero quantities are not picks', () {
     final r = price({21: 1, 30: 0});
     expect(r.isOk, isTrue);

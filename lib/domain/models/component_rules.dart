@@ -533,6 +533,9 @@ enum OptionProblem {
   /// Not offered on this product, or 86'd.
   notOffered,
 
+  /// More units of one option than its own limit allows.
+  tooManyOfOne,
+
   /// Picked in a group the rest of the selection keeps hidden.
   hiddenGroup,
 
@@ -558,8 +561,8 @@ class OptionPricing {
   final List<ChargedComponentLine> lines;
   final OptionProblem? problem;
 
-  /// The component at fault, for [OptionProblem.notOffered] and
-  /// [OptionProblem.hiddenGroup].
+  /// The component at fault, for [OptionProblem.notOffered],
+  /// [OptionProblem.tooManyOfOne] and [OptionProblem.hiddenGroup].
   final int? componentId;
 
   /// The group at fault, for [OptionProblem.tooFew] and [OptionProblem.tooMany].
@@ -567,6 +570,15 @@ class OptionPricing {
 
   bool get isOk => problem == null;
 }
+
+/// How many units of one option a line may carry, as the product dialog's
+/// stepper allows: the product link's `maxQuantity` in a stepper group (0 or
+/// null = no cap), one in a SINGLE or MULTIPLE group.
+int? maxUnitsOf(ComponentGroupRule? rule, int? linkMaxQuantity) =>
+    (rule?.selectionType ?? ComponentSelectionType.quantity) ==
+            ComponentSelectionType.quantity
+        ? effectiveMaxQuantity(linkMaxQuantity)
+        : 1;
 
 /// Check and price a line's options the way the till's product dialog does,
 /// for a selection made somewhere else (the waiter app). Whatever price the
@@ -577,11 +589,15 @@ class OptionPricing {
 /// product link's override, else the component's own), and [groupOf] their
 /// group. Rules are checked only for groups that have something on offer and
 /// that the selection makes visible — exactly the groups the dialog shows.
+///
+/// [maxEach] caps units per option, as the dialog's stepper does (absent or
+/// null = no cap); see [maxUnitsOf].
 OptionPricing priceOptions({
   required Map<int, int> picked,
   required Map<int, double> catalogue,
   required Map<int, int?> groupOf,
   required Map<int?, ComponentGroupRule> rules,
+  Map<int, int?> maxEach = const {},
 }) {
   final chosen = {
     for (final e in picked.entries)
@@ -590,6 +606,13 @@ OptionPricing priceOptions({
   for (final id in chosen.keys) {
     if (!catalogue.containsKey(id)) {
       return OptionPricing.refused(OptionProblem.notOffered, componentId: id);
+    }
+  }
+  for (final e in chosen.entries) {
+    final max = maxEach[e.key];
+    if (max != null && e.value > max) {
+      return OptionPricing.refused(OptionProblem.tooManyOfOne,
+          componentId: e.key);
     }
   }
 

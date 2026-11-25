@@ -4,6 +4,8 @@ import '../domain/models/order_money_rows.dart';
 
 double _r2(double v) => (v * 100).roundToDouble() / 100;
 
+double _atLeastZero(double v) => v < 0 ? 0.0 : v;
+
 /// One line's money as the waiter app shows it.
 ///
 /// `unitaryPrice` already has the per-unit pre-discount (`unitaryDiscount`,
@@ -52,8 +54,13 @@ class WaiterOrderMoney {
 
   double get paid => total - balance;
 
+  /// [credit] is money already taken on open split-by-amount parts (tickets
+  /// that claim no line, see `OrderRepository.moneySplitParts`). It pays
+  /// towards the bill without settling any line, so it comes off [balance]
+  /// and leaves [allPaid] alone — the same as the till's quick pay.
   factory WaiterOrderMoney.of(Order order, Iterable<OrderProduct> lines,
-      Map<int, List<OrderProductComponent>> componentsByLine) {
+      Map<int, List<OrderProductComponent>> componentsByLine,
+      {double credit = 0}) {
     final pct = order.discountPercentage.clamp(0.0, 100.0).toDouble();
     var gross = 0.0, lineDiscount = 0.0, net = 0.0, unpaidNet = 0.0;
     var owesSomething = false, paidSomething = false;
@@ -81,7 +88,7 @@ class WaiterOrderMoney {
       subtotal: gross,
       discount: lineDiscount + orderDiscount,
       total: applyOrderDiscount(net, pct),
-      balance: applyOrderDiscount(unpaidNet, pct),
+      balance: _atLeastZero(applyOrderDiscount(unpaidNet, pct) - credit),
       allPaid: allPaid,
       discountPercentage: pct,
       discountReason: order.discountReason,

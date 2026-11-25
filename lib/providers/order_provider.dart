@@ -3353,7 +3353,7 @@ class OrderRepository {
   /// The 0.005 epsilon keeps rounding from flagging a fully-paid order.
   /// Correlated on `orders.id`, so it filters inside the query.
   static final Expression<bool> unpaidOrderSql = CustomExpression<bool>(
-    "(orders.status <> 'CANCELED' AND $_orderTotalSql > 0 AND "
+    "(orders.status NOT IN ('CANCELED', 'CANCELLED') AND $_orderTotalSql > 0 AND "
     '(SELECT COALESCE(SUM(t.amount), 0) FROM tickets t '
     'WHERE t.order_id = orders.id AND t.is_paid = 1 AND t.is_cancelled = 0)'
     ' + 0.005 < $_orderTotalSql)',

@@ -148,6 +148,26 @@ void main() {
           reason: 'cancelled before anyone paid: never settled');
     });
 
+    test('the waiter balance takes the amount already split off', () async {
+      final o = await order();
+      await line(o, 40);
+      final row = await (db.select(db.orders)..where((t) => t.id.equals(o)))
+          .getSingle();
+      final money = WaiterOrderMoney.of(
+          row, await db.select(db.orderProducts).get(), const {},
+          credit: 15);
+      expect(money.total, 40);
+      expect(money.balance, 25);
+      expect(money.allPaid, isFalse, reason: 'no line is settled yet');
+    });
+
+    test('an order cancelled with either spelling is not unpaid', () async {
+      final o = await db.into(db.orders).insert(OrdersCompanion.insert(
+          code: 'DOUBLE-L', status: const Value('CANCELLED')));
+      await line(o, 30);
+      expect(await repo.getUnpaidOrdersForResume(), isEmpty);
+    });
+
     test('the waiter API leaves it out of total and balance', () async {
       final o = await order(pct: 50);
       await line(o, 40);

@@ -84,7 +84,10 @@ void main() {
       ProductComponentsCompanion.insert(productId: 10, componentId: 1),
       ProductComponentsCompanion.insert(productId: 10, componentId: 2),
       ProductComponentsCompanion.insert(
-          productId: 10, componentId: 4, defaultPrice: const Value(0.5)),
+          productId: 10,
+          componentId: 4,
+          defaultPrice: const Value(0.5),
+          maxQuantity: const Value(2)),
       ProductComponentsCompanion.insert(productId: 10, componentId: 5),
     ]) {
       await db.into(db.productComponents).insert(link);
@@ -170,6 +173,16 @@ void main() {
     expect(body['productId'], 10);
     expect(await db.select(db.orders).get(), isEmpty,
         reason: 'nothing of the order is written');
+  });
+
+  test('more of one option than its own limit is refused', () async {
+    final res = await create([
+      {'componentId': 4, 'quantity': 3},
+    ]);
+    expect(res.statusCode, 400);
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    expect(body['error'], 'option_too_many');
+    expect(body['componentId'], 4);
   });
 
   test("an 86'd option is refused", () async {

@@ -65,26 +65,22 @@ TableReleaseReason? tableReleaseReason({
   if (_kDeadStatuses.contains(orderStatus.toUpperCase())) {
     return TableReleaseReason.orderCancelled;
   }
-  final states = lineStates.toList();
-  // Every line cancelled (the web cancels lines one by one, and the order
-  // keeps its status): as dead as a cancelled order, whatever the settings.
-  if (states.isNotEmpty && states.every(_isCancelledLine)) {
-    return TableReleaseReason.orderCancelled;
-  }
   if (!freeOnPayment) return null;
+  final states = lineStates.toList();
   if (states.isEmpty) return null;
   return isOrderSettled(states) ? TableReleaseReason.orderSettled : null;
 }
 
-bool _isCancelledLine(String state) =>
-    state == 'CANCELED' || state == 'CANCELLED';
-
 /// Whether an order still blocks a NEW order on its table: it is not
-/// cancelled, and it has no lines yet (just opened) or something on it is
-/// neither paid nor cancelled. [lineStates] go through `settlementState`
-/// first, so a paid line reads `PAID`.
+/// cancelled, and it is not settled ([isOrderSettled]: everything paid or
+/// voided, something paid). [lineStates] go through `settlementState` first,
+/// so a paid line reads `PAID`.
 ///
-/// Not the same question as [tableReleaseReason]: a fully paid order stops
+/// An order whose every line was cancelled is not settled, so it keeps
+/// blocking — the same as the floor, which keeps showing its table held. The
+/// cashier frees it; a second order must never silently take the table link.
+///
+/// Not the same question as [tableReleaseReason]: a settled order stops
 /// blocking a new one even where the till keeps the table held for the
 /// customers still sitting.
 bool orderBlocksTable({
@@ -92,7 +88,5 @@ bool orderBlocksTable({
   required Iterable<String> lineStates,
 }) {
   if (_kDeadStatuses.contains(orderStatus.toUpperCase())) return false;
-  final states = lineStates.toList();
-  if (states.isEmpty) return true;
-  return states.any((s) => s != 'PAID' && !_isCancelledLine(s));
+  return !isOrderSettled(lineStates);
 }

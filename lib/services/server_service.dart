@@ -1851,6 +1851,11 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           OrderProduct p, Iterable<OrderProductComponent> comps) =>
       p.amounts(componentsPerUnit: componentsPerUnitOf(comps)).net;
 
+  /// Money already taken on the order's open split-by-amount parts.
+  Future<double> _splitCredit(int orderId) async =>
+      (await _ref.read(orderRepositoryProvider).moneySplitParts(orderId))
+          .fold<double>(0.0, (sum, t) => sum + t.amount);
+
   /// Terminal (done) order/product states — the only ones that mark an order
   /// for cloud sync from the KDS path. Everything else (PENDING, PREPARING,
   /// READY, …) is a kitchen micro-state that stays LOCAL on the LAN-only KDS.
@@ -2749,7 +2754,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         final table = order.tableId != null ? tablesMap[order.tableId] : null;
         final products = productsByOrderId[order.id] ?? [];
 
-        final money = WaiterOrderMoney.of(order, products, componentsByOpId);
+        final money = WaiterOrderMoney.of(order, products, componentsByOpId,
+            credit: await _splitCredit(order.id));
         final lineList = <Map<String, dynamic>>[];
         for (final p in products) {
           final lineComponents = componentsByOpId[p.id] ?? const [];
@@ -3472,11 +3478,17 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       }
     }
 
+    final rules = await loadComponentGroupRules(database, productId);
     final pricing = priceOptions(
       picked: picked,
       catalogue: catalogue,
       groupOf: groupOf,
-      rules: await loadComponentGroupRules(database, productId),
+      rules: rules,
+      maxEach: {
+        for (final c in offered)
+          c.id: maxUnitsOf(
+              rules[c.componentGroupId], linkByComponent[c.id]!.maxQuantity),
+      },
     );
     final problem = pricing.problem;
     if (problem != null) {
@@ -3485,6 +3497,10 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         OptionProblem.notOffered => (
             'option_not_offered',
             'Option ${pricing.componentId} is not available on product $productId.'
+          ),
+        OptionProblem.tooManyOfOne => (
+            'option_too_many',
+            'Too many of option ${pricing.componentId} on product $productId.'
           ),
         OptionProblem.hiddenGroup => (
             'option_group_hidden',
@@ -3772,7 +3788,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       final componentNames = await _loadComponentNames(
           database, components.map((c) => c.componentId).toSet().toList());
 
-      final money = WaiterOrderMoney.of(order, products, componentsByOpId);
+      final money = WaiterOrderMoney.of(order, products, componentsByOpId,
+          credit: await _splitCredit(order.id));
       final lineList = <Map<String, dynamic>>[];
       for (final p in products) {
         final lineComponents = componentsByOpId[p.id] ?? const [];
