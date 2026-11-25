@@ -26,6 +26,7 @@ import '../utils/order_code.dart';
 import 'database_providers.dart';
 import 'network_provider.dart';
 import 'settings_provider.dart';
+import 'ticket_provider.dart';
 import '../services/waiter_kitchen_events.dart';
 import '../services/product_cost_resolver.dart';
 import '../services/z_day_resolver.dart';
@@ -740,7 +741,9 @@ class OrderRepository {
     // Z-report even when settled right at close/after midnight.
     final zDay = zDayOverride ?? await _zDayForSessionId(sessionId);
 
-    final created = await TicketSettlementService(_database).createPaidTicket(
+    final settlement = _ref?.read(ticketSettlementServiceProvider) ??
+        TicketSettlementService(_database);
+    final created = await settlement.createPaidTicket(
       orderId: orderId,
       paymentMethod: 'CASH',
       amount: due,

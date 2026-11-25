@@ -428,7 +428,7 @@ List<TicketLine> _carveRow(List<TicketData> tickets, int rowId, double qty) {
 
 /// Quantities are doubles because weighed goods exist; comparisons against
 /// zero have to tolerate the rounding that division introduces.
-const double _qtyEpsilon = 0.0001;
+const double _qtyEpsilon = TicketSettlementService.qtyEpsilon;
 
 /// A claim on one `order_products` row: how much of its quantity a ticket
 /// line is drawing from it.
@@ -3807,7 +3807,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   /// tills taking parts of one bill would otherwise both mint 0002, and the
   /// server keys tickets by (order, number). Offline the server cannot be
   /// asked; the bulk push is then the first place a clash could show.
-  /// Local cancelled tickets count too — the query below does not filter.
+  /// Local cancelled tickets count too: [TicketSettlementService.nextTicketNum]
+  /// does not filter them.
   Future<String> _mintTicketNum(int orderId) async {
     var serverNums = const <String>[];
     final code = widget.order.orderCode;

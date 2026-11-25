@@ -44,7 +44,9 @@ class TicketSettlementService {
   final AppDatabase _db;
   final _logger = Logger.instance;
 
-  static const double _qtyEpsilon = 0.0001;
+  /// Below this a quantity is rounding noise. The payment screen builds its
+  /// claims with the same tolerance.
+  static const double qtyEpsilon = 0.0001;
 
   /// One past the highest number on this order, here or on the server.
   Future<String> nextTicketNum(
@@ -156,7 +158,7 @@ class TicketSettlementService {
       final claimed = entry.value;
       final remainder = row.quantity - claimed;
 
-      if (remainder <= _qtyEpsilon) {
+      if (remainder <= qtyEpsilon) {
         await (_db.update(_db.orderProducts)..where((t) => t.id.equals(row.id)))
             .write(OrderProductsCompanion(
           ticketId: Value(ticketId),

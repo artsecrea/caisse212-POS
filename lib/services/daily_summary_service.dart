@@ -1015,7 +1015,7 @@ class DailySummaryService {
         if (op.state == 'CANCELED') continue;
         lineTotal += _opLineTotal(op, data.compCostByOpId[op.id] ?? 0.0);
         itemCount += op.quantity;
-        lineDiscount += (op.unitaryDiscount + op.manualDiscount) * op.quantity;
+        lineDiscount += op.amounts().lineDiscount;
       }
       final total = applyOrderDiscount(lineTotal, o.discountPercentage);
       final orderLevelDiscount = lineTotal - total;

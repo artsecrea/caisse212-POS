@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/models/order_money.dart';
 import '../domain/models/order_money_rows.dart';
 import '../domain/models/line_payment.dart' show settlementState;
 import '../domain/models/order_tag_codec.dart' show parseTagIds;
@@ -222,7 +223,7 @@ class LineMoney {
     final lineDiscount = amounts.lineDiscount;
     final afterLine = gross - lineDiscount;
     final orderLevel = orderDiscountPercentage > 0
-        ? afterLine * (orderDiscountPercentage / 100)
+        ? orderDiscountAmount(afterLine, orderDiscountPercentage)
         : 0.0;
     return LineMoney(gross: gross, discount: lineDiscount + orderLevel);
   }
