@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:drift/drift.dart' hide Column show OrderingTerm, BooleanExpressionOperators;
 import '../domain/models/component_rules.dart';
 import '../domain/models/permission_rules.dart';
+import '../domain/models/order_money.dart';
+import '../domain/models/order_money_rows.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -897,38 +899,35 @@ final waitersByAreaProvider = FutureProvider.autoDispose.family<List<Waiter>, in
 final waiterStatsProvider = FutureProvider.autoDispose.family<Map<String, dynamic>, int>((ref, waiterId) async {
   final database = ref.watch(databaseProvider);
 
-  // Get all orders assigned to this waiter (not completed/cancelled)
-  final ordersQuery = database.select(database.orders)
-    ..where((tbl) => tbl.waiterId.equals(waiterId))
-    ..where((tbl) => tbl.status.isNotIn(['COMPLETED', 'DELIVERED', 'CANCELLED']));
-
-  final orders = await ordersQuery.get();
-  int totalOrders = orders.length;
+  // Orders are born COMPLETED, so the status says nothing about whether one
+  // is still open: an order is active while it still owes something.
+  final orders = await (database.select(database.orders)
+        ..where((tbl) => tbl.waiterId.equals(waiterId))
+        ..where((tbl) => tbl.status.isNotIn(['CANCELED', 'CANCELLED'])))
+      .get();
+  int totalOrders = 0;
   double unpaidTotal = 0.0;
 
   for (final order in orders) {
-    // Get all order products for this order
     final products = await (database.select(database.orderProducts)
-      ..where((tbl) => tbl.orderId.equals(order.id)))
-      .get();
+          ..where((tbl) => tbl.orderId.equals(order.id)))
+        .get();
 
+    var unpaidNet = 0.0;
+    var owesSomething = false;
     for (final product in products) {
-      // Only count unpaid items (no ticketId)
-      if (product.ticketId == null) {
-        // Get component prices for this product
-        final components = await (database.select(database.orderProductComponents)
-          ..where((tbl) => tbl.orderProductId.equals(product.id)))
+      if (product.ticketId != null || !lineIsOwed(product.state)) continue;
+      owesSomething = true;
+      final components = await (database.select(database.orderProductComponents)
+            ..where((tbl) => tbl.orderProductId.equals(product.id)))
           .get();
-        
-        double componentTotal = 0.0;
-        for (final comp in components) {
-          componentTotal += comp.price * comp.quantity;
-        }
-        
-        final itemTotal = (product.unitaryPrice + componentTotal) * product.quantity;
-        unpaidTotal += itemTotal;
-      }
+      unpaidNet += product
+          .amounts(componentsPerUnit: componentsPerUnitOf(components))
+          .net;
     }
+    if (!owesSomething) continue;
+    totalOrders++;
+    unpaidTotal += applyOrderDiscount(unpaidNet, order.discountPercentage);
   }
 
   return {
