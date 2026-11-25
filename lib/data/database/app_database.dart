@@ -2,9 +2,6 @@ import 'dart:io';
 import 'package:drift/drift.dart' hide Column;
 // Used by generated code: order_products.line_uid's clientDefault.
 import '../../utils/line_uid.dart';
-import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
 import 'tables/category_table.dart';
 import 'tables/product_table.dart';
@@ -50,7 +47,6 @@ import 'tables/reservation_cache_table.dart';
 import 'tables/ticket_draft_split_table.dart';
 import 'tables/pending_notification_table.dart';
 import 'tables/order_number_counter_table.dart';
-import '../../utils/pos_log.dart';
 
 part 'app_database.g.dart';
 
@@ -105,11 +101,12 @@ part 'app_database.g.dart';
   OrderNumberCounters,
 ])
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  /// The app passes `openAppDatabaseConnection()` (app_database_connection.dart),
+  /// which needs Flutter; anything else passes its own executor.
+  AppDatabase(super.executor);
 
   /// Injects a caller-supplied executor — used by tests to run against an
-  /// in-memory database instead of the on-disk one. Production code always uses
-  /// the default constructor.
+  /// in-memory database instead of the on-disk one.
   AppDatabase.forTesting(super.executor);
 
   static String dbName = 'sqd.db';
@@ -1209,42 +1206,6 @@ class AppDatabase extends _$AppDatabase {
     if (scope == null) return;
     await into(orderNumberCounters).insertOnConflictUpdate(
         OrderNumberCountersCompanion.insert(scope: scope, seq: const Value(0)));
-  }
-
-  static LazyDatabase _openConnection() {
-    return LazyDatabase(() async {
-      try {
-        final dbFolder = await getApplicationDocumentsDirectory();
-        final file = File(p.join(dbFolder.path, dbName));
-
-        // Ensure directory exists
-        if (!await dbFolder.exists()) {
-          await dbFolder.create(recursive: true);
-        }
-        posLog(">>>>>>>>"+dbFolder.path);
-
-        openedFile = file;
-        return NativeDatabase.createInBackground(file);
-      } catch (e) {
-        // Fallback: try using executable directory on Windows
-        if (Platform.isWindows) {
-          try {
-            final exePath = Platform.resolvedExecutable;
-            final exeDir = File(exePath).parent.path;
-            final dataDir = Directory(p.join(exeDir, 'data'));
-            if (!await dataDir.exists()) {
-              await dataDir.create(recursive: true);
-            }
-            final file = File(p.join(dataDir.path, dbName));
-            openedFile = file;
-            return NativeDatabase.createInBackground(file);
-          } catch (e2) {
-            rethrow;
-          }
-        }
-        rethrow;
-      }
-    });
   }
 }
 

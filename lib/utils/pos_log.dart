@@ -1,4 +1,7 @@
-import 'package:flutter/foundation.dart';
+/// Flutter's `kDebugMode`, spelled out so this file loads without Flutter:
+/// neither a release (`dart.vm.product`) nor a profile build.
+const bool _debugBuild = !bool.fromEnvironment('dart.vm.product') &&
+    !bool.fromEnvironment('dart.vm.profile');
 
 /// Debug-only tracing.
 ///
@@ -14,9 +17,9 @@ import 'package:flutter/foundation.dart';
 /// into that logger instead would churn the 10 MB rotation and bury the real
 /// diagnostics, which is why this exists alongside it rather than instead of it.
 ///
-/// `kDebugMode` is a const, so the whole call is tree-shaken out of release.
+/// The flag is a const, so the whole call is tree-shaken out of release.
 void posLog(Object? message) {
-  if (kDebugMode) {
+  if (_debugBuild) {
     // ignore: avoid_print
     print(message);
   }
@@ -25,7 +28,7 @@ void posLog(Object? message) {
 /// Lazy variant — the message is only built when it will actually be printed.
 /// Use for anything expensive to format (a whole response body, a big list).
 void posLogLazy(Object? Function() build) {
-  if (kDebugMode) {
+  if (_debugBuild) {
     // ignore: avoid_print
     print(build());
   }

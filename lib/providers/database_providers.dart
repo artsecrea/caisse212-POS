@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database/app_database.dart';
+import '../data/database/app_database_connection.dart';
 import '../data/database/app_database.dart' as db;
 import '../services/session_service.dart';
 import '../services/z_service.dart';
@@ -36,7 +37,7 @@ import '../utils/pos_log.dart';
 
 // Database Provider
 final databaseProvider = Provider<AppDatabase>((ref) {
-  return AppDatabase();
+  return AppDatabase(openAppDatabaseConnection());
 });
 
 // API Service Provider
