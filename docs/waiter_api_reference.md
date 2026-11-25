@@ -618,7 +618,7 @@ Create a new order.
 | `products[].variantId` | no | — | Server re-reads variant price/TVA. |
 | `products[].quantity` | no | `1` | Fractional allowed. |
 | `products[].note` | no | — | Per-line note. |
-| `products[].components[]` | no | `[]` | `componentId` (req), `quantity` (1), `price` (0.0). |
+| `products[].components[]` | no | `[]` | `componentId` (req), `quantity` (1). Checked and priced by the POS; `price` and `name` are ignored — see §7 and `waiter_app_changes_2026-11.md`. |
 
 **Requires an OPEN, non-paused cash session.** Checked against the session's
 live status at request time. Rejected with **`409`**:
@@ -945,13 +945,17 @@ Reprints (endpoint 15) skip everything except `printingEnabled`.
 - **Line total math** (everywhere): `(unitaryPrice + Σ component.price ×
   component.quantity) × quantity − unitaryDiscount×qty − manualDiscount×qty`.
 - **Prices are authoritative server-side:** on create/add, the POS re-reads
-  product/variant price from its DB; client-sent prices for products are not
-  trusted (component `price` is taken as sent). This is what makes the
-  free-allowance split work over the wire: send one array entry per row you
-  want stored (e.g. 2 units of a component at `price: 0.0` and 1 more at
-  catalogue price, same `componentId`) and every entry lands as its own row —
-  create/add insert one row per array entry, there is no merge-by-componentId
-  and no unique constraint that would collapse them.
+  product/variant price from its DB, and checks and prices every option the
+  way its own product dialog does (`priceOptions` in `component_rules.dart`):
+  only options the product offers and has not 86'd, only in visible groups,
+  within each group's min/max, at the catalogue price (link override, else
+  the option's price) with the group's free allowance. Client-sent `price`
+  and `name` are ignored. Entries are summed per `componentId`, so one entry
+  per component is enough; a partly free component is stored as two rows
+  (`0.0` and catalogue price), as on the till. A selection the till would
+  refuse answers `400` (`option_not_offered`, `option_group_hidden`,
+  `option_group_too_few`, `option_group_too_many`) and writes nothing — see
+  `waiter_api_errors.md`.
 - **`chargeOnRemoval` is read-only for now.** `POST /waiters/orders` and
   `PUT .../add-product` do not yet accept a `removalCharge` flag on a
   component entry, so a removal that should bill cannot be expressed from the

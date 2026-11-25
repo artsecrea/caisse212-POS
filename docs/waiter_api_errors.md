@@ -42,6 +42,10 @@ All errors are JSON with at least an `error` field:
 | `invalid_pin` | 403 | `POST /waiters/login` | — | — |
 | `login_failed` | 500 | `POST /waiters/login` | — | — |
 | `printing_disabled` | 503 | `POST …/print` | — | — |
+| `option_not_offered` | 400 | create, `add-product`, `add-products` | ✅ | ✅ |
+| `option_group_hidden` | 400 | create, `add-product`, `add-products` | ✅ | ✅ |
+| `option_group_too_few` | 400 | create, `add-product`, `add-products` | ✅ | ✅ |
+| `option_group_too_many` | 400 | create, `add-product`, `add-products` | ✅ | ✅ |
 
 All other errors use a human sentence as the `error` value (see per-endpoint
 tables below).
@@ -143,6 +147,7 @@ The session's live status is read from the POS at request time.
 | 400 | `Table not found` | `tableId` doesn't exist. |
 | 403 | `Waiter not assigned to this table's area` | Area-restricted waiter targeting a table outside their areas. |
 | 409 | `table_taken_by_other_waiter` *(+message)* | The target table already has an **active** order owned by someone else (another waiter, or a cashier order). To add to your own open order, use `PUT …/add-product`. |
+| 400 | `option_not_offered` / `option_group_hidden` / `option_group_too_few` / `option_group_too_many` *(+message)* | A line's options are not a selection the till accepts. Carries `productId` and `componentId` or `componentGroupId` (+ `minSelection` / `maxSelection`). Nothing is written. See `waiter_app_changes_2026-11.md` §2. |
 | 500 | `Failed to create order` | Server exception. |
 
 ### `PUT /waiters/orders/{code}/add-product`
@@ -152,6 +157,7 @@ The session's live status is read from the POS at request time.
 | 404 | `Order not found` | No such order. |
 | 403 | `Not authorized to modify this order` | Not the owner. |
 | 400 | `Product not found` | `productId` doesn't exist. |
+| 400 | `option_not_offered` / `option_group_hidden` / `option_group_too_few` / `option_group_too_many` *(+message)* | As for create. Nothing is written. On `add-products` the whole round is refused and `index` names the faulty entry. |
 | 500 | `Failed to add product` | Server exception. |
 
 ### `DELETE /waiters/orders/{code}/products/{opId}` (remove line) — NEW
