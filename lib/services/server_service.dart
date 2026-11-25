@@ -19,6 +19,7 @@ import '../data/database/app_database.dart';
 import '../domain/models/component_rules.dart' show decodeVisibleWhen;
 import '../domain/models/line_payment.dart';
 import '../domain/models/order_course.dart';
+import '../domain/models/order_money.dart';
 import '../domain/models/order_money_rows.dart';
 import '../domain/models/socket_models.dart';
 import '../providers/database_providers.dart';
@@ -1813,8 +1814,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
   /// product `quantity` (it was added only once, so a qty-2 line with add-ons
   /// under-counted the add-ons); (2) `unitaryDiscount` is NOT subtracted — the
   /// per-unit pre-discount is already baked into `unitaryPrice`, so subtracting
-  /// it again double-discounted the line. Order-level `discountPercentage` is
-  /// applied by the caller where relevant (waiter orders default to 0).
+  /// it again double-discounted the line. The caller skips cancelled lines and
+  /// applies the order-level `discountPercentage`.
   double _waiterLineTotal(
           OrderProduct p, Iterable<OrderProductComponent> comps) =>
       p.amounts(componentsPerUnit: componentsPerUnitOf(comps)).net;
@@ -1973,14 +1974,19 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       }
 
       for (final order in waiterOrders) {
+        var orderExpected = 0.0, orderCash = 0.0;
         for (final p in productsByOrderId[order.id] ?? const <OrderProduct>[]) {
+          if (!lineIsOwed(p.state)) continue;
           final item = _waiterLineTotal(p, componentsByOpId[p.id] ?? const []);
-          expectedCash += item;
+          orderExpected += item;
           if (p.ticketId != null) {
             final ticket = ticketsMap[p.ticketId];
-            if (ticket != null && !ticket.isCancelled) totalCash += item;
+            if (ticket != null && !ticket.isCancelled) orderCash += item;
           }
         }
+        expectedCash +=
+            applyOrderDiscount(orderExpected, order.discountPercentage);
+        totalCash += applyOrderDiscount(orderCash, order.discountPercentage);
       }
 
       // Cashier setting — when off, zero out the financial fields so the
@@ -2542,11 +2548,13 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         double totalAmount = 0.0;
         if (order != null) {
           for (final p in productsByOrderId[order.id] ?? const <OrderProduct>[]) {
-            if (p.ticketId == null) {
+            if (p.ticketId == null && lineIsOwed(p.state)) {
               totalAmount +=
                   _waiterLineTotal(p, componentsByOpId[p.id] ?? const []);
             }
           }
+          totalAmount =
+              applyOrderDiscount(totalAmount, order.discountPercentage);
         }
 
         // Who is serving this table, for the waiter app's "my tables" view.

@@ -3332,7 +3332,7 @@ class OrderRepository {
   /// "Is this order unpaid?" — the canonical check behind the orders-screen
   /// unpaid chip, the resume picker and the close-time unpaid gate.
   ///
-  /// Same formula as [getOrderTotals] (lines with their components, less
+  /// Same formula as [getOrderTotals] (owed lines with their components, less
   /// manual discounts, less the order's discount %), against the paid,
   /// uncancelled tickets; an empty order and a CANCELED one are not unpaid.
   /// The 0.005 epsilon keeps rounding from flagging a fully-paid order.
@@ -3348,7 +3348,8 @@ class OrderRepository {
       '(SELECT COALESCE(SUM(((op.unitary_price + COALESCE((SELECT SUM(c.price * c.quantity) '
       'FROM order_product_components c WHERE c.order_product_id = op.id), 0))'
       ' - op.manual_discount) * op.quantity), 0) '
-      'FROM order_products op WHERE op.order_id = orders.id)';
+      'FROM order_products op WHERE op.order_id = orders.id '
+      "AND op.state NOT IN ('CANCELED', 'CANCELLED'))";
 
   static const _orderTotalSql =
       '($_orderLinesSql * (1 - COALESCE(orders.discount_percentage, 0) / 100.0))';
@@ -3536,6 +3537,7 @@ class OrderRepository {
 
     final beforeDiscount = <int, double>{};
     for (final p in products) {
+      if (!lineIsOwed(p.state)) continue;
       final comps = compsByProductId[p.id] ?? const <OrderProductComponent>[];
       final itemTotal =
           p.amounts(componentsPerUnit: componentsPerUnitOf(comps)).net;
@@ -3706,10 +3708,12 @@ class OrderRepository {
         }
 
         final money = product.amounts(componentsPerUnit: componentTotal);
-        subtotal += money.unitSubtotalHt * product.quantity;
-        itemDiscount += money.lineDiscount;
-        totalTva += money.tva;
-        linesNet += money.net;
+        if (lineIsOwed(product.state)) {
+          subtotal += money.unitSubtotalHt * product.quantity;
+          itemDiscount += money.lineDiscount;
+          totalTva += money.tva;
+          linesNet += money.net;
+        }
 
         // Check if item is paid (has a ticket)
         final isPaid = product.ticketId != null;

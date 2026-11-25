@@ -39,6 +39,10 @@ class LineAmounts {
   double get unitSubtotalHt => ((unitPrice - unitTva) + unitDiscount) + componentsPerUnit;
 }
 
+/// Whether a line is still owed. A cancelled line stays on the order, so the
+/// kitchen and the cloud can see it, but nobody pays for it.
+bool lineIsOwed(String state) => state != 'CANCELED' && state != 'CANCELLED';
+
 /// The order-level remise on a total of line nets.
 double orderDiscountAmount(double linesNet, double percentage) =>
     linesNet * (percentage / 100);

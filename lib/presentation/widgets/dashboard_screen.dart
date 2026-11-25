@@ -164,7 +164,10 @@ final _dashboardStatsProvider =
 
   // Per-order line subtotals (before order-level %)
   final Map<int, double> orderLineSubtotals = {};
-  for (final op in orderProducts) {
+  // A cancelled line is neither sold nor owed.
+  final owedProducts =
+      orderProducts.where((op) => lineIsOwed(op.state)).toList();
+  for (final op in owedProducts) {
     orderLineSubtotals[op.orderId] =
         (orderLineSubtotals[op.orderId] ?? 0.0) + opLineTotal(op);
   }
@@ -185,7 +188,7 @@ final _dashboardStatsProvider =
   double itemAutoDisc = 0.0;
   double itemManualDisc = 0.0;
   double orderPercentDisc = 0.0;
-  for (final op in orderProducts) {
+  for (final op in owedProducts) {
     final order = orderById[op.orderId];
     if (order?.status == 'CANCELED') continue;
     itemAutoDisc += op.unitaryDiscount * op.quantity;
@@ -202,7 +205,7 @@ final _dashboardStatsProvider =
 
   // Top products map (gross line total per product, before order-level %)
   final Map<int, _MutableProduct> prodMap = {};
-  for (final op in orderProducts) {
+  for (final op in owedProducts) {
     prodMap[op.productId] ??= _MutableProduct();
     prodMap[op.productId]!.qty += op.quantity.round();
     prodMap[op.productId]!.rev += opLineTotal(op);

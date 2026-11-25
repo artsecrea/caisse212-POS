@@ -58,6 +58,7 @@ class WaiterOrderMoney {
     var gross = 0.0, lineDiscount = 0.0, net = 0.0, unpaidNet = 0.0;
     var allPaid = true;
     for (final p in lines) {
+      if (!lineIsOwed(p.state)) continue;
       final m = WaiterLineMoney.of(p, componentsByLine[p.id] ?? const []);
       gross += m.gross;
       lineDiscount += m.discount;

@@ -812,7 +812,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     // everything back into one ticket. An order nobody has split yet, or
     // whose draft turns out stale, falls through to that same one-ticket
     // default inside the helper.
-    final unpaidItems = grouped[null] ?? [];
+    // A cancelled line is shown on the order but owed by nobody, so it never
+    // goes on a ticket.
+    final unpaidItems =
+        (grouped[null] ?? const <OrderItem>[]).where((i) => i.isOwed).toList();
     if (unpaidItems.isNotEmpty) {
       final defaultMethod = TransactionType.fromString(
         ref.read(settingsProvider).defaultPaymentMethod,

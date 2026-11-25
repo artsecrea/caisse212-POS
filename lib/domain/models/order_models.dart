@@ -126,6 +126,9 @@ class OrderItem {
   // Price per item with all discounts applied (including manual discount)
   double get totalPrice => amounts.net;
 
+  /// False for a cancelled line: still shown, never charged.
+  bool get isOwed => lineIsOwed(state);
+
   // Total discount per all quantities (pre-discount + manual discount)
   double get totalDiscount => amounts.lineDiscount;
 
@@ -443,18 +446,20 @@ class CurrentOrder {
   double get deliveryFeeAmount => deliveryFee ?? 0.0;
 
   // Subtotal: sum of all base prices (no tax, no discounts)
+  Iterable<OrderItem> get _owedItems => items.where((item) => item.isOwed);
+
   double get subtotal {
-    return items.fold(0.0, (sum, item) => sum + (item.subtotalPerItem * item.quantity));
+    return _owedItems.fold(0.0, (sum, item) => sum + (item.subtotalPerItem * item.quantity));
   }
 
   // Total tax for all items
   double get tax {
-    return items.fold(0.0, (sum, item) => sum + item.totalTva);
+    return _owedItems.fold(0.0, (sum, item) => sum + item.totalTva);
   }
 
   // Total before order-level discount (includes item prices with components, tva, pre-discounts, and manual discounts)
   double get totalBeforeDiscount {
-    return items.fold(0.0, (sum, item) => sum + item.totalPrice);
+    return _owedItems.fold(0.0, (sum, item) => sum + item.totalPrice);
   }
 
   // Order-level discount amount calculated from percentage
@@ -471,8 +476,9 @@ class CurrentOrder {
   double get amountDue => total + deliveryFeeAmount;
 
   // Get only unpaid items
+  /// Lines still to be paid for. A cancelled line is owed by nobody.
   List<OrderItem> get unpaidItems {
-    return items.where((item) => item.ticketId == null).toList();
+    return items.where((item) => item.ticketId == null && item.isOwed).toList();
   }
 
   // Get only paid items
@@ -486,7 +492,7 @@ class CurrentOrder {
   }
 
   double get totalDiscount {
-    return items.fold(0.0, (sum, item) => sum + item.totalDiscount) + discountAmount;
+    return _owedItems.fold(0.0, (sum, item) => sum + item.totalDiscount) + discountAmount;
   }
 
 

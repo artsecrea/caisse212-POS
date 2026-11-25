@@ -705,6 +705,7 @@ class DailySummaryService {
       double linesNet = 0.0;
 
       for (final product in orderProducts) {
+        if (!lineIsOwed(product.state)) continue;
         // Get components for this order product
         final orderComponents = await (_db.select(_db.orderProductComponents)
           ..where((tbl) => tbl.orderProductId.equals(product.id)))
@@ -1012,7 +1013,7 @@ class DailySummaryService {
       var itemCount = 0.0;
       var lineDiscount = 0.0;
       for (final op in ops) {
-        if (op.state == 'CANCELED') continue;
+        if (!lineIsOwed(op.state)) continue;
         lineTotal += _opLineTotal(op, data.compCostByOpId[op.id] ?? 0.0);
         itemCount += op.quantity;
         lineDiscount += op.amounts().lineDiscount;
@@ -1109,7 +1110,7 @@ class DailySummaryService {
     final acc = <int, _ProductAcc>{};
     for (final op in data.orderProducts) {
       if (!liveOrderIds.contains(op.orderId)) continue;
-      if (op.state == 'CANCELED') continue;
+      if (!lineIsOwed(op.state)) continue;
       final compCost = data.compCostByOpId[op.id] ?? 0.0;
       final a = acc.putIfAbsent(op.productId, () => _ProductAcc());
       a.quantity += op.quantity;
@@ -1231,7 +1232,7 @@ class DailySummaryService {
       var net = 0.0;
       var units = 0.0;
       for (final op in opsByOrder[o.id] ?? const <OrderProduct>[]) {
-        if (op.state == 'CANCELED') continue;
+        if (!lineIsOwed(op.state)) continue;
         net += _opLineTotal(op, data.compCostByOpId[op.id] ?? 0.0);
         units += op.quantity;
       }
@@ -1487,7 +1488,7 @@ class DailySummaryService {
     }
     final pctByOrder = {for (final o in orders) o.id: o.discountPercentage};
     for (final op in allOps) {
-      if (op.state == 'CANCELED') continue;
+      if (!lineIsOwed(op.state)) continue;
       final acc =
           productAcc.putIfAbsent(op.productId, () => _EmailProductAcc());
       acc.quantity += op.quantity;
