@@ -6,7 +6,6 @@ import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:caisse212/services/api_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
 import '../widgets/report_issue_dialog.dart';
@@ -52,7 +51,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
   }
 
   Future<void> _loadServerUrl() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = ref.read(sharedPreferencesProvider);
     // Must end in `/api`: ApiService stores this as `api_base_url` and appends
     // a SECOND `/api` on every request, because the backend runs with servlet
     // context-path `/api` and its controllers are mapped at `/api/pos/...`.
@@ -98,7 +97,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
     });
 
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
 
       // Save and set the base URL
