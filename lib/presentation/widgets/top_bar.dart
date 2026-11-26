@@ -9,13 +9,12 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:caisse212/providers/stat_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
 import 'package:caisse212/services/api_service.dart' show ApiService;
-import 'package:caisse212/services/data_sync_service.dart';
 import 'package:caisse212/services/permission_service.dart';
 import 'package:caisse212/services/activity_log_service.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
-import '../../services/session_service.dart';
+import '../../providers/user_provider.dart';
 import '../../services/customer_display_service.dart';
 import '../../services/app_exit_service.dart';
 import '../../utils/admin_auth.dart';
@@ -404,7 +403,7 @@ class _TopBarState extends ConsumerState<TopBar> {
     final l10n = AppLocalizations.of(context);
     // Refuse before asking for credentials — typing a password only to be
     // told no is worse than being told no.
-    if (await zReportBlockedByOpenShift(ref.read(databaseProvider))) {
+    if (await ref.read(zServiceProvider).reportBlockedByOpenShift()) {
       if (mounted) {
         SnackBarHelper.error(
             context, l10n?.translate('z_report_blocked_open') ?? 'Close the Z first');
@@ -432,8 +431,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       return;
     }
 
-    final database = ref.read(databaseProvider);
-    final sessionService = SessionService(database);
+    final sessionService = ref.read(sessionServiceProvider);
     final session = await sessionService.getActiveSession(currentUser.id);
 
     if (session == null) {
@@ -555,8 +553,7 @@ class _TopBarState extends ConsumerState<TopBar> {
         return;
       }
 
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
+      final sessionService = ref.read(sessionServiceProvider);
       final session = await sessionService.getActiveSession(currentUser.id);
 
       if (session == null || session.status != 'active') {
@@ -763,16 +760,15 @@ class _TopBarState extends ConsumerState<TopBar> {
   /// must never be blocked by a failed sync.
   Future<void> _syncAndCloseBeforeLogout(int? userId) async {
     try {
-      final database = ref.read(databaseProvider);
+      final sessionService = ref.read(sessionServiceProvider);
       final syncService = ref.read(dataSyncServiceProvider);
       if (userId != null) {
-        final session =
-            await SessionService(database).getActiveSession(userId);
+        final session = await sessionService.getActiveSession(userId);
         // Pause, never end: a session still active here means the logout
         // dialog's End/Pause did not run (an error fell through to logout).
         // Ending it would close a cashier's shift nobody asked to close.
         if (session != null && session.status == 'active') {
-          if (await SessionService(database).pauseSession(session.id)) {
+          if (await sessionService.pauseSession(session.id)) {
             await notifySessionPauseChange(ref.read, session.id);
           }
         }
@@ -1006,8 +1002,8 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   Future<void> _syncData(AppLocalizations? l10n, ApiService apiService) async {
     try {
-      final database = ref.read(databaseProvider);
-      final syncService = DataSyncService(database, apiService);
+      final users = ref.read(userRepositoryProvider);
+      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
 
       // The terminal's category scope rides on login/refresh only — never on
       // the catalogue sync — so without this an admin hiding a category would
@@ -1036,7 +1032,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       final user = ref.read(currentUserProvider);
       if (user != null) {
         ref.read(currentUserProvider.notifier).state =
-            await reloadCurrentUser(database, user);
+            await users.reloadCurrentUser(user);
       }
 
       if (mounted) {
