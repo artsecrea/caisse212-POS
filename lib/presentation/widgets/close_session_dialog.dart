@@ -5,14 +5,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:uuid/uuid.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/floor_repository.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/user_provider.dart';
 import '../../services/unpaid_orders_service.dart';
 import '../../domain/models/order_models.dart';
 import '../../services/daily_summary_service.dart';
 import '../../utils/button_styles.dart';
-import '../../services/data_sync_service.dart';
 import '../../services/printing_service.dart';
 import '../../services/pos_notifications.dart' show notifySessionClosed;
 import '../../services/session_service.dart';
@@ -92,12 +93,11 @@ Future<_UnpaidAction?> _promptUnpaidOrders(
     final cur = grouped[wid] ?? (count: 0, amount: 0.0);
     grouped[wid] = (count: cur.count + 1, amount: cur.amount + due);
   }
-  final db = ref.read(databaseProvider);
   final waiterIds = grouped.keys.whereType<int>().toList();
   final nameById = <int, String>{};
   if (waiterIds.isNotEmpty) {
     final waiterRows =
-        await (db.select(db.waiters)..where((w) => w.id.isIn(waiterIds))).get();
+        await ref.read(floorRepositoryProvider).waitersByIds(waiterIds);
     for (final w in waiterRows) {
       nameById[w.id] = '${w.firstName} ${w.lastName ?? ''}'.trim();
     }
@@ -436,8 +436,8 @@ Future<CloseSessionResult> showCloseSessionDialog({
   bool closeZ = false,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final sessionService = SessionService(ref.read(databaseProvider));
-  final dailySummary = DailySummaryService(ref.read(databaseProvider));
+  final sessionService = ref.read(sessionServiceProvider);
+  final dailySummary = ref.read(dailySummaryServiceProvider);
 
   // Everything up to the dialog reads the day off disk — on a long history
   // that is seconds, and the button must not look dead meanwhile. Each step
@@ -664,8 +664,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
             UnpaidOrdersSummary? outstanding;
             try {
               outstanding =
-                  await UnpaidOrdersService(ref.read(databaseProvider))
-                      .summary();
+                  await ref.read(unpaidOrdersServiceProvider).summary();
             } catch (_) {}
             try {
               zReport = await dailySummary.generateSessionReport(sessionId);
@@ -776,10 +775,8 @@ Future<CloseSessionResult> showCloseSessionDialog({
             //    stays isSynced=false and syncSessionsBulk picks it up later.
             progress.message = l10n.translate('syncing_with_server_progress');
             try {
-              final syncService = DataSyncService(
-                ref.read(databaseProvider),
-                ref.read(apiServiceProvider),
-              );
+              final syncService = ref.read(dataSyncServiceFactoryProvider)(
+                  ref.read(apiServiceProvider));
               // The session carries its Z label, and — if it closed the Z —
               // the close fields. There is no separate Z push.
               await syncService.syncSessionsBulk();
@@ -1204,10 +1201,8 @@ Future<int?> _authorizeZClose(
   );
   if (elevation == null) return null;
   // The signer must clear every rule, not just the one that stopped us.
-  final database = ref.read(databaseProvider);
-  final signer = await (database.select(database.users)
-        ..where((u) => u.id.equals(elevation.adminId)))
-      .getSingleOrNull();
+  final signer =
+      await ref.read(userRepositoryProvider).getUserById(elevation.adminId);
   if (signer == null) return null;
   final again = await zCloseBlock(
     ref,
@@ -1255,8 +1250,8 @@ Future<void> _sendEmailReport(
 ) async {
   try {
     final currency = ref.read(settingsProvider).currency;
-    final session = await SessionService(ref.read(databaseProvider))
-        .getSessionById(sessionId);
+    final session =
+        await ref.read(sessionServiceProvider).getSessionById(sessionId);
     final z = session?.zId == null
         ? null
         : await ref.read(zServiceProvider).getById(session!.zId!);
