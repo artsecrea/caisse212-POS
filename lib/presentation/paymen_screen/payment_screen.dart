@@ -18,6 +18,7 @@ import '../../domain/models/split_bill.dart';
 import '../../core/enums.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
+import '../../services/local_floor_service.dart';
 import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/sync_manager_provider.dart';
@@ -3934,7 +3935,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       // Sweep the rest of the floor while we are here. Cheap, and it clears
       // tables stranded by an earlier order that finished down a path which
       // forgot to let go of its table.
-      await orderRepo.reconcileTableOccupancy(
+      await ref.read(floorServiceProvider).reconcile(
         freeOnPayment: settings.autoClearTableAfterPaying,
       );
 

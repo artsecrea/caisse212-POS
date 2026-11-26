@@ -4,6 +4,7 @@ import 'package:loggecrea/loggecrea.dart';
 
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../services/local_floor_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/unpaid_orders_service.dart';
 import '../../utils/app_localizations.dart';
@@ -349,7 +350,7 @@ Future<void> showSettleUnpaidDialog({
   }
 
   try {
-    await repo.reconcileTableOccupancy(
+    await ref.read(floorServiceProvider).reconcile(
         freeOnPayment: ref.read(settingsProvider).autoClearTableAfterPaying);
   } catch (_) {}
   ref.invalidate(areaTablesProvider);

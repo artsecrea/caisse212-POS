@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:drift/drift.dart' show OrderingTerm, BooleanExpressionOperators;
 import '../domain/models/component_rules.dart';
 import '../domain/models/permission_rules.dart';
+import '../services/local_floor_service.dart';
 import 'order_provider.dart' show OrderRepository;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -634,10 +635,8 @@ final areasProvider = StreamProvider<List<db.Area>>((ref) {
 });
 
 // Area Tables Provider
-final areaTablesProvider = StreamProvider<List<db.AreaTable>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.areaTables)..watch()).watch();
-});
+final areaTablesProvider = StreamProvider<List<db.AreaTable>>(
+    (ref) => ref.watch(floorServiceProvider).watchTables());
 
 /// Which waiter is on each order, keyed by `orders.id`.
 ///

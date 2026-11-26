@@ -11,6 +11,7 @@ import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
+import '../../services/local_floor_service.dart';
 import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
@@ -1447,9 +1448,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     if (oldTableId != null &&
                         orderId != null &&
                         tableId != null) {
-                      await ref
-                          .read(orderRepositoryProvider)
-                          .transferOrderToTable(orderId, oldTableId, tableId);
+                      await ref.read(floorServiceProvider).transfer(
+                          orderId,
+                          fromTableId: oldTableId,
+                          toTableId: tableId);
                       ref
                           .read(orderProvider.notifier)
                           .updateTable(tableId, tableName);

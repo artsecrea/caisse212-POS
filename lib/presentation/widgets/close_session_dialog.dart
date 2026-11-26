@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/floor_repository.dart';
 import '../../providers/order_provider.dart';
+import '../../services/local_floor_service.dart';
 import '../../providers/ticket_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/user_provider.dart';
@@ -645,8 +646,8 @@ Future<CloseSessionResult> showCloseSessionDialog({
             if (freeTablesAtClose) {
               try {
                 await ref
-                    .read(orderRepositoryProvider)
-                    .clearTablesForSession(sessionId);
+                    .read(floorServiceProvider)
+                    .freeTablesForSession(sessionId);
                 ref.invalidate(areaTablesProvider);
               } catch (_) {}
             }

@@ -5,6 +5,7 @@ import '../../providers/settings_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../services/local_floor_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../data/database/app_database.dart' as db;
@@ -34,8 +35,8 @@ class _TableSelectionDialogState extends ConsumerState<TableSelectionDialog> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref
-          .read(orderRepositoryProvider)
-          .reconcileTableOccupancy(
+          .read(floorServiceProvider)
+          .reconcile(
             freeOnPayment:
                 ref.read(settingsProvider).autoClearTableAfterPaying,
           )
@@ -865,8 +866,8 @@ Future<void> _handleTableSelection(
     BuildContext context, WidgetRef ref, db.AreaTable table,
     {bool transferMode = false}) async {
   // Load existing order for this table if any
-  final orderRepo = ref.read(orderRepositoryProvider);
-  final existingOrder = await orderRepo.getOrderByTable(table.id);
+  final existingOrder =
+      await ref.read(floorServiceProvider).openTable(table.id);
   // Everything below touches the dialog's context, and the lookup above is an
   // await: the picker can be gone by the time it returns.
   if (!context.mounted) return;
@@ -988,8 +989,8 @@ Future<void> _handleTableLongPress(
 Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable table) async {
     final l10n = AppLocalizations.of(context)!;
     try {
-      final orderRepo = ref.read(orderRepositoryProvider);
-      final order = await orderRepo.getOrderByTable(table.id);
+      final floor = ref.read(floorServiceProvider);
+      final order = await floor.openTable(table.id);
 
       if (order == null || order.orderId == null) return;
 
@@ -1074,7 +1075,7 @@ Future<void> _handleClearTable(BuildContext context, WidgetRef ref, db.AreaTable
 
       // Clear the table by setting orderId to null
       if (context.mounted) {
-        await orderRepo.clearTableOrder(table.id);
+        await floor.clearTable(table.id);
 
         // Refresh the tables list
         ref.invalidate(areaTablesProvider);
