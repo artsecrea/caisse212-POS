@@ -16,7 +16,6 @@ import '../../providers/sse_provider.dart';
 import '../../services/subscription_store.dart';
 import '../../services/refund_policy_store.dart';
 import '../../services/refund_sandbox.dart';
-import '../../services/daily_summary_service.dart';
 import '../../utils/escpos_text.dart';
 import 'subscription_notice.dart';
 import 'token_debug_panel.dart';
@@ -218,7 +217,8 @@ class _TestModeScreenState extends ConsumerState<TestModeScreen> {
       return;
     }
     try {
-      final report = await DailySummaryService(ref.read(databaseProvider))
+      final report = await ref
+          .read(dailySummaryServiceProvider)
           .generateSessionReport(session.id);
       final bytes =
           await ref.read(printingServiceProvider).buildDailySummaryReportBytes(
