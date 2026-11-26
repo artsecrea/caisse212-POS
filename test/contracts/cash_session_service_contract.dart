@@ -12,6 +12,11 @@ abstract class CashSessionHarness {
   Future<int> session(String status);
   Future<String?> statusOf(int sessionId);
 
+  /// An order of [sessionId] seated at a new table; returns the table.
+  Future<int> seatedOrderIn(int sessionId);
+  Future<int?> holderOf(int tableId);
+  Future<double?> countedCashOf(int sessionId);
+
   Future<void> dispose();
 }
 
@@ -36,6 +41,38 @@ void cashSessionServiceContract(
       expect(await h.statusOf(s), 'active');
       expect(await h.sessions.resume(s), isNull,
           reason: 'not paused: nothing changes');
+    });
+
+    test('a close ends the session with the cash counted', () async {
+      final s = await h.session('active');
+
+      await h.sessions.close(s,
+          countedCash: 120, closedBy: (userId: 1, username: 'Amina'));
+
+      expect(await h.statusOf(s), 'ended');
+      expect(await h.countedCashOf(s), 120);
+    });
+
+    test('a close frees the session\u2019s tables only when asked', () async {
+      final kept = await h.session('active');
+      final freed = await h.session('active');
+      final t1 = await h.seatedOrderIn(kept);
+      final t2 = await h.seatedOrderIn(freed);
+
+      await h.sessions.close(kept, countedCash: 0);
+      await h.sessions.close(freed, countedCash: 0, freeTables: true);
+
+      expect(await h.holderOf(t1), isNotNull);
+      expect(await h.holderOf(t2), isNull);
+    });
+
+    test('publishing a close offline neither throws nor reopens it', () async {
+      final s = await h.session('active');
+      await h.sessions.close(s, countedCash: 0);
+
+      await h.sessions.publishClose(s);
+
+      expect(await h.statusOf(s), 'ended');
     });
 
     test('a closed session is not deleted', () async {

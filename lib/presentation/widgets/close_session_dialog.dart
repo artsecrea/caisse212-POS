@@ -1,13 +1,11 @@
 import 'dart:math' as math;
-import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
-import 'package:uuid/uuid.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_cash_session_service.dart';
 import '../../providers/floor_repository.dart';
 import '../../providers/order_provider.dart';
-import '../../services/local_floor_service.dart';
 import '../../services/local_payment_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/user_provider.dart';
@@ -16,7 +14,6 @@ import '../../domain/models/order_models.dart';
 import '../../services/daily_summary_service.dart';
 import '../../utils/button_styles.dart';
 import '../../services/printing_service.dart';
-import '../../services/pos_notifications.dart' show notifySessionClosed;
 import '../../services/session_service.dart';
 import '../../services/z_actions.dart';
 import '../../services/z_rules.dart' show ZRuleBlock, printSessionXWithZ;
@@ -618,34 +615,17 @@ Future<CloseSessionResult> showCloseSessionDialog({
           var progress = BlockingProgress.show(
               ctx, l10n.translate('closing_session_progress'));
           try {
-            // 1. Close the session locally.
-            await sessionService.endSession(
-              sessionId: sessionId,
-              countedCash: c,
-              countNotes: notes.isEmpty ? null : notes,
-            );
-            // Every person-made close leaves a SESSION_END, so one missing
-            // from the log points at a close nobody asked for.
-            try {
-              final me = ref.read(currentUserProvider);
-              await ref.read(activityLogServiceProvider).logSessionEnd(
-                    userId: me?.id,
-                    username: me?.effectiveDisplayName,
-                  );
-            } catch (_) {}
-
-            // 1b. Free the tables used this session so the floor starts empty
-            //     next session. Covers orders paid earlier in the shift too
-            //     (independent of the per-payment "auto-clear table" setting).
-            //     Skipped when ending with unpaid orders still open.
-            if (freeTablesAtClose) {
-              try {
-                await ref
-                    .read(floorServiceProvider)
-                    .freeTablesForSession(sessionId);
-                ref.invalidate(areaTablesProvider);
-              } catch (_) {}
-            }
+            // 1. Close the session, logged as this person's close. The
+            //    tables are freed unless it ends with unpaid orders open.
+            final me = ref.read(currentUserProvider);
+            await ref.read(cashSessionServiceProvider).close(
+                  sessionId,
+                  countedCash: c,
+                  notes: notes.isEmpty ? null : notes,
+                  closedBy: (userId: me?.id, username: me?.effectiveDisplayName),
+                  freeTables: freeTablesAtClose,
+                );
+            if (freeTablesAtClose) ref.invalidate(areaTablesProvider);
 
             // 2. Print. A session close prints at most an X — the Z report is
             //    the Z's, and prints only when the Z closes. A legacy session
@@ -765,38 +745,13 @@ Future<CloseSessionResult> showCloseSessionDialog({
             );
             printed = printed || run.printed > 0;
 
-            // 3. Push session + orders + tickets to the server so the
-            //    email-report payload reflects freshly synced data.
-            //    Best-effort: network errors are swallowed; the spinner
-            //    stays visible while this runs. If offline, the session
-            //    stays isSynced=false and syncSessionsBulk picks it up later.
+            // 3. Send the session's data, the email report and the admin
+            //    notice. The spinner stays up while it runs; offline, what
+            //    did not go stays queued.
             progress.message = l10n.translate('syncing_with_server_progress');
-            try {
-              final syncService = ref.read(dataSyncServiceFactoryProvider)(
-                  ref.read(apiServiceProvider));
-              // The session carries its Z label, and — if it closed the Z —
-              // the close fields. There is no separate Z push.
-              await syncService.syncSessionsBulk();
-              await syncService.syncCashMovementsBulk();
-              await syncService.syncOrdersBulk();
-              await syncService.syncTicketsBulk();
-              // After orders + tickets, so each refund's order (and its server
-              // line ids) already exist — and before the email report, whose
-              // refundsTotal should reflect what the server now knows.
-              await syncService.syncRefundsBulk();
-            } catch (_) {}
-
-            // 4. Send the email report (awaited — after sync so the server
-            //    already has the session/orders/tickets it references).
-            progress.message = l10n.translate('sending_report_progress');
-            await _sendEmailReport(ref, dailySummary, sessionId);
-
-            // 5. Fire-and-forget notification so admin devices get the Z summary.
-            final closedReport = zReport;
-            if (closedReport != null && closedReport.sessions.isNotEmpty) {
-              unawaited(notifySessionClosed(ref.read, sessionId,
-                  report: closedReport));
-            }
+            await ref
+                .read(cashSessionServiceProvider)
+                .publishClose(sessionId, report: zReport);
 
             progress.close();
             if (ctx.mounted) {
@@ -1238,46 +1193,3 @@ Future<bool> _askCloseDay(BuildContext context, AppLocalizations l10n) async {
   return yes == true;
 }
 
-/// Builds and POSTs the session email-report payload.
-/// Never throws — failures are logged so the dialog close is never blocked.
-Future<void> _sendEmailReport(
-  WidgetRef ref,
-  DailySummaryService dailySummary,
-  int sessionId,
-) async {
-  try {
-    final currency = ref.read(settingsProvider).currency;
-    final session =
-        await ref.read(sessionServiceProvider).getSessionById(sessionId);
-    final z = session?.zId == null
-        ? null
-        : await ref.read(zServiceProvider).getById(session!.zId!);
-
-    // The server's idempotency key is (tenant, sessionCode, clientRequestId).
-    // Minting a fresh uuid per attempt would make a retry — or a second close
-    // of the same session from Sessions Management — look like a new request
-    // and send a duplicate email. So it is generated once per session and kept
-    // in prefs until the server accepts it.
-    final prefs = ref.read(sharedPreferencesProvider);
-    final ridKey = 'email_report_rid_$sessionId';
-    var rid = prefs.getString(ridKey);
-    if (rid == null) {
-      rid = const Uuid().v4();
-      await prefs.setString(ridKey, rid);
-    }
-
-    final payload = await dailySummary.buildEmailReportPayload(
-      sessionId,
-      currency: currency,
-      zNumber: z?.zSeq,
-      clientRequestId: rid,
-    );
-    final sessionCode = (payload['session'] as Map)['code'] as String;
-    await ref.read(apiServiceProvider).sendSessionEmailReport(sessionCode, payload);
-    // Accepted (any of the five terminal statuses) — the key has done its job.
-    await prefs.remove(ridKey);
-  } catch (e) {
-    // Key deliberately left in prefs so the next attempt reuses it.
-    Logger.instance.warning('email-report: failed for session $sessionId: $e');
-  }
-}

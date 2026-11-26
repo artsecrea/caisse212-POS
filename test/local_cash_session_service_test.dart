@@ -47,6 +47,30 @@ class _LocalCashSessionHarness implements CashSessionHarness {
               : const Value.absent()));
 
   @override
+  Future<int> seatedOrderIn(int sessionId) async {
+    final table = await db
+        .into(db.areaTables)
+        .insert(AreaTablesCompanion.insert(name: 'T${++_seq}'));
+    final order = await db.into(db.orders).insert(OrdersCompanion.insert(
+        code: 'O$_seq', sessionId: Value(sessionId), tableId: Value(table)));
+    await (db.update(db.areaTables)..where((t) => t.id.equals(table)))
+        .write(AreaTablesCompanion(orderId: Value(order)));
+    return table;
+  }
+
+  @override
+  Future<int?> holderOf(int tableId) async =>
+      (await (db.select(db.areaTables)..where((t) => t.id.equals(tableId)))
+              .getSingle())
+          .orderId;
+
+  @override
+  Future<double?> countedCashOf(int sessionId) async =>
+      (await (db.select(db.cashSessions)..where((s) => s.id.equals(sessionId)))
+              .getSingle())
+          .countedCash;
+
+  @override
   Future<String?> statusOf(int sessionId) async =>
       (await (db.select(db.cashSessions)..where((s) => s.id.equals(sessionId)))
               .getSingleOrNull())

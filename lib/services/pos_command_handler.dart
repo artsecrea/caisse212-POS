@@ -270,7 +270,7 @@ class PosCommandHandler {
       final db = _ref.read(databaseProvider);
       final session = await SessionService(db).getActiveSession(user.id);
       if (session == null) return;
-      await SessionService(db).endSession(sessionId: session.id);
+      await _ref.read(cashSessionServiceProvider).close(session.id);
       _ref.read(currentSessionProvider.notifier).state = null;
       _logger.info('PosCommandHandler: session #${session.id} closed');
     });
@@ -301,9 +301,9 @@ class PosCommandHandler {
       final sessions = await (db.select(db.cashSessions)
             ..where((s) => s.status.isIn(['active', 'paused'])))
           .get();
-      final service = SessionService(db);
+      final service = _ref.read(cashSessionServiceProvider);
       for (final s in sessions) {
-        await service.endSession(sessionId: s.id);
+        await service.close(s.id);
         _logger.info('PosCommandHandler: session #${s.id} closed');
       }
       final current = _ref.read(currentSessionProvider);

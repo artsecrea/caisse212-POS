@@ -9,6 +9,7 @@ import '../../core/enums.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_cash_session_service.dart';
 import '../../providers/order_provider.dart';
 import '../../services/local_order_service.dart';
 import '../../providers/ticket_provider.dart';
@@ -534,8 +535,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       CashSession session, String reasonKey) async {
     _autoCloseTimer?.cancel();
     try {
-      final sessionService = ref.read(sessionServiceProvider);
-      await sessionService.endSession(sessionId: session.id, autoClosed: true);
+      await ref
+          .read(cashSessionServiceProvider)
+          .close(session.id, autoClosed: true);
       ref.read(currentSessionProvider.notifier).state = null;
       // Sync all pending data to server before returning to login.
       try {
