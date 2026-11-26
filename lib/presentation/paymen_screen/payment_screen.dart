@@ -18,11 +18,9 @@ import '../../domain/models/split_bill.dart';
 import '../../core/enums.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
-import '../../services/local_floor_service.dart';
 import '../../services/local_payment_service.dart';
 import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
-import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../services/permission_service.dart';
 import '../../services/activity_log_service.dart';
@@ -3267,43 +3265,28 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
 
     try {
-      final ticketNumStr = await _mintTicketNum(orderId);
       final allTickets = ref.read(ticketsProvider);
 
-      // Insert ticket + settle its rows atomically — a crash between the two
-      // steps would leave an orphaned ticket with products still PENDING, or
-      // a division half applied.
-      final ticketId = (await ref
-              .read(ticketSettlementServiceProvider)
-              .createPaidTicket(
-                num: ticketNumStr,
-                orderId: orderId,
-                paymentMethod: ticket.paymentMethod.value,
-                amount: due,
-                sessionId: session.id,
-                // z_day = the active Z's opening day (all sessions in a Z share one
-                // z_day). Stays constant even if the ticket is cut after midnight.
-                zDay: ref.read(currentZDayProvider),
-                lines: ClaimedQuantities(_claimsOf(ticket)),
-                splitFromSettled: (settled) => _lineTicketSplit(
-                  ticket,
-                  allTickets,
-                  settled,
-                  ticketIndex: ticketIndex,
-                  credit: credit,
-                )?.encode(),
-                completeKitchen:
-                    ref.read(settingsProvider).paymentCompletesKitchen,
-              ))
-          .ticketId;
-
-      // Money changed hands at THIS till, so the order is now this cashier's
-      // — including a part payment, where the rest of the bill follows the
-      // person who took the first of it. Outside the transaction above: a
-      // claim must never be able to roll back a completed payment.
-      await ref
-          .read(orderRepositoryProvider)
-          .claimOrderForCurrentUser(widget.order.orderId!);
+      // The ticket and its rows commit together — a crash cannot leave a paid
+      // ticket over lines still PENDING, or a division half applied — and the
+      // order becomes this cashier's, a part payment included: the rest of
+      // the bill follows the person who took the first of it.
+      final paid = await ref.read(paymentServiceProvider).pay(
+            orderId,
+            paymentMethod: ticket.paymentMethod.value,
+            amount: due,
+            lines: ClaimedQuantities(_claimsOf(ticket)),
+            splitFromSettled: (settled) => _lineTicketSplit(
+              ticket,
+              allTickets,
+              settled,
+              ticketIndex: ticketIndex,
+              credit: credit,
+            )?.encode(),
+            checkCloudNumbers: true,
+          );
+      final ticketId = paid.ticketId;
+      final ticketNumStr = paid.ticketNum;
 
       // Update UI state immediately (synchronous, no frame callback)
       // This is critical for _payAllTickets to see the correct state on next iteration.
@@ -3517,27 +3500,19 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         forLines: await _forLinesOf(ticket),
         closesGroups: closing ? ticket.moneyGroups : const [],
       );
-      final ticketNumStr = await _mintTicketNum(orderId);
-      final ticketId = (await ref
-              .read(ticketSettlementServiceProvider)
-              .createPaidTicket(
-                num: ticketNumStr,
-                orderId: orderId,
-                paymentMethod: ticket.paymentMethod.value,
-                amount: amount,
-                splitDetails: split.encode(),
-                sessionId: session.id,
-                zDay: ref.read(currentZDayProvider),
-                // Only the closing part settles the lines and the kitchen.
-                lines: closing
-                    ? ClaimedQuantities(_claimsOf(ticket))
-                    : const NoLines(),
-                completeKitchen: closing &&
-                    ref.read(settingsProvider).paymentCompletesKitchen,
-              ))
-          .ticketId;
-
-      await ref.read(orderRepositoryProvider).claimOrderForCurrentUser(orderId);
+      final paid = await ref.read(paymentServiceProvider).pay(
+            orderId,
+            paymentMethod: ticket.paymentMethod.value,
+            amount: amount,
+            splitDetails: split.encode(),
+            // Only the closing part settles the lines and the kitchen.
+            lines: closing
+                ? ClaimedQuantities(_claimsOf(ticket))
+                : const NoLines(),
+            checkCloudNumbers: true,
+          );
+      final ticketId = paid.ticketId;
+      final ticketNumStr = paid.ticketNum;
 
       final row =
           (await ref.read(ticketRepositoryProvider).getTicketById(ticketId))!;
@@ -3771,43 +3746,6 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     return claims;
   }
 
-  /// The next ticket number on this order.
-  ///
-  /// Max + 1 over this till's tickets AND, when online, the server's: two
-  /// tills taking parts of one bill would otherwise both mint 0002, and the
-  /// server keys tickets by (order, number). Offline the server cannot be
-  /// asked; the bulk push is then the first place a clash could show.
-  /// Local cancelled tickets count too: [TicketSettlementService.nextTicketNum]
-  /// does not filter them.
-  Future<String> _mintTicketNum(int orderId) async {
-    var serverNums = const <String>[];
-    final code = widget.order.orderCode;
-    if (code != null &&
-        code.isNotEmpty &&
-        ref.read(lastKnownOnlineStatusProvider)) {
-      final view = await ref
-          .read(apiServiceProvider)
-          .fetchOrderSplit(code, timeout: const Duration(seconds: 2));
-      // `usedTicketNumbers` includes cancelled tickets, which `tickets`
-      // leaves out: re-using a cancelled number would upsert over that row
-      // and un-cancel it. `tickets` is only the fallback for a server that
-      // predates the field.
-      final used = view?['usedTicketNumbers'];
-      final tickets = view?['tickets'];
-      if (used is List) {
-        serverNums = [for (final n in used) '$n'];
-      } else if (tickets is List) {
-        serverNums = [
-          for (final t in tickets)
-            if (t is Map && t['ticketNumber'] != null) '${t['ticketNumber']}',
-        ];
-      }
-    }
-    return ref
-        .read(ticketSettlementServiceProvider)
-        .nextTicketNum(orderId, serverNums: serverNums);
-  }
-
   /// The `split` for a ticket paid by lines, or null when the bill is not
   /// split at all — an undivided sale pushes exactly what it always did.
   ///
@@ -3907,58 +3845,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   /// in-memory `tableId`). See [OrderRepository.settleOrderAndFreeTable].
   Future<void> _checkAndCompleteOrder(int orderId) async {
     try {
-      final orderRepo = ref.read(orderRepositoryProvider);
-      final settings = ref.read(settingsProvider);
-      final paidStatus = settings.paidOrderDefaultStatus;
-
-      final completed = await orderRepo.settleOrderAndFreeTable(
-        orderId,
-        paidStatus: paidStatus,
-        clearTable: settings.autoClearTableAfterPaying,
-      );
-
-      // Sweep the rest of the floor while we are here. Cheap, and it clears
-      // tables stranded by an earlier order that finished down a path which
-      // forgot to let go of its table.
-      await ref.read(floorServiceProvider).reconcile(
-        freeOnPayment: settings.autoClearTableAfterPaying,
-      );
+      final completed =
+          await ref.read(paymentServiceProvider).completeIfSettled(orderId);
 
       if (completed) {
-        _logger.info(
-          'Order #$orderId marked as $paidStatus (all lines settled)',
-        );
-        // Before the sync below, so `takenBy` goes up with the completion
-        // rather than needing a second push.
-        await orderRepo.claimOrderForCurrentUser(orderId);
-
-        // The division has done its job. Leaving the rows behind would have
-        // them reconstructed against re-used row ids if this order is ever
-        // reopened, and nothing else ever reads them again.
-        try {
-          await ref.read(paymentServiceProvider).clearDraftSplit(orderId);
-        } catch (e) {
-          _logger.error('Failed to clear draft split for #$orderId: $e');
-        }
-
-        // Auto-sync if online — detached, so the payment screen closes on the
-        // local commit instead of on a network round-trip. settleOrderAndFreeTable
-        // passes queueSyncOperation: false, so this is the paid order's only
-        // prompt push; it writes isSynced = false, so the periodic sweep stays
-        // the backstop if it fails.
-        final isOnline = ref.read(lastKnownOnlineStatusProvider);
-        if (isOnline) {
-          final syncManager = ref.read(syncManagerProvider.notifier);
-          unawaited(() async {
-            try {
-              await syncManager.autoSyncOrder(orderId);
-              _logger.info('Auto-synced $paidStatus order #$orderId');
-            } catch (e) {
-              _logger.error('Auto-sync failed for order #$orderId: $e');
-            }
-          }());
-        }
-
+        _logger.info('Order #$orderId completed (all lines settled)');
         // Close payment dialog with success
         if (mounted) {
           Navigator.of(context).pop(true);

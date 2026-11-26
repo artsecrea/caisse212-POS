@@ -3,13 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/models/order_models.dart';
 import '../../providers/database_providers.dart';
-import '../../providers/network_provider.dart';
 import '../../providers/order_provider.dart';
-import '../../providers/ticket_provider.dart';
 import '../../services/local_payment_service.dart';
 import '../../services/ticket_settlement_service.dart';
-import '../../providers/settings_provider.dart';
-import '../../providers/sync_manager_provider.dart';
 import '../../services/printing_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
@@ -156,14 +152,7 @@ class _WaiterSettlementDialogState
     if (selected.isEmpty) return;
 
     setState(() => _isWorking = true);
-    final session = ref.read(currentSessionProvider);
-    final repo = ref.read(orderRepositoryProvider);
-    final paidStatus =
-        ref.read(settingsProvider).paidOrderDefaultStatus;
-    final autoClearTable =
-        ref.read(settingsProvider).autoClearTableAfterPaying;
-    final isOnline = ref.read(lastKnownOnlineStatusProvider);
-    final syncManager = ref.read(syncManagerProvider.notifier);
+    final payments = ref.read(paymentServiceProvider);
     final printingService = ref.read(printingServiceProvider);
     final cashier = ref.read(currentUserProvider);
     final prefs = ref.read(sharedPreferencesProvider);
@@ -181,40 +170,19 @@ class _WaiterSettlementDialogState
         final due = _due(o);
         if (due <= 0) continue;
 
-        final created =
-            await ref.read(ticketSettlementServiceProvider).createPaidTicket(
-                  orderId: orderId,
-                  paymentMethod: 'CASH',
-                  amount: due,
-                  sessionId: session?.id,
-                  // z_day = the session's opening calendar day (falls back to
-                  // today's midnight when no session is open).
-                  zDay: ref.read(currentZDayProvider),
-                  lines: UnpaidLinesOf(orderId),
-                  completeKitchen:
-                      ref.read(settingsProvider).paymentCompletesKitchen,
-                );
-        final ticketId = created.ticketId;
-        final ticketNumStr = created.num;
-
-        // Mark the order paid AND free its table in one atomic step — the same
-        // path the cashier uses, so a waiter-settled order frees its table
-        // (occupancy-based) exactly like a cashier-paid one, honoring the
-        // auto-clear-table setting. All lines are paid by now, so this always
-        // settles.
         // The waiter keeps `servedBy`; the till that took the cash takes
-        // `takenBy`, so the money lands in this cashier's session.
-        await repo.claimOrderForCurrentUser(orderId);
-        await repo.settleOrderAndFreeTable(
+        // `takenBy`, so the money lands in this cashier's session. Every
+        // line is paid by now, so the order completes and frees its table
+        // exactly as a cashier-paid one does.
+        final paid = await payments.pay(
           orderId,
-          paidStatus: paidStatus,
-          clearTable: autoClearTable,
+          paymentMethod: 'CASH',
+          amount: due,
+          lines: UnpaidLinesOf(orderId),
         );
-        if (isOnline) {
-          try {
-            await syncManager.autoSyncOrder(orderId);
-          } catch (_) {/* sync errors here are non-fatal — pending ops handles */}
-        }
+        final ticketId = paid.ticketId;
+        final ticketNumStr = paid.ticketNum;
+        await payments.completeIfSettled(orderId);
 
         // Per-order payment receipt — same call shape the cashier payment
         // screen uses (payment_screen.dart:1569). This is what the user

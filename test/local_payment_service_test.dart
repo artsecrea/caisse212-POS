@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,8 +31,32 @@ class _LocalPaymentHarness implements PaymentHarness {
     ]);
     await db.into(db.products).insert(ProductsCompanion.insert(
         id: const Value(1), name: 'P', price: 10, finalPrice: 10));
-    return _LocalPaymentHarness(db, container);
+    final sessionId = await db.into(db.cashSessions).insert(
+        CashSessionsCompanion.insert(
+            code: 'OPEN', cashierId: 1, moneyAtStart: 0));
+    container.read(currentSessionProvider.notifier).state =
+        await (db.select(db.cashSessions)..where((s) => s.id.equals(sessionId)))
+            .getSingle();
+    return _LocalPaymentHarness(db, container)..openSessionId = sessionId;
   }
+
+  @override
+  late final int openSessionId;
+
+  @override
+  Future<int?> sessionOfTicket(int ticketId) async =>
+      (await (db.select(db.tickets)..where((t) => t.id.equals(ticketId)))
+              .getSingle())
+          .sessionId;
+
+  @override
+  Future<List<String>> ticketNumbersOf(int orderId) async => [
+        for (final t in await (db.select(db.tickets)
+              ..where((t) => t.orderId.equals(orderId))
+              ..orderBy([(t) => OrderingTerm(expression: t.id)]))
+            .get())
+          t.num
+      ];
 
   @override
   PaymentService get payments => container.read(paymentServiceProvider);
@@ -102,5 +127,14 @@ class _LocalPaymentHarness implements PaymentHarness {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  // Completing an order kicks a push, which asks the platform whether the
+  // till is online.
+  const MethodChannel('dev.fluttercommunity.plus/connectivity')
+      .setMockMethodCallHandler((call) async {
+    if (call.method == 'check') return <String>['none'];
+    return null;
+  });
+
   paymentServiceContract('LocalPaymentService', _LocalPaymentHarness.create);
 }

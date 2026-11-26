@@ -12,6 +12,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/activity_log_service.dart';
+import '../../services/local_payment_service.dart';
 import '../../services/pos_notifications.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
@@ -231,13 +232,8 @@ Future<bool> _settle({
   }
 
   // Complete the new order (status, table) exactly as a payment does.
-  final repo = ref.read(orderRepositoryProvider);
-  final settings = ref.read(settingsProvider);
   try {
-    await repo.settleOrderAndFreeTable(orderId,
-        paidStatus: settings.paidOrderDefaultStatus,
-        clearTable: settings.autoClearTableAfterPaying);
-    await repo.claimOrderForCurrentUser(orderId);
+    await ref.read(paymentServiceProvider).completeIfSettled(orderId);
   } catch (e) {
     Logger.instance.error('Exchange order completion failed: $e');
   }

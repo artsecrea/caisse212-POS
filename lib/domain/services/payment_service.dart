@@ -1,4 +1,13 @@
 import '../models/split_bill.dart' show DraftSplitRow;
+import '../../services/ticket_settlement_service.dart'
+    show NoLines, SettledLines;
+
+export '../../services/ticket_settlement_service.dart'
+    show ClaimedQuantities, NoLines, SettledLines, UnpaidLinesOf, WholeRows;
+
+/// A paid ticket just recorded: its id and number, and the rows that now
+/// carry what it paid (see `TicketSettlementService.createPaidTicket`).
+typedef PaidTicket = ({int ticketId, String ticketNum, Map<int, int> settledRows});
 
 /// What a till does with the money side of an order: its tickets and the
 /// split being drawn up. An interface because tickets are shared state — on a
@@ -9,6 +18,31 @@ import '../models/split_bill.dart' show DraftSplitRow;
 /// Nothing here prints: an action returns what was recorded, and the till
 /// prints it on its own printers.
 abstract interface class PaymentService {
+  /// Take [amount] by [paymentMethod] on [orderId], settling [lines], in the
+  /// open session and business day, and make the order the signed-in
+  /// cashier's — money changed hands at this till. A ticket that settles
+  /// lines also completes their kitchen when the till is set to.
+  ///
+  /// The ticket is numbered after the order's others. [checkCloudNumbers]
+  /// also counts the numbers the cloud already holds for the order, when
+  /// online, so two tills taking parts of one bill cannot mint the same one.
+  /// [splitDetails] is the ticket's split; [splitFromSettled] decides it
+  /// instead once the lines are settled.
+  Future<PaidTicket> pay(
+    int orderId, {
+    required String paymentMethod,
+    required double amount,
+    SettledLines lines = const NoLines(),
+    String? splitDetails,
+    String? Function(Map<int, int> settledRows)? splitFromSettled,
+    bool checkCloudNumbers = false,
+  });
+
+  /// Once every line of [orderId] is paid or voided: mark it paid, free its
+  /// table when the till is set to, drop its draft split, and send it to the
+  /// cloud. Returns whether it was completed.
+  Future<bool> completeIfSettled(int orderId);
+
   /// The draft split saved for [orderId], so a reopened payment screen gets
   /// the cashier's arrangement back.
   Future<List<DraftSplitRow>> draftSplit(int orderId);

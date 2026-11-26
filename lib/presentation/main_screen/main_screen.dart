@@ -53,7 +53,6 @@ import '../../utils/order_validation.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../services/waiter_call_service.dart' show WaiterCall, waiterCallAckProvider;
 import '../../utils/responsive_utils.dart';
-import '../../providers/sync_manager_provider.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/sse_provider.dart';
 import '../../providers/reservation_providers.dart';
@@ -2155,9 +2154,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   Future<void> _payDirectly() async {
     if (_isSavingOrder) return;
     var currentOrder = ref.read(orderProvider);
-    final orderRepo = ref.read(orderRepositoryProvider);
     final currentUser = ref.read(currentUserProvider);
-    final settings = ref.read(settingsProvider);
     final session = ref.read(currentSessionProvider);
     final printingService = ref.read(printingServiceProvider);
     final prefs = ref.read(sharedPreferencesProvider);
@@ -2242,9 +2239,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // Read before the new ticket exists: the fee rides the first one.
       final existingTickets =
           await ref.read(ticketRepositoryProvider).getTicketsByOrderId(orderId);
-      final created =
-          await ref.read(ticketSettlementServiceProvider).createPaidTicket(
-        orderId: orderId,
+      final paid = await ref.read(paymentServiceProvider).pay(
+        orderId,
         paymentMethod: TransactionType.cash.value,
         amount: total,
         splitDetails: moneyParts.isEmpty
@@ -2256,18 +2252,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 parts: moneyParts.length + 1,
                 orderTotal: lastSplit?.orderTotal ?? fullTotal,
               ).encode(),
-        sessionId: session.id,
-        // z_day = the session's opening calendar day (constant across midnight).
-        zDay: ref.read(currentZDayProvider),
         // Only UNPAID order items (don't touch already-paid items).
         lines: WholeRows([
           for (final item in unpaidItems)
             if (item.id != null) item.id!,
         ]),
-        completeKitchen: ref.read(settingsProvider).paymentCompletesKitchen,
       );
-      final ticketId = created.ticketId;
-      final ticketNumStr = created.num;
+      final ticketId = paid.ticketId;
+      final ticketNumStr = paid.ticketNum;
 
       // Everything below builds the paperwork for the items just paid. All of
       // it is read off local state NOW and printed DETACHED further down, so
@@ -2353,45 +2345,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         }
       }());
 
-      // Finalize atomically: mark paid + free the table (occupancy-based, so a
-      // stale in-memory tableId can't strand the table) in one transaction.
-      // Tolerates CANCELED lines. See OrderRepository.settleOrderAndFreeTable.
-      // Local writes, kept on the critical path: the table must be released
-      // before the cashier is told the till is free.
-      final paidStatus = settings.paidOrderDefaultStatus;
-      // Paying it here makes it this cashier's, wherever it came from.
-      await orderRepo.claimOrderForCurrentUser(orderId);
-
-      final completed = await orderRepo.settleOrderAndFreeTable(
-        orderId,
-        paidStatus: paidStatus,
-        clearTable: settings.autoClearTableAfterPaying,
-      );
+      // Marks it paid and frees the table before the cashier is told the
+      // till is free; the push to the cloud is detached.
+      await ref.read(paymentServiceProvider).completeIfSettled(orderId);
 
       // Money is recorded and the table is released — the till is free.
       if (context.mounted) {
         ref.read(orderProvider.notifier).clearOrder();
       }
 
-      if (completed) {
-        // Detached. Kept rather than deleted (unlike the Proceed path, where
-        // the repository already pushes): settleOrderAndFreeTable passes
-        // queueSyncOperation: false, so this is the paid order's only prompt
-        // push. It still writes isSynced = false, so the periodic sweep
-        // remains the backstop if this fails.
-        final isOnline = ref.read(lastKnownOnlineStatusProvider);
-        if (isOnline) {
-          final syncManager = ref.read(syncManagerProvider.notifier);
-          unawaited(() async {
-            try {
-              await syncManager.autoSyncOrder(orderId);
-              _logger.info('Auto-synced $paidStatus order #$orderId after direct payment');
-            } catch (e) {
-              _logger.error('Auto-sync failed after direct payment: $e');
-            }
-          }());
-        }
-      }
     } catch (e) {
       _logger.error('Direct payment failed: $e');
       if (context.mounted) {
