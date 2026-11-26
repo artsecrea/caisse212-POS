@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/providers/user_provider.dart';
 import 'package:caisse212/utils/admin_auth.dart';
 import 'package:caisse212/utils/master_password.dart';
 import 'package:caisse212/utils/super_admin_auth.dart';
@@ -14,6 +15,7 @@ import 'package:caisse212/utils/super_admin_auth.dart';
 /// password never carries the flag.
 void main() {
   late AppDatabase db;
+  late UserRepository users;
   late SharedPreferences prefs;
 
   String todayHash() => BCrypt.hashpw(
@@ -23,6 +25,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     prefs = await SharedPreferences.getInstance();
     db = AppDatabase.forTesting(NativeDatabase.memory());
+    users = UserRepository(db);
     for (final (id, name, type) in [(1, 'boss', 'admin'), (2, 'sara', 'cashier')]) {
       await db.into(db.users).insert(UsersCompanion.insert(
             id: Value(id),
@@ -47,32 +50,32 @@ void main() {
   });
 
   test('admin gate: master password is accepted and flagged', () async {
-    final e = await verifyAdminCredentials(db, prefs,
+    final e = await verifyAdminCredentials(users, prefs,
         username: 'boss', password: todayHash());
     expect(e?.adminId, 1);
     expect(e?.viaMasterPassword, isTrue);
   });
 
   test('admin gate: own password is not flagged', () async {
-    final e = await verifyAdminCredentials(db, prefs,
+    final e = await verifyAdminCredentials(users, prefs,
         username: 'boss', password: 'own-boss');
     expect(e?.viaMasterPassword, isFalse);
   });
 
   test('manager gate: accepted for a listed user, flagged', () async {
-    final e = await verifyManagerCredentials(db, prefs,
+    final e = await verifyManagerCredentials(users, prefs,
         username: 'boss', password: todayHash(), permission: 'pos:z:open');
     expect(e?.viaMasterPassword, isTrue);
     // The dialog only lists token holders, and the check agrees.
     expect(
-        await verifyManagerCredentials(db, prefs,
+        await verifyManagerCredentials(users, prefs,
             username: 'sara', password: todayHash(), permission: 'pos:z:open'),
         isNull);
   });
 
   test('wrong password is refused', () async {
     expect(
-        await verifyAdminCredentials(db, prefs,
+        await verifyAdminCredentials(users, prefs,
             username: 'boss', password: 'nope'),
         isNull);
   });

@@ -28,7 +28,7 @@ import '../presentation/widgets/adaptive_text_field.dart';
 /// Returns an [AdminElevation] identifying the admin on success, or `null` if
 /// no admin user matches.
 Future<AdminElevation?> verifyAdminCredentials(
-  AppDatabase db,
+  UserRepository users,
   SharedPreferences prefs, {
   required String username,
   required String password,
@@ -42,10 +42,7 @@ Future<AdminElevation?> verifyAdminCredentials(
     if (trimmedUser.isEmpty || trimmedPw.isEmpty) return null;
 
     // Find any user with this username — then check it's an admin.
-    final user = await (db.select(db.users)
-          ..where((u) => u.username.equals(trimmedUser))
-          ..limit(1))
-        .getSingleOrNull();
+    final user = await users.findByUsername(trimmedUser);
     if (user == null) return null;
     if (user.type.toLowerCase() != 'admin') return null;
 
@@ -83,7 +80,7 @@ bool userHasPermission(User user, String permission) => roleGrants(
 /// holds [permission] (used for the login-screen Z gate where a "manager" is a
 /// non-admin permission-holder). Returns an [AdminElevation] on success.
 Future<AdminElevation?> verifyManagerCredentials(
-  AppDatabase db,
+  UserRepository users,
   SharedPreferences prefs, {
   required String username,
   required String password,
@@ -92,10 +89,7 @@ Future<AdminElevation?> verifyManagerCredentials(
   try {
     final trimmedUser = username.trim();
     if (trimmedUser.isEmpty || password.isEmpty) return null;
-    final user = await (db.select(db.users)
-          ..where((u) => u.username.equals(trimmedUser))
-          ..limit(1))
-        .getSingleOrNull();
+    final user = await users.findByUsername(trimmedUser);
     if (user == null) return null;
     if (!userHasPermission(user, permission)) return null;
 
@@ -160,9 +154,7 @@ Future<AdminElevation?> showAdminCredentialDialog(
     if (required.isEmpty) {
       admins = await ref.read(userRepositoryProvider).getUsersByType('admin');
     } else {
-      final all = await ref.read(databaseProvider).select(
-            ref.read(databaseProvider).users,
-          ).get();
+      final all = await ref.read(userRepositoryProvider).getAllUsers();
       admins = all
           .where((u) => required.every((p) => userHasPermission(u, p)))
           .toList();
@@ -196,17 +188,17 @@ Future<AdminElevation?> showAdminCredentialDialog(
             });
             AdminElevation? r;
             try {
-              final db = ref.read(databaseProvider);
+              final users = ref.read(userRepositoryProvider);
               final prefs = ref.read(sharedPreferencesProvider);
               r = required.isEmpty
                   ? await verifyAdminCredentials(
-                      db,
+                      users,
                       prefs,
                       username: selectedUser.username,
                       password: passwordCtrl.text,
                     )
                   : await verifyManagerCredentials(
-                      db,
+                      users,
                       prefs,
                       username: selectedUser.username,
                       password: passwordCtrl.text,
