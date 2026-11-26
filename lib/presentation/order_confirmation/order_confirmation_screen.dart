@@ -3,6 +3,7 @@ import '../../core/theme/app_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:caisse212/domain/models/external_order_models.dart';
+import 'package:caisse212/providers/catalogue_repository.dart';
 import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/providers/external_order_provider.dart';
 import 'package:caisse212/providers/order_provider.dart';
@@ -58,21 +59,17 @@ class _OrderConfirmationScreenState
 
   Future<List<Map<String, dynamic>>> _resolveExternalItems(
       ExternalQueueItem item) async {
-    final db = ref.read(databaseProvider);
+    final catalogue = ref.read(catalogueRepositoryProvider);
     final result = <Map<String, dynamic>>[];
     for (final qi in item.order.items) {
-      final product = await (db.select(db.products)
-            ..where((p) => p.id.equals(qi.productId)))
-          .getSingleOrNull();
+      final product = await catalogue.productById(qi.productId);
       // Variant price wins when the queue item picked a variant — variants
       // typically have a different price than the base product (e.g. Large
       // size, special edition). Falls back to the product price otherwise.
       double unitPrice = product?.finalPrice ?? 0.0;
       String? variantName;
       if (qi.variantId != null) {
-        final variant = await (db.select(db.productVariants)
-              ..where((v) => v.id.equals(qi.variantId!)))
-            .getSingleOrNull();
+        final variant = await catalogue.variantById(qi.variantId!);
         if (variant != null) {
           unitPrice = variant.price;
           variantName = variant.name;
@@ -92,9 +89,7 @@ class _OrderConfirmationScreenState
       final comps = <Map<String, dynamic>>[];
       double componentsPerItem = 0.0;
       for (final c in qi.components) {
-        final comp = await (db.select(db.components)
-              ..where((cc) => cc.id.equals(c.componentId)))
-            .getSingleOrNull();
+        final comp = await catalogue.componentById(c.componentId);
         if (comp == null) continue;
         final compPrice = c.price ?? comp.price;
         componentsPerItem += compPrice * c.quantity;
