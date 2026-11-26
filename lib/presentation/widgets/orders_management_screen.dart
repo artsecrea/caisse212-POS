@@ -1,7 +1,6 @@
 import 'dart:async';
 // filepath: /home/artecrea/StudioProjects/posecrea/lib/presentation/widgets/orders_management_screen.dart
 
-import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +16,7 @@ import '../../domain/models/order_models.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/floor_repository.dart';
 import '../../providers/settings_provider.dart';
 import '../../data/database/app_database.dart';
 import '../../services/permission_service.dart';
@@ -141,10 +141,8 @@ class _OrdersManagementScreenState
     if (!mounted) return;
 
     try {
-      final db = ref.read(databaseProvider);
-      final order = await (db.select(db.orders)
-            ..where((t) => t.id.equals(targetId)))
-          .getSingleOrNull();
+      final order =
+          await ref.read(orderRepositoryProvider).getOrderRow(targetId);
       if (order != null && mounted) _showOrderDetails(order);
     } catch (_) {}
   }
@@ -164,9 +162,8 @@ class _OrdersManagementScreenState
       return;
     }
     try {
-      final database = ref.read(databaseProvider);
       final lowerQuery = query.toLowerCase();
-      final allCustomers = await database.select(database.customers).get();
+      final allCustomers = await ref.read(customerRepositoryProvider).getAll();
       final filtered = allCustomers.where((c) {
         final fullName = c.displayLabel.toLowerCase();
         final phone = c.phone?.toLowerCase() ?? '';
@@ -721,8 +718,7 @@ class _OrdersManagementScreenState
 
   Future<void> _showTablePicker() async {
     final l10n = AppLocalizations.of(context)!;
-    final database = ref.read(databaseProvider);
-    final tables = await database.select(database.areaTables).get();
+    final tables = await ref.read(floorRepositoryProvider).allTables();
     if (!mounted) return;
     final selectedId = await showDialog<int?>(
       context: context,
@@ -2410,10 +2406,8 @@ class _OrdersManagementScreenState
   Future<void> _showPendingOperationsDialog() async {
     final l10n = AppLocalizations.of(context)!;
     try {
-      final database = ref.read(databaseProvider);
-      final operations = await (database.select(database.pendingSyncOperations)
-            ..orderBy([(t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.desc)]))
-          .get();
+      final pendingOps = ref.read(pendingOperationsServiceProvider);
+      final operations = await pendingOps.getAllOperationsNewestFirst();
 
       if (!mounted) return;
 
@@ -2459,9 +2453,7 @@ class _OrdersManagementScreenState
                           trailing: IconButton(
                             icon: const Icon(Icons.delete_forever, color: Colors.red),
                             onPressed: () async {
-                              await (database.delete(database.pendingSyncOperations)
-                                    ..where((t) => t.id.equals(op.id)))
-                                  .go();
+                              await pendingOps.markCompleted(op.id);
                               Navigator.pop(dialogContext);
                               _showPendingOperationsDialog();
                             },
@@ -2575,16 +2567,12 @@ class _OrdersManagementScreenState
 
     try {
       // Step 1: Search in local database first
-      final database = ref.read(databaseProvider);
-      final localOrders = await (database.select(database.orders)
-            ..where((tbl) => tbl.code.equals(orderCode)))
-          .get();
+      final order =
+          await ref.read(orderRepositoryProvider).findOrderRowByCode(orderCode);
 
-      if (localOrders.isNotEmpty) {
+      if (order != null) {
         // Order found in local database
         if (mounted) Navigator.of(context).pop(); // Close loading dialog
-
-        final order = localOrders.first;
 
         if (mounted) {
           _showOrderDetails(order);
