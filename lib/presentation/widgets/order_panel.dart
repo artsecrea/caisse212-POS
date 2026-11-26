@@ -7,7 +7,7 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:drift/drift.dart' as drift;
+import '../../providers/catalogue_repository.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/held_orders_provider.dart';
 import '../../domain/models/order_course.dart';
@@ -21,7 +21,6 @@ import '../../services/activity_log_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
-import '../../data/database/app_database.dart';
 import 'product_modification_dialog.dart' show ProductModificationDialog;
 import 'unpaid_orders_dialog.dart';
 import '../../utils/button_styles.dart';
@@ -297,15 +296,13 @@ class OrderPanel extends ConsumerWidget {
       double? newTva;
       final zeroPriceRate = ref.read(settingsProvider).zeroPriceTvaRate;
       if (priceOverride != null && priceOverride >= 0 && zeroPriceRate > 0) {
-        final db = ref.read(databaseProvider);
+        final catalogueRepo = ref.read(catalogueRepositoryProvider);
         final catalogue = item.variantId != null
-            ? await (db.select(db.productVariants)
-                    ..where((v) => v.id.equals(item.variantId!)))
-                  .getSingleOrNull()
+            ? await catalogueRepo
+                  .variantById(item.variantId!)
                   .then((v) => v == null ? null : (v.price, v.tvaAmount))
-            : await (db.select(db.products)
-                    ..where((p) => p.id.equals(item.productId)))
-                  .getSingleOrNull()
+            : await catalogueRepo
+                  .productById(item.productId)
                   .then((p) => p == null ? null : (p.finalPrice, p.tvaAmount));
         if (catalogue != null) {
           newTva = lineUnitTva(
@@ -434,102 +431,16 @@ class OrderPanel extends ConsumerWidget {
 
       if (confirmed == true && context.mounted) {
         try {
-          final database = ref.read(databaseProvider);
-          final syncService = ref.read(dataSyncServiceProvider);
           final isOnline = ref.read(lastKnownOnlineStatusProvider);
 
           if (item.id != null && item.ticketId != null) {
-            // First, check how many items are in this ticket
-            final ticketProducts = await (database.select(
-              database.orderProducts,
-            )..where((tbl) => tbl.ticketId.equals(item.ticketId!))).get();
-
-            // Delete the order product from database
-            await (database.delete(
-              database.orderProducts,
-            )..where((tbl) => tbl.id.equals(item.id!))).go();
-
-            // Note: Order products are synced as part of the order, not individually
-
-            // If this was the only item in the ticket, delete the ticket
-            if (ticketProducts.length == 1) {
-              // Get ticket and order info for sync
-              final ticket =
-                  await (database.select(database.tickets)
-                        ..where((tbl) => tbl.id.equals(item.ticketId!)))
-                      .getSingleOrNull();
-
-              String? orderCode;
-              String? ticketNum;
-
-              if (ticket != null) {
-                ticketNum = ticket.num;
-                // Get order code
-                final order =
-                    await (database.select(database.orders)
-                          ..where((tbl) => tbl.id.equals(ticket.orderId)))
-                        .getSingleOrNull();
-                orderCode = order?.code;
-              }
-
-              await (database.delete(
-                database.tickets,
-              )..where((tbl) => tbl.id.equals(item.ticketId!))).go();
-
-              // Queue or execute delete operation for ticket
-              if (ticket != null &&
-                  ticket.isSynced &&
-                  orderCode != null &&
-                  ticketNum != null) {
-                await syncService.deleteTicketEntity(
-                  entityId: item.ticketId!,
-                  orderCode: orderCode,
-                  ticketNum: ticketNum,
+            final ticketDeleted = await ref
+                .read(orderRepositoryProvider)
+                .deletePaidLine(
+                  orderProductId: item.id!,
+                  ticketId: item.ticketId!,
                   isOnline: isOnline,
                 );
-              }
-            } else {
-              // Otherwise, update the ticket amount
-              final remainingProducts = await (database.select(
-                database.orderProducts,
-              )..where((tbl) => tbl.ticketId.equals(item.ticketId!))).get();
-
-              final newTicketAmount = remainingProducts.fold<double>(
-                0.0,
-                (sum, product) =>
-                    sum + (product.unitaryPrice * product.quantity),
-              );
-
-              await (database.update(
-                database.tickets,
-              )..where((tbl) => tbl.id.equals(item.ticketId!))).write(
-                TicketsCompanion(amount: drift.Value(newTicketAmount)),
-              );
-
-              // Queue or execute update operation for ticket
-              final ticket =
-                  await (database.select(database.tickets)
-                        ..where((tbl) => tbl.id.equals(item.ticketId!)))
-                      .getSingleOrNull();
-
-              if (ticket != null && ticket.isSynced) {
-                // Get order code
-                final order =
-                    await (database.select(database.orders)
-                          ..where((tbl) => tbl.id.equals(ticket.orderId)))
-                        .getSingleOrNull();
-
-                if (order != null) {
-                  await syncService.updateTicketEntity(
-                    entityId: item.ticketId!,
-                    orderCode: order.code,
-                    ticketNum: ticket.num,
-                    updateData: {'amount': newTicketAmount},
-                    isOnline: isOnline,
-                  );
-                }
-              }
-            }
 
             // Reload the whole order. Rebuilding the items by hand here left
             // out the print cursors, variant and server id of every remaining
@@ -553,7 +464,7 @@ class OrderPanel extends ConsumerWidget {
             }
 
             if (context.mounted) {
-              final message = ticketProducts.length == 1
+              final message = ticketDeleted
                   ? 'Paid item and ticket deleted successfully'
                   : 'Paid item deleted successfully';
               SnackBarHelper.showSuccessSnackBar(context, ref, message);
