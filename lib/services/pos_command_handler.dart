@@ -3,9 +3,9 @@ import 'package:loggecrea/loggecrea.dart';
 
 import '../providers/admin_elevation_provider.dart';
 import '../providers/database_providers.dart';
+import 'local_cash_session_service.dart';
 import 'activity_log_service.dart';
 import 'data_sync_service.dart';
-import 'pos_notifications.dart' show notifySessionPauseChange;
 import 'session_service.dart';
 import 'subscription_store.dart';
 
@@ -286,9 +286,7 @@ class PosCommandHandler {
       final service = SessionService(db);
       final session = await service.getActiveSession(user.id);
       if (session != null && session.status == 'active') {
-        if (await service.pauseSession(session.id)) {
-          await notifySessionPauseChange(_ref.read, session.id);
-        }
+        await _ref.read(cashSessionServiceProvider).pause(session.id);
       }
       await _ref
           .read(activityLogServiceProvider)

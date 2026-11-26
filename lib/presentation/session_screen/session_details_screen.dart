@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../../services/pos_notifications.dart' show notifySessionPauseChange;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_cash_session_service.dart';
 import '../../services/session_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
@@ -71,11 +71,9 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     if (_currentSession == null) return;
 
     try {
-      final sessionService = ref.read(sessionServiceProvider);
-      final id = _currentSession!.id;
-      if (await sessionService.pauseSession(id)) {
-        await notifySessionPauseChange(ref.read, id);
-      }
+      await ref
+          .read(cashSessionServiceProvider)
+          .pause(_currentSession!.id);
       await _loadCurrentSession();
       if (mounted) {
         SnackBarHelper.showToast('Session paused', kind: ToastKind.warning);
@@ -91,12 +89,9 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     if (_currentSession == null) return;
 
     try {
-      final sessionService = ref.read(sessionServiceProvider);
-      final id = _currentSession!.id;
-      final pausedAt = await sessionService.resumeSession(id);
-      if (pausedAt != null) {
-        await notifySessionPauseChange(ref.read, id, pausedAt: pausedAt);
-      }
+      await ref
+          .read(cashSessionServiceProvider)
+          .resume(_currentSession!.id);
       await _loadCurrentSession();
       if (mounted) {
         SnackBarHelper.showToast('Session resumed', kind: ToastKind.success);

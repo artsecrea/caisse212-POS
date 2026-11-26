@@ -7,6 +7,7 @@ import '../domain/models/order_models.dart';
 import '../domain/models/order_snapshot.dart';
 import '../providers/admin_elevation_provider.dart';
 import '../providers/database_providers.dart';
+import 'local_cash_session_service.dart';
 import '../providers/held_orders_provider.dart';
 import '../providers/order_provider.dart';
 import 'session_service.dart';
@@ -86,7 +87,9 @@ class UpdateResume {
         return false;
       }
       if (session.status == 'paused') {
-        await sessionService.resumeSession(session.id);
+        // Resumed by the update itself, not by a person: no admin notice.
+        await read(cashSessionServiceProvider)
+            .resume(session.id, notifyAdmins: false);
         session = await sessionService.getSessionById(session.id);
         if (session == null) return false;
       }

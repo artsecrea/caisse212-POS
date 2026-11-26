@@ -1,5 +1,4 @@
 import 'dart:async' show unawaited;
-import '../../services/pos_notifications.dart' show notifySessionPauseChange;
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
@@ -11,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_cash_session_service.dart';
 import '../../services/permission_service.dart';
 import '../../services/z_actions.dart';
 import '../../services/z_rules.dart' show ZRuleBlock;
@@ -691,17 +691,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
         if (existingSession != null) {
           if (existingSession.status == 'paused') {
-            final pausedAt =
-                await sessionService.resumeSession(existingSession.id);
+            await ref
+                .read(cashSessionServiceProvider)
+                .resume(existingSession.id);
             final resumedSession =
                 await sessionService.getSessionById(existingSession.id);
             ref.read(currentSessionProvider.notifier).state = resumedSession;
             await ref.read(activityLogServiceProvider)
                 .logSessionResume(userId: user.id, username: actorName);
-            if (pausedAt != null) {
-              await notifySessionPauseChange(ref.read, existingSession.id,
-                  pausedAt: pausedAt);
-            }
             if (mounted) {
               SnackBarHelper.showToast(l10n
                     .translate('resumed_session')

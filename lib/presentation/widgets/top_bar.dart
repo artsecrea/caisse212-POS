@@ -1,6 +1,5 @@
 import 'kitchen_board_dialog.dart' show showKitchenBoardDialog;
 import 'dart:async';
-import '../../services/pos_notifications.dart' show notifySessionPauseChange;
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +12,7 @@ import 'package:caisse212/services/permission_service.dart';
 import 'package:caisse212/services/activity_log_service.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_cash_session_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/customer_display_service.dart';
@@ -702,9 +702,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
       if (choice == 'pause') {
         // Pause session
-        if (await sessionService.pauseSession(session.id)) {
-          await notifySessionPauseChange(ref.read, session.id);
-        }
+        await ref.read(cashSessionServiceProvider).pause(session.id);
         if (mounted) {
           SnackBarHelper.showToast(l10n?.translate('session_paused_resume_login') ?? 'Session paused. Resume when you login again.', kind: ToastKind.warning);
         }
@@ -768,9 +766,7 @@ class _TopBarState extends ConsumerState<TopBar> {
         // dialog's End/Pause did not run (an error fell through to logout).
         // Ending it would close a cashier's shift nobody asked to close.
         if (session != null && session.status == 'active') {
-          if (await sessionService.pauseSession(session.id)) {
-            await notifySessionPauseChange(ref.read, session.id);
-          }
+          await ref.read(cashSessionServiceProvider).pause(session.id);
         }
       }
       await syncService.syncPendingOperations();

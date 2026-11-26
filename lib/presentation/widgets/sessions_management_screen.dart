@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_cash_session_service.dart';
 import '../../providers/network_provider.dart';
 import '../../services/session_service.dart';
 import '../../services/permission_service.dart';
@@ -596,8 +597,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
     if (confirm == true) {
       try {
-        final sessionService = ref.read(sessionServiceProvider);
-        await sessionService.deleteSession(session.id);
+        await ref.read(cashSessionServiceProvider).delete(session.id);
         _refreshFuture();
         if (mounted) {
           SnackBarHelper.showToast(l10n.translate('success'), kind: ToastKind.info);

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/database_providers.dart';
+import '../../services/local_cash_session_service.dart';
 import '../../services/cash_movement_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
@@ -26,7 +27,7 @@ Future<bool> showCashMovementDialog({
     return false;
   }
 
-  final service = ref.read(cashMovementServiceProvider);
+  final service = ref.read(cashSessionServiceProvider);
   final fmt = ref.read(currencyFormatterProvider);
   final amountCtrl = TextEditingController();
   final reasonCtrl = TextEditingController();
@@ -54,7 +55,7 @@ Future<bool> showCashMovementDialog({
         }
         setLocal(() => busy = true);
         try {
-          await service.record(
+          await service.recordMovement(
             direction: direction,
             amount: amount,
             reason: reasonCtrl.text,
@@ -155,7 +156,7 @@ Future<bool> showCashMovementDialog({
                 // What has already been recorded this session, with a running
                 // net — the cashier needs to see it to trust their count.
                 FutureBuilder<List<dynamic>>(
-                  future: service.forSession(session.id),
+                  future: service.movementsOf(session.id),
                   builder: (ctx, snap) {
                     final rows = snap.data ?? const [];
                     if (rows.isEmpty) {
@@ -204,7 +205,8 @@ Future<bool> showCashMovementDialog({
                                   onPressed: busy
                                       ? null
                                       : () async {
-                                          await service.delete(r.id as int);
+                                          await service
+                                              .deleteMovement(r.id as int);
                                           setLocal(() {});
                                         },
                                 ),
