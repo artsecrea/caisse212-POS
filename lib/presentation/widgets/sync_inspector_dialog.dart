@@ -65,18 +65,12 @@ class _SyncInspectorDialogState extends ConsumerState<SyncInspectorDialog> {
 
   Future<void> _loadMeta() async {
     final prefs = ref.read(sharedPreferencesProvider);
-    final database = ref.read(databaseProvider);
-    final apiService = ref.read(apiServiceProvider);
-    final syncService = DataSyncService(database, apiService);
-    final meta = await syncService.getDeltaSyncMeta(prefs);
+    final meta = await _sync().getDeltaSyncMeta(prefs);
     if (mounted) setState(() => _meta = meta);
   }
 
-  DataSyncService _sync() {
-    final database = ref.read(databaseProvider);
-    final apiService = ref.read(apiServiceProvider);
-    return DataSyncService(database, apiService);
-  }
+  DataSyncService _sync() =>
+      ref.read(dataSyncServiceFactoryProvider)(ref.read(apiServiceProvider));
 
   Future<void> _resetOrdersCursor() async {
     final l10n = AppLocalizations.of(context);
