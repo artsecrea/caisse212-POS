@@ -38,6 +38,14 @@ abstract interface class PaymentService {
     bool checkCloudNumbers = false,
   });
 
+  /// Settle the [due] left on [orderId] in cash, all its unpaid lines at
+  /// once, and mark it paid — the close-time "pay everything" and the bulk
+  /// settlement of old orders. The ticket goes into [sessionId] (the order's
+  /// own, which need not be the open one) and its business day, or [zDay]
+  /// when an admin chose another. Null when nothing was due.
+  Future<PaidTicket?> settleAsCash(int orderId, double due,
+      {int? sessionId, DateTime? zDay});
+
   /// Once every line of [orderId] is paid or voided: mark it paid, free its
   /// table when the till is set to, drop its draft split, and send it to the
   /// cloud. Returns whether it was completed.

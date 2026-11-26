@@ -154,6 +154,25 @@ void paymentServiceContract(
       expect(await h.payments.draftSplit(o.orderId), isEmpty);
     });
 
+    test('settling in cash takes every unpaid line, in the given session',
+        () async {
+      final o = await h.orderWithLines(2);
+      expect(await h.payments.settleAsCash(o.orderId, 0), isNull,
+          reason: 'nothing due, nothing recorded');
+
+      final res = await h.payments
+          .settleAsCash(o.orderId, 20, sessionId: h.openSessionId);
+
+      expect(res, isNotNull);
+      for (final l in o.lineIds) {
+        expect(await h.ticketOfLine(l), res!.ticketId);
+      }
+      expect(await h.sessionOfTicket(res!.ticketId), h.openSessionId);
+      final row = (await h.ticket(res.ticketId))!;
+      expect(row.method, 'CASH');
+      expect(row.amount, 20);
+    });
+
     test('a ticket of a closed session cannot be deleted', () async {
       final o = await h.orderWithLines(1);
       final t = await h.paidTicket(o.orderId, o.lineIds, sessionEnded: true);

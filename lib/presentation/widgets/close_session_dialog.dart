@@ -263,8 +263,6 @@ Future<bool> _settleUnpaidAsCash(
   bool printReceipts,
 ) async {
   final l10n = AppLocalizations.of(context)!;
-  final repo = ref.read(orderRepositoryProvider);
-  final paidStatus = ref.read(settingsProvider).paidOrderDefaultStatus;
   final progress =
       BlockingProgress.show(context, l10n.translate('settling_orders'));
   try {
@@ -279,12 +277,9 @@ Future<bool> _settleUnpaidAsCash(
       progress.message =
           '${l10n.translate('settling_orders')} ${i + 1}/${unpaid.length}';
       final due = o.total - o.totalPaid;
-      final res = await repo.settleOrderAsCash(
-        o.order.id,
-        due,
-        sessionId: sessionId,
-        paidStatus: paidStatus,
-      );
+      final res = await ref
+          .read(paymentServiceProvider)
+          .settleAsCash(o.order.id, due, sessionId: sessionId);
       if (res != null && printing != null) {
         try {
           final itemsForPrint = o.items
@@ -300,7 +295,7 @@ Future<bool> _settleUnpaidAsCash(
           await printing.printPaymentDocuments(
             ticketId: res.ticketId,
             ticketNumber: res.ticketNum,
-            amount: res.due,
+            amount: due,
             deliveryFee: PrintingService.feeForThisTicket(
               o.order.deliveryFee,
               anythingAlreadyPaid: o.totalPaid > 0,

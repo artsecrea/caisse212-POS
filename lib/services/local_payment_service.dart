@@ -93,6 +93,26 @@ class LocalPaymentService implements PaymentService {
         .nextTicketNum(orderId, serverNums: serverNums);
   }
 
+  @override
+  Future<PaidTicket?> settleAsCash(int orderId, double due,
+      {int? sessionId, DateTime? zDay}) async {
+    final res = await _orders.settleOrderAsCash(
+      orderId,
+      due,
+      sessionId: sessionId,
+      paidStatus: _ref.read(settingsProvider).paidOrderDefaultStatus,
+      zDayOverride: zDay,
+    );
+    // Whole unpaid lines are attached, never cut, so no row is re-homed.
+    return res == null
+        ? null
+        : (
+            ticketId: res.ticketId,
+            ticketNum: res.ticketNum,
+            settledRows: const <int, int>{},
+          );
+  }
+
   /// The status write is local and on the caller's path, so the table is
   /// free before the cashier is told the till is; the push is detached, and
   /// the order stays unsynced for the periodic sweep if it fails. The floor

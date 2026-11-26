@@ -5,6 +5,7 @@ import 'package:loggecrea/loggecrea.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../services/local_floor_service.dart';
+import '../../services/local_payment_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/unpaid_orders_service.dart';
 import '../../utils/app_localizations.dart';
@@ -247,7 +248,6 @@ Future<void> showSettleUnpaidDialog({
   if (go != true || !context.mounted) return;
 
   final repo = ref.read(orderRepositoryProvider);
-  final paidStatus = ref.read(settingsProvider).paidOrderDefaultStatus;
   final toSettle = [
     for (final e in entries)
       if (selected.contains(e.order.id)) e,
@@ -296,13 +296,12 @@ Future<void> showSettleUnpaidDialog({
 
   for (final e in toSettle) {
     try {
-      final res = await repo.settleOrderAsCash(
-        e.order.id,
-        e.due,
-        sessionId: await sessionFor(e),
-        paidStatus: paidStatus,
-        zDayOverride: zDay,
-      );
+      final res = await ref.read(paymentServiceProvider).settleAsCash(
+            e.order.id,
+            e.due,
+            sessionId: await sessionFor(e),
+            zDay: zDay,
+          );
       settled++;
 
       if (res != null && printing != null) {
@@ -315,7 +314,7 @@ Future<void> showSettleUnpaidDialog({
           await printing.printPaymentDocuments(
             ticketId: res.ticketId,
             ticketNumber: res.ticketNum,
-            amount: res.due,
+            amount: e.due,
             paymentMethod: 'CASH',
             createdAt: DateTime.now(),
             items: [
