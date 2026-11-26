@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:drift/drift.dart' show Value, OrderingTerm;
+import 'package:drift/drift.dart' show Value;
 import '../../data/database/app_database.dart';
 import '../../providers/notes_provider.dart';
-import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/app_localizations.dart';
 import './adaptive_text_field.dart';
@@ -275,14 +274,10 @@ class _OrderLinkPicker extends ConsumerWidget {
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final db = ref.watch(databaseProvider);
+    final orderRepo = ref.watch(orderRepositoryProvider);
 
     return FutureBuilder<List<Order>>(
-      future: (db.select(db.orders)
-            ..where((o) => o.status.isNotIn(['CANCELLED']))
-            ..orderBy([(o) => OrderingTerm.desc(o.createdAt)])
-            ..limit(100))
-          .get(),
+      future: orderRepo.recentOrdersForNoteLink(),
       builder: (context, snap) {
         final orders = snap.data ?? [];
         final dropdownItems = <DropdownMenuItem<int?>>[
