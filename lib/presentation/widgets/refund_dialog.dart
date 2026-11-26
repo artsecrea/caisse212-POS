@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:drift/drift.dart' show OrderingTerm;
-
 import '../../data/database/app_database.dart';
 import '../../domain/models/exchange.dart';
 import '../../domain/models/refund_policy.dart';
-import '../../providers/order_provider.dart' show orderProvider;
+import '../../providers/catalogue_repository.dart';
+import '../../providers/order_provider.dart'
+    show orderProvider, orderRepositoryProvider;
 import 'exchange_settle_dialog.dart' show exchangeDraftProvider;
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart'
@@ -86,7 +86,9 @@ Future<bool> showRefundDialog({
   final l10n = AppLocalizations.of(context)!;
   final fmt = ref.read(currencyFormatterProvider);
   final refundService = ref.read(refundServiceProvider);
-  final db = ref.read(databaseProvider);
+  final orderRepo = ref.read(orderRepositoryProvider);
+  final catalogue = ref.read(catalogueRepositoryProvider);
+  final serials = ref.read(serialServiceProvider);
 
   // A refund line points at the SERVER id of an order line. An order that has
   // never synced has no server ids to point at, so the refund could be taken at
@@ -131,42 +133,23 @@ Future<bool> showRefundDialog({
 
   // Work from the order_products rows, not the display DTO — a refund line
   // has to reference a real line id.
-  final rows = await (db.select(db.orderProducts)
-        ..where((op) => op.orderId.equals(order.id))
-        ..orderBy([(op) => OrderingTerm.asc(op.id)]))
-      .get();
+  final rows = await orderRepo.linesOfOrder(order.id);
 
-  final opIds = rows.map((r) => r.id).toList();
-  final comps = opIds.isEmpty
-      ? <OrderProductComponent>[]
-      : await (db.select(db.orderProductComponents)
-            ..where((c) => c.orderProductId.isIn(opIds)))
-          .get();
+  final comps = await orderRepo.componentsOfLines(rows.map((r) => r.id));
   final compCost = <int, double>{};
   for (final c in comps) {
     compCost[c.orderProductId] =
         (compCost[c.orderProductId] ?? 0) + c.price * c.quantity;
   }
 
-  final productIds = rows.map((r) => r.productId).toSet().toList();
-  final products = productIds.isEmpty
-      ? <Product>[]
-      : await (db.select(db.products)..where((p) => p.id.isIn(productIds)))
-          .get();
+  final products =
+      await catalogue.productsByIds(rows.map((r) => r.productId).toSet());
   final nameById = {for (final p in products) p.id: p.name};
 
   // Serial numbers for any tracked line, so the slip and the picker name the
   // exact unit being returned.
-  final serialIds = rows.map((r) => r.serialId).whereType<int>().toSet();
-  final serialNumberById = <int?, String?>{};
-  if (serialIds.isNotEmpty) {
-    final serialRows = await (db.select(db.serials)
-          ..where((t) => t.id.isIn(serialIds)))
-        .get();
-    for (final sr in serialRows) {
-      serialNumberById[sr.id] = sr.serialNumber;
-    }
-  }
+  final serialNumberById = await serials
+      .serialNumbersByIds(rows.map((r) => r.serialId).whereType<int>().toSet());
 
   final refundable = <_RefundableLine>[];
   for (final r in rows) {
@@ -891,12 +874,9 @@ Future<bool> startRefund({
   final api = ref.read(apiServiceProvider);
   final sync = ref.read(dataSyncServiceProvider);
   final refunds = ref.read(refundServiceProvider);
-  final db = ref.read(databaseProvider);
+  final orderRepo = ref.read(orderRepositoryProvider);
 
-  Future<Order?> localOrder() => (db.select(db.orders)
-        ..where((o) => o.code.equals(code))
-        ..limit(1))
-      .getSingleOrNull();
+  Future<Order?> localOrder() => orderRepo.findOrderRowByCode(code);
 
   // A modal spinner: the lookup is two round-trips and the cashier must not
   // start a second refund meanwhile.
