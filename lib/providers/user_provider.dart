@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import 'database_providers.dart';
+import 'database_providers.dart' as providers show reloadCurrentUser;
 
 class UserRepository {
   final AppDatabase _database;
@@ -30,6 +31,26 @@ class UserRepository {
           ..where((tbl) => tbl.id.equals(id)))
         .getSingleOrNull();
   }
+
+  /// `username` is UNIQUE in the schema, so at most one row can match. The
+  /// limit is there for the reader, not for the database.
+  Future<User?> findByUsername(String username) async {
+    return await (_database.select(_database.users)
+          ..where((tbl) => tbl.username.equals(username))
+          ..limit(1))
+        .getSingleOrNull();
+  }
+
+  /// Writes `displayName` alone, not `updatedAt`, as the profile dialog
+  /// always has. Null falls back to first + last name.
+  Future<void> setDisplayName(int userId, String? displayName) async {
+    await (_database.update(_database.users)
+          ..where((tbl) => tbl.id.equals(userId)))
+        .write(UsersCompanion(displayName: Value(displayName)));
+  }
+
+  Future<CurrentUser> reloadCurrentUser(CurrentUser user) =>
+      providers.reloadCurrentUser(_database, user);
 
   // Update last login
   Future<void> updateLastLogin(int userId) async {

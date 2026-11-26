@@ -605,6 +605,22 @@ class RefundService {
             ..orderBy([(r) => OrderingTerm.desc(r.refundedAt)]))
           .get();
 
+  /// The refunds list, newest first: everything from [since] on (no upper
+  /// bound) when it is given, otherwise the refunds of [sessionId] — and none
+  /// at all when there is no session, rather than every refund ever taken.
+  Future<List<Refund>> localRefunds({int? sessionId, DateTime? since}) {
+    final query = _database.select(_database.refunds)
+      ..orderBy([(r) => OrderingTerm.desc(r.refundedAt)]);
+    if (since != null) {
+      query.where((r) => r.refundedAt.isBiggerOrEqualValue(since));
+    } else {
+      query.where((r) => sessionId == null
+          ? const Constant(false)
+          : r.sessionId.equals(sessionId));
+    }
+    return query.get();
+  }
+
   Future<List<RefundLine>> linesForRefund(int refundId) =>
       (_database.select(_database.refundLines)
             ..where((l) => l.refundId.equals(refundId)))

@@ -51,6 +51,15 @@ class SerialService {
         ..limit(1))
       .getSingleOrNull();
 
+  /// Serial number by id, so a refund slip names the exact unit going back.
+  /// Ids no longer in the cache are simply absent.
+  Future<Map<int, String>> serialNumbersByIds(Iterable<int> ids) async {
+    if (ids.isEmpty) return {};
+    final rows = await (_db.select(_db.serials)..where((t) => t.id.isIn(ids)))
+        .get();
+    return {for (final r in rows) r.id: r.serialNumber};
+  }
+
   /// Resolve a scanned/typed number against the local cache.
   ///
   /// Case-insensitive and whitespace-trimmed: a scanner can emit trailing
@@ -108,4 +117,21 @@ class SerialService {
                 (t) => t.productId.equals(productId) & t.isAvailable.equals(true))
             ..orderBy([(t) => OrderingTerm.asc(t.id)]))
           .watch();
+
+  /// Units this till sold that went to another order and nobody has said they
+  /// have seen yet, newest first.
+  Stream<List<SerialConflict>> watchUnacknowledgedConflicts() =>
+      (_db.select(_db.serialConflicts)
+            ..where((c) => c.acknowledgedAt.isNull())
+            ..orderBy([(c) => OrderingTerm.desc(c.detectedAt)]))
+          .watch();
+
+  /// Acknowledged, not deleted: somebody will ask what happened to that box
+  /// weeks from now. Every row gets the same [at].
+  Future<void> acknowledgeConflicts(Iterable<int> ids, DateTime at) async {
+    for (final id in ids) {
+      await (_db.update(_db.serialConflicts)..where((row) => row.id.equals(id)))
+          .write(SerialConflictsCompanion(acknowledgedAt: Value(at)));
+    }
+  }
 }

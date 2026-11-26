@@ -289,6 +289,17 @@ class PendingOperationsService {
         .get();
   }
 
+  /// Every queued op, newest first, dead-lettered ones included — the queue
+  /// as the operator inspects it, unlike the retry order of
+  /// [getPendingOperations].
+  Future<List<PendingSyncOperation>> getAllOperationsNewestFirst() async {
+    return await (_database.select(_database.pendingSyncOperations)
+      ..orderBy([
+        (tbl) => OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc),
+      ]))
+        .get();
+  }
+
   /// Mark operation as completed and remove from queue
   Future<void> markCompleted(int operationId) async {
     try {

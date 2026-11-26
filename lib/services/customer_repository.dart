@@ -1,9 +1,14 @@
-import 'package:drift/drift.dart' show Value, OrderingTerm;
+import 'package:drift/drift.dart'
+    show
+        BooleanExpressionOperators,
+        OrderingTerm,
+        StringExpressionOperators,
+        Value;
 
 import '../data/database/app_database.dart';
 import '../utils/phone_normalizer.dart';
 
-/// Customer table operations that need to enforce phone-uniqueness.
+/// Customer table reads, and the writes that need to enforce phone-uniqueness.
 ///
 /// The Customers table is keyed by `phone_normalized` for dedup. A direct
 /// `insert` with a phone that's already in the table produces two rows —
@@ -14,6 +19,48 @@ import '../utils/phone_normalizer.dart';
 class CustomerRepository {
   final AppDatabase _db;
   CustomerRepository(this._db);
+
+  /// Unfiltered: the customer picker narrows it in Dart on the display label,
+  /// which is not a column.
+  Stream<List<Customer>> watchAll() => _db.select(_db.customers).watch();
+
+  Future<List<Customer>> getAll() => _db.select(_db.customers).get();
+
+  Future<Customer?> getById(int id) =>
+      (_db.select(_db.customers)..where((c) => c.id.equals(id)))
+          .getSingleOrNull();
+
+  Future<List<Customer>> getByIds(Iterable<int> ids) async {
+    if (ids.isEmpty) return [];
+    return (_db.select(_db.customers)..where((c) => c.id.isIn(ids))).get();
+  }
+
+  /// The six suggestions under the reservation's customer field.
+  /// [lowerText] must already be trimmed and lowercased; names are compared
+  /// lowercased, phones as stored.
+  Future<List<Customer>> searchByNameOrPhone(String lowerText) {
+    final like = '%$lowerText%';
+    return (_db.select(_db.customers)
+          ..where((c) =>
+              c.firstName.lower().like(like) |
+              c.lastName.lower().like(like) |
+              c.phone.like(like) |
+              c.phoneNormalized.like(like))
+          ..limit(6))
+        .get();
+  }
+
+  /// First row for an already-normalised phone. Duplicate-tolerant, like
+  /// [upsertByPhone]'s lookup, but with no ordering: which duplicate comes
+  /// back is whatever SQLite returns first, as the external-order review has
+  /// always had it.
+  Future<Customer?> findByPhoneNormalized(String phoneNorm) async {
+    final matches = await (_db.select(_db.customers)
+          ..where((c) => c.phoneNormalized.equals(phoneNorm))
+          ..limit(1))
+        .get();
+    return matches.isEmpty ? null : matches.first;
+  }
 
   /// Upsert a customer keyed by normalized phone.
   ///
