@@ -1,4 +1,3 @@
-import 'package:drift/drift.dart' show OrderingTerm, OrderingMode, Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,13 +8,7 @@ import '../../utils/app_localizations.dart';
 /// Conflicts nobody has said they have seen yet.
 final unacknowledgedSerialConflictsProvider =
     StreamProvider<List<SerialConflict>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.serialConflicts)
-        ..where((c) => c.acknowledgedAt.isNull())
-        ..orderBy([
-          (c) => OrderingTerm(expression: c.detectedAt, mode: OrderingMode.desc)
-        ]))
-      .watch();
+  return ref.watch(serialServiceProvider).watchUnacknowledgedConflicts();
 });
 
 /// Tells the cashier that a unit they sold went to another till.
@@ -102,16 +95,8 @@ Future<void> showSerialConflictAlert(
       actions: [
         FilledButton(
           onPressed: () async {
-            final database = ref.read(databaseProvider);
-            final now = DateTime.now();
-            for (final c in conflicts) {
-              // Acknowledged, not deleted. Somebody will ask what happened to
-              // that box weeks from now.
-              await (database.update(database.serialConflicts)
-                    ..where((row) => row.id.equals(c.id)))
-                  .write(SerialConflictsCompanion(
-                      acknowledgedAt: Value(now)));
-            }
+            await ref.read(serialServiceProvider).acknowledgeConflicts(
+                conflicts.map((c) => c.id), DateTime.now());
             if (ctx.mounted) Navigator.pop(ctx);
           },
           style: FilledButton.styleFrom(
