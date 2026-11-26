@@ -27,7 +27,8 @@ does. The function is `priceOptions` in `lib/domain/models/component_rules.dart`
   are not 86'd (`isActive = false`) are accepted.
 - Each option is capped as the till's stepper caps it: its product link's
   `maxQuantity` in a QUANTITY group or ungrouped (0 = no cap), one in a SINGLE
-  or MULTIPLE group. A per-option `minQuantity` is not enforced.
+  or MULTIPLE group. A per-option `minQuantity` / `isRequired` is not
+  enforced yet — see §9.
 - An option in a group the selection keeps hidden (`visibleWhenComponentIds`)
   is refused.
 - Each visible group's `minSelection` / `maxSelection` is enforced. A required
@@ -195,3 +196,40 @@ rung up on the till.
    a charged default (the current advice).
 
 Until this is decided, keep option 3 in the app.
+
+## 9. To decide later: a required option the tablet left out
+
+**Status:** not enforced by the waiter API, on purpose. To be discussed.
+
+**What the till does.** A product link can be `isRequired` or carry a
+`minQuantity`. The till's dialog opens with such an option already selected
+(`seedGroup` in `component_rules.dart`: at least `minQuantity`, and at least one
+when required). Its stepper will not go below the minimum, so a line rung up
+on the till always carries it. Group minimums (`minSelection`) are enforced by
+the waiter API already (`option_group_too_few`).
+
+**What the cloud does.** According to the rules file, the server adds an
+omitted required option itself ("required with no default and no minimum means
+one, which is what the server does when it auto-adds an omitted required
+option").
+
+**Why the waiter API does not refuse yet.**
+
+- Refusing would be stricter than the cloud, which adds the option instead.
+- Adding it on the till would bill an option the waiter never saw on the
+  tablet.
+- In a SINGLE / MULTIPLE group the per-option minimum does not apply the same
+  way: the dialog deliberately leaves the unpicked members of a radio group
+  out.
+
+**Options to choose from.**
+
+1. Refuse with `400 option_required` (`productId`, `componentId`,
+   `minQuantity`). The app must seed required options the way the till does.
+2. Add the missing units on the till at catalogue price, matching the cloud,
+   and return the stored line so the app can show what was added.
+3. Leave it to the cloud (current behaviour). The till's own total then
+   differs from the cloud's until the next pull.
+
+Until this is decided, the app should seed required options and minimum
+quantities exactly as `seedGroup` does, so the question never arises.
