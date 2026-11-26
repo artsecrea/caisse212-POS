@@ -1,4 +1,3 @@
-import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
@@ -10,7 +9,7 @@ import '../../services/unpaid_orders_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
-import 'z_report_dialog.dart' show ZDayOption, loadZDayOptions;
+import '../../domain/models/z_day_option.dart';
 
 /// Which trading day absorbs the cash when stale orders are settled in bulk.
 enum SettleTarget {
@@ -48,16 +47,16 @@ Future<void> showSettleUnpaidDialog({
   required WidgetRef ref,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final db = ref.read(databaseProvider);
+  final sessionService = ref.read(sessionServiceProvider);
 
-  final entries = await UnpaidOrdersService(db).unpaidOrders();
+  final entries = await ref.read(unpaidOrdersServiceProvider).unpaidOrders();
   if (!context.mounted) return;
   if (entries.isEmpty) {
     SnackBarHelper.error(context, l10n.translate('nothing_outstanding'));
     return;
   }
 
-  final days = await loadZDayOptions(db);
+  final days = await ref.read(zServiceProvider).zDayOptions();
   final session = ref.read(currentSessionProvider);
   if (!context.mounted) return;
 
@@ -269,10 +268,8 @@ Future<void> showSettleUnpaidDialog({
       case SettleTarget.chosenDay:
         final ids = chosenDay?.sessionIds ?? const <int>[];
         if (ids.isEmpty) return e.sessionId;
-        final rows = await (db.select(db.cashSessions)
-              ..where((s) => s.id.isIn(ids))
-              ..orderBy([(s) => OrderingTerm.asc(s.startedAt)]))
-            .get();
+        final rows =
+            await sessionService.getSessionsByIds(ids, oldestFirst: true);
         final own = rows.where((s) => s.cashierId == e.holderId);
         return own.isNotEmpty ? own.first.id : rows.first.id;
     }
