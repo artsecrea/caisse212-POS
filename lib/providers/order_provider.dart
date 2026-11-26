@@ -603,6 +603,12 @@ class OrderRepository {
     _logService = OrderLogService(_database);
   }
 
+  /// Restart the per-session order number so the next order in [sessionId]
+  /// is #1 — [AppDatabase.resetOrderNumber], for screens that hold the
+  /// repository rather than the database.
+  Future<void> resetOrderNumber(int? sessionId, {String mode = 'session'}) =>
+      _database.resetOrderNumber(sessionId, mode: mode);
+
   /// A fresh order code (see [generateOrderCode]) no order here carries yet,
   /// re-drawn on the astronomically rare clash. Falls back to a
   /// timestamp-suffixed code after a few tries so it always ends.

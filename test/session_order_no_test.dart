@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/providers/order_provider.dart';
 
 void main() {
   late AppDatabase db;
@@ -40,6 +41,13 @@ void main() {
       await db.nextSessionOrderNo(s);
       await db.nextSessionOrderNo(s);
       await db.resetOrderNumber(s);
+      expect(await db.nextSessionOrderNo(s), 1);
+    });
+
+    test('the repository resets the same counter', () async {
+      final s = await session('S1');
+      await db.nextSessionOrderNo(s);
+      await OrderRepository(db).resetOrderNumber(s);
       expect(await db.nextSessionOrderNo(s), 1);
     });
   });
