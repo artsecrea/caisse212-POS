@@ -18,7 +18,7 @@ final kitchenBoardProvider =
     StreamProvider.autoDispose<List<KitchenBoardOrder>>((ref) {
   final session = ref.watch(currentSessionProvider);
   if (session == null) return Stream.value(const []);
-  return KitchenBoardService(ref.watch(databaseProvider)).watch(session.id);
+  return ref.watch(kitchenBoardServiceProvider).watch(session.id);
 });
 
 /// The kitchen as the floor sees it: what is waiting, what is cooking, what
