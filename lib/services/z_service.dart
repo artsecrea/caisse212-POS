@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
+import '../domain/models/z_day_option.dart';
 import 'session_service.dart';
 import 'z_rules.dart';
 
@@ -69,6 +70,79 @@ class ZService {
         ])
         ..limit(limit))
       .get();
+
+  /// Every CLOSED business day that has at least one cash session, newest
+  /// first.
+  ///
+  /// A Z is only printable once the day is over on paper: a day still holding
+  /// an open or paused session, or a Z that has not been closed, is left out —
+  /// its figures are not final, and a Z printed from them would be a legal
+  /// document that later disagrees with the real one. Its X is always there.
+  ///
+  /// Days are business days: a session belongs to its Z's zDay, and a legacy
+  /// session with no Z to the day it opened.
+  ///
+  /// Capped because this feeds a dropdown, not an archive browser; a shop
+  /// wanting an older day has the sessions screen. The cap is generous enough
+  /// to cover a quarter of trading.
+  Future<List<ZDayOption>> zDayOptions({int limitDays = 120}) async {
+    final sessions = await (_database.select(_database.cashSessions)
+          ..orderBy([(s) => OrderingTerm.desc(s.startedAt)]))
+        .get();
+
+    final zs = await _database.select(_database.zs).get();
+    final zById = {for (final z in zs) z.id: z};
+
+    final byDay = <DateTime, List<CashSession>>{};
+    final unfinished = <DateTime>{};
+    for (final s in sessions) {
+      final z = s.zId == null ? null : zById[s.zId];
+      final d = z != null
+          ? zDayOf(z)
+          : DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day);
+      byDay.putIfAbsent(d, () => []).add(s);
+      if (s.status != 'ended') unfinished.add(d);
+    }
+
+    // Z rows are matched by their business day. A day with several Zs names
+    // the first; the report itself covers every session of the day.
+    final zByDay = <DateTime, Z>{};
+    for (final z in zs) {
+      final d = zDayOf(z);
+      if (z.status != 'closed') unfinished.add(d);
+      final held = zByDay[d];
+      if (held == null || z.zSeq < held.zSeq) zByDay[d] = z;
+    }
+
+    final days = byDay.keys.where((d) => !unfinished.contains(d)).toList()
+      ..sort((a, b) => b.compareTo(a));
+    return [
+      for (final day in days.take(limitDays))
+        ZDayOption(
+          day: day,
+          sessionIds: [for (final s in byDay[day]!) s.id],
+          sessionCodes: [for (final s in byDay[day]!) s.code],
+          zCode: zByDay[day]?.code,
+          zNumber: zByDay[day]?.zSeq,
+        ),
+    ];
+  }
+
+  /// True while the till is still trading: a Z is open, or a cash session is
+  /// active or paused. The Z report is the closing document, so it is not
+  /// printable until then — mid-shift figures are the X report's job.
+  Future<bool> reportBlockedByOpenShift() async {
+    final openZ = await (_database.select(_database.zs)
+          ..where((z) => z.status.equals('open'))
+          ..limit(1))
+        .getSingleOrNull();
+    if (openZ != null) return true;
+    final running = await (_database.select(_database.cashSessions)
+          ..where((s) => s.status.isIn(const ['active', 'paused']))
+          ..limit(1))
+        .getSingleOrNull();
+    return running != null;
+  }
 
   /// Open a Z under [label]. [openMode] is null for a Z adopted from the
   /// server, whose opening session is already there.
