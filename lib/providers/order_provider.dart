@@ -2057,16 +2057,18 @@ class OrderRepository {
   }
 
   /// Remove a PAID line from its ticket, as the order panel's paid-line
-  /// delete always has. Returns true when the ticket held only this line and
-  /// was deleted with it; otherwise the ticket's amount is rewritten from the
+  /// delete does. Returns true when the ticket held only this line and was
+  /// deleted with it; otherwise the ticket's amount is rewritten from the
   /// lines it still holds.
   ///
-  /// Deliberately the panel's exact steps, quirks included: no transaction,
-  /// the line's `order_product_components` are left in place, and the new
-  /// amount is written without touching `isSynced` or `updatedAt` — the
-  /// server only hears of it through the [DataSyncService] call, which is
-  /// made only for a ticket already synced. [isOnline] is the caller's read
-  /// of the network, taken before any of this runs.
+  /// The amount is what the payment screen charged for those lines: their net
+  /// with options, less the order percentage, never below zero. It used to be
+  /// `unitaryPrice × quantity` alone, which dropped every option and discount
+  /// from the ticket. The line goes with its options, and the local writes
+  /// commit together; the server hears of it only through the
+  /// [DataSyncService] call made afterwards for a ticket already synced, so
+  /// the rows are not flipped unsynced. [isOnline] is the caller's read of the
+  /// network, taken before any of this runs.
   Future<bool> deletePaidLine({
     required int orderProductId,
     required int ticketId,
@@ -2075,79 +2077,74 @@ class OrderRepository {
     final ticketProducts = await (_database.select(_database.orderProducts)
           ..where((tbl) => tbl.ticketId.equals(ticketId)))
         .get();
-
-    await (_database.delete(_database.orderProducts)
-          ..where((tbl) => tbl.id.equals(orderProductId)))
-        .go();
-
-    if (ticketProducts.length == 1) {
-      final ticket = await (_database.select(_database.tickets)
-            ..where((tbl) => tbl.id.equals(ticketId)))
-          .getSingleOrNull();
-
-      String? orderCode;
-      String? ticketNum;
-
-      if (ticket != null) {
-        ticketNum = ticket.num;
-        final order = await (_database.select(_database.orders)
+    final ticket = await (_database.select(_database.tickets)
+          ..where((tbl) => tbl.id.equals(ticketId)))
+        .getSingleOrNull();
+    final order = ticket == null
+        ? null
+        : await (_database.select(_database.orders)
               ..where((tbl) => tbl.id.equals(ticket.orderId)))
             .getSingleOrNull();
-        orderCode = order?.code;
-      }
+    final ticketGoes = ticketProducts.length == 1;
 
-      await (_database.delete(_database.tickets)
-            ..where((tbl) => tbl.id.equals(ticketId)))
+    var newTicketAmount = 0.0;
+    await _database.transaction(() async {
+      await (_database.delete(_database.orderProductComponents)
+            ..where((c) => c.orderProductId.equals(orderProductId)))
+          .go();
+      await (_database.delete(_database.orderProducts)
+            ..where((tbl) => tbl.id.equals(orderProductId)))
           .go();
 
-      if (ticket != null &&
-          ticket.isSynced &&
-          orderCode != null &&
-          ticketNum != null) {
-        await _syncService?.deleteTicketEntity(
-          entityId: ticketId,
-          orderCode: orderCode,
-          ticketNum: ticketNum,
-          isOnline: isOnline,
-        );
+      if (ticketGoes) {
+        await (_database.delete(_database.tickets)
+              ..where((tbl) => tbl.id.equals(ticketId)))
+            .go();
+        return;
       }
-    } else {
-      final remainingProducts =
-          await (_database.select(_database.orderProducts)
-                ..where((tbl) => tbl.ticketId.equals(ticketId)))
-              .get();
 
-      final newTicketAmount = remainingProducts.fold<double>(
-        0.0,
-        (sum, product) => sum + (product.unitaryPrice * product.quantity),
-      );
+      final remaining = await (_database.select(_database.orderProducts)
+            ..where((tbl) => tbl.ticketId.equals(ticketId)))
+          .get();
+      final components = await componentsOfLines(remaining.map((l) => l.id));
+      final linesNet = remaining.fold<double>(
+          0.0,
+          (sum, line) =>
+              sum +
+              line
+                  .amounts(
+                      componentsPerUnit: componentsPerUnitOf(
+                          components.where((c) => c.orderProductId == line.id)))
+                  .net);
+      final amount =
+          applyOrderDiscount(linesNet, order?.discountPercentage ?? 0);
+      newTicketAmount = amount < 0 ? 0.0 : amount;
 
       await (_database.update(_database.tickets)
             ..where((tbl) => tbl.id.equals(ticketId)))
           .write(TicketsCompanion(amount: Value(newTicketAmount)));
+    });
 
-      final ticket = await (_database.select(_database.tickets)
-            ..where((tbl) => tbl.id.equals(ticketId)))
-          .getSingleOrNull();
-
-      if (ticket != null && ticket.isSynced) {
-        final order = await (_database.select(_database.orders)
-              ..where((tbl) => tbl.id.equals(ticket.orderId)))
-            .getSingleOrNull();
-
-        if (order != null) {
-          await _syncService?.updateTicketEntity(
-            entityId: ticketId,
-            orderCode: order.code,
-            ticketNum: ticket.num,
-            updateData: {'amount': newTicketAmount},
-            isOnline: isOnline,
-          );
-        }
-      }
+    if (ticket == null || !ticket.isSynced || order == null) {
+      return ticketGoes;
     }
-
-    return ticketProducts.length == 1;
+    if (ticketGoes) {
+      await _syncService?.deleteTicketEntity(
+        entityId: ticketId,
+        orderCode: order.code,
+        ticketNum: ticket.num,
+        isOnline: isOnline,
+      );
+    } else {
+      await _syncService?.updateTicketEntity(
+        entityId: ticketId,
+        orderCode: order.code,
+        ticketNum: ticket.num,
+        updateData: {'amount': newTicketAmount},
+        isOnline: isOnline,
+      );
+    }
+    return ticketGoes;
   }
 
   /// Find an active product by its MBW / PLU code (string comparison only).

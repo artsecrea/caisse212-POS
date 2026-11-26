@@ -98,10 +98,10 @@ void main() {
       expect(row.updatedAt, stamp, reason: 'nor touches updatedAt');
     });
 
-    test("leaves the deleted line's components behind", () async {
+    test("takes the deleted line's options with it", () async {
       await repo.deletePaidLine(
           orderProductId: gone, ticketId: t, isOnline: false);
-      expect(await componentsOf(gone), hasLength(1));
+      expect(await componentsOf(gone), isEmpty);
     });
 
     test('does not mark the order unsynced', () async {
@@ -139,6 +139,22 @@ void main() {
     });
   });
 
+  test('the new amount counts options and the order percentage', () async {
+    final o = await db.into(db.orders).insert(OrdersCompanion.insert(
+        code: 'PCT', discountPercentage: const Value(10)));
+    final t = await ticket(o);
+    final gone = await line(o, t, 40, 1);
+    final kept = await line(o, t, 20, 2);
+    await db.into(db.orderProductComponents).insert(
+        OrderProductComponentsCompanion.insert(
+            orderProductId: kept, componentId: 1, price: const Value(5)));
+
+    await repo.deletePaidLine(orderProductId: gone, ticketId: t, isOnline: false);
+
+    // (20 + 5) x 2 = 50, less 10% = 45: what the payment screen charged.
+    expect((await ticketRow(t))!.amount, closeTo(45, 1e-9));
+  });
+
   group('the last line of its ticket', () {
     late int o, t, only;
 
@@ -156,8 +172,8 @@ void main() {
       expect(ticketDeleted, isTrue);
       expect(await db.select(db.orderProducts).get(), isEmpty);
       expect(await ticketRow(t), isNull);
-      expect(await componentsOf(only), hasLength(1),
-          reason: 'components are not cascaded here either');
+      expect(await componentsOf(only), isEmpty,
+          reason: 'the line goes with its options');
     });
 
     test('offline: queues a ticket DELETE', () async {
