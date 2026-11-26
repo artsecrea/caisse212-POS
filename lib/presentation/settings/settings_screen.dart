@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/server_provider.dart';
+import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
 import '../../services/update_config.dart';
@@ -33,7 +34,6 @@ import '../../services/permission_service.dart'
     show Permissions, permissionServiceProvider;
 import '../../services/autostart_service.dart';
 import '../../utils/full_logout.dart';
-import '../../services/z_day_resolver.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../widgets/adaptive_text_field.dart';
 import '../../utils/snackbar_helper.dart';
@@ -1391,9 +1391,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   /// the open session's, its Z's, or the manual counter, per the mode.
   Future<void> _confirmResetOrderNumber(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
-    final db = ref.read(databaseProvider);
+    final orders = ref.read(orderRepositoryProvider);
     final mode = ref.read(settingsProvider).orderNumberResetMode;
-    final session = await ZDayResolver(db).activeSession();
+    final session = await ref.read(zDayResolverProvider).activeSession();
     if (!context.mounted) return;
     if (session == null && mode != 'manual') {
       SnackBarHelper.showToast(l10n.translate('reset_order_number_no_session'), kind: ToastKind.info);
@@ -1417,7 +1417,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
     if (confirm != true) return;
-    await db.resetOrderNumber(session?.id, mode: mode);
+    await orders.resetOrderNumber(session?.id, mode: mode);
     SnackBarHelper.showToast(l10n.translate('reset_order_number_done'), kind: ToastKind.info);
   }
 
@@ -4762,8 +4762,7 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
     if (enabled.isEmpty) return;
 
     try {
-      final db = ref.read(databaseProvider);
-      final all = await db.select(db.products).get();
+      final all = await ref.read(catalogueRepositoryProvider).allProducts();
       // Export only products that carry an MBW code — not the whole catalog.
       final products = all
           .where((p) =>
