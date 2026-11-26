@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/catalogue_repository.dart';
 import '../../providers/order_provider.dart';
+import '../../services/local_order_service.dart';
 import '../../providers/held_orders_provider.dart';
 import '../../domain/models/order_course.dart';
 import '../../domain/models/order_models.dart';
@@ -177,15 +178,12 @@ class OrderPanel extends ConsumerWidget {
     // controller for a few frames. It is collected with the dialog.
     if (reason == null) return false;
 
-    final repo = ref.read(orderRepositoryProvider);
     try {
-      await repo.updateOrderStatus(
-        orderId,
-        'CANCELED',
-        cancellationReason: reason.isNotEmpty ? reason : null,
-        userId: ref.read(currentUserProvider)?.id,
-      );
-      await repo.freeTablesForOrder(orderId);
+      await ref.read(orderServiceProvider).cancelOrder(
+            orderId,
+            reason: reason.isNotEmpty ? reason : null,
+            userId: ref.read(currentUserProvider)?.id,
+          );
     } catch (e) {
       if (context.mounted) {
         SnackBarHelper.showErrorSnackBar(

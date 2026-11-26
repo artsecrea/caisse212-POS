@@ -14,6 +14,7 @@ import '../../utils/customer_display.dart';
 import 'package:data_table_2/data_table_2.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/order_provider.dart';
+import '../../services/local_order_service.dart';
 import '../../providers/sync_manager_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/floor_repository.dart';
@@ -1138,8 +1139,7 @@ class _OrdersManagementScreenState
     final ids = await showOrderTagPicker(
         context: context, ref: ref, initial: parseTagIds(order.tagIds));
     if (ids == null || !mounted) return;
-    await ref.read(orderRepositoryProvider).setOrderTags(order.id, ids);
-    unawaited(ref.read(dataSyncServiceProvider).pushOrderTags());
+    await ref.read(orderServiceProvider).setTags(order.id, ids);
     _loadOrders();
   }
 
@@ -2328,25 +2328,10 @@ class _OrdersManagementScreenState
   Future<void> _changeOrderStatus(Order order, String newStatus, {String? cancellationReason}) async {
     final l10n = AppLocalizations.of(context)!;
     try {
-      final orderRepo = ref.read(orderRepositoryProvider);
       final isOnline = ref.read(networkStateProvider);
-
-      // Update order status with cancellation reason if provided
-      await orderRepo.updateOrderStatus(order.id, newStatus, cancellationReason: cancellationReason);
-
-      // Ticket flagging moved into OrderRepository.updateOrderStatus, so every
-      // route to CANCELED gets it rather than just this one.
-
-      bool synced = false;
-      // Auto-sync for all statuses except ONHOLD
-      if (isOnline && newStatus != 'ONHOLD') {
-        try {
-          final syncManager = ref.read(syncManagerProvider.notifier);
-          synced = await syncManager.autoSyncOrder(order.id);
-        } catch (e) {
-          // Ignore sync errors
-        }
-      }
+      final synced = await ref
+          .read(orderServiceProvider)
+          .changeStatus(order.id, newStatus, reason: cancellationReason);
 
       _loadOrders();
 

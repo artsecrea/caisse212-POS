@@ -10,6 +10,7 @@ import '../../data/database/app_database.dart';
 import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../services/local_order_service.dart';
 import '../../providers/ticket_provider.dart';
 import '../../services/local_floor_service.dart';
 import '../../services/ticket_settlement_service.dart';
@@ -1863,10 +1864,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 ref.read(orderProvider.notifier).setTagIds(ids);
                 final orderId = ref.read(orderProvider).orderId;
                 if (orderId != null) {
-                  await ref
-                      .read(orderRepositoryProvider)
-                      .setOrderTags(orderId, ids);
-                  unawaited(ref.read(dataSyncServiceProvider).pushOrderTags());
+                  await ref.read(orderServiceProvider).setTags(orderId, ids);
                 }
               },
             );
@@ -2515,20 +2513,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if (confirmed != true || !mounted) return;
 
     try {
-      await ref.read(orderRepositoryProvider).updateOrderStatus(
+      await ref.read(orderServiceProvider).cancelOrder(
             order.orderId!,
-            'CANCELED',
-            cancellationReason: reason.isEmpty ? null : reason,
+            reason: reason.isEmpty ? null : reason,
             userId: ref.read(currentUserProvider)?.id,
           );
-      // The table is only freed once the cancel actually landed — releasing it
-      // first would hand the table to the next party while the order it is
-      // still carrying failed to cancel.
-      if (order.tableId != null) {
-        await ref
-            .read(orderRepositoryProvider)
-            .setTableOrderId(order.tableId!, null);
-      }
       ref.read(orderProvider.notifier).clearOrder();
     } catch (e) {
       if (mounted) SnackBarHelper.failure(context, e);
