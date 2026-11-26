@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
+import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../domain/models/app_settings.dart';
@@ -214,10 +215,8 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
 
     // Load plannable flag for this product
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final db = ref.read(databaseProvider);
-      final product = await (db.select(db.products)
-            ..where((t) => t.id.equals(_productId)))
-          .getSingleOrNull();
+      final product =
+          await ref.read(catalogueRepositoryProvider).productById(_productId);
       if (product != null && mounted) {
         setState(() {
           _isPlannable = product.isPlannable;
