@@ -13,7 +13,6 @@ import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/activity_log_service.dart';
 import '../../services/pos_notifications.dart';
-import '../../services/exchange_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
@@ -198,7 +197,7 @@ Future<bool> _settle({
   required String backMethod,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final db = ref.read(databaseProvider);
+  final exchange = ref.read(exchangeServiceProvider);
   final session = ref.read(currentSessionProvider);
   final user = ref.read(currentUserProvider);
   final orderId = order.orderId;
@@ -210,7 +209,7 @@ Future<bool> _settle({
   late int lastTicketId;
   late String lastTicketNum;
   try {
-    final result = await ExchangeService(db).settle(
+    final result = await exchange.settle(
       draft: draft,
       newOrderId: orderId,
       newOrderCode: order.orderCode!,
