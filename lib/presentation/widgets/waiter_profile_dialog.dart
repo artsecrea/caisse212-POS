@@ -1,4 +1,3 @@
-import 'package:drift/drift.dart' show OrderingMode, OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,6 +6,7 @@ import '../../domain/models/order_models.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
+import '../../providers/ticket_provider.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
 import '../../utils/currency_formatter.dart';
@@ -234,19 +234,10 @@ class _WaiterProfileDialogState extends ConsumerState<WaiterProfileDialog>
       // loaded so we can show per-payment rows (a single order may have
       // multiple tickets). Cap at 50 — older history lives in the orders
       // management screen.
-      final database = ref.read(databaseProvider);
       final orderIds = result.orders.map((o) => o.order.id).toList();
-      final tickets = orderIds.isEmpty
-          ? <db.Ticket>[]
-          : await (database.select(database.tickets)
-                ..where((t) => t.orderId.isIn(orderIds))
-                ..where((t) => t.isPaid.equals(true))
-                ..orderBy([(t) => OrderingTerm(
-                      expression: t.date,
-                      mode: OrderingMode.desc,
-                    )])
-                ..limit(50))
-              .get();
+      final tickets = await ref
+          .read(ticketRepositoryProvider)
+          .paidTicketsForOrders(orderIds);
 
       if (!mounted) return;
       setState(() {
