@@ -34,8 +34,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     });
 
     try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
+      final sessionService = ref.read(sessionServiceProvider);
       final currentUser = ref.read(currentUserProvider);
 
       if (currentUser != null) {
@@ -72,8 +71,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     if (_currentSession == null) return;
 
     try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
+      final sessionService = ref.read(sessionServiceProvider);
       final id = _currentSession!.id;
       if (await sessionService.pauseSession(id)) {
         await notifySessionPauseChange(ref.read, id);
@@ -93,8 +91,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     if (_currentSession == null) return;
 
     try {
-      final database = ref.read(databaseProvider);
-      final sessionService = SessionService(database);
+      final sessionService = ref.read(sessionServiceProvider);
       final id = _currentSession!.id;
       final pausedAt = await sessionService.resumeSession(id);
       if (pausedAt != null) {
