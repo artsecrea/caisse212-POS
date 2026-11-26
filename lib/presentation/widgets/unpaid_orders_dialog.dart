@@ -1,9 +1,9 @@
-import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/floor_repository.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
@@ -69,10 +69,8 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
   }
 
   Future<void> _bootstrap() async {
-    final db = ref.read(databaseProvider);
-    final tables = await (db.select(db.areaTables)
-          ..orderBy([(t) => OrderingTerm.asc(t.name)]))
-        .get();
+    final tables =
+        await ref.read(floorRepositoryProvider).allTables(orderByName: true);
     if (!mounted) return;
     setState(() {
       _tables = tables;
@@ -91,11 +89,10 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
       if (mounted) setState(() => _customerMatches = const []);
       return;
     }
-    final db = ref.read(databaseProvider);
     // Pull a small candidate pool from the DB. Drift doesn't have a
     // case-insensitive LIKE without `customStatement` so we filter in
     // Dart after a coarse name pull.
-    final all = await db.select(db.customers).get();
+    final all = await ref.read(customerRepositoryProvider).getAll();
     final matches = <Customer>[];
     for (final c in all) {
       final fullName = '${c.firstName} ${c.lastName}'.toLowerCase();
@@ -117,7 +114,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
   Future<void> _query() async {
     setState(() => _isLoading = true);
     final orderRepo = ref.read(orderRepositoryProvider);
-    final db = ref.read(databaseProvider);
+    final customerRepo = ref.read(customerRepositoryProvider);
 
     // When the cashier has picked a specific customer, filter orders
     // strictly by that id. Otherwise fall back to the free-text query
@@ -144,13 +141,8 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
         .where((o) => o.clientId != null)
         .map((o) => o.clientId!)
         .toSet();
-    Map<int, Customer> byClientId = const {};
-    if (clientIds.isNotEmpty) {
-      final customers = await (db.select(db.customers)
-            ..where((c) => c.id.isIn(clientIds)))
-          .get();
-      byClientId = {for (final c in customers) c.id: c};
-    }
+    final customers = await customerRepo.getByIds(clientIds);
+    final byClientId = {for (final c in customers) c.id: c};
 
     final orderIds = filtered.map((o) => o.id).toList();
     final totalsByOrderId =
