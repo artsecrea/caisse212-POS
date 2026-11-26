@@ -5,7 +5,6 @@ import '../providers/admin_elevation_provider.dart';
 import '../providers/database_providers.dart';
 import '../providers/order_provider.dart';
 import '../services/api_service.dart';
-import '../services/data_sync_service.dart';
 import 'admin_auth.dart';
 import 'app_localizations.dart';
 import 'snackbar_helper.dart';
@@ -88,8 +87,7 @@ Future<bool> runFullLogout(BuildContext context, WidgetRef ref) async {
     // password hash as well, which is what forces re-provisioning.
     await apiService.clearAllAuthData();
 
-    final database = ref.read(databaseProvider);
-    final syncService = DataSyncService(database, apiService);
+    final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
     // Dump first. Anything not yet synced is about to be unrecoverable, and a
     // support case after an accidental wipe has nothing else to work from.
     await syncService.dumpDatabaseBeforeClear();
