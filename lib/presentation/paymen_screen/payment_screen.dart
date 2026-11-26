@@ -917,11 +917,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final orderId = widget.order.orderId;
     if (orderId == null) return const {};
     try {
-      final database = ref.read(databaseProvider);
-      final rows = await (database.select(
-        database.orderProducts,
-      )..where((p) => p.orderId.equals(orderId))).get();
-      return {for (final r in rows) r.id: r.lineUid};
+      return await ref.read(orderRepositoryProvider).lineUidsForOrder(orderId);
     } catch (e) {
       _logger.error('Failed to load line uids: $e');
       return const {};
@@ -980,10 +976,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     var draftRows = const <DraftSplitRow>[];
     if (orderId != null) {
       try {
-        final database = ref.read(databaseProvider);
-        final rows = await (database.select(
-          database.ticketDraftSplits,
-        )..where((t) => t.orderId.equals(orderId))).get();
+        final rows =
+            await ref.read(ticketRepositoryProvider).draftSplitRows(orderId);
         draftRows = [
           for (final r in rows)
             (
@@ -1016,30 +1010,19 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final orderId = widget.order.orderId;
     if (orderId == null) return;
     try {
-      final database = ref.read(databaseProvider);
-      await database.transaction(() async {
-        await (database.delete(
-          database.ticketDraftSplits,
-        )..where((t) => t.orderId.equals(orderId))).go();
-        final unpaid = tickets.where((t) => !t.isPaid).toList();
-        for (var idx = 0; idx < unpaid.length; idx++) {
-          for (final line in unpaid[idx].items) {
-            for (final source in line.sources) {
-              if (source.quantity <= 0) continue;
-              await database
-                  .into(database.ticketDraftSplits)
-                  .insert(
-                    TicketDraftSplitsCompanion.insert(
-                      orderId: orderId,
-                      orderProductId: source.rowId,
-                      draftIndex: idx,
-                      quantity: source.quantity,
-                    ),
-                  );
-            }
-          }
-        }
-      });
+      final unpaid = tickets.where((t) => !t.isPaid).toList();
+      await ref.read(ticketRepositoryProvider).replaceDraftSplit(orderId, [
+        for (var idx = 0; idx < unpaid.length; idx++)
+          for (final line in unpaid[idx].items)
+            for (final source in line.sources)
+              if (source.quantity > 0)
+                TicketDraftSplitsCompanion.insert(
+                  orderId: orderId,
+                  orderProductId: source.rowId,
+                  draftIndex: idx,
+                  quantity: source.quantity,
+                ),
+      ]);
     } catch (e) {
       _logger.error('Failed to persist draft ticket split: $e');
     }
@@ -3512,7 +3495,6 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
 
     setState(() => _isProcessing = true);
-    final database = ref.read(databaseProvider);
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
 
@@ -3571,9 +3553,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
       await ref.read(orderRepositoryProvider).claimOrderForCurrentUser(orderId);
 
-      final row = await (database.select(
-        database.tickets,
-      )..where((t) => t.id.equals(ticketId))).getSingle();
+      final row =
+          (await ref.read(ticketRepositoryProvider).getTicketById(ticketId))!;
 
       if (mounted) {
         setState(() {
@@ -3969,10 +3950,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         // them reconstructed against re-used row ids if this order is ever
         // reopened, and nothing else ever reads them again.
         try {
-          final database = ref.read(databaseProvider);
-          await (database.delete(
-            database.ticketDraftSplits,
-          )..where((t) => t.orderId.equals(orderId))).go();
+          await ref.read(ticketRepositoryProvider).clearDraftSplit(orderId);
         } catch (e) {
           _logger.error('Failed to clear draft split for #$orderId: $e');
         }
@@ -4480,10 +4458,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
       // A ticket closed by split-by-amount holds only its last share — the
       // earlier parts are rows of their own. Reprint what this row took.
-      final database = ref.read(databaseProvider);
-      final row = await (database.select(
-        database.tickets,
-      )..where((t) => t.id.equals(ticket.ticketId!))).getSingleOrNull();
+      final row = await ref
+          .read(ticketRepositoryProvider)
+          .getTicketById(ticket.ticketId!);
       final total = roundMoney(ticket.total);
       final paid = row != null && row.amount < total - 0.005
           ? roundMoney(row.amount)
