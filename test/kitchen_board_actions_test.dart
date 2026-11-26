@@ -9,8 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/providers/database_providers.dart';
-import 'package:caisse212/providers/server_provider.dart';
 import 'package:caisse212/services/kitchen_board_service.dart';
+import 'package:caisse212/services/local_kitchen_service.dart';
 
 /// What the POS kitchen board's actions do: move lines exactly as a KDS bump
 /// would (stamps + the change-log entry the KDS polls on), and flag a rush.
@@ -59,17 +59,17 @@ void main() {
 
   test('a line moved from the till is stamped and logged for the KDS',
       () async {
-    final server = container.read(serverServiceProvider);
+    final kitchen = container.read(kitchenServiceProvider);
     final before = await logCount();
 
-    expect(await server.applyKitchenLineState(lineId, 'PREPARING'), isTrue);
+    expect(await kitchen.setLineState(lineId, 'PREPARING'), isTrue);
     final cooking = await line();
     expect(cooking.state, 'PREPARING');
     expect(cooking.preparingAt, isNotNull);
     expect(await logCount(), greaterThan(before),
         reason: 'the KDS only sees changes through the change log');
 
-    await server.applyKitchenLineState(lineId, 'COMPLETED');
+    await kitchen.setLineState(lineId, 'COMPLETED');
     final done = await line();
     expect(done.state, 'COMPLETED');
     expect(done.servedAt, isNotNull);
@@ -78,8 +78,8 @@ void main() {
   test('an unknown line is reported, not invented', () async {
     expect(
         await container
-            .read(serverServiceProvider)
-            .applyKitchenLineState(9999, 'PREPARING'),
+            .read(kitchenServiceProvider)
+            .setLineState(9999, 'PREPARING'),
         isFalse);
   });
 
@@ -97,7 +97,7 @@ void main() {
         unitaryPrice: 10,
         kitchenAt: Value(DateTime.now().subtract(const Duration(hours: 1)))));
 
-    await container.read(serverServiceProvider).setOrderRush(orderId, true);
+    await container.read(kitchenServiceProvider).setRush(orderId, true);
     final order = await (db.select(db.orders)
           ..where((o) => o.id.equals(orderId)))
         .getSingle();
@@ -108,7 +108,7 @@ void main() {
     expect(board.first.code, 'K1');
     expect(board.first.rush, isTrue);
 
-    await container.read(serverServiceProvider).setOrderRush(orderId, false);
+    await container.read(kitchenServiceProvider).setRush(orderId, false);
     final cleared = kitchenBoardView(
         await KitchenBoardService(db).watch(1).first, DateTime.now());
     expect(cleared.first.code, 'K0');

@@ -15,6 +15,7 @@ import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/providers/server_provider.dart';
 import 'package:caisse212/services/kds_live_service.dart';
 import 'package:caisse212/services/lan_notification_hub.dart';
+import 'package:caisse212/services/local_kitchen_service.dart';
 import 'package:caisse212/services/server_service.dart';
 
 /// Kitchen screens told about changes instead of polling every 2 s: the
@@ -330,7 +331,7 @@ void main() {
 
     test('a write in between: the full answer, with the change', () async {
       final first = await getOrders({'station': 'Cuisine'});
-      await server.applyKitchenLineState(tajineLine, 'PREPARING');
+      await container.read(kitchenServiceProvider).setLineState(tajineLine, 'PREPARING');
       final next = await getOrders({
         'station': 'Cuisine',
         'after_id': '$orderA',
@@ -393,7 +394,7 @@ void main() {
         expect(container.read(kdsPresenceProvider).byName('Grill 1')!.live,
             isTrue);
         final nudge = events.first.timeout(const Duration(seconds: 2));
-        await server.applyKitchenLineState(tajineLine, 'PREPARING');
+        await container.read(kitchenServiceProvider).setLineState(tajineLine, 'PREPARING');
         expect(await nudge, 'orders-changed');
       } finally {
         client.close();

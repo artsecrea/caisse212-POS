@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:loggecrea/loggecrea.dart';
 import '../providers/database_providers.dart';
+import '../providers/network_provider.dart' show lastKnownOnlineStatusProvider;
 import '../providers/settings_provider.dart';
 import '../providers/business_day_provider.dart';
 import '../providers/session_rules_provider.dart';
@@ -412,3 +414,22 @@ final syncManagerProvider = StateNotifierProvider<SyncManagerNotifier, SyncState
   return SyncManagerNotifier(ref);
 });
 
+/// Push [orderId] now when the till is online, without waiting on it — the
+/// periodic sync is the fallback, since the row is already unsynced.
+/// [label] names the caller in the log.
+void kickOrderSync(Ref ref, int orderId, String label) {
+  try {
+    if (ref.read(lastKnownOnlineStatusProvider)) {
+      // ignore: unawaited_futures
+      ref
+          .read(syncManagerProvider.notifier)
+          .autoSyncOrder(orderId)
+          .catchError((Object e) {
+        Logger.instance.warning('$label autoSync failed: $e');
+        return false;
+      });
+    }
+  } catch (e) {
+    Logger.instance.warning('$label autoSync kickoff failed: $e');
+  }
+}

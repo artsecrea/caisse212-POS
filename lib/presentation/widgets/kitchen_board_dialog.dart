@@ -5,9 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
-import '../../providers/server_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/kitchen_board_service.dart';
+import '../../services/local_kitchen_service.dart';
 import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/snackbar_helper.dart';
@@ -18,7 +18,7 @@ final kitchenBoardProvider =
     StreamProvider.autoDispose<List<KitchenBoardOrder>>((ref) {
   final session = ref.watch(currentSessionProvider);
   if (session == null) return Stream.value(const []);
-  return ref.watch(kitchenBoardServiceProvider).watch(session.id);
+  return ref.watch(kitchenServiceProvider).watchBoard(session.id);
 });
 
 /// The kitchen as the floor sees it: what is waiting, what is cooking, what
@@ -424,9 +424,9 @@ class _OrderActionsDialogState extends ConsumerState<_OrderActionsDialog> {
 
   Future<void> _setLines(Iterable<KitchenBoardLine> lines, String state) =>
       _run(() async {
-        final server = ref.read(serverServiceProvider);
+        final kitchen = ref.read(kitchenServiceProvider);
         for (final l in lines) {
-          await server.applyKitchenLineState(l.id, state);
+          await kitchen.setLineState(l.id, state);
         }
       });
 
@@ -539,8 +539,8 @@ class _OrderActionsDialogState extends ConsumerState<_OrderActionsDialog> {
                     onPressed: !canAct || _busy || open.isEmpty
                         ? null
                         : () => _run(() => ref
-                            .read(serverServiceProvider)
-                            .setOrderRush(order.id, !order.rush)),
+                            .read(kitchenServiceProvider)
+                            .setRush(order.id, !order.rush)),
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.local_fire_department_rounded),

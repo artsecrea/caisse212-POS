@@ -29,7 +29,8 @@ import '../providers/order_provider.dart'
     show OrderRepository, orderRepositoryProvider;
 import '../providers/settings_provider.dart' show settingsProvider;
 import '../providers/network_provider.dart' show lastKnownOnlineStatusProvider;
-import '../providers/sync_manager_provider.dart' show syncManagerProvider;
+import '../providers/sync_manager_provider.dart'
+    show kickOrderSync, syncManagerProvider;
 import 'activity_log_service.dart' show activityLogServiceProvider;
 import 'local_floor_service.dart' show floorServiceProvider;
 import 'order_log_service.dart';
@@ -54,7 +55,8 @@ import 'product_cost_resolver.dart';
 import 'z_day_resolver.dart';
 import 'pos_notifications.dart';
 import 'kitchen_timing.dart'
-    show kdsCourseLines, kitchenDoneAt, kitchenSince, kitchenStageStamps;
+    show isCloudTerminalState, kdsCourseLines, kitchenDoneAt, kitchenSince;
+import 'local_kitchen_service.dart' show kitchenServiceProvider;
 
 /// Thrown inside a DB transaction to abort it (rolling back all writes) and
 /// surface a specific HTTP error to the client. Lets a race-safe check *inside*
@@ -1154,7 +1156,7 @@ class ServerService {
               : const drift.Value.absent(),
           // Kitchen micro-states stay LOCAL (LAN-only KDS); only a TERMINAL
           // state marks the order for cloud sync.
-          isSynced: _isTerminalState(newStatus)
+          isSynced: isCloudTerminalState(newStatus)
               ? const drift.Value(false)
               : const drift.Value.absent(),
         );
@@ -1163,8 +1165,8 @@ class ServerService {
               ..where((tbl) => tbl.id.equals(id)))
             .write(companion);
 
-        if (_isTerminalState(newStatus)) {
-          _autoSyncWaiterOrder(id, 'kds-terminal');
+        if (isCloudTerminalState(newStatus)) {
+          kickOrderSync(_ref, id, 'kds-terminal');
         }
 
         if (isConfirming) {
@@ -1272,7 +1274,7 @@ class ServerService {
         );
       }
 
-      final found = await applyKitchenLineState(
+      final found = await _ref.read(kitchenServiceProvider).setLineState(
           productId, statusParam.toUpperCase(),
           source: 'API');
       if (!found) {
@@ -1296,100 +1298,7 @@ class ServerService {
     }
   }
 
-  /// Move one order line to [newState] exactly as a KDS bump does: stage
-  /// stamps, the waiter's "ready" event, the order rollup, and the change-log
-  /// entry the KDS polls on. Shared by `PUT /orders/products/<id>` and the
-  /// POS kitchen board, so a change made at the till reaches every screen.
-  /// Returns false when the line does not exist.
-  Future<bool> applyKitchenLineState(int lineId, String newState,
-      {String source = 'POS'}) async {
-    final database = _ref.read(databaseProvider);
-    final logService = OrderLogService(database);
-    final now = DateTime.now();
 
-    // Read the current row first: needed to stamp each KDS stage timestamp
-    // only the FIRST time the item enters that stage (a remake bouncing back
-    // to PREPARING must not overwrite the original prep start).
-    final existing = await (database.select(database.orderProducts)
-          ..where((tbl) => tbl.id.equals(lineId)))
-        .getSingleOrNull();
-    if (existing == null) return false;
-
-    await (database.update(database.orderProducts)
-          ..where((tbl) => tbl.id.equals(lineId)))
-        .write(kitchenStageStamps(existing, newState, now).copyWith(
-          state: drift.Value(newState),
-          updatedAt: drift.Value(now),
-        ));
-
-    final orderId = existing.orderId;
-    // First time the kitchen is done with this line → the waiter has food
-    // to carry. Stage timestamps are write-once, so a remake bounced back
-    // and re-bumped does not ring twice.
-    if (isKitchenDoneState(newState) &&
-        existing.readyAt == null &&
-        existing.servedAt == null) {
-      _ref
-          .read(waiterKitchenEventServiceProvider)
-          .lineReady(orderId: orderId, lineId: lineId);
-    }
-    final allProducts = await (database.select(database.orderProducts)
-          ..where((tbl) => tbl.orderId.equals(orderId)))
-        .get();
-    final allSameStatus = allProducts.every((p) => p.state == newState);
-    // Whole order finished in the kitchen → tell the delivery platform.
-    // Fired on READY and on any terminal rollup, because a station that goes
-    // straight from PREPARING to COMPLETED never passes through READY.
-    if (allSameStatus &&
-        (newState == 'READY' || _isTerminalState(newState))) {
-      // ignore: unawaited_futures
-      _signalOrderReadyIfDelivery(orderId);
-    }
-    if (allSameStatus) {
-      final terminal = _isTerminalState(newState);
-      // Orders are born COMPLETED (cloud-terminal); the kitchen flow lives on
-      // the PRODUCTS. So a KDS micro-state rollup (PENDING/PREPARING/READY)
-      // must NOT drag order.status back down — that would un-complete a
-      // cloud-terminal order. Only a genuinely terminal rollup
-      // (COMPLETED/CANCELED/DELIVERED) writes order.status, and only a
-      // non-COMPLETED terminal (CANCELED/DELIVERED) is a real change worth
-      // re-syncing.
-      if (terminal) {
-        await (database.update(database.orders)
-              ..where((tbl) => tbl.id.equals(orderId)))
-            .write(OrdersCompanion(
-          status: drift.Value(newState),
-          updatedAt: drift.Value(now),
-          isSynced: const drift.Value(false),
-        ));
-        _autoSyncWaiterOrder(orderId, 'kds-terminal');
-      } else {
-        // Micro-state rollup: bump updatedAt only, so the change-log cursor
-        // still surfaces the order to the KDS on the next poll.
-        await (database.update(database.orders)
-              ..where((tbl) => tbl.id.equals(orderId)))
-            .write(OrdersCompanion(updatedAt: drift.Value(now)));
-      }
-    }
-    await logService.logOrderUpdated(
-        orderId, 'Product status updated via $source to $newState');
-    return true;
-  }
-
-  /// Flag (or unflag) [orderId] as a rush for the kitchen: the KDS shows it
-  /// first, flashing, with the alarm. Rides the order's existing `priority`
-  /// (> 0 = rush) and the change log, so the KDS picks it up on its next poll.
-  Future<void> setOrderRush(int orderId, bool rush) async {
-    final database = _ref.read(databaseProvider);
-    await (database.update(database.orders)
-          ..where((tbl) => tbl.id.equals(orderId)))
-        .write(OrdersCompanion(
-      priority: drift.Value(rush ? 1 : 0),
-      updatedAt: drift.Value(DateTime.now()),
-    ));
-    await OrderLogService(database).logOrderUpdated(
-        orderId, rush ? 'Kitchen rush requested' : 'Kitchen rush cleared');
-  }
 
   /// GET /stations/ - Get all stations (for KDS station selection)
   Future<Response> _getStations(Request request) async {
@@ -1877,11 +1786,6 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       (await _ref.read(orderRepositoryProvider).moneySplitParts(orderId))
           .fold<double>(0.0, (sum, t) => sum + t.amount);
 
-  /// Terminal (done) order/product states — the only ones that mark an order
-  /// for cloud sync from the KDS path. Everything else (PENDING, PREPARING,
-  /// READY, …) is a kitchen micro-state that stays LOCAL on the LAN-only KDS.
-  static bool _isTerminalState(String s) =>
-      s == 'COMPLETED' || s == 'CANCELED' || s == 'DELIVERED';
 
   /// The active cash-session id, or null when none is open. The read endpoints
   /// (`dashboard`, `orders`) scope to THIS session (the current shift) rather
@@ -3727,7 +3631,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       _fireKdsForWaiterAddedProduct(order.id, posUser?.firstName,
           roundIsComplete: true);
 
-      _autoSyncWaiterOrder(order.id, 'add-products');
+      kickOrderSync(_ref, order.id, 'add-products');
 
       return Response.ok(
         jsonEncode({
@@ -4050,70 +3954,6 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
   /// Fire-and-forget auto-sync of [orderId] when the POS is online. Shared by
   /// the waiter mutation endpoints so a change doesn't sit unsynced until the
   /// next periodic cycle. Safe to call unawaited.
-  void _autoSyncWaiterOrder(int orderId, String label) {
-    try {
-      if (_ref.read(lastKnownOnlineStatusProvider)) {
-        // ignore: unawaited_futures
-        _ref
-            .read(syncManagerProvider.notifier)
-            .autoSyncOrder(orderId)
-            .catchError((Object e) {
-          Logger.instance.warning('Waiter $label autoSync failed: $e');
-          return false;
-        });
-      }
-    } catch (e) {
-      Logger.instance.warning('Waiter $label autoSync kickoff failed: $e');
-    }
-  }
-
-  /// Fire-and-forget "kitchen finished" signal for a delivery order, so the
-  /// platform (Glovo / Kooul) gets its ready call.
-  ///
-  /// Deliberately narrow:
-  ///   - only orders that came from, or go out on, a delivery platform;
-  ///   - only once per order (`readySignalAt` guards it — the endpoint is
-  ///     idempotent anyway, this just avoids a pointless round-trip);
-  ///   - only while online, and only after the order exists server-side, since
-  ///     the endpoint 404s on an unsynced order. There is no offline queue by
-  ///     design: a ready signal delivered an hour late is worse than none.
-  /// Intentionally not awaited by its caller — the KDS response must not wait
-  /// on a delivery-platform round-trip.
-  Future<void> _signalOrderReadyIfDelivery(int orderId) async {
-    {
-      try {
-        if (!_ref.read(lastKnownOnlineStatusProvider)) return;
-        final database = _ref.read(databaseProvider);
-        final order = await (database.select(database.orders)
-              ..where((o) => o.id.equals(orderId)))
-            .getSingleOrNull();
-        if (order == null) return;
-        if (order.readySignalAt != null) return; // already signalled
-        if (order.status == 'CANCELED') return;
-
-        final isPlatform =
-            order.externalOrderId != null || order.type == 'DELIVERY';
-        if (!isPlatform) return;
-
-        // The signal 404s until the order exists server-side. Push it first,
-        // then signal — that's the documented order of operations.
-        if (!order.isSynced) {
-          final synced = await _ref
-              .read(dataSyncServiceProvider)
-              .syncSingleOrder(orderId);
-          if (!synced) return;
-        }
-
-        final ok = await _ref.read(apiServiceProvider).signalOrderReady(order.code);
-        if (!ok) return;
-        await (database.update(database.orders)
-              ..where((o) => o.id.equals(orderId)))
-            .write(OrdersCompanion(readySignalAt: drift.Value(DateTime.now())));
-      } catch (e) {
-        Logger.instance.warning('ready-signal failed for order #$orderId: $e');
-      }
-    }
-  }
 
   /// DELETE /waiters/orders/<code>/products/<opId>?waiterId=int
   ///
@@ -4244,7 +4084,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
 
       await logService.logOrderUpdated(
           order.id, 'Line #$orderProductId removed by waiter #$waiterId');
-      _autoSyncWaiterOrder(order.id, 'remove-line');
+      kickOrderSync(_ref, order.id, 'remove-line');
 
       return Response.ok(
         jsonEncode({'removed': true, 'removedId': orderProductId}),
@@ -4365,7 +4205,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
             ? 'Waiter #$waiterId'
             : '${waiterRow.firstName} ${waiterRow.lastName ?? ''}'.trim(),
       );
-      _autoSyncWaiterOrder(order.id, 'cancel');
+      kickOrderSync(_ref, order.id, 'cancel');
 
       return Response.ok(
         jsonEncode({'canceled': true, 'status': 'CANCELED'}),
@@ -4638,7 +4478,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       final posUser = _ref.read(currentUserProvider);
       _fireKdsForWaiterAddedProduct(order.id, posUser?.firstName);
 
-      _autoSyncWaiterOrder(order.id, 'add-product');
+      kickOrderSync(_ref, order.id, 'add-product');
 
       return Response.ok(
         jsonEncode({'message': 'Product added to order successfully'}),

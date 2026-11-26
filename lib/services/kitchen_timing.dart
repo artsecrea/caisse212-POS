@@ -142,3 +142,9 @@ Future<void> completeKitchenForTicket(AppDatabase db, int ticketId) async {
     ));
   }
 }
+
+/// Terminal (done) order/product states — the only ones that mark an order
+/// for cloud sync from the KDS path. Everything else (PENDING, PREPARING,
+/// READY, …) is a kitchen micro-state that stays LOCAL on the LAN-only KDS.
+bool isCloudTerminalState(String s) =>
+    s == 'COMPLETED' || s == 'CANCELED' || s == 'DELIVERED';
