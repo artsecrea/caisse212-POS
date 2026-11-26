@@ -440,6 +440,19 @@ class SessionService {
       .getSingleOrNull();
   }
 
+  /// The sessions behind a report scope. Unordered unless [oldestFirst]:
+  /// the day-scope check only asks whether any is still open, while the
+  /// settle-unpaid target falls back to the day's first shift.
+  Future<List<CashSession>> getSessionsByIds(Iterable<int> ids,
+      {bool oldestFirst = false}) async {
+    final query = _database.select(_database.cashSessions)
+      ..where((tbl) => tbl.id.isIn(ids));
+    if (oldestFirst) {
+      query.orderBy([(tbl) => OrderingTerm.asc(tbl.startedAt)]);
+    }
+    return await query.get();
+  }
+
   /// Checks whether [rules] allow a new session to be opened right now.
   ///
   /// Pass [isAdmin: true] to bypass all checks (admin users are exempt).
