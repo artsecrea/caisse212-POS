@@ -6,6 +6,7 @@ import '../../providers/admin_elevation_provider.dart';
 import '../../providers/business_day_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/user_provider.dart';
 import '../../services/permission_service.dart';
 import '../../services/z_actions.dart';
 import '../../services/z_service.dart';
@@ -29,13 +30,11 @@ Future<void> showZManagementDialog(
   AdminElevation elevation,
 ) async {
   final l10n = AppLocalizations.of(context)!;
-  final db = ref.read(databaseProvider);
   final zService = ref.read(zServiceProvider);
 
   // Load the acting user's permissions for per-button gating.
-  final actor = await (db.select(db.users)
-        ..where((u) => u.id.equals(elevation.adminId)))
-      .getSingleOrNull();
+  final actor =
+      await ref.read(userRepositoryProvider).getUserById(elevation.adminId);
   bool can(String perm) => actor != null && userHasPermission(actor, perm);
 
   if (!context.mounted) return;
