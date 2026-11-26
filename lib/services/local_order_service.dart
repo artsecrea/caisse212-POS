@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/models/order_models.dart';
 import '../domain/services/order_service.dart';
 import '../providers/database_providers.dart';
 import '../providers/order_provider.dart';
+import '../providers/settings_provider.dart';
 import '../providers/sync_manager_provider.dart';
 
 /// [OrderService] on this till's own database: the standalone till. Each
@@ -16,6 +18,36 @@ class LocalOrderService implements OrderService {
   final Ref _ref;
 
   OrderRepository get _orders => _ref.read(orderRepositoryProvider);
+
+  @override
+  Future<SubmittedCart> submitCart(
+    CurrentOrder cart, {
+    required int userId,
+    required int sessionId,
+    bool headerOnly = false,
+  }) async {
+    final orders = _orders;
+    final int orderId;
+    if (cart.isSaved()) {
+      await orders.updateOrder(cart, headerOnly: headerOnly);
+      orderId = cart.orderId!;
+    } else {
+      orderId = await orders.saveOrder(
+        cart,
+        userId,
+        status: _ref.read(settingsProvider).defaultOrderStatus,
+        sessionId: sessionId,
+      );
+      if (cart.tableId != null) {
+        await orders.setTableOrderId(cart.tableId!, orderId);
+      }
+    }
+    return (orderId: orderId, reloaded: await orders.getOrderById(orderId));
+  }
+
+  @override
+  Future<void> updateCart(CurrentOrder cart, {bool headerOnly = false}) =>
+      _orders.updateOrder(cart, headerOnly: headerOnly);
 
   /// Frees the tables only once the cancel has landed: releasing first would
   /// hand the table to the next party while the order it still carries failed

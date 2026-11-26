@@ -12,6 +12,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../services/local_order_service.dart';
 import '../../providers/ticket_provider.dart';
+import '../../domain/services/order_service.dart' show SubmittedCart;
 import '../../services/local_floor_service.dart';
 import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
@@ -1618,10 +1619,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     // header field: writing the lines here as well left the
                     // panel holding a cart the database had moved past.
                     if (currentOrder.orderId != null) {
-                      final updatedOrder = ref.read(orderProvider);
                       await ref
-                          .read(orderRepositoryProvider)
-                          .updateOrder(updatedOrder, headerOnly: true);
+                          .read(orderServiceProvider)
+                          .updateCart(ref.read(orderProvider), headerOnly: true);
                     }
                   } else if (action == 'select') {
                     ref.read(orderProvider.notifier).setWaiter(
@@ -1632,10 +1632,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     // header field: writing the lines here as well left the
                     // panel holding a cart the database had moved past.
                     if (currentOrder.orderId != null) {
-                      final updatedOrder = ref.read(orderProvider);
                       await ref
-                          .read(orderRepositoryProvider)
-                          .updateOrder(updatedOrder, headerOnly: true);
+                          .read(orderServiceProvider)
+                          .updateCart(ref.read(orderProvider), headerOnly: true);
                     }
                   }
                 }
@@ -1716,7 +1715,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       final currentUser = ref.read(currentUserProvider);
                       final printSession = ref.read(currentSessionProvider);
                       final orderRepo = ref.read(orderRepositoryProvider);
-                      final settings = ref.read(settingsProvider);
 
                       if (currentUser == null) return;
                       if (printSession == null) {
@@ -1744,27 +1742,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       // repository, rather than trusting the panel.
                       final mayEditLines = canEditWaiterOrder(ref);
 
-                      int? orderId = currentOrder.orderId;
+                      final SubmittedCart submitted;
                       try {
-                        if (currentOrder.isSaved()) {
-                          _logger.debug(
-                              'Print: Updating order $orderId with ${currentOrder.items.length} items'
-                              '${mayEditLines ? '' : ' (header only — waiter order)'}');
-                          await orderRepo.updateOrder(currentOrder,
-                              headerOnly: !mayEditLines);
-                        } else {
-                          _logger.debug('Print: Saving new order with ${currentOrder.items.length} items');
-                          orderId = await orderRepo.saveOrder(
-                            currentOrder,
-                            currentUser.id,
-                            status: settings.defaultOrderStatus,
-                            sessionId: printSession.id,
-                          );
-
-                          if (currentOrder.tableId != null) {
-                            await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
-                          }
-                        }
+                        submitted = await ref
+                            .read(orderServiceProvider)
+                            .submitCart(currentOrder,
+                                userId: currentUser.id,
+                                sessionId: printSession.id,
+                                headerOnly: !mayEditLines);
                       } catch (e) {
                         _logger.error('Error saving order for print: $e');
                         if (context.mounted) {
@@ -1783,8 +1768,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         // database id and its true printed quantities, which
                         // is what the delta filter and the printed-mark both
                         // run on.
-                        final orderToPrint =
-                            orderId == null ? null : await orderRepo.getOrderById(orderId);
+                        final orderToPrint = submitted.reloaded;
                         if (orderToPrint != null) {
                           ref.read(orderProvider.notifier).loadOrder(orderToPrint);
                         }
@@ -1810,8 +1794,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           // cart still holding the pre-print zeros writes them
                           // straight back over the stamps, and the next round
                           // re-sends the kitchen everything it already has.
-                          if (printed == true && context.mounted && orderId != null) {
-                            final refreshed = await orderRepo.getOrderById(orderId);
+                          if (printed == true && context.mounted) {
+                            final refreshed =
+                                await orderRepo.getOrderById(submitted.orderId);
                             if (refreshed != null) {
                               ref.read(orderProvider.notifier).loadOrder(refreshed);
                             }
@@ -1995,8 +1980,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       if (updated.orderId != null) {
                         try {
                           await ref
-                              .read(orderRepositoryProvider)
-                              .updateOrder(updated);
+                              .read(orderServiceProvider)
+                              .updateCart(updated);
                         } catch (e) {
                           if (context.mounted) {
                             SnackBarHelper.showToast('$e', kind: ToastKind.error);
@@ -2079,9 +2064,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     ? null
                     : () async {
                     if (_isSavingOrder) return;
-                    final orderRepo = ref.read(orderRepositoryProvider);
                     final currentUser = ref.read(currentUserProvider);
-                    final settings = ref.read(settingsProvider);
                     // Printing now goes through _firePostSavePrints, which
                     // reads the service itself.
 
@@ -2106,26 +2089,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
                     setState(() => _isSavingOrder = true);
                     try {
-                      int orderId;
-                      if (currentOrder.isSaved()) {
-                        _logger.error("order updated");
-                        // Lines stay the waiter's; the header is the cashier's.
-                        await orderRepo.updateOrder(currentOrder,
-                            headerOnly: !canEditWaiterOrder(ref));
-                        orderId = currentOrder.orderId!;
-                      } else {
-                        _logger.error("new order created with ${currentOrder.items.length} items");
-                        orderId = await orderRepo.saveOrder(
-                          currentOrder,
-                          currentUser.id,
-                          status: settings.defaultOrderStatus,
-                          sessionId: session.id,
-                        );
-
-                        if (currentOrder.tableId != null) {
-                          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
-                        }
-                      }
+                      // Lines stay the waiter's; the header is the cashier's.
+                      final submitted = await ref
+                          .read(orderServiceProvider)
+                          .submitCart(currentOrder,
+                              userId: currentUser.id,
+                              sessionId: session.id,
+                              headerOnly: !canEditWaiterOrder(ref));
+                      final orderId = submitted.orderId;
 
                       // The order is committed and durable at this point, so
                       // the till is free. Clearing HERE — before the prints —
@@ -2139,7 +2110,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       // Failures are logged there and cannot lose kitchen work —
                       // items are only marked printed on a confirmed success, so
                       // KdsPrintMode.modificationsOnly re-sends them next time.
-                      final reloadedOrder = await orderRepo.getOrderById(orderId);
+                      final reloadedOrder = submitted.reloaded;
 
                       if (reloadedOrder != null) {
                         unawaited(_firePostSavePrints(reloadedOrder));
@@ -2223,29 +2194,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
     setState(() => _isSavingOrder = true);
     try {
-      int orderId;
-      // Save or update order first.
-      if (currentOrder.isSaved()) {
-        _logger.debug('Updating existing order with ${currentOrder.items.length} items');
-        // Lines stay the waiter's; the header is the cashier's.
-        await orderRepo.updateOrder(currentOrder,
-            headerOnly: !canEditWaiterOrder(ref));
-        orderId = currentOrder.orderId!;
-      } else {
-        _logger.debug('Creating new order with ${currentOrder.items.length} items');
-        orderId = await orderRepo.saveOrder(
+      // Save or update order first. Lines stay the waiter's; the header is
+      // the cashier's.
+      final submitted = await ref.read(orderServiceProvider).submitCart(
           currentOrder,
-          currentUser.id,
-          status: settings.defaultOrderStatus,
+          userId: currentUser.id,
           sessionId: session.id,
-        );
-        if (currentOrder.tableId != null) {
-          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
-        }
-      }
+          headerOnly: !canEditWaiterOrder(ref));
+      final orderId = submitted.orderId;
 
-      // ✅ RELOAD order from database to get the auto-generated product IDs
-      final reloadedOrder = await orderRepo.getOrderById(orderId);
+      // The reload carries the database ids of the lines just written.
+      final reloadedOrder = submitted.reloaded;
       if (reloadedOrder == null) {
         throw Exception('Failed to reload order after saving');
       }
@@ -2608,7 +2567,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     var currentOrder = ref.read(orderProvider);
     final orderRepo = ref.read(orderRepositoryProvider);
     final currentUser = ref.read(currentUserProvider);
-    final settings = ref.read(settingsProvider);
 
     if (currentUser == null) return;
     final session = ref.read(currentSessionProvider);
@@ -2643,29 +2601,19 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
     setState(() => _isSavingOrder = true);
     try {
-      int orderId;
-      // Save or update order first.
-      if (currentOrder.isSaved()) {
-        // Lines stay the waiter's; the header is the cashier's.
-        await orderRepo.updateOrder(currentOrder,
-            headerOnly: !canEditWaiterOrder(ref));
-        orderId = currentOrder.orderId!;
-      } else {
-        orderId = await orderRepo.saveOrder(
+      // Save or update order first. Lines stay the waiter's; the header is
+      // the cashier's.
+      final submitted = await ref.read(orderServiceProvider).submitCart(
           currentOrder,
-          currentUser.id,
-          status: settings.defaultOrderStatus,
+          userId: currentUser.id,
           sessionId: session.id,
-        );
-        if (currentOrder.tableId != null) {
-          await orderRepo.setTableOrderId(currentOrder.tableId!, orderId);
-        }
-      }
+          headerOnly: !canEditWaiterOrder(ref));
+      final orderId = submitted.orderId;
 
-      // Reload the order from database to get updated IDs (and the tip
-      // we just persisted).
+      // The reload carries the lines' database ids (and the tip just
+      // persisted).
       final tSave = perf.elapsedMilliseconds;
-      final reloadedOrder = await orderRepo.getOrderById(orderId);
+      final reloadedOrder = submitted.reloaded;
       if (reloadedOrder == null) {
         throw Exception('Failed to reload order');
       }

@@ -41,6 +41,26 @@ class _LocalOrderHarness implements OrderHarness {
   OrderService get orders => container.read(orderServiceProvider);
 
   @override
+  int get productId => 1;
+
+  @override
+  Future<int> openSession() => db.into(db.cashSessions).insert(
+      CashSessionsCompanion.insert(
+          code: 'S${++_seq}', cashierId: 1, moneyAtStart: 0));
+
+  @override
+  Future<int> addTable() => db
+      .into(db.areaTables)
+      .insert(AreaTablesCompanion.insert(name: 'T${++_seq}'));
+
+  @override
+  Future<int> lineCountOf(int orderId) async =>
+      (await (db.select(db.orderProducts)
+                ..where((l) => l.orderId.equals(orderId)))
+              .get())
+          .length;
+
+  @override
   Future<({int orderId, int tableId, int ticketId})> seatedPaidOrder() async {
     final n = ++_seq;
     final tableId =
