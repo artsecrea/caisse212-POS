@@ -415,6 +415,142 @@ class TicketRepository {
     return lineDiscount + orderDiscountAmount(net, orderDiscountPercentage);
   }
 
+  /// The saved draft split of [orderId] (see [TicketDraftSplits]), in no
+  /// particular order: the payment screen regroups the slices itself.
+  Future<List<TicketDraftSplit>> draftSplitRows(int orderId) async {
+    return await (_database.select(_database.ticketDraftSplits)
+          ..where((t) => t.orderId.equals(orderId)))
+        .get();
+  }
+
+  /// Replace [orderId]'s whole draft split with [rows] in one transaction,
+  /// so a reader never sees half of an old arrangement and half of a new one.
+  Future<void> replaceDraftSplit(
+      int orderId, Iterable<TicketDraftSplitsCompanion> rows) async {
+    await _database.transaction(() async {
+      await (_database.delete(_database.ticketDraftSplits)
+            ..where((t) => t.orderId.equals(orderId)))
+          .go();
+      for (final row in rows) {
+        await _database.into(_database.ticketDraftSplits).insert(row);
+      }
+    });
+  }
+
+  /// Drop [orderId]'s draft split once the order is settled: left behind, its
+  /// row ids could be matched against re-used ones if the order is reopened.
+  Future<void> clearDraftSplit(int orderId) async {
+    await (_database.delete(_database.ticketDraftSplits)
+          ..where((t) => t.orderId.equals(orderId)))
+        .go();
+  }
+
+  /// Every ticket of [orderIds], in any state — the caller sorts paid from
+  /// cancelled itself.
+  Future<List<Ticket>> ticketsForOrders(List<int> orderIds) async {
+    if (orderIds.isEmpty) return [];
+    return await (_database.select(_database.tickets)
+          ..where((t) => t.orderId.isIn(orderIds)))
+        .get();
+  }
+
+  /// The 50 most recent paid tickets of [orderIds]. Capped because it feeds
+  /// a profile's payment history; older history lives in the orders screen.
+  /// A cancelled ticket still counts when it is marked paid.
+  Future<List<Ticket>> paidTicketsForOrders(List<int> orderIds) async {
+    if (orderIds.isEmpty) return [];
+    return await (_database.select(_database.tickets)
+          ..where((t) => t.orderId.isIn(orderIds))
+          ..where((t) => t.isPaid.equals(true))
+          ..orderBy([
+            (t) => OrderingTerm(expression: t.date, mode: OrderingMode.desc),
+          ])
+          ..limit(50))
+        .get();
+  }
+
+  /// The order lines [ticketId] paid for.
+  Future<List<OrderProduct>> linesOfTicket(int ticketId) async {
+    return await (_database.select(_database.orderProducts)
+          ..where((tbl) => tbl.ticketId.equals(ticketId)))
+        .get();
+  }
+
+  /// The delivery fee to show on a REPRINT of [ticketId], or null.
+  ///
+  /// An order carries one delivery charge, collected on whichever ticket
+  /// settled first — which is the lowest-id ticket on that order, since ticket
+  /// rows are inserted in payment order. Reprinting any later ticket of a
+  /// divided order must not repeat the fee, or two receipts would each claim
+  /// to have collected it. Every ticket of the order competes for "first",
+  /// cancelled or unpaid ones included.
+  Future<double?> deliveryFeeForTicket(int orderId, int ticketId) async {
+    final order = await (_database.select(_database.orders)
+          ..where((o) => o.id.equals(orderId)))
+        .getSingleOrNull();
+    final fee = order?.deliveryFee;
+    if (fee == null || fee <= 0) return null;
+
+    final ticketIds = await (_database.select(_database.tickets)
+          ..where((t) => t.orderId.equals(orderId)))
+        .get();
+    if (ticketIds.isEmpty) return null;
+    final firstTicketId =
+        ticketIds.map((t) => t.id).reduce((a, b) => a < b ? a : b);
+    return ticketId == firstTicketId ? fee : null;
+  }
+
+  /// VAT carried by [ticketId]'s lines, summed the same way
+  /// `OrderItem.totalTva` does (`unitaryTva * quantity`) so a reprint shows
+  /// the figure the original receipt showed.
+  Future<double> tvaTotalOf(int ticketId) async {
+    final products = await linesOfTicket(ticketId);
+    return products.fold<double>(
+        0.0, (sum, p) => sum + (p.unitaryTva * p.quantity));
+  }
+
+  /// [ticketId]'s lines in the shape the receipt printer takes for a reprint.
+  /// A component since removed from the catalogue is left off the paper; a
+  /// removed product still prints, as 'Unknown Product'.
+  Future<List<Map<String, dynamic>>> printItemsOf(int ticketId) async {
+    final products = await linesOfTicket(ticketId);
+
+    final itemsForPrint = <Map<String, dynamic>>[];
+    for (final item in products) {
+      final product = await (_database.select(_database.products)
+            ..where((tbl) => tbl.id.equals(item.productId)))
+          .getSingleOrNull();
+
+      final orderComponents =
+          await (_database.select(_database.orderProductComponents)
+                ..where((tbl) => tbl.orderProductId.equals(item.id)))
+              .get();
+
+      final componentsForPrint = <Map<String, dynamic>>[];
+      for (final orderComp in orderComponents) {
+        final component = await (_database.select(_database.components)
+              ..where((tbl) => tbl.id.equals(orderComp.componentId)))
+            .getSingleOrNull();
+        if (component != null) {
+          componentsForPrint.add({
+            'name': component.name,
+            'quantity': orderComp.quantity,
+            'price': orderComp.price,
+            'isSpecial': orderComp.isSpecial,
+          });
+        }
+      }
+
+      itemsForPrint.add({
+        'name': product?.name ?? 'Unknown Product',
+        'quantity': item.quantity,
+        'price': item.unitaryPrice * item.quantity,
+        'components': componentsForPrint,
+      });
+    }
+    return itemsForPrint;
+  }
+
   /// Raw SQL on purpose: a reprint must not touch `updatedAt` or wake the
   /// ticket streams, so the row is not re-pushed as edited.
   Future<void> incrementPrintCount(int ticketId) async {
