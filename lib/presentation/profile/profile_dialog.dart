@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bcrypt/bcrypt.dart';
-import 'package:drift/drift.dart' show Value;
-import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/user_provider.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
 import '../../utils/password_check.dart';
@@ -58,10 +57,10 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
     if (currentUser == null) return;
     setState(() => _isSavingDisplayName = true);
     try {
-      final db = ref.read(databaseProvider);
       final newName = _displayNameController.text.trim();
-      await (db.update(db.users)..where((u) => u.id.equals(currentUser.id)))
-          .write(UsersCompanion(displayName: Value(newName.isEmpty ? null : newName)));
+      await ref
+          .read(userRepositoryProvider)
+          .setDisplayName(currentUser.id, newName.isEmpty ? null : newName);
       ref.read(currentUserProvider.notifier).state =
           currentUser.copyWith(displayName: newName.isEmpty ? null : newName);
       if (mounted) {
