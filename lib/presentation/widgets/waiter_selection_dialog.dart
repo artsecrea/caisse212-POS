@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/floor_repository.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../data/database/app_database.dart';
@@ -37,10 +38,9 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
 
   Future<void> _initializeAreaFromTable() async {
     if (widget.currentTableId != null) {
-      final database = ref.read(databaseProvider);
-      final table = await (database.select(database.areaTables)
-        ..where((tbl) => tbl.id.equals(widget.currentTableId!)))
-        .getSingleOrNull();
+      final table = await ref
+          .read(floorRepositoryProvider)
+          .tableById(widget.currentTableId!);
       if (table != null && table.areaId != null && mounted) {
         setState(() {
           _selectedAreaId = table.areaId;
