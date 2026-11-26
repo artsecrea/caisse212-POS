@@ -110,10 +110,13 @@ class _FakeFloor implements FloorService {
 
   @override
   Future<void> transfer(int orderId,
-          {required int fromTableId, required int toTableId}) async {}
+      {int? fromTableId,
+      required int toTableId,
+      FloorActor by = const ByCashier()}) async {}
 
   @override
-  Future<void> clearTable(int tableId) async {}
+  Future<void> clearTable(int tableId,
+      {FloorActor by = const ByCashier()}) async {}
 
   @override
   Future<int> reconcile({required bool freeOnPayment}) async => 42;

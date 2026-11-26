@@ -67,11 +67,36 @@ void floorServiceContract(String name, Future<FloorHarness> Function() make) {
 
       await expectLater(
           h.floor.transfer(mine, fromTableId: from, toTableId: to),
-          throwsA(anything));
+          throwsA(isA<TableOccupiedException>()));
 
       expect(await h.holderOf(from), mine);
       expect(await h.holderOf(to), theirs);
       expect(await h.tableOfOrder(mine), from);
+    });
+
+    test('transfer seats an order that was on no table', () async {
+      final scratch = await h.addTable('T0');
+      final to = await h.addTable('T2');
+      final order = await h.openOrderAt(scratch);
+      await h.floor.clearTable(scratch);
+
+      await h.floor.transfer(order, toTableId: to);
+
+      expect(await h.holderOf(to), order);
+      expect(await h.tableOfOrder(order), to);
+    });
+
+    test('a waiter can move and free tables too', () async {
+      final from = await h.addTable('T1');
+      final to = await h.addTable('T2');
+      final order = await h.openOrderAt(from);
+
+      await h.floor.transfer(order,
+          fromTableId: from, toTableId: to, by: const ByWaiter(7));
+      expect(await h.holderOf(to), order);
+
+      await h.floor.clearTable(to, by: const ByWaiter(7));
+      expect(await h.holderOf(to), isNull);
     });
 
     test('clearTable lets go whatever the table holds', () async {

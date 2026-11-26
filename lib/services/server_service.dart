@@ -23,6 +23,7 @@ import '../domain/models/order_money.dart';
 import '../domain/models/order_money_rows.dart';
 import '../domain/models/socket_models.dart';
 import '../domain/models/table_occupancy.dart' show orderBlocksTable;
+import '../domain/services/floor_service.dart';
 import '../providers/database_providers.dart';
 import '../providers/order_provider.dart'
     show OrderRepository, orderRepositoryProvider;
@@ -30,6 +31,7 @@ import '../providers/settings_provider.dart' show settingsProvider;
 import '../providers/network_provider.dart' show lastKnownOnlineStatusProvider;
 import '../providers/sync_manager_provider.dart' show syncManagerProvider;
 import 'activity_log_service.dart' show activityLogServiceProvider;
+import 'local_floor_service.dart' show floorServiceProvider;
 import 'order_log_service.dart';
 import 'discovery_service.dart' show DiscoveryService;
 import 'lan_notification_hub.dart';
@@ -4392,7 +4394,6 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
   Future<Response> _waiterTransferTable(Request request, String code) async {
     try {
       final database = _ref.read(databaseProvider);
-      final logService = OrderLogService(database);
       final body = await request.readAsString();
       final json = body.isNotEmpty
           ? jsonDecode(body) as Map<String, dynamic>
@@ -4435,44 +4436,22 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
             body: jsonEncode({'error': 'Not allowed to use the target table'}),
             headers: {'Content-Type': 'application/json'});
       }
-      final now = DateTime.now();
-      // All table-link writes happen in ONE transaction, with the occupancy
-      // re-check inside it — so two concurrent transfers (or a transfer racing
-      // a create) onto the same target table can't both succeed and stomp the
-      // link. A conflict rolls back and becomes a 400 below.
+      // The till's own transfer: one transaction with the occupancy re-check
+      // inside it, so two transfers (or a transfer racing a create) onto the
+      // same table cannot both win; the order log names the waiter, and the
+      // order is pushed the way a cashier's transfer is.
       try {
-        await database.transaction(() async {
-          final t = await (database.select(database.areaTables)
-                ..where((x) => x.id.equals(newTableId)))
-              .getSingleOrNull();
-          if (t != null && t.orderId != null && t.orderId != order.id) {
-            throw const _WaiterConflict(400, 'target_table_occupied',
-                'The target table is already occupied by another order.');
-          }
-          // Free the old table (if any) before linking the new one.
-          if (order.tableId != null && order.tableId != newTableId) {
-            await (database.update(database.areaTables)
-                  ..where((x) => x.id.equals(order.tableId!)))
-                .write(const AreaTablesCompanion(orderId: drift.Value(null)));
-          }
-          await (database.update(database.areaTables)
-                ..where((x) => x.id.equals(newTableId)))
-              .write(AreaTablesCompanion(orderId: drift.Value(order.id)));
-          await (database.update(database.orders)
-                ..where((o) => o.id.equals(order.id)))
-              .write(OrdersCompanion(
-            tableId: drift.Value(newTableId),
-            updatedAt: drift.Value(now),
-            isSynced: const drift.Value(false),
-          ));
-        });
-      } on _WaiterConflict catch (e) {
-        return e.toResponse();
+        await _ref.read(floorServiceProvider).transfer(
+              order.id,
+              fromTableId: order.tableId,
+              toTableId: newTableId,
+              by: ByWaiter(waiterId),
+            );
+      } on TableOccupiedException {
+        return const _WaiterConflict(400, 'target_table_occupied',
+                'The target table is already occupied by another order.')
+            .toResponse();
       }
-
-      await logService.logOrderUpdated(order.id,
-          'Order moved to table #$newTableId by waiter #$waiterId');
-      _autoSyncWaiterOrder(order.id, 'transfer-table');
 
       return Response.ok(
         jsonEncode({'transferred': true, 'tableId': newTableId}),
@@ -4501,7 +4480,6 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
   Future<Response> _waiterClearTable(Request request, String tableId) async {
     try {
       final database = _ref.read(databaseProvider);
-      final logService = OrderLogService(database);
       final body = await request.readAsString();
       final json = body.isNotEmpty
           ? jsonDecode(body) as Map<String, dynamic>
@@ -4530,15 +4508,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
             headers: {'Content-Type': 'application/json'});
       }
 
-      final clearedOrderId = table.orderId;
-      await (database.update(database.areaTables)
-            ..where((t) => t.id.equals(tId)))
-          .write(const AreaTablesCompanion(orderId: drift.Value(null)));
-
-      if (clearedOrderId != null) {
-        await logService.logOrderUpdated(
-            clearedOrderId, 'Table #$tId cleared by waiter #$waiterId');
-      }
+      await _ref
+          .read(floorServiceProvider)
+          .clearTable(tId, by: ByWaiter(waiterId));
 
       return Response.ok(
         jsonEncode({'cleared': true}),

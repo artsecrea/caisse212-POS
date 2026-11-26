@@ -7,6 +7,7 @@ import '../domain/models/order_course.dart';
 import '../domain/models/order_models.dart';
 import '../domain/models/order_money.dart';
 import '../domain/models/order_money_rows.dart';
+import '../domain/services/floor_service.dart' show TableOccupiedException;
 import '../domain/models/order_tag_codec.dart';
 import '../domain/models/line_payment.dart';
 import '../domain/models/split_bill.dart';
@@ -3201,11 +3202,16 @@ class OrderRepository {
   }
 
   // Transfer order from one table to another
+  /// [oldTableId] is null for an order on no table yet. [byWaiterId] is set
+  /// when a waiter moves it from the waiter app: the order log names the
+  /// waiter, and the activity log, which records the till's signed-in user,
+  /// is left alone.
   Future<void> transferOrderToTable(
     int orderId,
-    int oldTableId,
-    int newTableId,
-  ) async {
+    int? oldTableId,
+    int newTableId, {
+    int? byWaiterId,
+  }) async {
     // Move both table pointers and the order's tableId atomically so a crash
     // can't leave the old table freed while the order still points at it, or
     // two tables pointing at one order.
@@ -3230,12 +3236,10 @@ class OrderRepository {
         _database.areaTables,
       )..where((t) => t.id.equals(newTableId))).getSingleOrNull();
       if (target?.orderId != null && target!.orderId != orderId) {
-        throw Exception(
-          'Table ${target.name} already has an open order — settle or move it first',
-        );
+        throw TableOccupiedException(target.name);
       }
 
-      await clearTableOrder(oldTableId);
+      if (oldTableId != null) await clearTableOrder(oldTableId);
       await setTableOrderId(newTableId, orderId);
       await (_database.update(
         _database.orders,
@@ -3251,21 +3255,25 @@ class OrderRepository {
     // Log the transfer
     await _logService.logOrderUpdated(
       orderId,
-      'Order transferred from table $oldTableId to table $newTableId',
+      byWaiterId != null
+          ? 'Order moved to table #$newTableId by waiter #$byWaiterId'
+          : 'Order transferred from table $oldTableId to table $newTableId',
     );
-    final transferred = await (_database.select(
-      _database.orders,
-    )..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
-    final transferCode = transferred?.code ?? '#$orderId';
-    _audit(
-      (log, uid, uname) => log.logOrderTransferred(
-        transferCode,
-        '$oldTableId',
-        '$newTableId',
-        userId: uid,
-        username: uname,
-      ),
-    );
+    if (byWaiterId == null) {
+      final transferred = await (_database.select(
+        _database.orders,
+      )..where((tbl) => tbl.id.equals(orderId))).getSingleOrNull();
+      final transferCode = transferred?.code ?? '#$orderId';
+      _audit(
+        (log, uid, uname) => log.logOrderTransferred(
+          transferCode,
+          '$oldTableId',
+          '$newTableId',
+          userId: uid,
+          username: uname,
+        ),
+      );
+    }
 
     // Push immediately when online; the isSynced=false flag above guarantees
     // the periodic sweep retries if this fails or we're offline. Detached, like
