@@ -4,10 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart' as widgets;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
-import 'package:drift/drift.dart' as drift;
 import '../../providers/device_providers.dart';
 import '../../data/database/app_database.dart';
-import '../../providers/database_providers.dart';
 import '../../services/kds_live_service.dart';
 import '../../services/permission_service.dart';
 import '../../utils/snackbar_helper.dart';
@@ -300,14 +298,12 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
     List<Kiosk> kioskList,
   ) async {
     final devices = <DeviceRowData>[];
-    final database = ref.read(databaseProvider);
+    final deviceRepo = ref.read(deviceRepositoryProvider);
 
     for (final kds in kdsList) {
       String? stationName;
       if (kds.stationId != null) {
-        final station = await (database.select(database.stations)
-              ..where((tbl) => tbl.id.equals(kds.stationId!)))
-            .getSingleOrNull();
+        final station = await deviceRepo.getStationById(kds.stationId!);
         stationName = station?.name;
       }
 
@@ -818,24 +814,10 @@ class _AddStationDialogState extends ConsumerState<_AddStationDialog> {
     if (!_formKey.currentState!.validate()) return;
 
     try {
-      final database = ref.read(databaseProvider);
-
-      // Get the maximum ID and increment it
-      final maxId = await (database.selectOnly(database.stations)
-        ..addColumns([database.stations.id.max()]))
-        .map((row) => row.read(database.stations.id.max()))
-        .getSingleOrNull();
-
-      final newId = (maxId ?? 0) + 1;
-
-      // Insert the new station
-      await database.into(database.stations).insert(
-        StationsCompanion.insert(
-          id: drift.Value(newId),
-          name: _nameController.text,
-          description: drift.Value(_descriptionController.text.isEmpty ? null : _descriptionController.text),
-        ),
-      );
+      final newId = await ref.read(deviceRepositoryProvider).addStation(
+            name: _nameController.text,
+            description: _descriptionController.text,
+          );
 
       if (mounted) {
         widget.onStationAdded(newId);
