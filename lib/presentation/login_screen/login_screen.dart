@@ -28,10 +28,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
 import '../super_admin/super_admin_tap_target.dart';
 import '../../services/api_service.dart';
-import '../../services/data_sync_service.dart';
 import '../../services/notification_params.dart';
 import '../../services/remote_support_service.dart';
-import '../../services/session_service.dart';
 import '../../providers/session_rules_provider.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
@@ -193,8 +191,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
   Future<void> _loadUsers() async {
     try {
-      final database = ref.read(databaseProvider);
-      final users = await database.select(database.users).get();
+      final users = await ref.read(userRepositoryProvider).getAllUsers();
       if (!mounted) return;
       setState(() {
         _availableUsers = users;
@@ -536,8 +533,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     try {
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
-      final database = ref.read(databaseProvider);
-      final syncService = DataSyncService(database, apiService, prefs);
+      final syncService =
+          ref.read(dataSyncServiceFactoryProvider)(apiService, prefs);
       if (mounted) {
         SnackBarHelper.showToast(l10n.translate('syncing_data'), kind: ToastKind.info, duration: const Duration(seconds: 2));
       }
@@ -594,8 +591,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     });
 
     try {
-      final database = ref.read(databaseProvider);
-      final users = await database.select(database.users).get();
+      final userRepository = ref.read(userRepositoryProvider);
+      final users = await userRepository.getAllUsers();
       if (users.isEmpty) {
         if (mounted) {
           await _performFullLogout(
@@ -607,9 +604,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       final username = _usernameController.text.trim();
       final password = _passwordController.text.trim();
 
-      final user = await (database.select(database.users)
-            ..where((tbl) => tbl.username.equals(username)))
-          .getSingleOrNull();
+      final user = await userRepository.findByUsername(username);
 
       if (user == null) {
         setState(() {
@@ -680,7 +675,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       }
 
       try {
-        final sessionService = SessionService(database);
+        final sessionService = ref.read(sessionServiceProvider);
         final startingBalance =
             double.tryParse(_startingBalanceController.text) ?? 0.0;
 
@@ -742,7 +737,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           // If offline, isSynced stays false and syncSessionsBulk covers it later.
           try {
             final prefs = ref.read(sharedPreferencesProvider);
-            await DataSyncService(ref.read(databaseProvider), ApiService(prefs))
+            await ref
+                .read(dataSyncServiceFactoryProvider)(ApiService(prefs))
                 .syncSingleSession(newSession.id);
           } catch (_) {}
           await ref.read(activityLogServiceProvider)
@@ -829,8 +825,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       await apiService.logout();
       await apiService.clearAllAuthData();
 
-      final database = ref.read(databaseProvider);
-      final syncService = DataSyncService(database, apiService);
+      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
       await syncService.dumpDatabaseBeforeClear();
       await syncService.clearAllData();
 
@@ -1418,8 +1413,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   Future<({bool ok, Z? z})> _resolveZForLogin(User user,
       {bool superAdmin = false}) async {
     final l10n = AppLocalizations.of(context)!;
-    final database = ref.read(databaseProvider);
-    final active = await SessionService(database).getActiveSession(user.id);
+    final active =
+        await ref.read(sessionServiceProvider).getActiveSession(user.id);
     if (active != null) {
       final z = active.zId == null
           ? null
