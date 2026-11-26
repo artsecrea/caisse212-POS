@@ -1,9 +1,9 @@
-import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/user_provider.dart';
 import '../../services/permission_service.dart';
 import '../../services/refund_service.dart';
 import '../../utils/app_localizations.dart';
@@ -60,19 +60,15 @@ class _RefundsScreenState extends ConsumerState<RefundsScreen> {
 
   Future<void> _loadLocal() async {
     setState(() => _loadingLocal = true);
-    final db = ref.read(databaseProvider);
-    final q = db.select(db.refunds)
-      ..orderBy([(r) => OrderingTerm.desc(r.refundedAt)]);
+    final refunds = ref.read(refundServiceProvider);
+    final List<Refund> rows;
     if (_period == _Period.session) {
-      final sessionId = ref.read(currentSessionProvider)?.id;
-      q.where((r) => sessionId == null
-          ? const Constant(false)
-          : r.sessionId.equals(sessionId));
+      rows = await refunds.localRefunds(
+          sessionId: ref.read(currentSessionProvider)?.id);
     } else {
       final (from, _) = _range();
-      q.where((r) => r.refundedAt.isBiggerOrEqualValue(from));
+      rows = await refunds.localRefunds(since: from);
     }
-    final rows = await q.get();
     if (mounted) {
       setState(() {
         _local = rows;
@@ -132,12 +128,10 @@ class _RefundsScreenState extends ConsumerState<RefundsScreen> {
     final l10n = AppLocalizations.of(context)!;
     final currency = ref.read(currencySymbolProvider);
     final slip = await ref.read(refundServiceProvider).slipFor(r);
-    final db = ref.read(databaseProvider);
+    final users = ref.read(userRepositoryProvider);
     String? approver;
     if (r.approvedBy != null) {
-      final u = await (db.select(db.users)
-            ..where((t) => t.id.equals(r.approvedBy!)))
-          .getSingleOrNull();
+      final u = await users.getUserById(r.approvedBy!);
       approver = u == null
           ? '#${r.approvedBy}'
           : ('${u.firstName} ${u.lastName}'.trim().isEmpty
