@@ -87,8 +87,7 @@ class _SessionReportsDialogState extends ConsumerState<_SessionReportsDialog> {
   DateTime _asOf = DateTime.now();
   bool _printing = false;
 
-  DailySummaryService get _summaries =>
-      DailySummaryService(ref.read(databaseProvider));
+  DailySummaryService get _summaries => ref.read(dailySummaryServiceProvider);
 
   @override
   void initState() {
@@ -108,12 +107,11 @@ class _SessionReportsDialogState extends ConsumerState<_SessionReportsDialog> {
   // ── Data ─────────────────────────────────────────────────────────────────
 
   Future<({ReportScope scope, bool provisional})> _resolveScope() async {
-    final db = ref.read(databaseProvider);
+    final sessions = ref.read(sessionServiceProvider);
+    final zService = ref.read(zServiceProvider);
     final session = widget.session;
     if (!_dayScope) {
-      final fresh = await (db.select(db.cashSessions)
-            ..where((s) => s.id.equals(session.id)))
-          .getSingleOrNull();
+      final fresh = await sessions.getSessionById(session.id);
       return (
         scope: (
           sessionIds: [session.id],
@@ -126,17 +124,13 @@ class _SessionReportsDialogState extends ConsumerState<_SessionReportsDialog> {
       );
     }
     final scope = await _summaries.dayScopeFor(session);
-    final rows = await (db.select(db.cashSessions)
-          ..where((s) => s.id.isIn(scope.sessionIds)))
-        .get();
+    final rows = await sessions.getSessionsByIds(scope.sessionIds);
     var provisional = rows.any((s) => s.endedAt == null);
     if (!provisional) {
       // Every shift ended, but the day is only settled once its Z is closed;
       // without Z tracking, today can still take another shift.
       if (session.zId != null) {
-        final z = await (db.select(db.zs)
-              ..where((t) => t.id.equals(session.zId!)))
-            .getSingleOrNull();
+        final z = await zService.getById(session.zId!);
         provisional = z != null && z.status != 'closed';
       } else {
         final now = DateTime.now();
@@ -171,8 +165,7 @@ class _SessionReportsDialogState extends ConsumerState<_SessionReportsDialog> {
         }
         UnpaidOrdersSummary? outstanding;
         try {
-          outstanding =
-              await UnpaidOrdersService(ref.read(databaseProvider)).summary();
+          outstanding = await ref.read(unpaidOrdersServiceProvider).summary();
         } catch (e) {
           Logger.instance.error('Reports: outstanding lookup failed: $e');
         }
