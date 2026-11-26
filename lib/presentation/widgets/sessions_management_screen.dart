@@ -6,8 +6,6 @@ import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../services/session_service.dart';
 import '../../services/permission_service.dart';
-import '../../services/data_sync_service.dart';
-import '../../services/pending_operations_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import 'admin_mode_chip.dart';
@@ -61,8 +59,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   }
 
   void _refreshFuture() {
-    final db = ref.read(databaseProvider);
-    final sessionService = SessionService(db);
+    final sessionService = ref.read(sessionServiceProvider);
     setState(() {
       _pageFuture = sessionService.getSessionsPage(
         offset: _currentPage * _rowsPerPage,
@@ -79,8 +76,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
   Future<void> _loadPendingOperationsCount() async {
     try {
-      final database = ref.read(databaseProvider);
-      final pendingOpsService = PendingOperationsService(database);
+      final pendingOpsService = ref.read(pendingOperationsServiceProvider);
       final operations = await pendingOpsService.getPendingOperationsByType('SESSION');
       if (mounted) {
         setState(() => _pendingOperationsCount = operations.length);
@@ -600,8 +596,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
     if (confirm == true) {
       try {
-        final database = ref.read(databaseProvider);
-        final sessionService = SessionService(database);
+        final sessionService = ref.read(sessionServiceProvider);
         await sessionService.deleteSession(session.id);
         _refreshFuture();
         if (mounted) {
@@ -795,9 +790,8 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
     setState(() => _isSyncing = true);
 
     try {
-      final database = ref.read(databaseProvider);
       final apiService = ref.read(apiServiceProvider);
-      final syncService = DataSyncService(database, apiService);
+      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
 
       await syncService.syncPendingOperations();
       final syncedCount = await syncService.syncSessionsBulk();
@@ -819,8 +813,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
   Future<void> _showPendingOperationsDialog() async {
     final l10n = AppLocalizations.of(context)!;
-    final database = ref.read(databaseProvider);
-    final pendingOpsService = PendingOperationsService(database);
+    final pendingOpsService = ref.read(pendingOperationsServiceProvider);
     final operations = await pendingOpsService.getPendingOperationsByType('SESSION');
 
     if (!mounted) return;
