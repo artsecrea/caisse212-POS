@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
-import 'package:drift/drift.dart' hide Column;
 import '../../core/enums.dart';
 import '../../data/database/app_database.dart';
+import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
@@ -57,7 +57,6 @@ import '../reservations/agenda_screen.dart';
 import '../reservations/reservation_panel.dart' show BasketLine, PanelCustomer;
 import '../../domain/models/reservation_models.dart';
 import '../../providers/session_rules_provider.dart';
-import '../../services/session_service.dart';
 import '../../services/customer_display_service.dart';
 import '../../services/scale_barcode_service.dart';
 import '../../domain/models/scale_config.dart';
@@ -250,15 +249,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   }
 
   Future<void> _handleStaticBarcode(String barcode) async {
-    final database = ref.read(databaseProvider);
+    final catalogue = ref.read(catalogueRepositoryProvider);
 
     try {
       // Match a scanned/typed code against barcode OR reference (SKU).
-      final matches = await (database.select(database.products)
-        ..where((tbl) =>
-            tbl.barcode.equals(barcode) | tbl.reference.equals(barcode))
-        ..where((tbl) => tbl.isActive.equals(true)))
-        .get();
+      final matches = await catalogue.findActiveByBarcodeOrReference(barcode);
       // Prefer an exact barcode hit if a reference on another product collides.
       final product = matches.isEmpty
           ? null
@@ -536,8 +531,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       CashSession session, String reasonKey) async {
     _autoCloseTimer?.cancel();
     try {
-      final db = ref.read(databaseProvider);
-      final sessionService = SessionService(db);
+      final sessionService = ref.read(sessionServiceProvider);
       await sessionService.endSession(sessionId: session.id, autoClosed: true);
       ref.read(currentSessionProvider.notifier).state = null;
       // Sync all pending data to server before returning to login.
