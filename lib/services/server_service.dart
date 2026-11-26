@@ -87,6 +87,25 @@ class _WaiterConflict implements Exception {
       );
 }
 
+/// What the till offers for one product, as the option check reads it.
+typedef _OptionCatalog = ({
+  Map<int, double> catalogue,
+  Map<int, int?> groupOf,
+  Map<int, String> nameOf,
+  Map<int, int?> maxEach,
+  Map<int?, ComponentGroupRule> rules,
+});
+
+/// Lookups shared by the lines of one request, so a round of twenty lines
+/// reads each product's options, rules and cost once instead of per line —
+/// inside the write transaction, where every query holds the lock.
+class _WaiterRound {
+  _WaiterRound(AppDatabase database) : costs = ProductCostResolver(database);
+
+  final ProductCostResolver costs;
+  final Map<int, _OptionCatalog> catalogs = {};
+}
+
 /// One option row to store on a waiter line, priced by the till.
 typedef _PricedOption = ({
   int componentId,
@@ -3058,6 +3077,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
           );
 
           // Insert products
+          final round = _WaiterRound(database);
           for (final productJson in products) {
             await _insertWaiterLine(
               database,
@@ -3065,6 +3085,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
               (productJson as Map).cast<String, dynamic>(),
               state: waiterItemState,
               zDay: waiterZDay,
+              round: round,
             );
           }
 
@@ -3360,7 +3381,9 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
     Map<String, dynamic> productJson, {
     required String state,
     DateTime? zDay,
+    _WaiterRound? round,
   }) async {
+    final lookups = round ?? _WaiterRound(database);
     final productId = productJson['productId'] as int;
     final variantId = productJson['variantId'] as int?;
     final quantity = (productJson['quantity'] as num?)?.toDouble() ?? 1.0;
@@ -3398,7 +3421,8 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
 
     // Checked before anything is written: a refusal throws, and the caller's
     // transaction takes the rest of the round back with it.
-    final options = await _priceWaiterOptions(database, productId, components);
+    final options =
+        await _priceWaiterOptions(database, productId, components, lookups);
 
     final orderProductId = await database.into(database.orderProducts).insert(
           OrderProductsCompanion.insert(
@@ -3407,7 +3431,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
             variantId: drift.Value(variantId),
             quantity: drift.Value(quantity),
             unitaryPrice: unitPrice,
-            cost: drift.Value(await ProductCostResolver(database)
+            cost: drift.Value(await lookups.costs
                 .resolve(productId: productId, variantId: variantId)),
             unitaryDiscount: drift.Value(unitDiscount),
             unitaryTva: drift.Value(unitTva),
@@ -3444,26 +3468,14 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
   /// Entries are summed per component first, so a tablet that already split
   /// a component into a free and a charged row gets the same result as one
   /// that sent it once. Zero-quantity entries are kept as zero rows.
-  Future<List<_PricedOption>> _priceWaiterOptions(
-      AppDatabase database, int productId, List<dynamic> components) async {
+  Future<List<_PricedOption>> _priceWaiterOptions(AppDatabase database,
+      int productId, List<dynamic> components, _WaiterRound round) async {
     if (components.isEmpty) return const [];
 
-    final links = await (database.select(database.productComponents)
-          ..where((pc) => pc.productId.equals(productId)))
-        .get();
-    final linkByComponent = {for (final l in links) l.componentId: l};
-    final offered = links.isEmpty
-        ? const <Component>[]
-        : await (database.select(database.components)
-              ..where((c) =>
-                  c.id.isIn(linkByComponent.keys) & c.isActive.equals(true)))
-            .get();
-    final catalogue = {
-      for (final c in offered)
-        c.id: linkByComponent[c.id]!.defaultPrice ?? c.price,
-    };
-    final groupOf = {for (final c in offered) c.id: c.componentGroupId};
-    final nameOf = {for (final c in offered) c.id: c.name};
+    final catalog = round.catalogs[productId] ??=
+        await _loadOptionCatalog(database, productId);
+    final catalogue = catalog.catalogue;
+    final nameOf = catalog.nameOf;
 
     final picked = <int, int>{};
     final zeroRows = <int>[];
@@ -3478,17 +3490,12 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       }
     }
 
-    final rules = await loadComponentGroupRules(database, productId);
     final pricing = priceOptions(
       picked: picked,
       catalogue: catalogue,
-      groupOf: groupOf,
-      rules: rules,
-      maxEach: {
-        for (final c in offered)
-          c.id: maxUnitsOf(
-              rules[c.componentGroupId], linkByComponent[c.id]!.maxQuantity),
-      },
+      groupOf: catalog.groupOf,
+      rules: catalog.rules,
+      maxEach: catalog.maxEach,
     );
     final problem = pricing.problem;
     if (problem != null) {
@@ -3536,6 +3543,38 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
         if (!picked.containsKey(id))
           (componentId: id, quantity: 0, price: 0.0, name: nameOf[id]),
     ];
+  }
+
+  /// What [productId] offers, with each option's resolved price (the link's
+  /// override, else the option's own), group, catalogue name and stepper cap,
+  /// plus the group rules in force for the product. 86'd options are left out.
+  Future<_OptionCatalog> _loadOptionCatalog(
+      AppDatabase database, int productId) async {
+    final links = await (database.select(database.productComponents)
+          ..where((pc) => pc.productId.equals(productId)))
+        .get();
+    final linkByComponent = {for (final l in links) l.componentId: l};
+    final offered = links.isEmpty
+        ? const <Component>[]
+        : await (database.select(database.components)
+              ..where((c) =>
+                  c.id.isIn(linkByComponent.keys) & c.isActive.equals(true)))
+            .get();
+    final rules = await loadComponentGroupRules(database, productId);
+    return (
+      catalogue: {
+        for (final c in offered)
+          c.id: linkByComponent[c.id]!.defaultPrice ?? c.price,
+      },
+      groupOf: {for (final c in offered) c.id: c.componentGroupId},
+      nameOf: {for (final c in offered) c.id: c.name},
+      maxEach: {
+        for (final c in offered)
+          c.id: maxUnitsOf(
+              rules[c.componentGroupId], linkByComponent[c.id]!.maxQuantity),
+      },
+      rules: rules,
+    );
   }
 
   /// PUT /waiters/orders/`<code>`/add-products — add SEVERAL products at once.
@@ -3608,6 +3647,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
       var added = 0;
       try {
         await database.transaction(() async {
+          final round = _WaiterRound(database);
           for (var index = 0; index < products.length; index++) {
             final map = (products[index] as Map).cast<String, dynamic>();
             final int? inserted;
@@ -3616,6 +3656,7 @@ self.addEventListener('fetch', () => {}); // pass-through, no caching
                 database,
                 order.id,
                 map,
+                round: round,
                 // Matches the single-product route exactly.
                 state: 'PENDING',
                 // Inherited from the order, so a round lands in the same Z as
