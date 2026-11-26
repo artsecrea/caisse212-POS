@@ -3,7 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
-import 'package:caisse212/presentation/widgets/z_report_dialog.dart';
+import 'package:caisse212/services/z_service.dart';
 
 /// The Z report is offered for any trading day, whether or not the terminal
 /// was ever switched into Z tracking — so its day list is built from cash
@@ -27,14 +27,14 @@ void main() {
           ));
 
   test('no sessions means nothing to report on', () async {
-    expect(await loadZDayOptions(db), isEmpty);
+    expect(await ZService(db).zDayOptions(), isEmpty);
   });
 
   test('sessions on the same day collapse into one entry', () async {
     await session('S1', DateTime(2026, 3, 4, 8));
     await session('S2', DateTime(2026, 3, 4, 17));
 
-    final days = await loadZDayOptions(db);
+    final days = await ZService(db).zDayOptions();
     expect(days, hasLength(1));
     expect(days.single.sessionIds, hasLength(2));
     expect(days.single.sessionCodes, containsAll(['S1', 'S2']));
@@ -46,7 +46,7 @@ void main() {
     await session('older', DateTime(2026, 3, 1, 9));
     await session('newer', DateTime(2026, 3, 9, 9));
 
-    final days = await loadZDayOptions(db);
+    final days = await ZService(db).zDayOptions();
     expect([for (final d in days) d.day.day], [9, 1]);
   });
 
@@ -61,7 +61,7 @@ void main() {
           status: const Value('closed'),
         ));
 
-    final day = (await loadZDayOptions(db)).single;
+    final day = (await ZService(db).zDayOptions()).single;
     expect(day.zNumber, 1);
     expect(day.zCode, 'Z-20260304-1-080000001');
     expect(day.label, contains('Z1'));
@@ -79,7 +79,7 @@ void main() {
           status: const Value('closed'),
         ));
 
-    final day = (await loadZDayOptions(db)).single;
+    final day = (await ZService(db).zDayOptions()).single;
     expect(day.day, DateTime(2026, 3, 4));
     expect(day.zNumber, 2);
   });
@@ -96,7 +96,7 @@ void main() {
           status: const Value('closed'),
         ));
 
-    final days = await loadZDayOptions(db);
+    final days = await ZService(db).zDayOptions();
     expect(days, hasLength(2));
     expect(days[0].zNumber, 2, reason: 'the 5th has a Z');
     expect(days[1].zNumber, isNull, reason: 'the 4th does not, and is fine');
@@ -108,13 +108,13 @@ void main() {
       await session('S1', DateTime(2026, 3, 4, 8));
       await session('S2', DateTime(2026, 3, 4, 17), status: 'active');
       await session('S3', DateTime(2026, 3, 3, 9));
-      final days = await loadZDayOptions(db);
+      final days = await ZService(db).zDayOptions();
       expect([for (final d in days) d.day], [DateTime(2026, 3, 3)]);
     });
 
     test('a paused session blocks the day too', () async {
       await session('S1', DateTime(2026, 3, 4, 8), status: 'paused');
-      expect(await loadZDayOptions(db), isEmpty);
+      expect(await ZService(db).zDayOptions(), isEmpty);
     });
 
     test('a day whose Z is still open is not offered, even with every '
@@ -126,7 +126,7 @@ void main() {
             zDay: const Value('2026-03-04'),
           ));
       await session('S1', DateTime(2026, 3, 4, 8), zId: zId);
-      expect(await loadZDayOptions(db), isEmpty);
+      expect(await ZService(db).zDayOptions(), isEmpty);
     });
   });
 }

@@ -3,7 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
-import 'package:caisse212/presentation/widgets/z_report_dialog.dart';
+import 'package:caisse212/services/z_service.dart';
 
 void main() {
   late AppDatabase db;
@@ -28,22 +28,22 @@ void main() {
   test('nothing open: the Z report is allowed', () async {
     await session('ended');
     await z('closed');
-    expect(await zReportBlockedByOpenShift(db), isFalse);
+    expect(await ZService(db).reportBlockedByOpenShift(), isFalse);
   });
 
   test('an open Z blocks it', () async {
     await z('open');
-    expect(await zReportBlockedByOpenShift(db), isTrue);
+    expect(await ZService(db).reportBlockedByOpenShift(), isTrue);
   });
 
   test('a running session blocks it, even with every Z closed', () async {
     await z('closed');
     await session('active');
-    expect(await zReportBlockedByOpenShift(db), isTrue);
+    expect(await ZService(db).reportBlockedByOpenShift(), isTrue);
   });
 
   test('a paused session blocks it', () async {
     await session('paused');
-    expect(await zReportBlockedByOpenShift(db), isTrue);
+    expect(await ZService(db).reportBlockedByOpenShift(), isTrue);
   });
 }

@@ -1,94 +1,14 @@
-import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 
-import '../../data/database/app_database.dart';
 import '../../domain/models/z_day_option.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
-import '../../services/daily_summary_service.dart';
 import 'report_documents.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
-import '../../services/z_service.dart' show ZService;
-
-export '../../domain/models/z_day_option.dart';
-
-/// Every CLOSED business day that has at least one cash session, newest
-/// first.
-///
-/// A Z is only printable once the day is over on paper: a day still holding
-/// an open or paused session, or a Z that has not been closed, is left out —
-/// its figures are not final, and a Z printed from them would be a legal
-/// document that later disagrees with the real one. Its X is always there.
-///
-/// Days are business days: a session belongs to its Z's zDay, and a legacy
-/// session with no Z to the day it opened.
-///
-/// Capped because this feeds a dropdown, not an archive browser; a shop
-/// wanting an older day has the sessions screen. The cap is generous enough
-/// to cover a quarter of trading.
-Future<List<ZDayOption>> loadZDayOptions(AppDatabase db,
-    {int limitDays = 120}) async {
-  final sessions = await (db.select(db.cashSessions)
-        ..orderBy([(s) => OrderingTerm.desc(s.startedAt)]))
-      .get();
-
-  final zs = await db.select(db.zs).get();
-  final zById = {for (final z in zs) z.id: z};
-
-  final byDay = <DateTime, List<CashSession>>{};
-  final unfinished = <DateTime>{};
-  for (final s in sessions) {
-    final z = s.zId == null ? null : zById[s.zId];
-    final d = z != null
-        ? ZService.zDayOf(z)
-        : DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day);
-    byDay.putIfAbsent(d, () => []).add(s);
-    if (s.status != 'ended') unfinished.add(d);
-  }
-
-  // Z rows are matched by their business day. A day with several Zs names
-  // the first; the report itself covers every session of the day.
-  final zByDay = <DateTime, Z>{};
-  for (final z in zs) {
-    final d = ZService.zDayOf(z);
-    if (z.status != 'closed') unfinished.add(d);
-    final held = zByDay[d];
-    if (held == null || z.zSeq < held.zSeq) zByDay[d] = z;
-  }
-
-  final days = byDay.keys.where((d) => !unfinished.contains(d)).toList()
-    ..sort((a, b) => b.compareTo(a));
-  return [
-    for (final day in days.take(limitDays))
-      ZDayOption(
-        day: day,
-        sessionIds: [for (final s in byDay[day]!) s.id],
-        sessionCodes: [for (final s in byDay[day]!) s.code],
-        zCode: zByDay[day]?.code,
-        zNumber: zByDay[day]?.zSeq,
-      ),
-  ];
-}
-
-/// True while the till is still trading: a Z is open, or a cash session is
-/// active or paused. The Z report is the closing document, so it is not
-/// printable until then — mid-shift figures are the X report's job.
-Future<bool> zReportBlockedByOpenShift(AppDatabase db) async {
-  final openZ = await (db.select(db.zs)
-        ..where((z) => z.status.equals('open'))
-        ..limit(1))
-      .getSingleOrNull();
-  if (openZ != null) return true;
-  final running = await (db.select(db.cashSessions)
-        ..where((s) => s.status.isIn(const ['active', 'paused']))
-        ..limit(1))
-      .getSingleOrNull();
-  return running != null;
-}
 
 /// Print a Z report for a chosen trading day, picking the documents freely.
 ///
@@ -103,16 +23,16 @@ Future<void> showPrintZReportDialog({
   required WidgetRef ref,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final db = ref.read(databaseProvider);
+  final zService = ref.read(zServiceProvider);
 
-  if (await zReportBlockedByOpenShift(db)) {
+  if (await zService.reportBlockedByOpenShift()) {
     if (context.mounted) {
       SnackBarHelper.error(context, l10n.translate('z_report_blocked_open'));
     }
     return;
   }
 
-  final days = await loadZDayOptions(db);
+  final days = await zService.zDayOptions();
   if (!context.mounted) return;
   if (days.isEmpty) {
     SnackBarHelper.error(context, l10n.translate('no_z_days_to_report'));
@@ -122,7 +42,7 @@ Future<void> showPrintZReportDialog({
   var selected = days.first;
   var includeTotals = true;
   final documents = ReportDocuments.fromSettings(ref.read(settingsProvider));
-  final staff = await StaffChoices.load(db, l10n);
+  final staff = await StaffChoices.load(ref.read(databaseProvider), l10n);
   if (!context.mounted) return;
 
   final go = await showDialog<bool>(
@@ -220,7 +140,8 @@ Future<void> showPrintZReportDialog({
   if (includeTotals) {
     attempted++;
     try {
-      final report = await DailySummaryService(db).generateReport(
+      final summaries = ref.read(dailySummaryServiceProvider);
+      final report = await summaries.generateReport(
         startDate: scope.day,
         endDate: scope.day,
         sessionIds: scope.sessionIds,

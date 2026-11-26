@@ -4,14 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/domain/models/z_day_option.dart';
-import 'package:caisse212/presentation/widgets/z_report_dialog.dart'
-    show loadZDayOptions, zReportBlockedByOpenShift;
 import 'package:caisse212/services/z_service.dart';
 
 /// [ZService.zDayOptions] and [ZService.reportBlockedByOpenShift] are the Z
 /// report dialog's helpers moved out of the UI. Same cases as
-/// z_report_days_test / z_report_blocked_test, plus a check that both
-/// still agree with the UI functions until those become wrappers.
+/// z_report_days_test / z_report_blocked_test, plus a mixed case and two
+/// open Zs.
 void main() {
   late AppDatabase db;
   late ZService z;
@@ -94,18 +92,24 @@ void main() {
       expect(await z.zDayOptions(), isEmpty);
     });
 
-    test('agrees with loadZDayOptions', () async {
+    test('a Z day and a legacy day side by side, the open day left out',
+        () async {
       final zId = await zRow('Z1', DateTime(2026, 3, 5, 8), zDay: '2026-03-05');
-      await session('S1', DateTime(2026, 3, 4, 8));
-      await session('S2', DateTime(2026, 3, 5, 8), zId: zId);
-      await session('S3', DateTime(2026, 3, 5, 14), zId: zId);
+      final s1 = await session('S1', DateTime(2026, 3, 4, 8));
+      final s2 = await session('S2', DateTime(2026, 3, 5, 8), zId: zId);
+      final s3 = await session('S3', DateTime(2026, 3, 5, 14), zId: zId);
       await session('S4', DateTime(2026, 3, 6, 9), status: 'active');
 
       String flat(List<ZDayOption> days) => [
             for (final d in days)
               '${d.day}|${d.sessionIds}|${d.sessionCodes}|${d.zCode}|${d.zNumber}'
           ].join('\n');
-      expect(flat(await z.zDayOptions()), flat(await loadZDayOptions(db)));
+      expect(
+          flat(await z.zDayOptions()),
+          [
+            '${DateTime(2026, 3, 5)}|[$s3, $s2]|[S3, S2]|Z1|1',
+            '${DateTime(2026, 3, 4)}|[$s1]|[S1]|null|null',
+          ].join('\n'));
     });
   });
 
@@ -123,7 +127,6 @@ void main() {
 
     Future<void> expectBlocked(bool blocked) async {
       expect(await z.reportBlockedByOpenShift(), blocked);
-      expect(await zReportBlockedByOpenShift(db), blocked);
     }
 
     test('nothing open: allowed', () async {
