@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/database_providers.dart';
-import '../../services/customer_repository.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/phone_normalizer.dart';
 import 'customer_selection_dialog.dart';
@@ -69,7 +68,7 @@ class _ExternalCustomerReviewDialogState
   }
 
   Future<void> _saveOrModifyFlow() async {
-    final db = ref.read(databaseProvider);
+    final customers = ref.read(customerRepositoryProvider);
     final split = _splitName();
     final queueFullName =
         '${split.firstName} ${split.lastName}'.trim();
@@ -85,13 +84,7 @@ class _ExternalCustomerReviewDialogState
     if (phoneRaw.isNotEmpty) {
       final phoneNorm = normalizePhone(phoneRaw);
       if (phoneNorm.isNotEmpty) {
-        // Duplicate-tolerant: getSingleOrNull() throws on >1 match, which is
-        // exactly what froze this dialog when the DB held duplicate phones.
-        final matches = await (db.select(db.customers)
-              ..where((c) => c.phoneNormalized.equals(phoneNorm))
-              ..limit(1))
-            .get();
-        final existing = matches.isEmpty ? null : matches.first;
+        final existing = await customers.findByPhoneNormalized(phoneNorm);
         if (existing != null) {
           final existingFullName =
               '${existing.firstName} ${existing.lastName}'.trim();
@@ -127,8 +120,7 @@ class _ExternalCustomerReviewDialogState
             }
             // Use New → upsert directly without showing the add form.
             // The cashier already declared intent; no need to re-edit.
-            final overriddenId =
-                await CustomerRepository(db).upsertByPhone(
+            final overriddenId = await customers.upsertByPhone(
               phoneRaw: phoneRaw,
               firstName: split.firstName,
               lastName: split.lastName,
@@ -148,7 +140,7 @@ class _ExternalCustomerReviewDialogState
     // the queue values. Same code path as before.
     final result = await showPrefilledAddCustomerDialog(
       context,
-      database: db,
+      customers: customers,
       initialFirstName: split.firstName,
       initialLastName: split.lastName,
       initialPhone: widget.suggestedPhone,

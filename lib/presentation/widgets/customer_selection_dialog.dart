@@ -32,7 +32,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
 
   @override
   Widget build(BuildContext context) {
-    final database = ref.watch(databaseProvider);
+    final customerRepo = ref.watch(customerRepositoryProvider);
     final l10n = AppLocalizations.of(context)!;
 
     return Dialog(
@@ -81,7 +81,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: _buildCustomerList(database, l10n),
+              child: _buildCustomerList(customerRepo, l10n),
             ),
             const SizedBox(height: 16),
             Row(
@@ -121,7 +121,8 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
     );
   }
 
-  Widget _buildCustomerList(AppDatabase database, AppLocalizations l10n) {
+  Widget _buildCustomerList(
+      CustomerRepository customerRepo, AppLocalizations l10n) {
     if (!_hasSearched) {
       return Center(
         child: Column(
@@ -144,7 +145,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
     }
 
     return StreamBuilder<List<Customer>>(
-      stream: _searchCustomers(database),
+      stream: _searchCustomers(customerRepo),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -216,16 +217,14 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
     );
   }
 
-  Stream<List<Customer>> _searchCustomers(AppDatabase database) {
-    final query = database.select(database.customers);
-
+  Stream<List<Customer>> _searchCustomers(CustomerRepository customerRepo) {
     if (_searchQuery.isEmpty) {
       return Stream.value([]);
     }
 
     // Search in firstName, lastName, phone, or email
-    return query
-        .watch()
+    return customerRepo
+        .watchAll()
         .map((customers) => customers.where((c) {
               final name = c.displayLabel.toLowerCase();
               final phone = c.phone?.toLowerCase() ?? '';
@@ -241,7 +240,8 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
   Future<void> _showAddCustomerDialog(BuildContext context, AppLocalizations l10n) async {
     final result = await showDialog<Map<String, dynamic>?>(
       context: context,
-      builder: (context) => _AddCustomerDialog(database: ref.read(databaseProvider)),
+      builder: (context) =>
+          _AddCustomerDialog(customers: ref.read(customerRepositoryProvider)),
     );
     // If the user saved a new customer, immediately select it.
     if (result != null && mounted) {
@@ -257,7 +257,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
 /// private class.
 Future<Map<String, dynamic>?> showPrefilledAddCustomerDialog(
   BuildContext context, {
-  required AppDatabase database,
+  required CustomerRepository customers,
   String? initialFirstName,
   String? initialLastName,
   String? initialPhone,
@@ -266,7 +266,7 @@ Future<Map<String, dynamic>?> showPrefilledAddCustomerDialog(
   return showDialog<Map<String, dynamic>?>(
     context: context,
     builder: (_) => _AddCustomerDialog(
-      database: database,
+      customers: customers,
       initialFirstName: initialFirstName,
       initialLastName: initialLastName,
       initialPhone: initialPhone,
@@ -277,7 +277,7 @@ Future<Map<String, dynamic>?> showPrefilledAddCustomerDialog(
 
 // Enhanced Add Customer Dialog with better validation and UX
 class _AddCustomerDialog extends StatefulWidget {
-  final AppDatabase database;
+  final CustomerRepository customers;
   // Optional pre-fill values — used when the dialog is opened from the
   // external-order review flow with the queue's customer data prepopulated.
   // Any of these that are null or empty leave the corresponding field blank,
@@ -288,7 +288,7 @@ class _AddCustomerDialog extends StatefulWidget {
   final String? initialEmail;
 
   const _AddCustomerDialog({
-    required this.database,
+    required this.customers,
     this.initialFirstName,
     this.initialLastName,
     this.initialPhone,
@@ -434,7 +434,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
       // already exists, override its non-empty fields and reuse its id
       // instead of producing a duplicate. See [CustomerRepository] for the
       // rationale (sync-reconciliation and search-list cleanliness).
-      final customerId = await CustomerRepository(widget.database).upsertByPhone(
+      final customerId = await widget.customers.upsertByPhone(
         phoneRaw: phoneRaw,
         firstName: firstName,
         lastName: lastName,
