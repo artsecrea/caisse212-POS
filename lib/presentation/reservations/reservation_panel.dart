@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../data/database/app_database.dart';
 import '../../domain/models/reservation_models.dart';
+import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/reservation_providers.dart';
 import '../../providers/resource_providers.dart';
@@ -21,10 +21,8 @@ import 'side_panel.dart';
 /// Category names for grouping the services list.
 final serviceCategoryNamesProvider = FutureProvider<Map<int, String>>((
   ref,
-) async {
-  final db = ref.watch(databaseProvider);
-  final cats = await db.select(db.categories).get();
-  return {for (final c in cats) c.id: c.name};
+) {
+  return ref.watch(catalogueRepositoryProvider).categoryNamesById();
 });
 
 /// One line of the reservation being built: a timed service on a person or
@@ -424,19 +422,9 @@ class _ReservationPanelState extends ConsumerState<ReservationPanel> {
         if (mounted) setState(() => _matches = const []);
         return;
       }
-      final db = ref.read(databaseProvider);
-      final like = '%$text%';
-      final rows =
-          await (db.select(db.customers)
-                ..where(
-                  (c) =>
-                      c.firstName.lower().like(like) |
-                      c.lastName.lower().like(like) |
-                      c.phone.like(like) |
-                      c.phoneNormalized.like(like),
-                )
-                ..limit(6))
-              .get();
+      final rows = await ref
+          .read(customerRepositoryProvider)
+          .searchByNameOrPhone(text);
       if (mounted && _customerQuery.text == q) setState(() => _matches = rows);
     });
   }
@@ -531,10 +519,9 @@ class _ReservationPanelState extends ConsumerState<ReservationPanel> {
     // otherwise name + phone, which the server matches or creates.
     int? customerId;
     if (_phone.text.trim().isEmpty && _localCustomerId != null) {
-      final db = ref.read(databaseProvider);
-      final row = await (db.select(
-        db.customers,
-      )..where((c) => c.id.equals(_localCustomerId!))).getSingleOrNull();
+      final row = await ref
+          .read(customerRepositoryProvider)
+          .getById(_localCustomerId!);
       if (row != null && row.isSynced) customerId = row.id;
     }
     return ReservationDraft(
