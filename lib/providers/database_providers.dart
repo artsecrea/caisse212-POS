@@ -28,6 +28,11 @@ import '../services/refund_policy_store.dart';
 import '../domain/models/refund_policy.dart';
 import '../domain/models/subscription_info.dart';
 import '../services/data_sync_service.dart';
+import '../services/customer_repository.dart';
+import '../services/daily_summary_service.dart';
+import '../services/exchange_service.dart';
+import '../services/kitchen_board_service.dart';
+import '../services/z_day_resolver.dart';
 import '../services/printing_service.dart';
 import '../services/unpaid_orders_service.dart';
 import '../services/pending_operations_service.dart';
@@ -63,6 +68,17 @@ final dataSyncServiceProvider = Provider<DataSyncService>((ref) {
   final database = ref.watch(databaseProvider);
   final apiService = ref.watch(apiServiceProvider);
   return DataSyncService(database, apiService);
+});
+
+/// A fresh [DataSyncService] per call, for the screens that must not share
+/// [dataSyncServiceProvider]'s instance: it holds per-instance state
+/// (`onProgress`, the last-failure flag), and the login screens sync through
+/// an [ApiService] they built themselves. [prefs] is the constructor's
+/// optional third argument, passed only by the callers that pass it today.
+final dataSyncServiceFactoryProvider = Provider<
+    DataSyncService Function(ApiService api, [SharedPreferences? prefs])>((ref) {
+  final database = ref.watch(databaseProvider);
+  return (api, [prefs]) => DataSyncService(database, api, prefs);
 });
 
 // Pending Operations Service Provider
@@ -159,6 +175,36 @@ final refundServiceProvider = Provider<RefundService>((ref) {
 final cashMovementServiceProvider = Provider<CashMovementService>((ref) {
   final database = ref.watch(databaseProvider);
   return CashMovementService(database);
+});
+
+final dailySummaryServiceProvider = Provider<DailySummaryService>((ref) {
+  final database = ref.watch(databaseProvider);
+  return DailySummaryService(database);
+});
+
+final unpaidOrdersServiceProvider = Provider<UnpaidOrdersService>((ref) {
+  final database = ref.watch(databaseProvider);
+  return UnpaidOrdersService(database);
+});
+
+final exchangeServiceProvider = Provider<ExchangeService>((ref) {
+  final database = ref.watch(databaseProvider);
+  return ExchangeService(database);
+});
+
+final kitchenBoardServiceProvider = Provider<KitchenBoardService>((ref) {
+  final database = ref.watch(databaseProvider);
+  return KitchenBoardService(database);
+});
+
+final zDayResolverProvider = Provider<ZDayResolver>((ref) {
+  final database = ref.watch(databaseProvider);
+  return ZDayResolver(database);
+});
+
+final customerRepositoryProvider = Provider<CustomerRepository>((ref) {
+  final database = ref.watch(databaseProvider);
+  return CustomerRepository(database);
 });
 
 final quickProductServiceProvider = Provider<QuickProductService>((ref) {
