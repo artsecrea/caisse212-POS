@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:caisse212/core/enums.dart';
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/domain/models/order_models.dart';
+import 'package:caisse212/domain/models/split_bill.dart';
 import 'package:caisse212/presentation/paymen_screen/payment_screen.dart';
 import 'package:caisse212/providers/order_provider.dart';
 

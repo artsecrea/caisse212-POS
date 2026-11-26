@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
-import 'package:drift/drift.dart' hide Column;
 import '../../data/database/app_database.dart';
 import '../../providers/catalogue_repository.dart';
 import '../../providers/floor_repository.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
+import '../../services/local_payment_service.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/settings_provider.dart';
@@ -831,7 +831,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     );
 
     if (success) {
-      await ticketRepo.incrementPrintCount(ticket.id);
+      await ref.read(paymentServiceProvider).recordPrint(ticket.id);
     }
     return success;
   }
@@ -944,15 +944,11 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
     if (result != null && mounted) {
       try {
-        final ticketRepo = ref.read(ticketRepositoryProvider);
-        await ticketRepo.updateTicket(
-          ticket.id,
-          TicketsCompanion(
-            paymentMethod: Value(result['paymentMethod'] as String),
-            amount: Value(result['amount'] as double),
-            updatedAt: Value(DateTime.now()),
-          ),
-        );
+        await ref.read(paymentServiceProvider).editTicket(
+              ticket.id,
+              paymentMethod: result['paymentMethod'] as String,
+              amount: result['amount'] as double,
+            );
 
         _refreshFuture();
         if (mounted) {
@@ -988,8 +984,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
     if (confirmed == true) {
       try {
-        final ticketRepo = ref.read(ticketRepositoryProvider);
-        await ticketRepo.deleteTicket(ticket.id);
+        await ref.read(paymentServiceProvider).deleteTicket(ticket.id);
         _refreshFuture();
         if (mounted) {
           SnackBarHelper.showToast('Ticket deleted successfully', kind: ToastKind.info);
@@ -1267,7 +1262,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
 
       if (success) {
         // Update print count in database
-        await ticketRepo.incrementPrintCount(ticket.id);
+        await ref.read(paymentServiceProvider).recordPrint(ticket.id);
 
         if (context.mounted) {
           SnackBarHelper.showToast('Ticket #${ticket.num} printed successfully${ticket.isPaid ? " (Paid)" : " (Unpaid)"}', kind: ToastKind.success);

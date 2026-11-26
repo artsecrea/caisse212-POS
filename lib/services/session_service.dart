@@ -11,6 +11,7 @@ import 'cash_report_sections.dart' show CashReportSections;
 import 'refund_service.dart';
 import 'pending_operations_service.dart';
 import '../utils/pos_log.dart';
+import 'package:loggecrea/loggecrea.dart';
 
 /// Per-method money breakdown for a set of tickets.
 ///
@@ -261,8 +262,10 @@ class SessionService {
     double? moneyEntered,
     double? moneyCarriedOver,
     int? posId,
-  }) async {
-    // Check if there's an active session for this user
+  }) =>
+      // One transaction so two concurrent starts cannot both pass the check
+      // and both insert: drift runs them one after the other.
+      _database.transaction(() async {
     final existingSession = await getActiveSession(cashierId);
     if (existingSession != null) {
       throw Exception('User already has an active session');
@@ -286,7 +289,7 @@ class SessionService {
     return (await _database.select(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(id)))
       .getSingle();
-  }
+  });
 
   static final _random = Random.secure();
 
@@ -425,12 +428,22 @@ class SessionService {
   }
 
   /// Get active session for a user
+  ///
+  /// Newest first: a till that already holds two open sessions for one
+  /// cashier (a double-fired login on 2026-11-26) must still let them sign
+  /// in, and `getSingleOrNull` threw "Bad state: Too many elements" there.
   Future<CashSession?> getActiveSession(int cashierId) async {
-    return await (_database.select(_database.cashSessions)
-      ..where((tbl) =>
-        tbl.cashierId.equals(cashierId) &
-        tbl.status.isIn(['active', 'paused'])))
-      .getSingleOrNull();
+    final open = await (_database.select(_database.cashSessions)
+          ..where((tbl) =>
+              tbl.cashierId.equals(cashierId) &
+              tbl.status.isIn(['active', 'paused']))
+          ..orderBy([(tbl) => OrderingTerm.desc(tbl.startedAt)]))
+        .get();
+    if (open.length > 1) {
+      Logger.instance.warning('cashier $cashierId has ${open.length} open '
+          'sessions (${open.map((s) => s.id).join(', ')}); using ${open.first.id}');
+    }
+    return open.firstOrNull;
   }
 
   /// Get session by ID

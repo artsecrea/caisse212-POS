@@ -6,6 +6,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
+import '../../services/local_payment_service.dart';
 import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/sync_manager_provider.dart';
@@ -263,7 +264,7 @@ class _WaiterSettlementDialogState
             tableName: o.tableName,
             numberOfPersons: o.order.persons,
           );
-          await ref.read(ticketRepositoryProvider).incrementPrintCount(ticketId);
+          await ref.read(paymentServiceProvider).recordPrint(ticketId);
         } catch (e) {
           // Non-fatal — payment is committed; cashier can reprint.
           // ignore: avoid_print

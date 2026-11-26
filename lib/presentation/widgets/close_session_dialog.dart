@@ -8,7 +8,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/floor_repository.dart';
 import '../../providers/order_provider.dart';
 import '../../services/local_floor_service.dart';
-import '../../providers/ticket_provider.dart';
+import '../../services/local_payment_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/unpaid_orders_service.dart';
@@ -322,7 +322,7 @@ Future<bool> _settleUnpaidAsCash(
             tableName: o.tableName,
             numberOfPersons: o.order.persons,
           );
-          await ref.read(ticketRepositoryProvider).incrementPrintCount(res.ticketId);
+          await ref.read(paymentServiceProvider).recordPrint(res.ticketId);
         } catch (_) {/* print non-fatal — payment already committed */}
       }
     }

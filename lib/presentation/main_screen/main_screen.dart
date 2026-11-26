@@ -12,6 +12,7 @@ import '../../providers/database_providers.dart';
 import '../../providers/order_provider.dart';
 import '../../services/local_order_service.dart';
 import '../../providers/ticket_provider.dart';
+import '../../services/local_payment_service.dart';
 import '../../domain/services/order_service.dart' show SubmittedCart;
 import '../../services/local_floor_service.dart';
 import '../../services/ticket_settlement_service.dart';
@@ -2346,7 +2347,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             numberOfPersons: reloadedOrder.numberOfPersons,
           );
 
-          await ref.read(ticketRepositoryProvider).incrementPrintCount(ticketId);
+          await ref.read(paymentServiceProvider).recordPrint(ticketId);
         } catch (e) {
           _logger.error('Print failed: $e');
         }

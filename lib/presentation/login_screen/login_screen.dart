@@ -565,6 +565,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   bool get _accountLocked => ref.read(accountBlockProvider) != null;
 
   Future<void> _handleLogin() async {
+    // The button's onPressed is bound at build time, so a double tap (or
+    // Enter + tap) inside one frame reached here twice and opened two
+    // sessions 1 ms apart.
+    if (_isLoading) return;
     if (_accountLocked) {
       setState(() => _errorMessage =
           AppLocalizations.of(context)!.translate('account_locked_login'));

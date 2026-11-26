@@ -282,3 +282,9 @@ class SplitPartReceipt {
     required this.remaining,
   });
 }
+
+/// One saved slice of a draft ticket split — see `TicketDraftSplits` for
+/// what the fields mean. A plain record rather than the Drift row type, so
+/// the payment screen and the payment service's contract carry no database
+/// type, and a test can feed one by hand.
+typedef DraftSplitRow = ({int orderProductId, int draftIndex, double quantity});

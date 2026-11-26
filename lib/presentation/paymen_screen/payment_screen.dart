@@ -19,6 +19,7 @@ import '../../core/enums.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
 import '../../services/local_floor_service.dart';
+import '../../services/local_payment_service.dart';
 import '../../services/ticket_settlement_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/sync_manager_provider.dart';
@@ -192,12 +193,6 @@ class MoneySplitPlan {
     );
   }
 }
-
-/// One saved slice of a draft ticket split — see [TicketDraftSplits] for
-/// what the fields mean. A plain record rather than the Drift row type so
-/// [reconstructUnpaidTickets] has no database dependency and is trivial to
-/// feed by hand in a test.
-typedef DraftSplitRow = ({int orderProductId, int draftIndex, double quantity});
 
 /// Rebuild the unpaid tickets from a saved draft split, or the plain
 /// one-ticket default when [draftRows] is empty.
@@ -977,16 +972,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     var draftRows = const <DraftSplitRow>[];
     if (orderId != null) {
       try {
-        final rows =
-            await ref.read(ticketRepositoryProvider).draftSplitRows(orderId);
-        draftRows = [
-          for (final r in rows)
-            (
-              orderProductId: r.orderProductId,
-              draftIndex: r.draftIndex,
-              quantity: r.quantity,
-            ),
-        ];
+        draftRows = await ref.read(paymentServiceProvider).draftSplit(orderId);
       } catch (e) {
         _logger.error('Failed to load draft ticket split: $e');
       }
@@ -1012,13 +998,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     if (orderId == null) return;
     try {
       final unpaid = tickets.where((t) => !t.isPaid).toList();
-      await ref.read(ticketRepositoryProvider).replaceDraftSplit(orderId, [
+      await ref.read(paymentServiceProvider).saveDraftSplit(orderId, [
         for (var idx = 0; idx < unpaid.length; idx++)
           for (final line in unpaid[idx].items)
             for (final source in line.sources)
               if (source.quantity > 0)
-                TicketDraftSplitsCompanion.insert(
-                  orderId: orderId,
+                (
                   orderProductId: source.rowId,
                   draftIndex: idx,
                   quantity: source.quantity,
@@ -3431,7 +3416,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             numberOfPersons: widget.order.numberOfPersons,
           );
 
-          await ref.read(ticketRepositoryProvider).incrementPrintCount(ticketId);
+          await ref.read(paymentServiceProvider).recordPrint(ticketId);
         } catch (e) {
           _logger.error('Print failed: $e');
         }
@@ -3654,7 +3639,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             tableName: widget.order.tableName,
             numberOfPersons: widget.order.numberOfPersons,
           );
-          await ref.read(ticketRepositoryProvider).incrementPrintCount(ticketId);
+          await ref.read(paymentServiceProvider).recordPrint(ticketId);
         } catch (e) {
           _logger.error('Print failed: $e');
         }
@@ -3951,7 +3936,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         // them reconstructed against re-used row ids if this order is ever
         // reopened, and nothing else ever reads them again.
         try {
-          await ref.read(ticketRepositoryProvider).clearDraftSplit(orderId);
+          await ref.read(paymentServiceProvider).clearDraftSplit(orderId);
         } catch (e) {
           _logger.error('Failed to clear draft split for #$orderId: $e');
         }
@@ -4509,7 +4494,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         isReprint: true,
       );
 
-      await ref.read(ticketRepositoryProvider).incrementPrintCount(ticket.ticketId!);
+      await ref.read(paymentServiceProvider).recordPrint(ticket.ticketId!);
     } catch (e) {
       _logger.error('Reprint failed: $e');
       if (mounted) {
