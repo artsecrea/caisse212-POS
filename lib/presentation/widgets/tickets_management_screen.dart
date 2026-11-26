@@ -4,12 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import 'package:drift/drift.dart' hide Column;
 import '../../data/database/app_database.dart';
+import '../../providers/catalogue_repository.dart';
+import '../../providers/floor_repository.dart';
+import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/settings_provider.dart';
-import '../../services/data_sync_service.dart';
-import '../../services/pending_operations_service.dart';
 import '../../services/permission_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/customer_display.dart';
@@ -84,8 +85,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
   Future<void> _loadPendingOperationsCount() async {
     try {
-      final database = ref.read(databaseProvider);
-      final pendingOpsService = PendingOperationsService(database);
+      final pendingOpsService = ref.read(pendingOperationsServiceProvider);
       final operations = await pendingOpsService.getPendingOperationsByType('TICKET');
       if (mounted) {
         setState(() {
@@ -220,9 +220,8 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     setState(() => _isSyncing = true);
 
     try {
-      final database = ref.read(databaseProvider);
       final apiService = ref.read(apiServiceProvider);
-      final syncService = DataSyncService(database, apiService);
+      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
 
       // Sync pending operations first
       await syncService.syncPendingOperations();
@@ -248,8 +247,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   }
 
   Future<void> _showPendingOperationsDialog() async {
-    final database = ref.read(databaseProvider);
-    final pendingOpsService = PendingOperationsService(database);
+    final pendingOpsService = ref.read(pendingOperationsServiceProvider);
     final operations = await pendingOpsService.getPendingOperationsByType('TICKET');
 
     if (!mounted) return;
@@ -773,19 +771,18 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   Future<bool> _reprintSingleTicket(Ticket ticket) async {
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
-    final database = ref.read(databaseProvider);
+    final ticketRepo = ref.read(ticketRepositoryProvider);
     final prefs = ref.read(sharedPreferencesProvider);
 
-    final orderData = await (database.select(database.orders)
-          ..where((tbl) => tbl.id.equals(ticket.orderId)))
-        .getSingleOrNull();
+    final orderData =
+        await ref.read(orderRepositoryProvider).getOrderRow(ticket.orderId);
 
     String? customerName;
     String? customerPhone;
     if (orderData?.clientId != null) {
-      final customer = await (database.select(database.customers)
-            ..where((tbl) => tbl.id.equals(orderData!.clientId!)))
-          .getSingleOrNull();
+      final customer = await ref
+          .read(customerRepositoryProvider)
+          .getById(orderData!.clientId!);
       if (customer != null) {
         customerName = customer.displayLabel;
         customerPhone = customer.phone;
@@ -796,13 +793,12 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     // holds tableId. Same lookup pattern the order receipt uses.
     String? tableName;
     if (orderData?.tableId != null) {
-      final table = await (database.select(database.areaTables)
-            ..where((t) => t.id.equals(orderData!.tableId!)))
-          .getSingleOrNull();
+      final table =
+          await ref.read(floorRepositoryProvider).tableById(orderData!.tableId!);
       tableName = table?.name;
     }
 
-    final itemsForPrint = await _buildTicketPrintItems(database, ticket.id);
+    final itemsForPrint = await ticketRepo.printItemsOf(ticket.id);
     final businessName = prefs.getString('business_name');
 
     final success = await printingService.printTicketReceipt(
@@ -811,10 +807,10 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
       amount: ticket.amount,
       deliveryFee: orderData == null
           ? null
-          : await _ticketDeliveryFee(database, orderData.id, ticket.id),
-      tvaAmount: await _ticketTvaTotal(database, ticket.id),
-      discountAmount: await _ticketDiscountTotal(
-          database, ticket.id, orderData?.discountPercentage ?? 0),
+          : await ticketRepo.deliveryFeeForTicket(orderData.id, ticket.id),
+      tvaAmount: await ticketRepo.tvaTotalOf(ticket.id),
+      discountAmount: await ticketRepo.discountTotalOf(
+          ticket.id, orderData?.discountPercentage ?? 0),
       discountReason: orderData?.discountReason,
       paymentMethod: ticket.paymentMethod,
       createdAt: ticket.date,
@@ -835,7 +831,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     );
 
     if (success) {
-      await ref.read(ticketRepositoryProvider).incrementPrintCount(ticket.id);
+      await ticketRepo.incrementPrintCount(ticket.id);
     }
     return success;
   }
@@ -901,17 +897,14 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   // CRUD Operations
   void _showTicketDetails(Ticket ticket, int itemCount) async {
     // Get order products for this ticket
-    final database = ref.read(databaseProvider);
-    final items = await (database.select(database.orderProducts)
-          ..where((tbl) => tbl.ticketId.equals(ticket.id)))
-        .get();
+    final ticketRepo = ref.read(ticketRepositoryProvider);
+    final catalogueRepo = ref.read(catalogueRepositoryProvider);
+    final items = await ticketRepo.linesOfTicket(ticket.id);
 
     // Get product names for each item
     final itemsWithNames = <Map<String, dynamic>>[];
     for (final item in items) {
-      final product = await (database.select(database.products)
-            ..where((tbl) => tbl.id.equals(item.productId)))
-          .getSingleOrNull();
+      final product = await catalogueRepo.productById(item.productId);
 
       itemsWithNames.add({
         'product': item,
@@ -920,13 +913,13 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     }
 
     // Get order details
-    final orderData = await (database.select(database.orders)
-          ..where((tbl) => tbl.id.equals(ticket.orderId)))
-        .getSingleOrNull();
+    final orderData =
+        await ref.read(orderRepositoryProvider).getOrderRow(ticket.orderId);
 
     final deliveryFee = orderData == null
         ? 0.0
-        : await _ticketDeliveryFee(database, orderData.id, ticket.id) ?? 0.0;
+        : await ticketRepo.deliveryFeeForTicket(orderData.id, ticket.id) ??
+            0.0;
 
     if (!mounted) return;
 
@@ -1207,20 +1200,19 @@ class _TicketDetailsDialog extends ConsumerWidget {
   ) async {
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
-    final database = ref.read(databaseProvider);
+    final ticketRepo = ref.read(ticketRepositoryProvider);
 
     // Get order code
-    final orderData = await (database.select(database.orders)
-          ..where((tbl) => tbl.id.equals(ticket.orderId)))
-        .getSingleOrNull();
+    final orderData =
+        await ref.read(orderRepositoryProvider).getOrderRow(ticket.orderId);
 
     // Get customer information from order
     String? customerName;
     String? customerPhone;
     if (orderData?.clientId != null) {
-      final customer = await (database.select(database.customers)
-            ..where((tbl) => tbl.id.equals(orderData!.clientId!)))
-          .getSingleOrNull();
+      final customer = await ref
+          .read(customerRepositoryProvider)
+          .getById(orderData!.clientId!);
       if (customer != null) {
         customerName = customer.displayLabel;
         customerPhone = customer.phone;
@@ -1231,14 +1223,13 @@ class _TicketDetailsDialog extends ConsumerWidget {
     // receipt does, kept inline so the reprint path is self-contained.
     String? tableName;
     if (orderData?.tableId != null) {
-      final table = await (database.select(database.areaTables)
-            ..where((t) => t.id.equals(orderData!.tableId!)))
-          .getSingleOrNull();
+      final table =
+          await ref.read(floorRepositoryProvider).tableById(orderData!.tableId!);
       tableName = table?.name;
     }
 
     // Build items list for printing with components
-    final itemsForPrint = await _buildTicketPrintItems(database, ticket.id);
+    final itemsForPrint = await ticketRepo.printItemsOf(ticket.id);
 
     // Get business name from SharedPreferences
     final prefs = ref.read(sharedPreferencesProvider);
@@ -1251,10 +1242,10 @@ class _TicketDetailsDialog extends ConsumerWidget {
         amount: ticket.amount,
         deliveryFee: orderData == null
             ? null
-            : await _ticketDeliveryFee(database, orderData.id, ticket.id),
-        tvaAmount: await _ticketTvaTotal(database, ticket.id),
-        discountAmount: await _ticketDiscountTotal(
-            database, ticket.id, orderData?.discountPercentage ?? 0),
+            : await ticketRepo.deliveryFeeForTicket(orderData.id, ticket.id),
+        tvaAmount: await ticketRepo.tvaTotalOf(ticket.id),
+        discountAmount: await ticketRepo.discountTotalOf(
+            ticket.id, orderData?.discountPercentage ?? 0),
         discountReason: orderData?.discountReason,
         paymentMethod: ticket.paymentMethod,
         createdAt: ticket.date,
@@ -1276,7 +1267,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
 
       if (success) {
         // Update print count in database
-        await ref.read(ticketRepositoryProvider).incrementPrintCount(ticket.id);
+        await ticketRepo.incrementPrintCount(ticket.id);
 
         if (context.mounted) {
           SnackBarHelper.showToast('Ticket #${ticket.num} printed successfully${ticket.isPaid ? " (Paid)" : " (Unpaid)"}', kind: ToastKind.success);
@@ -1415,94 +1406,5 @@ class _EditTicketDialogState extends State<_EditTicketDialog> {
       ],
     );
   }
-}
-
-/// Build the items list (with components) for a ticket's order products.
-/// VAT carried by a ticket's lines, summed the same way `OrderItem.totalTva`
-/// does (`unitaryTva * quantity`) so a reprint shows the figure the original
-/// receipt showed. Only reaches the paper when the `tva` ticket field is on.
-/// The delivery fee to show on a REPRINT of [ticketId], or null.
-///
-/// An order carries one delivery charge, collected on whichever ticket settled
-/// first — which is the lowest-id ticket on that order, since ticket rows are
-/// inserted in payment order. Reprinting any later ticket of a divided order
-/// must not repeat the fee, or two receipts would each claim to have collected
-/// it. Returns null when there is no fee or this isn't that ticket.
-Future<double?> _ticketDeliveryFee(
-    AppDatabase database, int orderId, int ticketId) async {
-  final order = await (database.select(database.orders)
-        ..where((o) => o.id.equals(orderId)))
-      .getSingleOrNull();
-  final fee = order?.deliveryFee;
-  if (fee == null || fee <= 0) return null;
-
-  final ticketIds = await (database.select(database.tickets)
-        ..where((t) => t.orderId.equals(orderId)))
-      .get();
-  if (ticketIds.isEmpty) return null;
-  final firstTicketId =
-      ticketIds.map((t) => t.id).reduce((a, b) => a < b ? a : b);
-  return ticketId == firstTicketId ? fee : null;
-}
-
-/// Everything taken off this ticket: the per-line reductions plus this
-/// ticket's share of the order-level remise.
-///
-/// The remise is a percentage on the ORDER and is never stored per line, so a
-/// reprint has to recompute it the way the payment screen did when the ticket
-/// was first rung up — otherwise the reprint quietly shows a smaller reduction
-/// than the original receipt.
-Future<double> _ticketDiscountTotal(
-        AppDatabase database, int ticketId, double orderDiscountPercentage) =>
-    TicketRepository(database)
-        .discountTotalOf(ticketId, orderDiscountPercentage);
-
-Future<double> _ticketTvaTotal(AppDatabase database, int ticketId) async {
-  final products = await (database.select(database.orderProducts)
-        ..where((tbl) => tbl.ticketId.equals(ticketId)))
-      .get();
-  return products.fold<double>(
-      0.0, (sum, p) => sum + (p.unitaryTva * p.quantity));
-}
-
-Future<List<Map<String, dynamic>>> _buildTicketPrintItems(
-    AppDatabase database, int ticketId) async {
-  final products = await (database.select(database.orderProducts)
-        ..where((tbl) => tbl.ticketId.equals(ticketId)))
-      .get();
-
-  final itemsForPrint = <Map<String, dynamic>>[];
-  for (final item in products) {
-    final product = await (database.select(database.products)
-          ..where((tbl) => tbl.id.equals(item.productId)))
-        .getSingleOrNull();
-
-    final orderComponents = await (database.select(database.orderProductComponents)
-          ..where((tbl) => tbl.orderProductId.equals(item.id)))
-        .get();
-
-    final componentsForPrint = <Map<String, dynamic>>[];
-    for (final orderComp in orderComponents) {
-      final component = await (database.select(database.components)
-            ..where((tbl) => tbl.id.equals(orderComp.componentId)))
-          .getSingleOrNull();
-      if (component != null) {
-        componentsForPrint.add({
-          'name': component.name,
-          'quantity': orderComp.quantity,
-          'price': orderComp.price,
-          'isSpecial': orderComp.isSpecial,
-        });
-      }
-    }
-
-    itemsForPrint.add({
-      'name': product?.name ?? 'Unknown Product',
-      'quantity': item.quantity,
-      'price': item.unitaryPrice * item.quantity,
-      'components': componentsForPrint,
-    });
-  }
-  return itemsForPrint;
 }
 
