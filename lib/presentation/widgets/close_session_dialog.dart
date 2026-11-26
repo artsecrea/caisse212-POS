@@ -515,7 +515,8 @@ Future<CloseSessionResult> showCloseSessionDialog({
   final StaffChoices staffChoices;
   try {
     summary = await sessionService.getSessionSummary(sessionId);
-    staffChoices = await StaffChoices.load(ref.read(databaseProvider), l10n);
+    staffChoices = await StaffChoices.load(ref.read(floorRepositoryProvider),
+        ref.read(userRepositoryProvider), l10n);
   } finally {
     preparing.close();
   }

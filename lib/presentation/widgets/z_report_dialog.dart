@@ -4,7 +4,9 @@ import 'package:loggecrea/loggecrea.dart';
 
 import '../../domain/models/z_day_option.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/floor_repository.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/user_provider.dart';
 import 'report_documents.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
@@ -42,7 +44,8 @@ Future<void> showPrintZReportDialog({
   var selected = days.first;
   var includeTotals = true;
   final documents = ReportDocuments.fromSettings(ref.read(settingsProvider));
-  final staff = await StaffChoices.load(ref.read(databaseProvider), l10n);
+  final staff = await StaffChoices.load(ref.read(floorRepositoryProvider),
+      ref.read(userRepositoryProvider), l10n);
   if (!context.mounted) return;
 
   final go = await showDialog<bool>(
