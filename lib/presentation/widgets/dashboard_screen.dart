@@ -1,5 +1,4 @@
 import 'dart:math';
-import 'package:drift/drift.dart' hide Column;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +8,10 @@ import 'package:intl/intl.dart';
 import '../../data/database/app_database.dart';
 import '../../domain/models/order_money.dart';
 import '../../domain/models/order_money_rows.dart';
+import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
+import '../../providers/order_provider.dart';
+import '../../providers/ticket_provider.dart';
 import '../../utils/currency_formatter.dart';
 import 'kds_stats_dialog.dart';
 
@@ -74,20 +76,15 @@ class _TopProduct {
 final _dashboardStatsProvider =
     FutureProvider.autoDispose.family<DashboardStats, _DashboardKey>(
         (ref, key) async {
-  final db = ref.watch(databaseProvider);
+  final orderRepo = ref.watch(orderRepositoryProvider);
+  final ticketRepo = ref.watch(ticketRepositoryProvider);
+  final catalogue = ref.watch(catalogueRepositoryProvider);
   final dayStart = DateTime(key.date.year, key.date.month, key.date.day);
   final dayEnd = dayStart.add(const Duration(days: 1));
 
   // 1. Orders for the user on that day (createdBy OR takenBy)
-  final allOrders = await (db.select(db.orders)
-        ..where((t) =>
-            t.createdAt.isBiggerOrEqualValue(dayStart) &
-            t.createdAt.isSmallerThanValue(dayEnd) &
-            (key.userId == null
-                ? const Constant(true)
-                : t.createdBy.equals(key.userId!) |
-                    t.takenBy.equals(key.userId!))))
-      .get();
+  final allOrders = await orderRepo.ordersCreatedBetween(dayStart, dayEnd,
+      userId: key.userId);
 
   // statuses
   final Map<String, int> byStatus = {};
@@ -102,12 +99,7 @@ final _dashboardStatsProvider =
   final orderIds = allOrders.map((o) => o.id).toList();
 
   // 2. Tickets linked to these orders
-  List<Ticket> tickets = [];
-  if (orderIds.isNotEmpty) {
-    tickets = await (db.select(db.tickets)
-          ..where((t) => t.orderId.isIn(orderIds)))
-        .get();
-  }
+  final tickets = await ticketRepo.ticketsForOrders(orderIds);
 
   // Which orders have at least one non-cancelled paid ticket
   final Set<int> paidOrderIds = {};
@@ -132,25 +124,15 @@ final _dashboardStatsProvider =
   }
 
   // 3. Order products + their components
-  List<OrderProduct> orderProducts = [];
-  if (orderIds.isNotEmpty) {
-    orderProducts = await (db.select(db.orderProducts)
-          ..where((t) => t.orderId.isIn(orderIds)))
-        .get();
-  }
+  final orderProducts = await orderRepo.linesForOrders(orderIds);
 
   // Build a map: orderProductId → total component cost
   final Map<int, double> componentCostById = {};
-  if (orderProducts.isNotEmpty) {
-    final opIds = orderProducts.map((op) => op.id).toList();
-    final comps = await (db.select(db.orderProductComponents)
-          ..where((t) => t.orderProductId.isIn(opIds)))
-        .get();
-    for (final c in comps) {
-      componentCostById[c.orderProductId] =
-          (componentCostById[c.orderProductId] ?? 0.0) +
-              c.price * c.quantity;
-    }
+  final comps =
+      await orderRepo.componentsOfLines(orderProducts.map((op) => op.id));
+  for (final c in comps) {
+    componentCostById[c.orderProductId] =
+        (componentCostById[c.orderProductId] ?? 0.0) + c.price * c.quantity;
   }
 
   // unitaryPrice is already post-auto-discount (finalPrice stored at order time).
@@ -214,9 +196,7 @@ final _dashboardStatsProvider =
   // Resolve names
   final topProds = <_TopProduct>[];
   for (final entry in prodMap.entries) {
-    final prod = await (db.select(db.products)
-          ..where((t) => t.id.equals(entry.key)))
-        .getSingleOrNull();
+    final prod = await catalogue.productById(entry.key);
     topProds.add(_TopProduct(
         prod?.name ?? '#${entry.key}', entry.value.qty, entry.value.rev));
   }
