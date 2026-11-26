@@ -1,11 +1,11 @@
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:drift/drift.dart' show Value;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/database/app_database.dart';
+import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/favorites_provider.dart';
 import '../../providers/order_provider.dart';
@@ -1266,9 +1266,9 @@ class _ProductCard extends ConsumerWidget {
     );
     if (ok != true) return;
 
-    final db = ref.read(databaseProvider);
-    await (db.update(db.products)..where((p) => p.id.equals(product.id)))
-        .write(ProductsCompanion(isAvailable: Value(!makeUnavailable)));
+    await ref
+        .read(catalogueRepositoryProvider)
+        .setProductAvailability(product.id, !makeUnavailable);
     ref.read(waiterKitchenEventServiceProvider).productAvailabilityChanged(
           productId: product.id,
           name: product.name,
