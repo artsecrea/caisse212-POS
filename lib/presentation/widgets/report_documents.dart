@@ -7,7 +7,6 @@ import '../../domain/models/app_settings.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/daily_summary_service.dart';
-import '../../services/unpaid_orders_service.dart';
 import '../../utils/app_localizations.dart';
 
 /// One selectable person in a staff picker. `id == null` is the "everyone"
@@ -304,9 +303,9 @@ Future<PrintRun> printReportDocuments({
   String? zCode,
   int? zNumber,
 }) async {
-  final db = ref.read(databaseProvider);
   final printing = ref.read(printingServiceProvider);
-  final summaries = DailySummaryService(db);
+  final summaries = ref.read(dailySummaryServiceProvider);
+  final unpaidOrders = ref.read(unpaidOrdersServiceProvider);
   final businessName =
       ref.read(sharedPreferencesProvider).getString('business_name');
 
@@ -354,7 +353,7 @@ Future<PrintRun> printReportDocuments({
 
   if (documents.unpaid) {
     await run('unpaid', () async {
-      final summary = await UnpaidOrdersService(db).summary();
+      final summary = await unpaidOrders.summary();
       return printing.printUnpaidOrders(
           summary: summary, businessName: businessName);
     });
