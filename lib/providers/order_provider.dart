@@ -1979,6 +1979,177 @@ class OrderRepository {
     return await loadOrderDetails(order);
   }
 
+  /// The bare `orders` row, for screens that only need its columns and not
+  /// the hydrated cart [getOrderById] builds.
+  Future<Order?> getOrderRow(int id) async {
+    return await (_database.select(_database.orders)
+          ..where((tbl) => tbl.id.equals(id)))
+        .getSingleOrNull();
+  }
+
+  /// The `orders` row carrying [code] (codes are unique), or null.
+  Future<Order?> findOrderRowByCode(String code) async {
+    return await (_database.select(_database.orders)
+          ..where((tbl) => tbl.code.equals(code))
+          ..limit(1))
+        .getSingleOrNull();
+  }
+
+  /// Each line of [orderId] with its cross-till `lineUid`, keyed by local
+  /// row id, so a money split can name its lines on every till.
+  Future<Map<int, String?>> lineUidsForOrder(int orderId) async {
+    final rows = await (_database.select(_database.orderProducts)
+          ..where((p) => p.orderId.equals(orderId)))
+        .get();
+    return {for (final r in rows) r.id: r.lineUid};
+  }
+
+  /// The 100 newest orders a note can be linked to.
+  ///
+  /// The 'CANCELLED' spelling matches no row — the app writes 'CANCELED' —
+  /// so cancelled orders are offered too. Kept as the note dialog always had
+  /// it; excluding them would be a deliberate change of its own.
+  Future<List<Order>> recentOrdersForNoteLink() async {
+    return await (_database.select(_database.orders)
+          ..where((o) => o.status.isNotIn(['CANCELLED']))
+          ..orderBy([(o) => OrderingTerm.desc(o.createdAt)])
+          ..limit(100))
+        .get();
+  }
+
+  /// Orders created in [from, to). With [userId], only those that user
+  /// created or took — either side of the hand-over counts as theirs.
+  Future<List<Order>> ordersCreatedBetween(DateTime from, DateTime to,
+      {int? userId}) async {
+    return await (_database.select(_database.orders)
+          ..where((t) =>
+              t.createdAt.isBiggerOrEqualValue(from) &
+              t.createdAt.isSmallerThanValue(to) &
+              (userId == null
+                  ? const Constant(true)
+                  : t.createdBy.equals(userId) | t.takenBy.equals(userId))))
+        .get();
+  }
+
+  /// Every line of [orderId], oldest first: a refund line names a real row.
+  Future<List<OrderProduct>> linesOfOrder(int orderId) async {
+    return await (_database.select(_database.orderProducts)
+          ..where((op) => op.orderId.equals(orderId))
+          ..orderBy([(op) => OrderingTerm.asc(op.id)]))
+        .get();
+  }
+
+  /// Every line of [orderIds], unordered.
+  Future<List<OrderProduct>> linesForOrders(List<int> orderIds) async {
+    if (orderIds.isEmpty) return [];
+    return await (_database.select(_database.orderProducts)
+          ..where((t) => t.orderId.isIn(orderIds)))
+        .get();
+  }
+
+  /// The components chosen on [lineIds], unordered.
+  Future<List<OrderProductComponent>> componentsOfLines(
+      Iterable<int> lineIds) async {
+    if (lineIds.isEmpty) return [];
+    return await (_database.select(_database.orderProductComponents)
+          ..where((c) => c.orderProductId.isIn(lineIds)))
+        .get();
+  }
+
+  /// Remove a PAID line from its ticket, as the order panel's paid-line
+  /// delete always has. Returns true when the ticket held only this line and
+  /// was deleted with it; otherwise the ticket's amount is rewritten from the
+  /// lines it still holds.
+  ///
+  /// Deliberately the panel's exact steps, quirks included: no transaction,
+  /// the line's `order_product_components` are left in place, and the new
+  /// amount is written without touching `isSynced` or `updatedAt` — the
+  /// server only hears of it through the [DataSyncService] call, which is
+  /// made only for a ticket already synced. [isOnline] is the caller's read
+  /// of the network, taken before any of this runs.
+  Future<bool> deletePaidLine({
+    required int orderProductId,
+    required int ticketId,
+    required bool isOnline,
+  }) async {
+    final ticketProducts = await (_database.select(_database.orderProducts)
+          ..where((tbl) => tbl.ticketId.equals(ticketId)))
+        .get();
+
+    await (_database.delete(_database.orderProducts)
+          ..where((tbl) => tbl.id.equals(orderProductId)))
+        .go();
+
+    if (ticketProducts.length == 1) {
+      final ticket = await (_database.select(_database.tickets)
+            ..where((tbl) => tbl.id.equals(ticketId)))
+          .getSingleOrNull();
+
+      String? orderCode;
+      String? ticketNum;
+
+      if (ticket != null) {
+        ticketNum = ticket.num;
+        final order = await (_database.select(_database.orders)
+              ..where((tbl) => tbl.id.equals(ticket.orderId)))
+            .getSingleOrNull();
+        orderCode = order?.code;
+      }
+
+      await (_database.delete(_database.tickets)
+            ..where((tbl) => tbl.id.equals(ticketId)))
+          .go();
+
+      if (ticket != null &&
+          ticket.isSynced &&
+          orderCode != null &&
+          ticketNum != null) {
+        await _syncService?.deleteTicketEntity(
+          entityId: ticketId,
+          orderCode: orderCode,
+          ticketNum: ticketNum,
+          isOnline: isOnline,
+        );
+      }
+    } else {
+      final remainingProducts =
+          await (_database.select(_database.orderProducts)
+                ..where((tbl) => tbl.ticketId.equals(ticketId)))
+              .get();
+
+      final newTicketAmount = remainingProducts.fold<double>(
+        0.0,
+        (sum, product) => sum + (product.unitaryPrice * product.quantity),
+      );
+
+      await (_database.update(_database.tickets)
+            ..where((tbl) => tbl.id.equals(ticketId)))
+          .write(TicketsCompanion(amount: Value(newTicketAmount)));
+
+      final ticket = await (_database.select(_database.tickets)
+            ..where((tbl) => tbl.id.equals(ticketId)))
+          .getSingleOrNull();
+
+      if (ticket != null && ticket.isSynced) {
+        final order = await (_database.select(_database.orders)
+              ..where((tbl) => tbl.id.equals(ticket.orderId)))
+            .getSingleOrNull();
+
+        if (order != null) {
+          await _syncService?.updateTicketEntity(
+            entityId: ticketId,
+            orderCode: order.code,
+            ticketNum: ticket.num,
+            updateData: {'amount': newTicketAmount},
+            isOnline: isOnline,
+          );
+        }
+      }
+    }
+
+    return ticketProducts.length == 1;
+  }
+
   /// Find an active product by its MBW / PLU code (string comparison only).
   Future<Product?> findByMbwCode(String plu) async {
     return (_database.select(_database.products)
