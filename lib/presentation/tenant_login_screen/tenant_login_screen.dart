@@ -6,7 +6,6 @@ import '../../utils/app_localizations.dart';
 import '../../utils/error_text.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:caisse212/services/api_service.dart';
-import 'package:caisse212/services/data_sync_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/update_provider.dart';
@@ -148,8 +147,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         _loadingProgress = 0.0;
       });
 
-      final database = ref.read(databaseProvider);
-      final syncService = DataSyncService(database, apiService);
+      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
 
       syncService.onProgress = (message, progress) {
         if (mounted) {
