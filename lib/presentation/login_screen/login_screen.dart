@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_sync_service.dart';
 import '../../domain/services/cash_session_service.dart' show SessionOpening;
 import '../../services/local_cash_session_service.dart';
 import '../../services/permission_service.dart';
@@ -536,11 +537,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       final prefs = ref.read(sharedPreferencesProvider);
       final apiService = ApiService(prefs);
       final syncService =
-          ref.read(dataSyncServiceFactoryProvider)(apiService, prefs);
+          ref.read(syncServiceFactoryProvider)(apiService, prefs);
       if (mounted) {
         SnackBarHelper.showToast(l10n.translate('syncing_data'), kind: ToastKind.info, duration: const Duration(seconds: 2));
       }
-      await syncService.syncAllData();
+      await syncService.syncAll();
       // Sync session rules in the background (best-effort — 404 is fine).
       final rules = await syncService.syncSessionRules();
       if (rules != null && mounted) {
@@ -772,7 +773,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       await apiService.logout();
       await apiService.clearAllAuthData();
 
-      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
+      final syncService = ref.read(syncServiceFactoryProvider)(apiService);
       await syncService.dumpDatabaseBeforeClear();
       await syncService.clearAllData();
 

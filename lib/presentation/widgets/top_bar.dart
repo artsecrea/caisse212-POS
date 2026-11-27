@@ -12,6 +12,7 @@ import 'package:caisse212/services/permission_service.dart';
 import 'package:caisse212/services/activity_log_service.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_sync_service.dart';
 import '../../services/local_cash_session_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/user_provider.dart';
@@ -759,7 +760,7 @@ class _TopBarState extends ConsumerState<TopBar> {
   Future<void> _syncAndCloseBeforeLogout(int? userId) async {
     try {
       final sessionService = ref.read(sessionQueriesProvider);
-      final syncService = ref.read(dataSyncServiceProvider);
+      final syncService = ref.read(syncServiceProvider);
       if (userId != null) {
         final session = await sessionService.getActiveSession(userId);
         // Pause, never end: a session still active here means the logout
@@ -771,10 +772,10 @@ class _TopBarState extends ConsumerState<TopBar> {
       }
       await syncService.syncPendingOperations();
       await Future.wait([
-        syncService.syncSessionsBulk(),
-        syncService.syncCashMovementsBulk(),
-        syncService.syncOrdersBulk(),
-        syncService.syncTicketsBulk(),
+        syncService.syncSessions(),
+        syncService.syncCashMovements(),
+        syncService.syncOrders(),
+        syncService.syncTickets(),
       ]).timeout(const Duration(seconds: 15));
     } catch (e) {
       _logger.warning('Pre-logout sync failed (non-blocking): $e');
@@ -999,7 +1000,7 @@ class _TopBarState extends ConsumerState<TopBar> {
   Future<void> _syncData(AppLocalizations? l10n, ApiService apiService) async {
     try {
       final users = ref.read(userServiceProvider);
-      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
+      final syncService = ref.read(syncServiceFactoryProvider)(apiService);
 
       // The terminal's category scope rides on login/refresh only — never on
       // the catalogue sync — so without this an admin hiding a category would
@@ -1011,7 +1012,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       await syncService.refreshOpenSessions();
 
       // Then download fresh data (also subscription, refund policy, tags).
-      await syncService.syncAllData();
+      await syncService.syncAll();
 
       // Settings that otherwise only refresh at login or on an SSE push.
       await ref.read(dayServiceProvider).refreshConfig();

@@ -6,6 +6,7 @@ import '../services/local_floor_service.dart';
 import 'order_provider.dart' show orderQueriesProvider;
 import 'catalogue_repository.dart' show catalogueServiceProvider;
 import '../domain/models/current_user.dart';
+import '../services/local_sync_service.dart' show syncServiceProvider;
 import 'floor_repository.dart' show floorQueriesProvider;
 import 'ticket_provider.dart' show ticketQueriesProvider;
 import 'package:flutter/foundation.dart';
@@ -73,7 +74,7 @@ final forceLogoutStreamProvider = StreamProvider<void>((ref) {
 // Fires the local DB id of any order whose sync delta was just applied.
 // The main screen uses this to live-refresh the order currently open in the panel.
 final syncedOrderUpdatedProvider = StreamProvider<int>((ref) {
-  return ref.watch(dataSyncServiceProvider).syncedOrderUpdatedStream;
+  return ref.watch(syncServiceProvider).syncedOrderUpdates;
 });
 
 // Data Sync Service Provider

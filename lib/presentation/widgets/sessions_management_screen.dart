@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:data_table_2/data_table_2.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_sync_service.dart';
 import '../../services/local_cash_session_service.dart';
 import '../../providers/network_provider.dart';
 import '../../services/session_service.dart';
@@ -634,12 +635,12 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
             // Sync all pending data to server before leaving.
             try {
-              final syncService = ref.read(dataSyncServiceProvider);
+              final syncService = ref.read(syncServiceProvider);
               await Future.wait([
                 syncService.syncPendingOperations(),
-                syncService.syncSessionsBulk(),
-                syncService.syncOrdersBulk(),
-                syncService.syncTicketsBulk(),
+                syncService.syncSessions(),
+                syncService.syncOrders(),
+                syncService.syncTickets(),
               ]).timeout(const Duration(seconds: 15));
             } catch (_) {}
 
@@ -791,10 +792,10 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
     try {
       final apiService = ref.read(apiServiceProvider);
-      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
+      final syncService = ref.read(syncServiceFactoryProvider)(apiService);
 
       await syncService.syncPendingOperations();
-      final syncedCount = await syncService.syncSessionsBulk();
+      final syncedCount = await syncService.syncSessions();
 
       await _loadPendingOperationsCount();
 

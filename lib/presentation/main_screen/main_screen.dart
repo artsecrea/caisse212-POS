@@ -9,6 +9,7 @@ import '../../core/enums.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_sync_service.dart';
 import '../../services/local_cash_session_service.dart';
 import '../../providers/order_provider.dart';
 import '../../services/local_order_service.dart';
@@ -511,12 +512,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   /// force_logout command via SSE. Syncs remaining data then navigates to login.
   Future<void> _handleSseSessionClose() async {
     try {
-      final syncService = ref.read(dataSyncServiceProvider);
+      final syncService = ref.read(syncServiceProvider);
       await Future.wait([
         syncService.syncPendingOperations(),
-        syncService.syncSessionsBulk(),
-        syncService.syncOrdersBulk(),
-        syncService.syncTicketsBulk(),
+        syncService.syncSessions(),
+        syncService.syncOrders(),
+        syncService.syncTickets(),
       ]).timeout(const Duration(seconds: 15));
     } catch (e) {
       _logger.warning('SSE session-close pre-logout sync failed: $e');
@@ -541,12 +542,12 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       ref.read(currentSessionProvider.notifier).state = null;
       // Sync all pending data to server before returning to login.
       try {
-        final syncService = ref.read(dataSyncServiceProvider);
+        final syncService = ref.read(syncServiceProvider);
         await Future.wait([
           syncService.syncPendingOperations(),
-          syncService.syncSessionsBulk(),
-          syncService.syncOrdersBulk(),
-          syncService.syncTicketsBulk(),
+          syncService.syncSessions(),
+          syncService.syncOrders(),
+          syncService.syncTickets(),
         ]).timeout(const Duration(seconds: 15));
       } catch (e) {
         _logger.warning('Pre-logout sync failed (non-blocking): $e');

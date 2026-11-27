@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/database_providers.dart';
-import '../../services/data_sync_service.dart';
+import '../../domain/services/sync_service.dart';
+import '../../services/local_sync_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../data/database/app_database.dart';
@@ -44,7 +45,7 @@ class _SyncInspectorDialogState extends ConsumerState<SyncInspectorDialog> {
     // usually fixed elsewhere (the order finally synced, a mapping corrected),
     // and a human deciding "try it now" is the signal that changed.
     await _sync().unparkRefund(refund.id);
-    await _sync().syncRefundsBulk();
+    await _sync().syncRefunds();
     await _loadParked();
     if (mounted) {
       SnackBarHelper.showSnackBar(context, ref,
@@ -64,18 +65,16 @@ class _SyncInspectorDialogState extends ConsumerState<SyncInspectorDialog> {
   }
 
   Future<void> _loadMeta() async {
-    final prefs = ref.read(sharedPreferencesProvider);
-    final meta = await _sync().getDeltaSyncMeta(prefs);
+    final meta = await _sync().deltaSyncMeta();
     if (mounted) setState(() => _meta = meta);
   }
 
-  DataSyncService _sync() =>
-      ref.read(dataSyncServiceFactoryProvider)(ref.read(apiServiceProvider));
+  SyncService _sync() =>
+      ref.read(syncServiceFactoryProvider)(ref.read(apiServiceProvider));
 
   Future<void> _resetOrdersCursor() async {
     final l10n = AppLocalizations.of(context);
-    final prefs = ref.read(sharedPreferencesProvider);
-    await _sync().resetOrdersCursor(prefs);
+    await _sync().resetOrdersCursor();
     await _loadMeta();
     if (mounted) {
       SnackBarHelper.showSnackBar(
@@ -85,8 +84,7 @@ class _SyncInspectorDialogState extends ConsumerState<SyncInspectorDialog> {
 
   Future<void> _resetPaymentsCursor() async {
     final l10n = AppLocalizations.of(context);
-    final prefs = ref.read(sharedPreferencesProvider);
-    await _sync().resetPaymentsCursor(prefs);
+    await _sync().resetPaymentsCursor();
     await _loadMeta();
     if (mounted) {
       SnackBarHelper.showSnackBar(
@@ -96,13 +94,12 @@ class _SyncInspectorDialogState extends ConsumerState<SyncInspectorDialog> {
 
   Future<void> _forceFullPull() async {
     final l10n = AppLocalizations.of(context);
-    final prefs = ref.read(sharedPreferencesProvider);
     final syncService = _sync();
     setState(() => _isPulling = true);
     try {
-      await syncService.resetOrdersCursor(prefs);
-      await syncService.resetPaymentsCursor(prefs);
-      await syncService.pullAllDeltas(prefs);
+      await syncService.resetOrdersCursor();
+      await syncService.resetPaymentsCursor();
+      await syncService.pullAllDeltas();
       await _loadMeta();
       if (mounted) {
         SnackBarHelper.showSnackBar(context, ref,

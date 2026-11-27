@@ -9,6 +9,7 @@ import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
 import '../../services/local_payment_service.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_sync_service.dart';
 import '../../domain/models/ticket_read_models.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/settings_provider.dart';
@@ -222,13 +223,13 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
     try {
       final apiService = ref.read(apiServiceProvider);
-      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
+      final syncService = ref.read(syncServiceFactoryProvider)(apiService);
 
       // Sync pending operations first
       await syncService.syncPendingOperations();
 
       // Sync unsynced tickets
-      final syncedCount = await syncService.syncTicketsBulk();
+      final syncedCount = await syncService.syncTickets();
 
       await _loadPendingOperationsCount();
 

@@ -6,6 +6,7 @@ import '../data/database/app_database.dart';
 
 import '../domain/models/reservation_models.dart';
 import '../domain/services/reservation_service.dart';
+import '../services/local_sync_service.dart' show syncServiceProvider;
 import '../services/reservation_service.dart';
 import 'database_providers.dart';
 import 'network_provider.dart';
@@ -55,7 +56,7 @@ final reservationServiceProvider = Provider<ReservationService>((ref) {
 /// Orders the server saved while another order already held their
 /// reservation — a possible duplicate sale, worth telling the cashier.
 final reservationDuplicateProvider = StreamProvider<ReservationLink>((ref) {
-  return ref.watch(dataSyncServiceProvider).reservationDuplicates;
+  return ref.watch(syncServiceProvider).reservationDuplicates;
 });
 
 /// Bumped whenever the diary may have changed (a write here, an SSE

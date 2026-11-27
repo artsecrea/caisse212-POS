@@ -41,6 +41,7 @@ import 'package:caisse212/domain/services/reservation_service.dart';
 import 'package:caisse212/domain/services/returns_service.dart';
 import 'package:caisse212/domain/services/serial_service.dart';
 import 'package:caisse212/domain/services/session_queries.dart';
+import 'package:caisse212/domain/services/sync_service.dart';
 import 'package:caisse212/domain/services/ticket_queries.dart';
 import 'package:caisse212/domain/services/unpaid_queries.dart';
 import 'package:caisse212/domain/services/user_service.dart';

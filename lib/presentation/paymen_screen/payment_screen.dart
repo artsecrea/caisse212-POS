@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:loggecrea/loggecrea.dart';
 import 'package:caisse212/providers/database_providers.dart';
+import '../../services/local_sync_service.dart';
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/utils/app_localizations.dart';
 import 'package:caisse212/utils/error_text.dart';
@@ -3656,7 +3657,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     if (!ref.read(lastKnownOnlineStatusProvider)) return;
     try {
       await ref
-          .read(dataSyncServiceProvider)
+          .read(syncServiceProvider)
           .syncTicketsForOrder(orderId, deadline: const Duration(seconds: 10));
     } catch (e) {
       _logger.warning('Split part push deferred: $e');

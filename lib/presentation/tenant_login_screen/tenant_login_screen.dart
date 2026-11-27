@@ -7,6 +7,7 @@ import '../../utils/error_text.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:caisse212/services/api_service.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_sync_service.dart';
 import '../../providers/update_provider.dart';
 import '../widgets/report_issue_dialog.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -146,7 +147,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         _loadingProgress = 0.0;
       });
 
-      final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
+      final syncService = ref.read(syncServiceFactoryProvider)(apiService);
 
       syncService.onProgress = (message, progress) {
         if (mounted) {
@@ -157,7 +158,7 @@ class _TenantLoginScreenState extends ConsumerState<TenantLoginScreen> {
         }
       };
 
-      await syncService.syncAllData();
+      await syncService.syncAll();
 
       // Check for updates after successful sync
       if (mounted) {
