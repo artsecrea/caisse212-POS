@@ -37,7 +37,7 @@ void main() {
       exchangeServiceProvider,
       kitchenBoardServiceProvider,
       zDayResolverProvider,
-      customerRepositoryProvider,
+      customerServiceProvider,
       catalogueRepositoryProvider,
       floorRepositoryProvider,
     ];

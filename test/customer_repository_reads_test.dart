@@ -5,20 +5,20 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/providers/database_providers.dart';
-import 'package:caisse212/services/customer_repository.dart';
+import 'package:caisse212/domain/services/customer_service.dart';
 
 /// The customer reads the screens used to make on the database directly.
 void main() {
   late AppDatabase db;
   late ProviderContainer container;
-  late CustomerRepository repo;
+  late CustomerService repo;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     container = ProviderContainer(overrides: [
       databaseProvider.overrideWithValue(db),
     ]);
-    repo = container.read(customerRepositoryProvider);
+    repo = container.read(customerServiceProvider);
   });
   tearDown(() {
     container.dispose();

@@ -6,9 +6,11 @@ import 'package:drift/drift.dart'
         Value;
 
 import '../data/database/app_database.dart';
+import '../domain/services/customer_service.dart';
 import '../utils/phone_normalizer.dart';
 
-/// Customer table reads, and the writes that need to enforce phone-uniqueness.
+/// [CustomerService] on this till's own database: the customer table reads,
+/// and the writes that need to enforce phone-uniqueness.
 ///
 /// The Customers table is keyed by `phone_normalized` for dedup. A direct
 /// `insert` with a phone that's already in the table produces two rows —
@@ -16,20 +18,24 @@ import '../utils/phone_normalizer.dart';
 /// confusing search list for the cashier ("which Ali is the right Ali?").
 /// All customer create/update paths funnel through [upsertByPhone] so the
 /// local DB stays single-row-per-phone.
-class CustomerRepository {
+class CustomerRepository implements CustomerService {
   final AppDatabase _db;
   CustomerRepository(this._db);
 
   /// Unfiltered: the customer picker narrows it in Dart on the display label,
   /// which is not a column.
+  @override
   Stream<List<Customer>> watchAll() => _db.select(_db.customers).watch();
 
+  @override
   Future<List<Customer>> getAll() => _db.select(_db.customers).get();
 
+  @override
   Future<Customer?> getById(int id) =>
       (_db.select(_db.customers)..where((c) => c.id.equals(id)))
           .getSingleOrNull();
 
+  @override
   Future<List<Customer>> getByIds(Iterable<int> ids) async {
     if (ids.isEmpty) return [];
     return (_db.select(_db.customers)..where((c) => c.id.isIn(ids))).get();
@@ -38,6 +44,7 @@ class CustomerRepository {
   /// The six suggestions under the reservation's customer field.
   /// [lowerText] must already be trimmed and lowercased; names are compared
   /// lowercased, phones as stored.
+  @override
   Future<List<Customer>> searchByNameOrPhone(String lowerText) {
     final like = '%$lowerText%';
     return (_db.select(_db.customers)
@@ -54,6 +61,7 @@ class CustomerRepository {
   /// [upsertByPhone]'s lookup, but with no ordering: which duplicate comes
   /// back is whatever SQLite returns first, as the external-order review has
   /// always had it.
+  @override
   Future<Customer?> findByPhoneNormalized(String phoneNorm) async {
     final matches = await (_db.select(_db.customers)
           ..where((c) => c.phoneNormalized.equals(phoneNorm))
@@ -79,6 +87,7 @@ class CustomerRepository {
   ///     the server (the manual `_AddCustomerDialog` flow).
   ///   - `true` for customers that arrived from the server already (the
   ///     external order queue flow — the server is authoritative).
+  @override
   Future<int?> upsertByPhone({
     required String? phoneRaw,
     String firstName = '',

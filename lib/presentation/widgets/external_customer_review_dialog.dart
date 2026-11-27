@@ -68,7 +68,7 @@ class _ExternalCustomerReviewDialogState
   }
 
   Future<void> _saveOrModifyFlow() async {
-    final customers = ref.read(customerRepositoryProvider);
+    final customers = ref.read(customerServiceProvider);
     final split = _splitName();
     final queueFullName =
         '${split.firstName} ${split.lastName}'.trim();

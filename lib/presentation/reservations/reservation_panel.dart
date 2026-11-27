@@ -423,7 +423,7 @@ class _ReservationPanelState extends ConsumerState<ReservationPanel> {
         return;
       }
       final rows = await ref
-          .read(customerRepositoryProvider)
+          .read(customerServiceProvider)
           .searchByNameOrPhone(text);
       if (mounted && _customerQuery.text == q) setState(() => _matches = rows);
     });
@@ -520,7 +520,7 @@ class _ReservationPanelState extends ConsumerState<ReservationPanel> {
     int? customerId;
     if (_phone.text.trim().isEmpty && _localCustomerId != null) {
       final row = await ref
-          .read(customerRepositoryProvider)
+          .read(customerServiceProvider)
           .getById(_localCustomerId!);
       if (row != null && row.isSynced) customerId = row.id;
     }

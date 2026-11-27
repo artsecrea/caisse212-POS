@@ -6,7 +6,7 @@ import '../../services/permission_service.dart';
 import '../../utils/button_styles.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/customer_display.dart';
-import '../../services/customer_repository.dart';
+import '../../domain/services/customer_service.dart';
 import './adaptive_text_field.dart';
 import '../../utils/snackbar_helper.dart';
 
@@ -32,7 +32,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
 
   @override
   Widget build(BuildContext context) {
-    final customerRepo = ref.watch(customerRepositoryProvider);
+    final customerRepo = ref.watch(customerServiceProvider);
     final l10n = AppLocalizations.of(context)!;
 
     return Dialog(
@@ -122,7 +122,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
   }
 
   Widget _buildCustomerList(
-      CustomerRepository customerRepo, AppLocalizations l10n) {
+      CustomerService customerRepo, AppLocalizations l10n) {
     if (!_hasSearched) {
       return Center(
         child: Column(
@@ -217,7 +217,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
     );
   }
 
-  Stream<List<Customer>> _searchCustomers(CustomerRepository customerRepo) {
+  Stream<List<Customer>> _searchCustomers(CustomerService customerRepo) {
     if (_searchQuery.isEmpty) {
       return Stream.value([]);
     }
@@ -241,7 +241,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
     final result = await showDialog<Map<String, dynamic>?>(
       context: context,
       builder: (context) =>
-          _AddCustomerDialog(customers: ref.read(customerRepositoryProvider)),
+          _AddCustomerDialog(customers: ref.read(customerServiceProvider)),
     );
     // If the user saved a new customer, immediately select it.
     if (result != null && mounted) {
@@ -257,7 +257,7 @@ class _CustomerSelectionDialogState extends ConsumerState<CustomerSelectionDialo
 /// private class.
 Future<Map<String, dynamic>?> showPrefilledAddCustomerDialog(
   BuildContext context, {
-  required CustomerRepository customers,
+  required CustomerService customers,
   String? initialFirstName,
   String? initialLastName,
   String? initialPhone,
@@ -277,7 +277,7 @@ Future<Map<String, dynamic>?> showPrefilledAddCustomerDialog(
 
 // Enhanced Add Customer Dialog with better validation and UX
 class _AddCustomerDialog extends StatefulWidget {
-  final CustomerRepository customers;
+  final CustomerService customers;
   // Optional pre-fill values — used when the dialog is opened from the
   // external-order review flow with the queue's customer data prepopulated.
   // Any of these that are null or empty leave the corresponding field blank,
@@ -432,7 +432,7 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
 
       // Phone-unique upsert: if a customer with the same normalised phone
       // already exists, override its non-empty fields and reuse its id
-      // instead of producing a duplicate. See [CustomerRepository] for the
+      // instead of producing a duplicate. See [CustomerService] for the
       // rationale (sync-reconciliation and search-list cleanliness).
       final customerId = await widget.customers.upsertByPhone(
         phoneRaw: phoneRaw,

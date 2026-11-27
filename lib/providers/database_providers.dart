@@ -30,6 +30,7 @@ import '../domain/models/refund_policy.dart';
 import '../domain/models/subscription_info.dart';
 import '../services/data_sync_service.dart';
 import '../services/customer_repository.dart';
+import '../domain/services/customer_service.dart';
 import '../services/daily_summary_service.dart';
 import '../services/exchange_service.dart';
 import '../services/kitchen_board_service.dart';
@@ -203,7 +204,9 @@ final zDayResolverProvider = Provider<ZDayResolver>((ref) {
   return ZDayResolver(database);
 });
 
-final customerRepositoryProvider = Provider<CustomerRepository>((ref) {
+/// The customers for the screens. A hub-linked till overrides this one
+/// provider; nothing else changes.
+final customerServiceProvider = Provider<CustomerService>((ref) {
   final database = ref.watch(databaseProvider);
   return CustomerRepository(database);
 });

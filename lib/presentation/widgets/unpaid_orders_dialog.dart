@@ -92,7 +92,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
     // Pull a small candidate pool from the DB. Drift doesn't have a
     // case-insensitive LIKE without `customStatement` so we filter in
     // Dart after a coarse name pull.
-    final all = await ref.read(customerRepositoryProvider).getAll();
+    final all = await ref.read(customerServiceProvider).getAll();
     final matches = <Customer>[];
     for (final c in all) {
       final fullName = '${c.firstName} ${c.lastName}'.toLowerCase();
@@ -114,7 +114,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
   Future<void> _query() async {
     setState(() => _isLoading = true);
     final orderRepo = ref.read(orderRepositoryProvider);
-    final customerRepo = ref.read(customerRepositoryProvider);
+    final customerRepo = ref.read(customerServiceProvider);
 
     // When the cashier has picked a specific customer, filter orders
     // strictly by that id. Otherwise fall back to the free-text query

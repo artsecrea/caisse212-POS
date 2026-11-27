@@ -781,7 +781,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     String? customerPhone;
     if (orderData?.clientId != null) {
       final customer = await ref
-          .read(customerRepositoryProvider)
+          .read(customerServiceProvider)
           .getById(orderData!.clientId!);
       if (customer != null) {
         customerName = customer.displayLabel;
@@ -1206,7 +1206,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
     String? customerPhone;
     if (orderData?.clientId != null) {
       final customer = await ref
-          .read(customerRepositoryProvider)
+          .read(customerServiceProvider)
           .getById(orderData!.clientId!);
       if (customer != null) {
         customerName = customer.displayLabel;

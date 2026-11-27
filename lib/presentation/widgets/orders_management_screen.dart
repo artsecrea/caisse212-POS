@@ -164,7 +164,7 @@ class _OrdersManagementScreenState
     }
     try {
       final lowerQuery = query.toLowerCase();
-      final allCustomers = await ref.read(customerRepositoryProvider).getAll();
+      final allCustomers = await ref.read(customerServiceProvider).getAll();
       final filtered = allCustomers.where((c) {
         final fullName = c.displayLabel.toLowerCase();
         final phone = c.phone?.toLowerCase() ?? '';
