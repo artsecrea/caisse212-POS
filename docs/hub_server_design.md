@@ -42,7 +42,7 @@ Modes of a till (one setting, `hubMode`):
 | Mode | Data | LAN server | Cloud sync | Ids and counters |
 |---|---|---|---|---|
 | `standalone` (default, today) | local Drift DB | **on** | the till | the till |
-| `hub` | the hub; the local DB is a cache plus the offline queue | **off** (must never start) | the hub | the hub (provisional ones while queued, §7) |
+| `hub` | the hub; **the till has no database**, only its settings and the queue of writes made while both hubs are down (§7) | **off** (must never start) | the hub | the hub (provisional ones while queued, §7) |
 
 Switching mode is a provider override at boot: each of the 28 swap-point providers listed in `hub_action_catalogue.md` §6 gets a `Hub…` implementation. Nothing else in the app changes.
 
@@ -226,7 +226,7 @@ Conventions:
 | `ExternalOrderService` | `GET /queue?page=&size=&source=&status=` · `GET /queue/counts` · `POST /queue/{id}/confirm` · `POST /queue/{id}/cancel` · `GET /orders/live-external` (+ topic `orders`) · `POST /orders/{id}/ready-for-pickup`. The hub reads the cloud queue once for the shop and pushes it to every till; the cloud already refuses a second acceptance (409), and the hub turns that race into a lock every till sees. |
 | `AuditLog` | `POST /audit` · `GET /audit?from=&to=&q=&limit=&offset=` · `POST /audit/export` |
 | `PendingOperations` | `GET /outbox?entity=` · `GET /outbox` · `POST /outbox/{id}/done` (the hub's cloud queue, inspected from a till) |
-| `SyncService` | `GET /sync/status` (+ topic `sync`) · `POST /sync/run?what=all\|orders\|tickets\|sessions\|movements\|refunds\|pending` · `GET /sync/cursors` · `POST /sync/cursors/reset` · `POST /sync/pull-all` · `GET /sync/parked-refunds` · `POST /sync/parked-refunds/{id}/unpark`. `dumpDatabaseBeforeClear` / `clearAllData` stay **local** (they wipe the till's cache). |
+| `SyncService` | `GET /sync/status` (+ topic `sync`) · `POST /sync/run?what=all\|orders\|tickets\|sessions\|movements\|refunds\|pending` · `GET /sync/cursors` · `POST /sync/cursors/reset` · `POST /sync/pull-all` · `GET /sync/parked-refunds` · `POST /sync/parked-refunds/{id}/unpark`. `dumpDatabaseBeforeClear` / `clearAllData` stay **local** and only apply to a standalone till (a hub-linked till has no database to wipe). |
 
 ### 5.9 Devices, pairing, health
 
@@ -278,9 +278,9 @@ Payloads and error codes are documented in `docs/waiter_api_reference.md`, `wait
 
 ## 7. The till while both hubs are down
 
-1. **Writes go to a local outbox** (`pending_hub_operations`, same shape as today's `pending_sync_operations`), each with its `X-Request-Id`. Reads come from the local cache, marked stale in the UI.
+1. **Writes go to a local outbox**, each with its `X-Request-Id`. The till keeps no database in hub mode; the outbox is the one thing it stores, in a small file-backed queue of its own (not the business database), so a restart never loses a queued sale. Reads while both hubs are down: what the till last received from the hub (in memory) plus its own queued writes, marked stale in the UI; nothing from the other tills.
 2. **Provisional ids:** a queued order gets a till-local negative id and a provisional code `P-<terminal>-<n>`; a queued payment gets a provisional ticket number `P<n>`. The receipt says *provisional* (legal wording to confirm, §11).
-3. **On reconnect** the outbox is replayed in order. The hub answers each request with the real ids and numbers; the till rewrites its cache (provisional → real) and reprints only if asked.
+3. **On reconnect** the outbox is replayed in order. The hub answers each request with the real ids and numbers; the till swaps provisional ids for real ones on screen, empties the outbox, and reprints only if asked.
 4. **Conflicts** are answered with the normal error codes: a table taken meanwhile → `table_occupied` → the till asks the cashier for another table. A line paid twice can't happen (the hub refuses the second settle). A Z closed meanwhile → the hub books into the open Z, as refunds already do.
 5. **What can't be done offline:** refunds that need other tills' refunds (`lookup`), reservations, platform order acceptance, product creation. These are refused, as today when offline.
 
@@ -311,7 +311,7 @@ One outbox worker, ordered per entity, with exponential backoff and a dead-lette
 
 ### 8.4 The cloud push channel in hub mode: the hub listens, the till runs device commands
 
-Decided (2026-11-27): in hub mode **the till opens no SSE stream**; the hub is the only listener. Business events are handled by the hub, which tells the tills what changed on its own event stream (§5, topics). **Remote control still runs on the till:** a command aimed at a device is relayed by the hub to that till, the till executes it, and the reply goes back through the hub. Standalone mode is unchanged: the till listens and runs everything itself, as today.
+Decided (2026-11-27): in hub mode **the till opens no SSE stream**; the hub is the only listener. Business events are handled by the hub, which tells the tills what changed on its own event stream (§5, topics). **Remote control of the device still runs on the till:** a command aimed at a device is relayed by the hub to that till, the till executes it, and the reply goes back through the hub. A query on the shop's data (`remote_sql`) runs on the hub, since a hub-linked till has no database. Standalone mode is unchanged: the till listens and runs everything itself, as today.
 
 **Which stream.** Today the stream is per terminal: the cloud knows the till by `X-POS-Name` (and `X-Business-Id`) and sends a terminal's commands on that terminal's stream only. Two ways to keep that:
 
@@ -351,10 +351,10 @@ Decided (2026-11-27): in hub mode **the till opens no SSE stream**; the hub is t
 | `ping`, `app_info`, `diagnostics`, `get_logs` | **till** | about the device |
 | `get_config`, `set_config`, `get_printers`, `set_printers`, `test_print` | **till** | settings and printers are the device's |
 | `remote_access_open` | **till** | RustDesk runs on the device |
-| `remote_sql` | **till** | the till's own SQLite (settings, offline queue). The shop's data is in the hub's Postgres; SQL there is a separate decision (§11) |
-| `pending_sync` | **till** | in hub mode this is the till's offline queue (§7), usually empty; the hub's outbox has its own figure |
+| `remote_sql` | **hub** | decided 2026-11-27: a hub-linked till has no database, so in hub mode the query runs on the hub's PostgreSQL, read-only with the same guards as the till (a role with `SELECT` only, statement timeout, row and size caps). The reply says `engine: postgres` and the hub's schema version, since the tables and SQL dialect differ from the till's SQLite. A standalone till runs it on its own SQLite, as today. |
+| `pending_sync` | **hub + till** | the hub answers with its cloud outbox for that terminal, and adds the till's own queue (§7, usually empty) when the till is connected |
 
-**Replies.** A relayed command reaches the till on its topic `commands:<terminal>`; the till answers `POST /hub/v1/commands/{requestId}/result`, and the hub posts `POST /pos/remote/{requestId}/result` with that terminal's identity. One path, which still works when only the hub has internet. If the target till is not connected to the hub, the hub replies `device_offline` at once rather than letting the back office wait out its timeout.
+**Replies.** A relayed command reaches the till on its topic `commands:<terminal>`; the till answers `POST /hub/v1/commands/{requestId}/result`, and the hub posts `POST /pos/remote/{requestId}/result` with that terminal's identity. One path, which still works when only the hub has internet. If the target till is not connected to the hub, the hub replies `device_offline` at once rather than letting the back office wait out its timeout. What the hub runs itself (`remote_sql`, the outbox part of `pending_sync`) it answers directly.
 
 **On the till (when the hub client is built):** in hub mode, the SSE provider does not start, and `PosCommandHandler` and `RemoteCommandService` take their commands from the hub stream instead. A relayed sync command is refused there with `not_in_hub_mode`, since a hub-linked till never syncs.
 
@@ -421,7 +421,7 @@ A line removed after it was saved, by a cashier, a waiter or the web, is a **can
 6. **Charged removals and required options** from the waiter app (`waiter_app_changes_2026-11.md` §8, §9).
 7. **Multi-site:** one hub per shop (assumed), or one hub serving several businesses?
 8. **What a till may create:** stations come from the back office only (Add Station removed from the till, 2026-11-27). Still to decide, for the same reason: quick product create (`POST /pos/products`), category create (`POST /pos/categories`), and anything else the till writes into the back-office data.
-9. **Remote SQL in hub mode:** `remote_sql` runs on the till's own SQLite (§8.4). Is SQL on the hub's Postgres wanted too, and if so read-only?
+9. ~~**Remote SQL in hub mode**~~: decided 2026-11-27, it runs on the hub's PostgreSQL, read-only (§8.4).
 
 ---
 
