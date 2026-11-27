@@ -107,7 +107,7 @@ Migrations: versioned SQL files (`golang-migrate` or `goose`), run at hub start.
 Conventions:
 - JSON over HTTPS on the LAN. Every request carries `Authorization: Bearer <device token>` and `X-Hub-Api: 1`. Writes also carry `X-Request-Id: <uuid>` (idempotency, §4 `request_log`).
 - A write answers with the resulting resource, including the hub-minted ids and numbers, so the till never has to guess them.
-- `watch…` methods = a snapshot `GET` plus the event stream `GET /hub/v1/events?topics=…` (SSE; `Last-Event-ID` resumes). Topics: `orders`, `order:<id>`, `tables`, `kitchen`, `tickets:<orderId>`, `drafts:<orderId>`, `sessions`, `z`, `unpaid`, `catalogue`, `customers`, `notes`, `devices`, `serials`, `sync`.
+- `watch…` methods = a snapshot `GET` plus the event stream `GET /hub/v1/events?topics=…` (SSE; `Last-Event-ID` resumes). Topics: `orders`, `order:<id>`, `tables`, `kitchen`, `tickets:<orderId>`, `drafts:<orderId>`, `sessions`, `z`, `unpaid`, `catalogue`, `customers`, `notes`, `devices`, `serials`, `sync`, `external_queue`, `reservations`, and `commands:<terminal>` (cloud commands relayed to one till, §8.4).
 - Errors: `{ "error": "<code>", "message": "…", "details": {…} }`, with the codes the POS already handles (`table_occupied`, `option_not_offered`, `option_group_too_few`, `z_block_manual_open`, `session_rule_violation`, `refund_policy_…`, `account_locked` 423…).
 
 ### 5.1 Orders: `OrderService`, `OrderQueries`
@@ -294,7 +294,7 @@ The hub becomes the shop's **only cloud client** for business data. It reuses th
 
 `GET /pos/users`, `/pos/waiters`, `/pos/areas`, `/pos/tables`, `/pos/categories`, `/pos/products`, `/pos/variants`, `/pos/products/{id}/variants`, `/pos/components`, `/pos/component-groups`, `/pos/product-components`, `/pos/product-component-groups`, `/pos/stations`, `/pos/commercials`, `/pos/customers`, `/pos/coupons`, `/pos/payment-methods`, `/pos/order-tags`, `/pos/resources`, `/pos/serials`, `/pos/mappings`, `/pos/session-rules`, `/pos/refund-policy`, `/pos/identity`, `/pos/subscription`, `/pos/account-status`, `/pos/z/current`.
 Deltas: `GET /pos/sync/orders`, `GET /pos/sync/payments` (cursor in `sync_cursors`); `GET /pos/sessions/{code}/orders`, `GET /pos/cash-sessions/{code}`, `GET /pos/orders/{code}`.
-Cloud push channel: SSE `GET {base}/api/pos/queue/subscribe` (note the double `/api`, it is correct) with `X-Business-Id`. Events handled today: `connected`, `heartbeat`, `new-order`, `order-updated`, `order-cancelled`, `order-ready`, `order-state-changed`, `order-delivery-status-changed`, `reservation-updated`, `pos-command` (`close_session`, `close_current_session`, `close_all_sessions`, `display_alert`, `force_logout`, `logout`, remote SQL, set config, kick), plus account/subscription signals. The hub keeps **one** subscription and fans each event out to the tills on its own event stream; `pos-command` events addressed to a terminal are relayed to that till only.
+Cloud push channel: SSE `GET {base}/api/pos/queue/subscribe` (note the double `/api`, it is correct) with `X-Business-Id`. Events handled today: `connected`, `heartbeat`, `new-order`, `order-updated`, `order-cancelled`, `order-ready`, `order-state-changed`, `order-delivery-status-changed`, `reservation-updated`, `pos-command` (`close_session`, `close_current_session`, `close_all_sessions`, `display_alert`, `force_logout`, `logout`, remote SQL, set config, kick), plus account/subscription signals. In hub mode **only the hub listens to this stream**; which event and command runs where is in §8.4.
 
 ### 8.2 Upstream (hub → cloud), the outbox
 
@@ -308,6 +308,55 @@ One outbox worker, ordered per entity, with exponential backoff and a dead-lette
 - Admin notices: `POST /pos/notify`; remote command results: `POST /pos/remote/{requestId}/result`; remote access: `PUT /pos/remote-access`.
 
 **Order of the push** stays what the till does today: sessions → movements → orders → tickets → refunds.
+
+### 8.4 The cloud push channel in hub mode: the hub listens, the till runs device commands
+
+Decided (2026-11-27): in hub mode **the till opens no SSE stream**; the hub is the only listener. Business events are handled by the hub, which tells the tills what changed on its own event stream (§5, topics). **Remote control still runs on the till:** a command aimed at a device is relayed by the hub to that till, the till executes it, and the reply goes back through the hub. Standalone mode is unchanged: the till listens and runs everything itself, as today.
+
+**Which stream.** Today the stream is per terminal: the cloud knows the till by `X-POS-Name` (and `X-Business-Id`) and sends a terminal's commands on that terminal's stream only. Two ways to keep that:
+
+- **A, no cloud change (first):** the hub opens one stream per paired till, with that till's identity. Commands arrive on the target till's stream, so the hub knows where to relay them. A business event that the cloud sends to every terminal then arrives once per stream; the hub handles it once (key: event type + queue item id or order code). *To check with the backend: which events go to every terminal, which to one.*
+- **B, later:** one stream for the hub, each command carrying its target terminal. Fewer connections; needs a backend change.
+
+**Events**
+
+| Event | Hub mode | What the tills see |
+|---|---|---|
+| `connected` | hub: catch-up pull of open sessions and the platform queue (the stream has no replay) | nothing new; a till catches up when its own hub stream reconnects |
+| `heartbeat` | hub: watchdog | the hub's own heartbeat |
+| `new-order`, `order-ready`, `order-delivery-status-changed` | hub: platform queue, read once for the shop | topic `external_queue` |
+| `order-cancelled` | hub: takes the item off the queue | topic `external_queue` + the loud alert on every till, flagged when it was already confirmed |
+| `order-updated` | hub: re-pulls that order (pull never subtracts) | topic `orders` |
+| `order-state-changed` | hub: logged only, as today | — |
+| `reservation-updated` | hub: re-pull (debounced) | topic `reservations`; an open agenda re-reads |
+
+**`pos-command` types**
+
+| Command | Runs on | Notes |
+|---|---|---|
+| `sync_all`, `reload_all`, `update:db`, `reload_menu`, `sync_menu`, `sync_products`, `reload_products`, `sync_categories`, `sync_users`, `sync_areas`, `sync_upload`, `sync_orders`, `sync_sessions`, `sync_customers` | **hub** | the hub is what syncs; tills refresh from its topics. Not relayed: a hub-linked till does not sync. |
+| `order_tags_updated`, `refund_policy_updated`, `sync_refund_policy` | **hub** | back-office mirror; topic `catalogue` |
+| `close_session`, `close_current_session`, `close_all_sessions` | **hub + till** | the session lives on the hub, so the hub closes it (no `SESSION_END` log: not a person's close, as today); the till that held it is told and goes to the login screen |
+| `force_logout`, `logout`, `force_kick`, `kick` | **till** | relayed to the target till; a kick pauses the shift through the till's normal session call to the hub |
+| `open_admin_mode`, `close_admin_mode`, `exit_admin_mode` | **till** | device UI |
+| `display_alert`, `custom` | **till** | relayed to the target till |
+| `account_disabled`, `account_enabled` (and aliases) | **hub + every till** | the hub keeps taking writes and queues its pushes until re-enabled; each till locks its login as today |
+| `refresh_token` (and aliases) | **hub + till** | the hub renews the token it uses for that terminal; the till renews its own for its account-level calls (login, subscription) |
+| `subscription_updated` (and aliases) | **till** | account-level: the till re-reads `/pos/subscription` directly, as today |
+
+**Remote console (requests with a `requestId`, `remote_command_service.dart`)**
+
+| Command | Runs on | Notes |
+|---|---|---|
+| `ping`, `app_info`, `diagnostics`, `get_logs` | **till** | about the device |
+| `get_config`, `set_config`, `get_printers`, `set_printers`, `test_print` | **till** | settings and printers are the device's |
+| `remote_access_open` | **till** | RustDesk runs on the device |
+| `remote_sql` | **till** | the till's own SQLite (settings, offline queue). The shop's data is in the hub's Postgres; SQL there is a separate decision (§11) |
+| `pending_sync` | **till** | in hub mode this is the till's offline queue (§7), usually empty; the hub's outbox has its own figure |
+
+**Replies.** A relayed command reaches the till on its topic `commands:<terminal>`; the till answers `POST /hub/v1/commands/{requestId}/result`, and the hub posts `POST /pos/remote/{requestId}/result` with that terminal's identity. One path, which still works when only the hub has internet. If the target till is not connected to the hub, the hub replies `device_offline` at once rather than letting the back office wait out its timeout.
+
+**On the till (when the hub client is built):** in hub mode, the SSE provider does not start, and `PosCommandHandler` and `RemoteCommandService` take their commands from the hub stream instead. A relayed sync command is refused there with `not_in_hub_mode`, since a hub-linked till never syncs.
 
 ### 8.3 Rules the mirror must keep
 
@@ -371,6 +420,8 @@ A line removed after it was saved, by a cashier, a waiter or the web, is a **can
 5. **Where the hub runs:** a dedicated mini-PC (Linux) or one of the tills (Windows service)? This affects updates, backups, and whether "hub down" also means "a till down".
 6. **Charged removals and required options** from the waiter app (`waiter_app_changes_2026-11.md` §8, §9).
 7. **Multi-site:** one hub per shop (assumed), or one hub serving several businesses?
+8. **What a till may create:** stations come from the back office only (Add Station removed from the till, 2026-11-27). Still to decide, for the same reason: quick product create (`POST /pos/products`), category create (`POST /pos/categories`), and anything else the till writes into the back-office data.
+9. **Remote SQL in hub mode:** `remote_sql` runs on the till's own SQLite (§8.4). Is SQL on the hub's Postgres wanted too, and if so read-only?
 
 ---
 
