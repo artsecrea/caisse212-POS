@@ -116,7 +116,6 @@ lib/
 │   ├── pending_operations_service.dart # Queue offline mutations; flush on reconnect
 │   ├── external_order_queue_service.dart # Poll remote queue for DealUp/WhatsApp orders
 │   ├── session_service.dart    # Cash session open/close lifecycle
-│   ├── auth_service.dart       # bcrypt login validation
 │   ├── permission_service.dart # Role-based permission checks
 │   ├── printing_service.dart   # Thermal printer (ESC/POS)
 │   ├── order_log_service.dart  # Audit log for order mutations
@@ -147,7 +146,7 @@ lib/
 Never let init throw — wrap expensive calls in `.timeout()` with fallback.
 
 ## Multi-Tenant Auth Flow
-`/tenant` (TenantLoginScreen) → user selects/enters server URL → stored in SharedPrefs → `/login` (LoginScreen) authenticates local user via `AuthService` (bcrypt) → navigates to `/main`.
+`/tenant` (TenantLoginScreen) → user selects/enters server URL → stored in SharedPrefs → `/login` (LoginScreen) authenticates the local user with bcrypt (`utils/password_check.dart`) → navigates to `/main`.
 
 ## Offline-First Mutation Flow
 UI → `OrderRepository` → writes to local Drift DB → `PendingOperationsService.queue*()` adds entry to `pending_sync_operations` table → `SyncJobService` polls and calls `DataSyncService` → `ApiService` flushes to remote. Never call sync directly from UI.
