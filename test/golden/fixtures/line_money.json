@@ -1,0 +1,263 @@
+{
+  "area": "line_money",
+  "about": "One order line's money. unitPrice is TTC with the catalogue discount already off; unitTva is a tax AMOUNT per unit; options are per parent unit.",
+  "dart": "lib/domain/models/order_money.dart (LineAmounts, lineCountsInTotal, applyOrderDiscount), lib/services/cash_report_sections.dart (LineMoney, vatRateOf)",
+  "cases": [
+    {
+      "name": "plain line",
+      "fn": "LineAmounts",
+      "input": {
+        "unitPrice": 12,
+        "quantity": 2
+      },
+      "expected": {
+        "net": 24.0,
+        "gross": 24.0,
+        "lineDiscount": 0.0,
+        "tva": 0.0,
+        "unitSubtotalHt": 12.0
+      }
+    },
+    {
+      "name": "catalogue discount is already inside unitPrice",
+      "fn": "LineAmounts",
+      "input": {
+        "unitPrice": 8,
+        "quantity": 3,
+        "unitDiscount": 2,
+        "unitTva": 1.333333
+      },
+      "expected": {
+        "net": 24.0,
+        "gross": 30.0,
+        "lineDiscount": 6.0,
+        "tva": 3.999999,
+        "unitSubtotalHt": 8.666667
+      }
+    },
+    {
+      "name": "options and a manual discount, per unit",
+      "fn": "LineAmounts",
+      "input": {
+        "unitPrice": 10,
+        "quantity": 2,
+        "componentsPerUnit": 3,
+        "manualDiscount": 1.5,
+        "unitTva": 1.67
+      },
+      "expected": {
+        "net": 23.0,
+        "gross": 26.0,
+        "lineDiscount": 3.0,
+        "tva": 3.34,
+        "unitSubtotalHt": 11.33
+      }
+    },
+    {
+      "name": "weighed line, fractional quantity",
+      "fn": "LineAmounts",
+      "input": {
+        "unitPrice": 120,
+        "quantity": 0.75,
+        "unitTva": 20
+      },
+      "expected": {
+        "net": 90.0,
+        "gross": 90.0,
+        "lineDiscount": 0.0,
+        "tva": 15.0,
+        "unitSubtotalHt": 100.0
+      }
+    },
+    {
+      "name": "a discount option lowers the line",
+      "fn": "LineAmounts",
+      "input": {
+        "unitPrice": 20,
+        "quantity": 1,
+        "componentsPerUnit": -5
+      },
+      "expected": {
+        "net": 15.0,
+        "gross": 15.0,
+        "lineDiscount": 0.0,
+        "tva": 0.0,
+        "unitSubtotalHt": 15.0
+      }
+    },
+    {
+      "name": "pending line is owed",
+      "fn": "lineCountsInTotal",
+      "input": {
+        "state": "PENDING",
+        "paid": false
+      },
+      "expected": {
+        "owed": true,
+        "countsInTotal": true
+      }
+    },
+    {
+      "name": "cancelled unpaid line is not owed and not in the total",
+      "fn": "lineCountsInTotal",
+      "input": {
+        "state": "CANCELED",
+        "paid": false
+      },
+      "expected": {
+        "owed": false,
+        "countsInTotal": false
+      }
+    },
+    {
+      "name": "cancelled after payment stays in the total",
+      "fn": "lineCountsInTotal",
+      "input": {
+        "state": "CANCELED",
+        "paid": true
+      },
+      "expected": {
+        "owed": false,
+        "countsInTotal": true
+      }
+    },
+    {
+      "name": "both spellings of cancelled",
+      "fn": "lineCountsInTotal",
+      "input": {
+        "state": "CANCELLED",
+        "paid": false
+      },
+      "expected": {
+        "owed": false,
+        "countsInTotal": false
+      }
+    },
+    {
+      "name": "legacy PAID state is owed (paid-ness comes from the ticket)",
+      "fn": "lineCountsInTotal",
+      "input": {
+        "state": "PAID",
+        "paid": false
+      },
+      "expected": {
+        "owed": true,
+        "countsInTotal": true
+      }
+    },
+    {
+      "name": "10 percent off 100",
+      "fn": "applyOrderDiscount",
+      "input": {
+        "linesNet": 100,
+        "percentage": 10
+      },
+      "expected": {
+        "discount": 10.0,
+        "total": 90.0
+      }
+    },
+    {
+      "name": "order percentage is not rounded",
+      "fn": "applyOrderDiscount",
+      "input": {
+        "linesNet": 33.33,
+        "percentage": 15
+      },
+      "expected": {
+        "discount": 4.9995,
+        "total": 28.3305
+      }
+    },
+    {
+      "name": "no order discount",
+      "fn": "applyOrderDiscount",
+      "input": {
+        "linesNet": 47.5,
+        "percentage": 0
+      },
+      "expected": {
+        "discount": 0.0,
+        "total": 47.5
+      }
+    },
+    {
+      "name": "report line: catalogue discount plus the order share",
+      "fn": "LineMoney",
+      "input": {
+        "line": {
+          "unitPrice": 8,
+          "quantity": 3,
+          "unitDiscount": 2
+        },
+        "orderDiscountPercentage": 10
+      },
+      "expected": {
+        "gross": 30.0,
+        "discount": 8.4,
+        "net": 21.6
+      }
+    },
+    {
+      "name": "report line: options and manual discount",
+      "fn": "LineMoney",
+      "input": {
+        "line": {
+          "unitPrice": 10,
+          "quantity": 2,
+          "manualDiscount": 1
+        },
+        "componentsPerUnit": 2.5
+      },
+      "expected": {
+        "gross": 25.0,
+        "discount": 2.0,
+        "net": 23.0
+      }
+    },
+    {
+      "name": "VAT 20 percent recovered from the amount",
+      "fn": "vatRateOf",
+      "input": {
+        "unitPrice": 12,
+        "unitTva": 2
+      },
+      "expected": {
+        "rate": 20.0
+      }
+    },
+    {
+      "name": "VAT 10 percent",
+      "fn": "vatRateOf",
+      "input": {
+        "unitPrice": 11,
+        "unitTva": 1
+      },
+      "expected": {
+        "rate": 10.0
+      }
+    },
+    {
+      "name": "cheap item rounds the rate to the half point",
+      "fn": "vatRateOf",
+      "input": {
+        "unitPrice": 0.5,
+        "unitTva": 0.08
+      },
+      "expected": {
+        "rate": 19.0
+      }
+    },
+    {
+      "name": "no tax amount means rate 0",
+      "fn": "vatRateOf",
+      "input": {
+        "unitPrice": 15,
+        "unitTva": 0
+      },
+      "expected": {
+        "rate": 0.0
+      }
+    }
+  ]
+}

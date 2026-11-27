@@ -1,0 +1,857 @@
+{
+  "area": "z_rules",
+  "about": "Z (business day) rules, contract v3: a Z is a (terminal, zDay, zSeq) label. Times are the shop's wall clock, yyyy-MM-ddTHH:mm:ss with no offset; HH:mm rules are relative to the business day, which starts at startHour. No case crosses a daylight-saving change. Enum values are the Dart names.",
+  "dart": "lib/services/z_rules.dart",
+  "cases": [
+    {
+      "name": "before the start hour belongs to the previous day",
+      "fn": "zDayKeyOf",
+      "input": {
+        "now": "2026-11-27T02:30:00",
+        "startHour": 5
+      },
+      "expected": {
+        "zDay": "2026-11-26"
+      }
+    },
+    {
+      "name": "the start hour opens the new day",
+      "fn": "zDayKeyOf",
+      "input": {
+        "now": "2026-11-27T05:00:00",
+        "startHour": 5
+      },
+      "expected": {
+        "zDay": "2026-11-27"
+      }
+    },
+    {
+      "name": "one second before the start hour",
+      "fn": "zDayKeyOf",
+      "input": {
+        "now": "2026-11-27T04:59:59",
+        "startHour": 5
+      },
+      "expected": {
+        "zDay": "2026-11-26"
+      }
+    },
+    {
+      "name": "midnight start",
+      "fn": "zDayKeyOf",
+      "input": {
+        "now": "2026-11-27T23:59:00",
+        "startHour": 0
+      },
+      "expected": {
+        "zDay": "2026-11-27"
+      }
+    },
+    {
+      "name": "an evening rule is that same night",
+      "fn": "ruleInstant",
+      "input": {
+        "zDay": "2026-11-26",
+        "startHour": 5,
+        "hhmm": "23:00"
+      },
+      "expected": {
+        "at": "2026-11-26T23:00:00"
+      }
+    },
+    {
+      "name": "an early-morning rule is the next calendar morning",
+      "fn": "ruleInstant",
+      "input": {
+        "zDay": "2026-11-26",
+        "startHour": 5,
+        "hhmm": "02:00"
+      },
+      "expected": {
+        "at": "2026-11-27T02:00:00"
+      }
+    },
+    {
+      "name": "a rule at the start hour is the start of the day",
+      "fn": "ruleInstant",
+      "input": {
+        "zDay": "2026-11-26",
+        "startHour": 5,
+        "hhmm": "05:00"
+      },
+      "expected": {
+        "at": "2026-11-26T05:00:00"
+      }
+    },
+    {
+      "name": "a minute before the start hour is the very end of the day",
+      "fn": "ruleInstant",
+      "input": {
+        "zDay": "2026-11-26",
+        "startHour": 5,
+        "hhmm": "04:59"
+      },
+      "expected": {
+        "at": "2026-11-27T04:59:00"
+      }
+    },
+    {
+      "name": "malformed rule is no rule",
+      "fn": "ruleInstant",
+      "input": {
+        "zDay": "2026-11-26",
+        "startHour": 5,
+        "hhmm": "25:00"
+      },
+      "expected": {
+        "at": null
+      }
+    },
+    {
+      "name": "missing rule",
+      "fn": "ruleInstant",
+      "input": {
+        "zDay": "2026-11-26",
+        "startHour": 5,
+        "hhmm": null
+      },
+      "expected": {
+        "at": null
+      }
+    },
+    {
+      "name": "server Z with a datetime zDay",
+      "fn": "ZSnapshot.fromServer",
+      "input": {
+        "json": {
+          "zDay": "2026-11-26T00:00:00",
+          "zSeq": 2,
+          "closed": true
+        }
+      },
+      "expected": {
+        "snapshot": {
+          "zDay": "2026-11-26",
+          "zSeq": 2,
+          "closed": true
+        }
+      }
+    },
+    {
+      "name": "server zSeq sent as a string",
+      "fn": "ZSnapshot.fromServer",
+      "input": {
+        "json": {
+          "zDay": "2026-11-26",
+          "zSeq": "3"
+        }
+      },
+      "expected": {
+        "snapshot": {
+          "zDay": "2026-11-26",
+          "zSeq": 3,
+          "closed": false
+        }
+      }
+    },
+    {
+      "name": "server zSeq 0 means no Z",
+      "fn": "ZSnapshot.fromServer",
+      "input": {
+        "json": {
+          "zDay": "2026-11-26",
+          "zSeq": 0,
+          "closed": false
+        }
+      },
+      "expected": {
+        "snapshot": null
+      }
+    },
+    {
+      "name": "terminal that never had a session",
+      "fn": "ZSnapshot.fromServer",
+      "input": {
+        "json": {
+          "zDay": null,
+          "zSeq": null
+        }
+      },
+      "expected": {
+        "snapshot": null
+      }
+    },
+    {
+      "name": "today's open Z continues",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "localOpen": {
+          "zDay": "2026-11-27",
+          "zSeq": 1
+        },
+        "server": {
+          "zDay": "2026-11-27",
+          "zSeq": 1,
+          "closed": false
+        }
+      },
+      "expected": {
+        "action": "continueOpen",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 1
+        },
+        "closeLocalAsServerClosed": false
+      }
+    },
+    {
+      "name": "a Z left open from yesterday continues (never closed by the clock)",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "localOpen": {
+          "zDay": "2026-11-26",
+          "zSeq": 2
+        }
+      },
+      "expected": {
+        "action": "continueOpen",
+        "next": {
+          "zDay": "2026-11-26",
+          "zSeq": 2
+        },
+        "closeLocalAsServerClosed": false
+      }
+    },
+    {
+      "name": "the server closed our open Z: close it here, open the next",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "localOpen": {
+          "zDay": "2026-11-27",
+          "zSeq": 1
+        },
+        "localLatest": {
+          "zDay": "2026-11-27",
+          "zSeq": 1,
+          "closed": false
+        },
+        "server": {
+          "zDay": "2026-11-27",
+          "zSeq": 1,
+          "closed": true
+        }
+      },
+      "expected": {
+        "action": "openNew",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 2
+        },
+        "closeLocalAsServerClosed": true
+      }
+    },
+    {
+      "name": "the server closed yesterday's Z: today starts at 1",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "localOpen": {
+          "zDay": "2026-11-26",
+          "zSeq": 1
+        },
+        "server": {
+          "zDay": "2026-11-26",
+          "zSeq": 1,
+          "closed": true
+        }
+      },
+      "expected": {
+        "action": "openNew",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 1
+        },
+        "closeLocalAsServerClosed": true
+      }
+    },
+    {
+      "name": "reinstall mid-day adopts the server's open Z",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "localLatest": {
+          "zDay": "2026-11-27",
+          "zSeq": 1,
+          "closed": true
+        },
+        "server": {
+          "zDay": "2026-11-27",
+          "zSeq": 2,
+          "closed": false
+        }
+      },
+      "expected": {
+        "action": "adoptServer",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 2
+        },
+        "closeLocalAsServerClosed": false
+      }
+    },
+    {
+      "name": "fresh install adopts the server's open Z",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "server": {
+          "zDay": "2026-11-27",
+          "zSeq": 1,
+          "closed": false
+        }
+      },
+      "expected": {
+        "action": "adoptServer",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 1
+        },
+        "closeLocalAsServerClosed": false
+      }
+    },
+    {
+      "name": "offline: next sequence from the till's own Zs",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "localLatest": {
+          "zDay": "2026-11-27",
+          "zSeq": 2,
+          "closed": true
+        }
+      },
+      "expected": {
+        "action": "openNew",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 3
+        },
+        "closeLocalAsServerClosed": false
+      }
+    },
+    {
+      "name": "first Z ever",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27"
+      },
+      "expected": {
+        "action": "openNew",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 1
+        },
+        "closeLocalAsServerClosed": false
+      }
+    },
+    {
+      "name": "a server Z open on an earlier day is not adopted",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "server": {
+          "zDay": "2026-11-26",
+          "zSeq": 1,
+          "closed": false
+        }
+      },
+      "expected": {
+        "action": "openNew",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 1
+        },
+        "closeLocalAsServerClosed": false
+      }
+    },
+    {
+      "name": "a server Z no newer than ours is not adopted",
+      "fn": "planZ",
+      "input": {
+        "currentZDay": "2026-11-27",
+        "localLatest": {
+          "zDay": "2026-11-27",
+          "zSeq": 2,
+          "closed": true
+        },
+        "server": {
+          "zDay": "2026-11-27",
+          "zSeq": 2,
+          "closed": false
+        }
+      },
+      "expected": {
+        "action": "openNew",
+        "next": {
+          "zDay": "2026-11-27",
+          "zSeq": 3
+        },
+        "closeLocalAsServerClosed": false
+      }
+    },
+    {
+      "name": "AUTO, no limit",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-27T09:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": null,
+        "cantOpenAfter": null,
+        "explicitOpen": false,
+        "hasOpenPermission": false,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": null
+      }
+    },
+    {
+      "name": "MANUAL does not open with a session",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-27T09:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": "manual",
+        "cantOpenAfter": null,
+        "explicitOpen": false,
+        "hasOpenPermission": true,
+        "hasOverride": true
+      },
+      "expected": {
+        "block": "manualOpenRequired"
+      }
+    },
+    {
+      "name": "MANUAL opened on purpose by a holder",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-27T09:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": "MANUAL",
+        "cantOpenAfter": null,
+        "explicitOpen": true,
+        "hasOpenPermission": true,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": null
+      }
+    },
+    {
+      "name": "MANUAL opened on purpose without the permission",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-27T09:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": "MANUAL",
+        "cantOpenAfter": null,
+        "explicitOpen": true,
+        "hasOpenPermission": false,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": "manualOpenRequired"
+      }
+    },
+    {
+      "name": "at the can't-open-after time is too late",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-27T23:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": "AUTO",
+        "cantOpenAfter": "23:00",
+        "explicitOpen": false,
+        "hasOpenPermission": false,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": "tooLateToOpen"
+      }
+    },
+    {
+      "name": "a minute before the can't-open-after time",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-27T22:59:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": "AUTO",
+        "cantOpenAfter": "23:00",
+        "explicitOpen": false,
+        "hasOpenPermission": false,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": null
+      }
+    },
+    {
+      "name": "override opens late",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-27T23:30:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": "AUTO",
+        "cantOpenAfter": "23:00",
+        "explicitOpen": false,
+        "hasOpenPermission": false,
+        "hasOverride": true
+      },
+      "expected": {
+        "block": null
+      }
+    },
+    {
+      "name": "an after-midnight limit belongs to the next morning",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-28T01:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": "AUTO",
+        "cantOpenAfter": "02:00",
+        "explicitOpen": false,
+        "hasOpenPermission": false,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": null
+      }
+    },
+    {
+      "name": "the after-midnight limit reached",
+      "fn": "checkZOpen",
+      "input": {
+        "now": "2026-11-28T02:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "openMode": "AUTO",
+        "cantOpenAfter": "02:00",
+        "explicitOpen": false,
+        "hasOpenPermission": false,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": "tooLateToOpen"
+      }
+    },
+    {
+      "name": "closing needs the close permission, override or not",
+      "fn": "checkZClose",
+      "input": {
+        "now": "2026-11-27T23:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "earliestCloseTime": null,
+        "hasClosePermission": false,
+        "hasOverride": true
+      },
+      "expected": {
+        "block": "noClosePermission"
+      }
+    },
+    {
+      "name": "before the earliest close time",
+      "fn": "checkZClose",
+      "input": {
+        "now": "2026-11-27T21:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "earliestCloseTime": "22:00",
+        "hasClosePermission": true,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": "tooEarlyToClose"
+      }
+    },
+    {
+      "name": "override closes early",
+      "fn": "checkZClose",
+      "input": {
+        "now": "2026-11-27T21:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "earliestCloseTime": "22:00",
+        "hasClosePermission": true,
+        "hasOverride": true
+      },
+      "expected": {
+        "block": null
+      }
+    },
+    {
+      "name": "at the earliest close time",
+      "fn": "checkZClose",
+      "input": {
+        "now": "2026-11-27T22:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "earliestCloseTime": "22:00",
+        "hasClosePermission": true,
+        "hasOverride": false
+      },
+      "expected": {
+        "block": null
+      }
+    },
+    {
+      "name": "AUTO_AFTER_HOUR asks after the hour",
+      "fn": "zAutoCloseDue",
+      "input": {
+        "now": "2026-11-27T23:30:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "closeMode": "AUTO_AFTER_HOUR",
+        "autoCloseAfter": "23:00"
+      },
+      "expected": {
+        "due": true
+      }
+    },
+    {
+      "name": "AUTO_AFTER_HOUR before the hour",
+      "fn": "zAutoCloseDue",
+      "input": {
+        "now": "2026-11-27T22:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "closeMode": "AUTO_AFTER_HOUR",
+        "autoCloseAfter": "23:00"
+      },
+      "expected": {
+        "due": false
+      }
+    },
+    {
+      "name": "MANUAL never asks",
+      "fn": "zAutoCloseDue",
+      "input": {
+        "now": "2026-11-27T23:30:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "closeMode": "MANUAL",
+        "autoCloseAfter": "23:00"
+      },
+      "expected": {
+        "due": false
+      }
+    },
+    {
+      "name": "after-midnight auto close, not yet",
+      "fn": "zAutoCloseDue",
+      "input": {
+        "now": "2026-11-28T00:30:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "closeMode": "auto_after_hour",
+        "autoCloseAfter": "01:00"
+      },
+      "expected": {
+        "due": false
+      }
+    },
+    {
+      "name": "after-midnight auto close reached",
+      "fn": "zAutoCloseDue",
+      "input": {
+        "now": "2026-11-28T01:00:00",
+        "zDay": "2026-11-27",
+        "startHour": 5,
+        "closeMode": "AUTO_AFTER_HOUR",
+        "autoCloseAfter": "01:00"
+      },
+      "expected": {
+        "due": true
+      }
+    },
+    {
+      "name": "BY_SESSION: the last session takes its Z",
+      "fn": "zClosesWithSession",
+      "input": {
+        "closeMode": "BY_SESSION",
+        "otherOpenSessions": 0,
+        "sessionsInZ": 1
+      },
+      "expected": {
+        "closes": true,
+        "printSessionX": false
+      }
+    },
+    {
+      "name": "BY_SESSION waits for the other sessions",
+      "fn": "zClosesWithSession",
+      "input": {
+        "closeMode": "by_session",
+        "otherOpenSessions": 1,
+        "sessionsInZ": 2
+      },
+      "expected": {
+        "closes": false,
+        "printSessionX": true
+      }
+    },
+    {
+      "name": "BY_SESSION still honours the earliest close time",
+      "fn": "zClosesWithSession",
+      "input": {
+        "closeMode": "BY_SESSION",
+        "otherOpenSessions": 0,
+        "tooEarly": true,
+        "sessionsInZ": 3
+      },
+      "expected": {
+        "closes": false,
+        "printSessionX": true
+      }
+    },
+    {
+      "name": "MANUAL never closes with a session",
+      "fn": "zClosesWithSession",
+      "input": {
+        "closeMode": "MANUAL",
+        "otherOpenSessions": 0,
+        "sessionsInZ": 2
+      },
+      "expected": {
+        "closes": false,
+        "printSessionX": true
+      }
+    },
+    {
+      "name": "a 04:00 cutoff is the next morning for a Z opened at 05:00",
+      "fn": "zOpenWarnings",
+      "input": {
+        "now": "2026-11-27T06:00:00",
+        "startedAt": "2026-11-27T05:00:00",
+        "cutoff": "04:00"
+      },
+      "expected": {
+        "warnings": [],
+        "cutoffAt": "2026-11-28T04:00:00"
+      }
+    },
+    {
+      "name": "past the cutoff",
+      "fn": "zOpenWarnings",
+      "input": {
+        "now": "2026-11-28T04:00:00",
+        "startedAt": "2026-11-27T05:00:00",
+        "cutoff": "04:00"
+      },
+      "expected": {
+        "warnings": [
+          "pastCutoff"
+        ],
+        "cutoffAt": "2026-11-28T04:00:00"
+      }
+    },
+    {
+      "name": "a Z opened before the cutoff hour meets it the same morning",
+      "fn": "zOpenWarnings",
+      "input": {
+        "now": "2026-11-27T04:30:00",
+        "startedAt": "2026-11-27T03:00:00",
+        "cutoff": "04:00"
+      },
+      "expected": {
+        "warnings": [
+          "pastCutoff"
+        ],
+        "cutoffAt": "2026-11-27T04:00:00"
+      }
+    },
+    {
+      "name": "opened exactly at the cutoff: the next one counts",
+      "fn": "zOpenWarnings",
+      "input": {
+        "now": "2026-11-27T04:30:00",
+        "startedAt": "2026-11-27T04:00:00",
+        "cutoff": "04:00"
+      },
+      "expected": {
+        "warnings": [],
+        "cutoffAt": "2026-11-28T04:00:00"
+      }
+    },
+    {
+      "name": "open too long",
+      "fn": "zOpenWarnings",
+      "input": {
+        "now": "2026-11-27T20:00:00",
+        "startedAt": "2026-11-27T08:00:00",
+        "maxOpenHours": 12
+      },
+      "expected": {
+        "warnings": [
+          "openTooLong"
+        ],
+        "cutoffAt": null
+      }
+    },
+    {
+      "name": "a minute short of too long",
+      "fn": "zOpenWarnings",
+      "input": {
+        "now": "2026-11-27T19:59:00",
+        "startedAt": "2026-11-27T08:00:00",
+        "maxOpenHours": 12
+      },
+      "expected": {
+        "warnings": [],
+        "cutoffAt": null
+      }
+    },
+    {
+      "name": "0 hours and a bad cutoff turn both warnings off",
+      "fn": "zOpenWarnings",
+      "input": {
+        "now": "2026-11-29T10:00:00",
+        "startedAt": "2026-11-27T08:00:00",
+        "maxOpenHours": 0,
+        "cutoff": "4h"
+      },
+      "expected": {
+        "warnings": [],
+        "cutoffAt": null
+      }
+    },
+    {
+      "name": "both warnings at once",
+      "fn": "zOpenWarnings",
+      "input": {
+        "now": "2026-11-29T10:00:00",
+        "startedAt": "2026-11-27T08:00:00",
+        "maxOpenHours": 24,
+        "cutoff": "04:00"
+      },
+      "expected": {
+        "warnings": [
+          "openTooLong",
+          "pastCutoff"
+        ],
+        "cutoffAt": "2026-11-28T04:00:00"
+      }
+    }
+  ]
+}

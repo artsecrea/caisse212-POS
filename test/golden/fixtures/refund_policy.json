@@ -1,0 +1,551 @@
+{
+  "area": "refund_policy",
+  "about": "The refund policy from BMS (GET /pos/refund-policy), read leniently, and the limits one refund goes past. Each issue names the permission that approves it; held is what the approver holds, unapproved what is still missing. Days are yyyy-MM-dd business days.",
+  "dart": "lib/domain/models/refund_policy.dart",
+  "cases": [
+    {
+      "name": "no policy sent reads as the defaults",
+      "fn": "RefundPolicy.fromJson",
+      "input": {
+        "json": {}
+      },
+      "expected": {
+        "enabled": true,
+        "windowDays": null,
+        "closedZNeedsPermission": false,
+        "approvalAbove": null,
+        "requireReason": false,
+        "reasons": [],
+        "allowedMethods": [
+          "CASH",
+          "CARD",
+          "TRANSFER",
+          "CHECK"
+        ],
+        "methodMustMatchPayment": false,
+        "allowPartial": true,
+        "defaultRestock": true
+      }
+    },
+    {
+      "name": "a full policy",
+      "fn": "RefundPolicy.fromJson",
+      "input": {
+        "json": {
+          "enabled": true,
+          "windowDays": 30,
+          "closedZNeedsPermission": true,
+          "approvalAbove": 500,
+          "requireReason": true,
+          "reasons": [
+            {
+              "code": "DEFECT",
+              "label": "Défaut"
+            },
+            {
+              "code": "OTHER",
+              "label": "Autre"
+            }
+          ],
+          "allowedMethods": [
+            "CASH",
+            "CARD"
+          ],
+          "methodMustMatchPayment": true,
+          "allowPartial": false,
+          "defaultRestock": false
+        }
+      },
+      "expected": {
+        "enabled": true,
+        "windowDays": 30,
+        "closedZNeedsPermission": true,
+        "approvalAbove": 500.0,
+        "requireReason": true,
+        "reasons": [
+          {
+            "code": "DEFECT",
+            "label": "Défaut"
+          },
+          {
+            "code": "OTHER",
+            "label": "Autre"
+          }
+        ],
+        "allowedMethods": [
+          "CASH",
+          "CARD"
+        ],
+        "methodMustMatchPayment": true,
+        "allowPartial": false,
+        "defaultRestock": false
+      }
+    },
+    {
+      "name": "malformed fields fall back instead of failing",
+      "fn": "RefundPolicy.fromJson",
+      "input": {
+        "json": {
+          "enabled": "no",
+          "windowDays": -1,
+          "approvalAbove": "250.5",
+          "reasons": [
+            {
+              "code": "",
+              "label": "x"
+            },
+            {
+              "code": "LATE"
+            },
+            "junk"
+          ],
+          "allowedMethods": [
+            "cash",
+            "bitcoin",
+            "CASH"
+          ]
+        }
+      },
+      "expected": {
+        "enabled": true,
+        "windowDays": null,
+        "closedZNeedsPermission": false,
+        "approvalAbove": 250.5,
+        "requireReason": false,
+        "reasons": [
+          {
+            "code": "LATE",
+            "label": "LATE"
+          }
+        ],
+        "allowedMethods": [
+          "CASH"
+        ],
+        "methodMustMatchPayment": false,
+        "allowPartial": true,
+        "defaultRestock": true
+      }
+    },
+    {
+      "name": "an empty method list means no restriction",
+      "fn": "RefundPolicy.fromJson",
+      "input": {
+        "json": {
+          "allowedMethods": []
+        }
+      },
+      "expected": {
+        "enabled": true,
+        "windowDays": null,
+        "closedZNeedsPermission": false,
+        "approvalAbove": null,
+        "requireReason": false,
+        "reasons": [],
+        "allowedMethods": [
+          "CASH",
+          "CARD",
+          "TRANSFER",
+          "CHECK"
+        ],
+        "methodMustMatchPayment": false,
+        "allowPartial": true,
+        "defaultRestock": true
+      }
+    },
+    {
+      "name": "a plain refund needs nothing more",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {},
+        "attempt": {
+          "saleZDay": "2026-11-20",
+          "currentZDay": "2026-11-27",
+          "saleZClosed": true,
+          "total": 80,
+          "method": "CASH",
+          "paidMethods": [
+            "CASH"
+          ]
+        }
+      },
+      "expected": {
+        "issues": [],
+        "permissionsNeeded": [],
+        "unapproved": []
+      }
+    },
+    {
+      "name": "closed Z when the policy asks for it",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "closedZNeedsPermission": true
+        },
+        "attempt": {
+          "saleZDay": "2026-11-26",
+          "currentZDay": "2026-11-27",
+          "saleZClosed": true,
+          "total": 10,
+          "method": "CASH"
+        }
+      },
+      "expected": {
+        "issues": [
+          {
+            "flag": "CLOSED_Z",
+            "permission": "pos:refunds:closed-z"
+          }
+        ],
+        "permissionsNeeded": [
+          "pos:refunds:closed-z"
+        ],
+        "unapproved": [
+          "CLOSED_Z"
+        ]
+      }
+    },
+    {
+      "name": "one day past the window",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "windowDays": 7
+        },
+        "attempt": {
+          "saleZDay": "2026-11-01",
+          "currentZDay": "2026-11-09",
+          "total": 10,
+          "method": "CASH"
+        }
+      },
+      "expected": {
+        "issues": [
+          {
+            "flag": "WINDOW",
+            "permission": "pos:refunds:override"
+          }
+        ],
+        "permissionsNeeded": [
+          "pos:refunds:override"
+        ],
+        "unapproved": [
+          "WINDOW"
+        ]
+      }
+    },
+    {
+      "name": "the last day of the window",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "windowDays": 7
+        },
+        "attempt": {
+          "saleZDay": "2026-11-02",
+          "currentZDay": "2026-11-09",
+          "total": 10,
+          "method": "CASH"
+        }
+      },
+      "expected": {
+        "issues": [],
+        "permissionsNeeded": [],
+        "unapproved": []
+      }
+    },
+    {
+      "name": "an unknown sale day never counts against the window",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "windowDays": 0
+        },
+        "attempt": {
+          "saleZDay": null,
+          "currentZDay": "2026-11-09",
+          "total": 10,
+          "method": "CASH"
+        }
+      },
+      "expected": {
+        "issues": [],
+        "permissionsNeeded": [],
+        "unapproved": []
+      }
+    },
+    {
+      "name": "half a centime over the amount limit is not over",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "approvalAbove": 500
+        },
+        "attempt": {
+          "total": 500.004,
+          "method": "CASH"
+        }
+      },
+      "expected": {
+        "issues": [],
+        "permissionsNeeded": [],
+        "unapproved": []
+      }
+    },
+    {
+      "name": "a centime over the amount limit",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "approvalAbove": 500
+        },
+        "attempt": {
+          "total": 500.01,
+          "method": "CASH"
+        }
+      },
+      "expected": {
+        "issues": [
+          {
+            "flag": "AMOUNT",
+            "permission": "pos:refunds:override"
+          }
+        ],
+        "permissionsNeeded": [
+          "pos:refunds:override"
+        ],
+        "unapproved": [
+          "AMOUNT"
+        ]
+      }
+    },
+    {
+      "name": "a method the policy does not offer",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "allowedMethods": [
+            "CASH"
+          ]
+        },
+        "attempt": {
+          "total": 10,
+          "method": "CARD"
+        }
+      },
+      "expected": {
+        "issues": [
+          {
+            "flag": "METHOD",
+            "permission": "pos:refunds:override"
+          }
+        ],
+        "permissionsNeeded": [
+          "pos:refunds:override"
+        ],
+        "unapproved": [
+          "METHOD"
+        ]
+      }
+    },
+    {
+      "name": "a method the order was not paid with",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "methodMustMatchPayment": true
+        },
+        "attempt": {
+          "total": 10,
+          "method": "cash",
+          "paidMethods": [
+            "CARD"
+          ]
+        }
+      },
+      "expected": {
+        "issues": [
+          {
+            "flag": "METHOD",
+            "permission": "pos:refunds:override"
+          }
+        ],
+        "permissionsNeeded": [
+          "pos:refunds:override"
+        ],
+        "unapproved": [
+          "METHOD"
+        ]
+      }
+    },
+    {
+      "name": "no known payments: the method is not checked",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "methodMustMatchPayment": true
+        },
+        "attempt": {
+          "total": 10,
+          "method": "CASH",
+          "paidMethods": []
+        }
+      },
+      "expected": {
+        "issues": [],
+        "permissionsNeeded": [],
+        "unapproved": []
+      }
+    },
+    {
+      "name": "a non-refundable product",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {},
+        "attempt": {
+          "total": 10,
+          "method": "CASH",
+          "includesNonRefundable": true
+        }
+      },
+      "expected": {
+        "issues": [
+          {
+            "flag": "NON_REFUNDABLE",
+            "permission": "pos:refunds:override"
+          }
+        ],
+        "permissionsNeeded": [
+          "pos:refunds:override"
+        ],
+        "unapproved": [
+          "NON_REFUNDABLE"
+        ]
+      }
+    },
+    {
+      "name": "a partial refund when only full ones are allowed",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "allowPartial": false
+        },
+        "attempt": {
+          "total": 10,
+          "method": "CASH",
+          "isFullRefund": false
+        }
+      },
+      "expected": {
+        "issues": [
+          {
+            "flag": "PARTIAL",
+            "permission": "pos:refunds:override"
+          }
+        ],
+        "permissionsNeeded": [
+          "pos:refunds:override"
+        ],
+        "unapproved": [
+          "PARTIAL"
+        ]
+      }
+    },
+    {
+      "name": "every limit at once, an approver with the override only",
+      "fn": "refundPolicyIssues",
+      "input": {
+        "policy": {
+          "closedZNeedsPermission": true,
+          "windowDays": 3,
+          "approvalAbove": 100,
+          "allowedMethods": [
+            "CARD"
+          ],
+          "allowPartial": false
+        },
+        "attempt": {
+          "saleZDay": "2026-11-01",
+          "currentZDay": "2026-11-27",
+          "saleZClosed": true,
+          "total": 150,
+          "method": "CASH",
+          "includesNonRefundable": true,
+          "isFullRefund": false
+        },
+        "held": [
+          "pos:refunds:override"
+        ]
+      },
+      "expected": {
+        "issues": [
+          {
+            "flag": "CLOSED_Z",
+            "permission": "pos:refunds:closed-z"
+          },
+          {
+            "flag": "WINDOW",
+            "permission": "pos:refunds:override"
+          },
+          {
+            "flag": "AMOUNT",
+            "permission": "pos:refunds:override"
+          },
+          {
+            "flag": "METHOD",
+            "permission": "pos:refunds:override"
+          },
+          {
+            "flag": "NON_REFUNDABLE",
+            "permission": "pos:refunds:override"
+          },
+          {
+            "flag": "PARTIAL",
+            "permission": "pos:refunds:override"
+          }
+        ],
+        "permissionsNeeded": [
+          "pos:refunds:closed-z",
+          "pos:refunds:override"
+        ],
+        "unapproved": [
+          "CLOSED_Z"
+        ]
+      }
+    },
+    {
+      "name": "payment labels mapped to refund methods",
+      "fn": "refundMethodsForPayments",
+      "input": {
+        "methods": [
+          "cash",
+          "Espèces",
+          "CB",
+          "card",
+          "mobile",
+          "Virement",
+          "chèque",
+          null,
+          ""
+        ]
+      },
+      "expected": {
+        "methods": [
+          "CARD",
+          "CASH",
+          "CHECK",
+          "TRANSFER"
+        ]
+      }
+    },
+    {
+      "name": "no payments",
+      "fn": "refundMethodsForPayments",
+      "input": {
+        "methods": []
+      },
+      "expected": {
+        "methods": []
+      }
+    }
+  ]
+}

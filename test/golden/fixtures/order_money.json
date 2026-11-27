@@ -1,0 +1,492 @@
+{
+  "area": "order_money",
+  "about": "An order's totals, priced by the waiter API (waiterApi, rounded to the cent as sent) and by the till's cart (till, unrounded). A line with ticketId is paid. credit is money already taken on open split-by-amount parts. unpaidLines are indexes into lines.",
+  "dart": "lib/services/waiter_order_money.dart (WaiterOrderMoney), lib/domain/models/order_models.dart (CurrentOrder)",
+  "cases": [
+    {
+      "name": "two plain lines",
+      "fn": "orderMoney",
+      "input": {
+        "lines": [
+          {
+            "unitPrice": 12,
+            "quantity": 2
+          },
+          {
+            "unitPrice": 4.5,
+            "quantity": 1
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 28.5,
+          "discountAmount": 0.0,
+          "totalAmount": 28.5,
+          "paidAmount": 0.0,
+          "balanceAmount": 28.5,
+          "allPaid": false,
+          "discountLabel": null,
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 28.5,
+          "tax": 0.0,
+          "totalBeforeDiscount": 28.5,
+          "discountAmount": 0.0,
+          "totalDiscount": 0.0,
+          "total": 28.5,
+          "unpaidLines": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "order discount, a cancelled unpaid line left out",
+      "fn": "orderMoney",
+      "input": {
+        "discountPercentage": 10,
+        "discountReason": " fidelite ",
+        "lines": [
+          {
+            "unitPrice": 20,
+            "quantity": 2
+          },
+          {
+            "unitPrice": 50,
+            "quantity": 1,
+            "state": "CANCELED"
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 40.0,
+          "discountAmount": 4.0,
+          "totalAmount": 36.0,
+          "paidAmount": 0.0,
+          "balanceAmount": 36.0,
+          "allPaid": false,
+          "discountLabel": "-10%",
+          "discountReason": "fidelite"
+        },
+        "till": {
+          "subtotalHt": 40.0,
+          "tax": 0.0,
+          "totalBeforeDiscount": 40.0,
+          "discountAmount": 4.0,
+          "totalDiscount": 4.0,
+          "total": 36.0,
+          "unpaidLines": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "a line paid then cancelled stays on the bill",
+      "fn": "orderMoney",
+      "input": {
+        "lines": [
+          {
+            "unitPrice": 20,
+            "quantity": 1
+          },
+          {
+            "unitPrice": 15,
+            "quantity": 1,
+            "state": "CANCELED",
+            "ticketId": 9
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 35.0,
+          "discountAmount": 0.0,
+          "totalAmount": 35.0,
+          "paidAmount": 15.0,
+          "balanceAmount": 20.0,
+          "allPaid": false,
+          "discountLabel": null,
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 35.0,
+          "tax": 0.0,
+          "totalBeforeDiscount": 35.0,
+          "discountAmount": 0.0,
+          "totalDiscount": 0.0,
+          "total": 35.0,
+          "unpaidLines": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "part paid by line, with an order discount",
+      "fn": "orderMoney",
+      "input": {
+        "discountPercentage": 10,
+        "lines": [
+          {
+            "unitPrice": 20,
+            "quantity": 1,
+            "ticketId": 1
+          },
+          {
+            "unitPrice": 30,
+            "quantity": 1
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 50.0,
+          "discountAmount": 5.0,
+          "totalAmount": 45.0,
+          "paidAmount": 18.0,
+          "balanceAmount": 27.0,
+          "allPaid": false,
+          "discountLabel": "-10%",
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 50.0,
+          "tax": 0.0,
+          "totalBeforeDiscount": 50.0,
+          "discountAmount": 5.0,
+          "totalDiscount": 5.0,
+          "total": 45.0,
+          "unpaidLines": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "split-by-amount credit lowers the balance only",
+      "fn": "orderMoney",
+      "input": {
+        "credit": 20,
+        "lines": [
+          {
+            "unitPrice": 50,
+            "quantity": 1
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 50.0,
+          "discountAmount": 0.0,
+          "totalAmount": 50.0,
+          "paidAmount": 20.0,
+          "balanceAmount": 30.0,
+          "allPaid": false,
+          "discountLabel": null,
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 50.0,
+          "tax": 0.0,
+          "totalBeforeDiscount": 50.0,
+          "discountAmount": 0.0,
+          "totalDiscount": 0.0,
+          "total": 50.0,
+          "unpaidLines": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "credit above the balance stops at zero",
+      "fn": "orderMoney",
+      "input": {
+        "credit": 70,
+        "lines": [
+          {
+            "unitPrice": 50,
+            "quantity": 1
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 50.0,
+          "discountAmount": 0.0,
+          "totalAmount": 50.0,
+          "paidAmount": 50.0,
+          "balanceAmount": 0.0,
+          "allPaid": false,
+          "discountLabel": null,
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 50.0,
+          "tax": 0.0,
+          "totalBeforeDiscount": 50.0,
+          "discountAmount": 0.0,
+          "totalDiscount": 0.0,
+          "total": 50.0,
+          "unpaidLines": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "every line cancelled before payment is not paid",
+      "fn": "orderMoney",
+      "input": {
+        "lines": [
+          {
+            "unitPrice": 9,
+            "quantity": 1,
+            "state": "CANCELED"
+          },
+          {
+            "unitPrice": 6,
+            "quantity": 2,
+            "state": "CANCELLED"
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 0.0,
+          "discountAmount": 0.0,
+          "totalAmount": 0.0,
+          "paidAmount": 0.0,
+          "balanceAmount": 0.0,
+          "allPaid": false,
+          "discountLabel": null,
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 0.0,
+          "tax": 0.0,
+          "totalBeforeDiscount": 0.0,
+          "discountAmount": 0.0,
+          "totalDiscount": 0.0,
+          "total": 0.0,
+          "unpaidLines": []
+        }
+      }
+    },
+    {
+      "name": "an order with no lines reads as paid",
+      "fn": "orderMoney",
+      "input": {
+        "lines": []
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 0.0,
+          "discountAmount": 0.0,
+          "totalAmount": 0.0,
+          "paidAmount": 0.0,
+          "balanceAmount": 0.0,
+          "allPaid": true,
+          "discountLabel": null,
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 0.0,
+          "tax": 0.0,
+          "totalBeforeDiscount": 0.0,
+          "discountAmount": 0.0,
+          "totalDiscount": 0.0,
+          "total": 0.0,
+          "unpaidLines": []
+        }
+      }
+    },
+    {
+      "name": "options, a removal charge, catalogue and manual discount, VAT",
+      "fn": "orderMoney",
+      "input": {
+        "discountPercentage": 5,
+        "lines": [
+          {
+            "unitPrice": 45,
+            "quantity": 2,
+            "unitDiscount": 5,
+            "manualDiscount": 2,
+            "unitTva": 7.5,
+            "components": [
+              {
+                "componentId": 1,
+                "quantity": 2,
+                "price": 1.5
+              },
+              {
+                "componentId": 2,
+                "quantity": 1,
+                "price": 0
+              },
+              {
+                "componentId": 3,
+                "quantity": 1,
+                "price": 1.2,
+                "removalCharge": true
+              }
+            ]
+          },
+          {
+            "unitPrice": 12,
+            "quantity": 1,
+            "unitTva": 2
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 120.4,
+          "discountAmount": 19.32,
+          "totalAmount": 101.08,
+          "paidAmount": 0.0,
+          "balanceAmount": 101.08,
+          "allPaid": false,
+          "discountLabel": "-5%",
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 103.4,
+          "tax": 17.0,
+          "totalBeforeDiscount": 106.4,
+          "discountAmount": 5.32,
+          "totalDiscount": 19.32,
+          "total": 101.08,
+          "unpaidLines": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cent rounding of the sent amounts",
+      "fn": "orderMoney",
+      "input": {
+        "discountPercentage": 7.5,
+        "lines": [
+          {
+            "unitPrice": 3.335,
+            "quantity": 3
+          },
+          {
+            "unitPrice": 0.99,
+            "quantity": 7,
+            "ticketId": 4
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 16.93,
+          "discountAmount": 1.27,
+          "totalAmount": 15.66,
+          "paidAmount": 6.41,
+          "balanceAmount": 9.25,
+          "allPaid": false,
+          "discountLabel": "-7.5%",
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 16.935,
+          "tax": 0.0,
+          "totalBeforeDiscount": 16.935,
+          "discountAmount": 1.270125,
+          "totalDiscount": 1.270125,
+          "total": 15.664875,
+          "unpaidLines": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "weighed line",
+      "fn": "orderMoney",
+      "input": {
+        "lines": [
+          {
+            "unitPrice": 89.9,
+            "quantity": 0.435,
+            "unitTva": 14.98
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 39.11,
+          "discountAmount": 0.0,
+          "totalAmount": 39.11,
+          "paidAmount": 0.0,
+          "balanceAmount": 39.11,
+          "allPaid": false,
+          "discountLabel": null,
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 32.5902,
+          "tax": 6.5163,
+          "totalBeforeDiscount": 39.1065,
+          "discountAmount": 0.0,
+          "totalDiscount": 0.0,
+          "total": 39.1065,
+          "unpaidLines": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "a discount option on a line",
+      "fn": "orderMoney",
+      "input": {
+        "lines": [
+          {
+            "unitPrice": 30,
+            "quantity": 1,
+            "components": [
+              {
+                "componentId": 8,
+                "quantity": 1,
+                "price": -5
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "waiterApi": {
+          "subtotalAmount": 25.0,
+          "discountAmount": 0.0,
+          "totalAmount": 25.0,
+          "paidAmount": 0.0,
+          "balanceAmount": 25.0,
+          "allPaid": false,
+          "discountLabel": null,
+          "discountReason": null
+        },
+        "till": {
+          "subtotalHt": 25.0,
+          "tax": 0.0,
+          "totalBeforeDiscount": 25.0,
+          "discountAmount": 0.0,
+          "totalDiscount": 0.0,
+          "total": 25.0,
+          "unpaidLines": [
+            0
+          ]
+        }
+      }
+    }
+  ]
+}

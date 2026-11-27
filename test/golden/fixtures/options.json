@@ -1,0 +1,907 @@
+{
+  "area": "options",
+  "about": "Checking and pricing a line's options (what the waiter app sends is checked the way the till's product dialog allows). Maps are keyed by component id as a string; groupOf null = ungrouped. picked is units per parent unit. Checks run in this order: not offered, too many of one, hidden group, then each group's min/max. No refused case has two faults found by the same check, so the order the components are listed in never matters. lines are sorted by componentId then unitPrice; their order carries no meaning.",
+  "dart": "lib/domain/models/component_rules.dart (priceOptions, seedGroup, removalRowsFor, removalChargePerParentUnit, maxUnitsOf)",
+  "cases": [
+    {
+      "name": "free allowance covers the most expensive unit",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "1": 2,
+          "2": 1,
+          "4": 1
+        },
+        "catalogue": {
+          "1": 1.5,
+          "2": 2.0,
+          "3": 0,
+          "4": 0,
+          "5": 1.0
+        },
+        "groupOf": {
+          "1": 10,
+          "2": 10,
+          "3": null,
+          "4": 20,
+          "5": 20
+        },
+        "rules": [
+          {
+            "groupId": 10,
+            "selectionType": "QUANTITY",
+            "maxSelection": 3,
+            "freeQuantity": 1
+          },
+          {
+            "groupId": 20,
+            "selectionType": "SINGLE",
+            "minSelection": 1,
+            "maxSelection": 1
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "problem": null,
+        "componentId": null,
+        "groupId": null,
+        "lines": [
+          {
+            "componentId": 1,
+            "quantity": 2,
+            "unitPrice": 1.5
+          },
+          {
+            "componentId": 2,
+            "quantity": 1,
+            "unitPrice": 0.0
+          },
+          {
+            "componentId": 4,
+            "quantity": 1,
+            "unitPrice": 0.0
+          }
+        ],
+        "optionTotalPerParentUnit": 3.0
+      }
+    },
+    {
+      "name": "free allowance split across one option's units",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "1": 3
+        },
+        "catalogue": {
+          "1": 1.5
+        },
+        "groupOf": {
+          "1": 10
+        },
+        "rules": [
+          {
+            "groupId": 10,
+            "selectionType": "QUANTITY",
+            "freeQuantity": 1
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "problem": null,
+        "componentId": null,
+        "groupId": null,
+        "lines": [
+          {
+            "componentId": 1,
+            "quantity": 1,
+            "unitPrice": 0.0
+          },
+          {
+            "componentId": 1,
+            "quantity": 2,
+            "unitPrice": 1.5
+          }
+        ],
+        "optionTotalPerParentUnit": 3.0
+      }
+    },
+    {
+      "name": "allowance skips free and discount options",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "8": 1,
+          "9": 1,
+          "10": 1
+        },
+        "catalogue": {
+          "8": -5,
+          "9": 1.0,
+          "10": 0
+        },
+        "groupOf": {
+          "8": 50,
+          "9": 50,
+          "10": 50
+        },
+        "rules": [
+          {
+            "groupId": 50,
+            "selectionType": "MULTIPLE",
+            "freeQuantity": 2
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "problem": null,
+        "componentId": null,
+        "groupId": null,
+        "lines": [
+          {
+            "componentId": 8,
+            "quantity": 1,
+            "unitPrice": -5.0
+          },
+          {
+            "componentId": 9,
+            "quantity": 1,
+            "unitPrice": 0.0
+          },
+          {
+            "componentId": 10,
+            "quantity": 1,
+            "unitPrice": 0.0
+          }
+        ],
+        "optionTotalPerParentUnit": -5.0
+      }
+    },
+    {
+      "name": "ungrouped options are priced with no rule",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "3": 2,
+          "12": 1
+        },
+        "catalogue": {
+          "3": 0,
+          "12": 0.75
+        },
+        "groupOf": {
+          "3": null,
+          "12": null
+        },
+        "rules": []
+      },
+      "expected": {
+        "ok": true,
+        "problem": null,
+        "componentId": null,
+        "groupId": null,
+        "lines": [
+          {
+            "componentId": 3,
+            "quantity": 2,
+            "unitPrice": 0.0
+          },
+          {
+            "componentId": 12,
+            "quantity": 1,
+            "unitPrice": 0.75
+          }
+        ],
+        "optionTotalPerParentUnit": 0.75
+      }
+    },
+    {
+      "name": "zero quantities are ignored",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "1": 0,
+          "4": 1
+        },
+        "catalogue": {
+          "1": 1.5,
+          "4": 0
+        },
+        "groupOf": {
+          "1": 10,
+          "4": 20
+        },
+        "rules": [
+          {
+            "groupId": 10,
+            "selectionType": "QUANTITY",
+            "minSelection": 0
+          },
+          {
+            "groupId": 20,
+            "selectionType": "SINGLE",
+            "minSelection": 1,
+            "maxSelection": 1
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "problem": null,
+        "componentId": null,
+        "groupId": null,
+        "lines": [
+          {
+            "componentId": 4,
+            "quantity": 1,
+            "unitPrice": 0.0
+          }
+        ],
+        "optionTotalPerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "conditional group shown by its trigger, chained",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "7": 1,
+          "6": 1,
+          "11": 1
+        },
+        "catalogue": {
+          "6": 0,
+          "7": 3.0,
+          "11": 0.5
+        },
+        "groupOf": {
+          "6": 30,
+          "7": 40,
+          "11": 60
+        },
+        "rules": [
+          {
+            "groupId": 30,
+            "selectionType": "SINGLE",
+            "minSelection": 1,
+            "maxSelection": 1,
+            "visibleWhenComponentIds": [
+              7
+            ]
+          },
+          {
+            "groupId": 40,
+            "selectionType": "MULTIPLE"
+          },
+          {
+            "groupId": 60,
+            "selectionType": "SINGLE",
+            "maxSelection": 1,
+            "visibleWhenComponentIds": [
+              6
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "problem": null,
+        "componentId": null,
+        "groupId": null,
+        "lines": [
+          {
+            "componentId": 6,
+            "quantity": 1,
+            "unitPrice": 0.0
+          },
+          {
+            "componentId": 7,
+            "quantity": 1,
+            "unitPrice": 3.0
+          },
+          {
+            "componentId": 11,
+            "quantity": 1,
+            "unitPrice": 0.5
+          }
+        ],
+        "optionTotalPerParentUnit": 3.5
+      }
+    },
+    {
+      "name": "a hidden group's minimum does not apply",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "5": 1
+        },
+        "catalogue": {
+          "5": 1.0,
+          "6": 0,
+          "7": 3.0
+        },
+        "groupOf": {
+          "5": 20,
+          "6": 30,
+          "7": 40
+        },
+        "rules": [
+          {
+            "groupId": 20,
+            "selectionType": "SINGLE",
+            "maxSelection": 1
+          },
+          {
+            "groupId": 30,
+            "selectionType": "SINGLE",
+            "minSelection": 1,
+            "maxSelection": 1,
+            "visibleWhenComponentIds": [
+              7
+            ]
+          },
+          {
+            "groupId": 40,
+            "selectionType": "MULTIPLE"
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "problem": null,
+        "componentId": null,
+        "groupId": null,
+        "lines": [
+          {
+            "componentId": 5,
+            "quantity": 1,
+            "unitPrice": 1.0
+          }
+        ],
+        "optionTotalPerParentUnit": 1.0
+      }
+    },
+    {
+      "name": "refused: not offered on this product",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "99": 1
+        },
+        "catalogue": {
+          "1": 1.5
+        },
+        "groupOf": {
+          "1": 10
+        },
+        "rules": []
+      },
+      "expected": {
+        "ok": false,
+        "problem": "notOffered",
+        "componentId": 99,
+        "groupId": null,
+        "lines": [],
+        "optionTotalPerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "refused: not offered wins over a hidden group",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "6": 1,
+          "99": 1
+        },
+        "catalogue": {
+          "6": 0,
+          "7": 3.0
+        },
+        "groupOf": {
+          "6": 30,
+          "7": 40
+        },
+        "rules": [
+          {
+            "groupId": 30,
+            "selectionType": "SINGLE",
+            "visibleWhenComponentIds": [
+              7
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "problem": "notOffered",
+        "componentId": 99,
+        "groupId": null,
+        "lines": [],
+        "optionTotalPerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "refused: more of one option than its stepper allows",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "1": 3
+        },
+        "catalogue": {
+          "1": 1.5
+        },
+        "groupOf": {
+          "1": 10
+        },
+        "rules": [
+          {
+            "groupId": 10,
+            "selectionType": "QUANTITY"
+          }
+        ],
+        "maxEach": {
+          "1": 2
+        }
+      },
+      "expected": {
+        "ok": false,
+        "problem": "tooManyOfOne",
+        "componentId": 1,
+        "groupId": null,
+        "lines": [],
+        "optionTotalPerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "refused: picked in a group nothing opened",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "6": 1
+        },
+        "catalogue": {
+          "6": 0,
+          "7": 3.0
+        },
+        "groupOf": {
+          "6": 30,
+          "7": 40
+        },
+        "rules": [
+          {
+            "groupId": 30,
+            "selectionType": "SINGLE",
+            "visibleWhenComponentIds": [
+              7
+            ]
+          },
+          {
+            "groupId": 40,
+            "selectionType": "MULTIPLE"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "problem": "hiddenGroup",
+        "componentId": 6,
+        "groupId": null,
+        "lines": [],
+        "optionTotalPerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "refused: required group left empty",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "1": 1
+        },
+        "catalogue": {
+          "1": 1.5,
+          "4": 0,
+          "5": 1.0
+        },
+        "groupOf": {
+          "1": 10,
+          "4": 20,
+          "5": 20
+        },
+        "rules": [
+          {
+            "groupId": 10,
+            "selectionType": "QUANTITY"
+          },
+          {
+            "groupId": 20,
+            "selectionType": "SINGLE",
+            "minSelection": 1,
+            "maxSelection": 1
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "problem": "tooFew",
+        "componentId": null,
+        "groupId": 20,
+        "lines": [],
+        "optionTotalPerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "refused: group maximum passed",
+      "fn": "priceOptions",
+      "input": {
+        "picked": {
+          "1": 2,
+          "2": 2
+        },
+        "catalogue": {
+          "1": 1.5,
+          "2": 2.0
+        },
+        "groupOf": {
+          "1": 10,
+          "2": 10
+        },
+        "rules": [
+          {
+            "groupId": 10,
+            "selectionType": "QUANTITY",
+            "maxSelection": 3
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "problem": "tooMany",
+        "componentId": null,
+        "groupId": 10,
+        "lines": [],
+        "optionTotalPerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "radio group seeds only its first default",
+      "fn": "seedGroup",
+      "input": {
+        "rule": {
+          "groupId": 20,
+          "selectionType": "SINGLE",
+          "maxSelection": 1
+        },
+        "seeds": [
+          {
+            "componentId": 4,
+            "defaultQuantity": 1
+          },
+          {
+            "componentId": 5,
+            "defaultQuantity": 1
+          }
+        ]
+      },
+      "expected": {
+        "seeded": {
+          "4": 1
+        }
+      }
+    },
+    {
+      "name": "required radio group with no default opens on its first option",
+      "fn": "seedGroup",
+      "input": {
+        "rule": {
+          "groupId": 20,
+          "selectionType": "SINGLE",
+          "minSelection": 1,
+          "maxSelection": 1
+        },
+        "seeds": [
+          {
+            "componentId": 4
+          },
+          {
+            "componentId": 5
+          }
+        ]
+      },
+      "expected": {
+        "seeded": {
+          "4": 1
+        }
+      }
+    },
+    {
+      "name": "optional radio group with no default opens empty",
+      "fn": "seedGroup",
+      "input": {
+        "rule": {
+          "groupId": 20,
+          "selectionType": "SINGLE",
+          "maxSelection": 1
+        },
+        "seeds": [
+          {
+            "componentId": 4
+          },
+          {
+            "componentId": 5
+          }
+        ]
+      },
+      "expected": {
+        "seeded": {}
+      }
+    },
+    {
+      "name": "stepper never starts below the minimum; required starts at one; a minimum alone seeds nothing",
+      "fn": "seedGroup",
+      "input": {
+        "rule": {
+          "groupId": 10,
+          "selectionType": "QUANTITY"
+        },
+        "seeds": [
+          {
+            "componentId": 1,
+            "defaultQuantity": 2,
+            "minQuantity": 3
+          },
+          {
+            "componentId": 2,
+            "isRequired": true
+          },
+          {
+            "componentId": 3,
+            "minQuantity": 2
+          }
+        ]
+      },
+      "expected": {
+        "seeded": {
+          "1": 3,
+          "2": 1
+        }
+      }
+    },
+    {
+      "name": "checkbox group seeds one each",
+      "fn": "seedGroup",
+      "input": {
+        "rule": {
+          "groupId": 40,
+          "selectionType": "MULTIPLE"
+        },
+        "seeds": [
+          {
+            "componentId": 7,
+            "defaultQuantity": 2
+          }
+        ]
+      },
+      "expected": {
+        "seeded": {
+          "7": 1
+        }
+      }
+    },
+    {
+      "name": "full removal sends a zero row and a charge row",
+      "fn": "removals",
+      "input": {
+        "candidates": [
+          {
+            "componentId": 1,
+            "defaultQuantity": 1,
+            "selectedQuantity": 0,
+            "unitPrice": 1.5,
+            "chargeOnRemoval": true
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "componentId": 1,
+            "quantity": 0,
+            "price": 0.0,
+            "removalCharge": false
+          },
+          {
+            "componentId": 1,
+            "quantity": 1,
+            "price": 1.5,
+            "removalCharge": true
+          }
+        ],
+        "needsExplicitRow": [
+          1
+        ],
+        "chargePerParentUnit": 1.5
+      }
+    },
+    {
+      "name": "partial removal charges the deficit only",
+      "fn": "removals",
+      "input": {
+        "candidates": [
+          {
+            "componentId": 2,
+            "defaultQuantity": 3,
+            "selectedQuantity": 1,
+            "unitPrice": 0.5,
+            "chargeOnRemoval": true
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "componentId": 2,
+            "quantity": 2,
+            "price": 0.5,
+            "removalCharge": true
+          }
+        ],
+        "needsExplicitRow": [
+          2
+        ],
+        "chargePerParentUnit": 1.0
+      }
+    },
+    {
+      "name": "removal on a link that does not charge",
+      "fn": "removals",
+      "input": {
+        "candidates": [
+          {
+            "componentId": 3,
+            "defaultQuantity": 1,
+            "selectedQuantity": 0,
+            "unitPrice": 2.0
+          }
+        ]
+      },
+      "expected": {
+        "rows": [],
+        "needsExplicitRow": [],
+        "chargePerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "more than the default is not a removal, but the row is still explicit",
+      "fn": "removals",
+      "input": {
+        "candidates": [
+          {
+            "componentId": 1,
+            "defaultQuantity": 1,
+            "selectedQuantity": 2,
+            "unitPrice": 1.5,
+            "chargeOnRemoval": true
+          }
+        ]
+      },
+      "expected": {
+        "rows": [],
+        "needsExplicitRow": [
+          1
+        ],
+        "chargePerParentUnit": 0.0
+      }
+    },
+    {
+      "name": "several removals add up per parent unit",
+      "fn": "removals",
+      "input": {
+        "candidates": [
+          {
+            "componentId": 1,
+            "defaultQuantity": 1,
+            "selectedQuantity": 0,
+            "unitPrice": 1.5,
+            "chargeOnRemoval": true
+          },
+          {
+            "componentId": 2,
+            "defaultQuantity": 3,
+            "selectedQuantity": 1,
+            "unitPrice": 0.5,
+            "chargeOnRemoval": true
+          },
+          {
+            "componentId": 3,
+            "defaultQuantity": 0,
+            "selectedQuantity": 0,
+            "unitPrice": 9.0,
+            "chargeOnRemoval": true
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "componentId": 1,
+            "quantity": 0,
+            "price": 0.0,
+            "removalCharge": false
+          },
+          {
+            "componentId": 1,
+            "quantity": 1,
+            "price": 1.5,
+            "removalCharge": true
+          },
+          {
+            "componentId": 2,
+            "quantity": 2,
+            "price": 0.5,
+            "removalCharge": true
+          }
+        ],
+        "needsExplicitRow": [
+          1,
+          2
+        ],
+        "chargePerParentUnit": 2.5
+      }
+    },
+    {
+      "name": "stepper cap 0 means no cap",
+      "fn": "maxUnitsOf",
+      "input": {
+        "rule": {
+          "groupId": 10,
+          "selectionType": "QUANTITY"
+        },
+        "linkMaxQuantity": 0
+      },
+      "expected": {
+        "max": null
+      }
+    },
+    {
+      "name": "stepper cap from the product link",
+      "fn": "maxUnitsOf",
+      "input": {
+        "rule": {
+          "groupId": 10,
+          "selectionType": "QUANTITY"
+        },
+        "linkMaxQuantity": 4
+      },
+      "expected": {
+        "max": 4
+      }
+    },
+    {
+      "name": "radio and checkbox options are one each",
+      "fn": "maxUnitsOf",
+      "input": {
+        "rule": {
+          "groupId": 20,
+          "selectionType": "SINGLE"
+        },
+        "linkMaxQuantity": 4
+      },
+      "expected": {
+        "max": 1
+      }
+    },
+    {
+      "name": "ungrouped option with no cap",
+      "fn": "maxUnitsOf",
+      "input": {
+        "rule": null,
+        "linkMaxQuantity": null
+      },
+      "expected": {
+        "max": null
+      }
+    }
+  ]
+}

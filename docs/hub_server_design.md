@@ -337,7 +337,7 @@ Requirement: tills switch to the second hub when the first is down, and queue wh
 
 ## 10. Business logic the hub must reproduce exactly
 
-The hub replaces the till's calculations, so Dart and Go must give **the same numbers**. Ship **golden fixtures** (JSON input → expected output) generated from the Dart code and run by both test suites.
+The hub replaces the till's calculations, so Dart and Go must give **the same numbers**. Ship **golden fixtures** (JSON input → expected output) generated from the Dart code and run by both test suites. **Done for the pure rules:** `test/golden/` (172 cases: line and order money, options, Z rules, refund policy, tables, splits; format and conventions in its README). The rules that need a database (payment settlement, X/Z figures, session open rules, order numbers) are pinned by the till's database tests until they get a shared form.
 
 | Area | Dart reference |
 |---|---|
@@ -406,13 +406,13 @@ hub/
   testdata/golden/           fixtures shared with the Dart tests
 ```
 
-Libraries: `net/http` + `chi` (routing), `pgx` + `sqlc` (typed SQL), `goose` (migrations), `grandcat/zeroconf` (mDNS), `shopspring/decimal` (money), `log/slog` (logs), `prometheus/client_golang` (metrics).
+Libraries: `net/http` + `chi` (routing), `pgx` + `sqlc` (typed SQL), `goose` (migrations), `grandcat/zeroconf` (mDNS), `float64` for money (not `shopspring/decimal`: the till rounds binary doubles half away from zero, so `1.005` rounds to `1.00`; decimal would give `1.01` and the two sides would disagree, see `test/golden/README.md`), `log/slog` (logs), `prometheus/client_golang` (metrics).
 
 ---
 
 ## 14. Suggested order of work
 
-1. **Golden fixtures from Dart** (money, options, payments, Z rules), then the Go `domain` package passing them.
+1. **Golden fixtures from Dart** (money, options, Z rules, refunds, tables, splits: done, `test/golden/`), then the Go `domain` package passing them.
 2. **Hub skeleton:** Postgres schema for the mirror + shop data, `/health`, pairing, event stream.
 3. **Cloud mirror down** (back-office data, read-only), then **outbox up** for orders/tickets/sessions.
 4. **Till API for reads** (§5 GETs) and a `Hub…` implementation of the 8 read interfaces in the POS, behind `hubMode`; run the POS read contract (`test/contracts/read_queries_contract.dart`) against it.

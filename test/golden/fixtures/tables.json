@@ -1,0 +1,256 @@
+{
+  "area": "tables",
+  "about": "When an order is settled, when it frees its table and when it blocks a new order on it. Paid-ness is the ticket (ticketId); line states go through settlementState first, so a paid line reads PAID. The order's own status is never used for paid: orders are born COMPLETED.",
+  "dart": "lib/domain/models/line_payment.dart, lib/domain/models/table_occupancy.dart",
+  "cases": [
+    {
+      "name": "unpaid kitchen line",
+      "fn": "settlementState",
+      "input": {
+        "state": "PREPARING",
+        "ticketId": null
+      },
+      "expected": {
+        "paid": false,
+        "state": "PREPARING"
+      }
+    },
+    {
+      "name": "a ticket makes a line paid whatever its kitchen state",
+      "fn": "settlementState",
+      "input": {
+        "state": "PENDING",
+        "ticketId": 5
+      },
+      "expected": {
+        "paid": true,
+        "state": "PAID"
+      }
+    },
+    {
+      "name": "legacy PAID state with no ticket",
+      "fn": "settlementState",
+      "input": {
+        "state": "PAID",
+        "ticketId": null
+      },
+      "expected": {
+        "paid": true,
+        "state": "PAID"
+      }
+    },
+    {
+      "name": "cancelled after payment reads paid",
+      "fn": "settlementState",
+      "input": {
+        "state": "CANCELED",
+        "ticketId": 3
+      },
+      "expected": {
+        "paid": true,
+        "state": "PAID"
+      }
+    },
+    {
+      "name": "paid and cancelled lines: settled",
+      "fn": "isOrderSettled",
+      "input": {
+        "lineStates": [
+          "PAID",
+          "CANCELED",
+          "CANCELLED"
+        ]
+      },
+      "expected": {
+        "settled": true
+      }
+    },
+    {
+      "name": "only cancelled lines: not settled",
+      "fn": "isOrderSettled",
+      "input": {
+        "lineStates": [
+          "CANCELED"
+        ]
+      },
+      "expected": {
+        "settled": false
+      }
+    },
+    {
+      "name": "no lines: not settled",
+      "fn": "isOrderSettled",
+      "input": {
+        "lineStates": []
+      },
+      "expected": {
+        "settled": false
+      }
+    },
+    {
+      "name": "one line still to pay",
+      "fn": "isOrderSettled",
+      "input": {
+        "lineStates": [
+          "PAID",
+          "READY"
+        ]
+      },
+      "expected": {
+        "settled": false
+      }
+    },
+    {
+      "name": "the order is gone",
+      "fn": "tableReleaseReason",
+      "input": {
+        "orderExists": false,
+        "orderStatus": "",
+        "lineStates": [],
+        "freeOnPayment": false
+      },
+      "expected": {
+        "reason": "danglingOrder"
+      }
+    },
+    {
+      "name": "the order was cancelled",
+      "fn": "tableReleaseReason",
+      "input": {
+        "orderExists": true,
+        "orderStatus": "canceled",
+        "lineStates": [
+          "PENDING"
+        ],
+        "freeOnPayment": false
+      },
+      "expected": {
+        "reason": "orderCancelled"
+      }
+    },
+    {
+      "name": "paid, and the till frees tables on payment",
+      "fn": "tableReleaseReason",
+      "input": {
+        "orderExists": true,
+        "orderStatus": "COMPLETED",
+        "lineStates": [
+          "PAID"
+        ],
+        "freeOnPayment": true
+      },
+      "expected": {
+        "reason": "orderSettled"
+      }
+    },
+    {
+      "name": "paid, but the till keeps paid tables held",
+      "fn": "tableReleaseReason",
+      "input": {
+        "orderExists": true,
+        "orderStatus": "COMPLETED",
+        "lineStates": [
+          "PAID"
+        ],
+        "freeOnPayment": false
+      },
+      "expected": {
+        "reason": null
+      }
+    },
+    {
+      "name": "an empty order keeps its table",
+      "fn": "tableReleaseReason",
+      "input": {
+        "orderExists": true,
+        "orderStatus": "COMPLETED",
+        "lineStates": [],
+        "freeOnPayment": true
+      },
+      "expected": {
+        "reason": null
+      }
+    },
+    {
+      "name": "still eating",
+      "fn": "tableReleaseReason",
+      "input": {
+        "orderExists": true,
+        "orderStatus": "COMPLETED",
+        "lineStates": [
+          "PAID",
+          "SERVED"
+        ],
+        "freeOnPayment": true
+      },
+      "expected": {
+        "reason": null
+      }
+    },
+    {
+      "name": "an open order blocks its table",
+      "fn": "orderBlocksTable",
+      "input": {
+        "orderStatus": "COMPLETED",
+        "lineStates": [
+          "PENDING"
+        ]
+      },
+      "expected": {
+        "blocks": true
+      }
+    },
+    {
+      "name": "a settled order does not block",
+      "fn": "orderBlocksTable",
+      "input": {
+        "orderStatus": "COMPLETED",
+        "lineStates": [
+          "PAID",
+          "CANCELED"
+        ]
+      },
+      "expected": {
+        "blocks": false
+      }
+    },
+    {
+      "name": "a cancelled order does not block",
+      "fn": "orderBlocksTable",
+      "input": {
+        "orderStatus": "CANCELLED",
+        "lineStates": [
+          "PENDING"
+        ]
+      },
+      "expected": {
+        "blocks": false
+      }
+    },
+    {
+      "name": "every line cancelled still blocks until the cashier frees it",
+      "fn": "orderBlocksTable",
+      "input": {
+        "orderStatus": "COMPLETED",
+        "lineStates": [
+          "CANCELED",
+          "CANCELED"
+        ]
+      },
+      "expected": {
+        "blocks": true
+      }
+    },
+    {
+      "name": "an empty order blocks",
+      "fn": "orderBlocksTable",
+      "input": {
+        "orderStatus": "COMPLETED",
+        "lineStates": []
+      },
+      "expected": {
+        "blocks": true
+      }
+    }
+  ]
+}

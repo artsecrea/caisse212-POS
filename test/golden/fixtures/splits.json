@@ -1,0 +1,186 @@
+{
+  "area": "splits",
+  "about": "Cent rounding, equal split parts and ticket numbers. Money is a binary double rounded with round-half-away-from-zero on value*100, so a half cent goes the way the double product lands (1.005 -> 1.00 but 2.675 -> 2.68). Go float64 with math.Round(v*100)/100 gives the same results; decimal rounding does not.",
+  "dart": "lib/domain/models/split_bill.dart (roundMoney, equalPartAmount, nextTicketNumber)",
+  "cases": [
+    {
+      "name": "1.005 * 100 falls below the half: 1.00 (decimal rounding would give 1.01)",
+      "fn": "roundMoney",
+      "input": {
+        "value": 1.005
+      },
+      "expected": {
+        "rounded": 1.0
+      }
+    },
+    {
+      "name": "2.675 * 100 lands on the half: 2.68",
+      "fn": "roundMoney",
+      "input": {
+        "value": 2.675
+      },
+      "expected": {
+        "rounded": 2.68
+      }
+    },
+    {
+      "name": "0.125 is an exact half cent: rounds up",
+      "fn": "roundMoney",
+      "input": {
+        "value": 0.125
+      },
+      "expected": {
+        "rounded": 0.13
+      }
+    },
+    {
+      "name": "a negative half cent rounds away from zero",
+      "fn": "roundMoney",
+      "input": {
+        "value": -0.125
+      },
+      "expected": {
+        "rounded": -0.13
+      }
+    },
+    {
+      "name": "already a cent value",
+      "fn": "roundMoney",
+      "input": {
+        "value": 19.9
+      },
+      "expected": {
+        "rounded": 19.9
+      }
+    },
+    {
+      "name": "100 in three: the last part takes the remainder",
+      "fn": "equalPartAmount",
+      "input": {
+        "total": 100,
+        "parts": 3
+      },
+      "expected": {
+        "amounts": [
+          33.33,
+          33.33,
+          33.34
+        ],
+        "sum": 100.0
+      }
+    },
+    {
+      "name": "10.05 in two: the first part rounds 5.025 up, the last takes 5.02",
+      "fn": "equalPartAmount",
+      "input": {
+        "total": 10.05,
+        "parts": 2
+      },
+      "expected": {
+        "amounts": [
+          5.03,
+          5.02
+        ],
+        "sum": 10.05
+      }
+    },
+    {
+      "name": "even split",
+      "fn": "equalPartAmount",
+      "input": {
+        "total": 50,
+        "parts": 4
+      },
+      "expected": {
+        "amounts": [
+          12.5,
+          12.5,
+          12.5,
+          12.5
+        ],
+        "sum": 50.0
+      }
+    },
+    {
+      "name": "ten centimes in three",
+      "fn": "equalPartAmount",
+      "input": {
+        "total": 0.1,
+        "parts": 3
+      },
+      "expected": {
+        "amounts": [
+          0.03,
+          0.03,
+          0.04
+        ],
+        "sum": 0.1
+      }
+    },
+    {
+      "name": "one part is the whole bill, rounded",
+      "fn": "equalPartAmount",
+      "input": {
+        "total": 12.345,
+        "parts": 1
+      },
+      "expected": {
+        "amounts": [
+          12.35
+        ],
+        "sum": 12.35
+      }
+    },
+    {
+      "name": "first ticket of an order",
+      "fn": "nextTicketNumber",
+      "input": {
+        "local": []
+      },
+      "expected": {
+        "number": "0001"
+      }
+    },
+    {
+      "name": "one past the highest, local or server",
+      "fn": "nextTicketNumber",
+      "input": {
+        "local": [
+          "0001",
+          "0002"
+        ],
+        "server": [
+          "0005"
+        ]
+      },
+      "expected": {
+        "number": "0006"
+      }
+    },
+    {
+      "name": "junk and spaces",
+      "fn": "nextTicketNumber",
+      "input": {
+        "local": [
+          "abc",
+          " 0003 "
+        ]
+      },
+      "expected": {
+        "number": "0004"
+      }
+    },
+    {
+      "name": "past four digits",
+      "fn": "nextTicketNumber",
+      "input": {
+        "local": [
+          "9999"
+        ]
+      },
+      "expected": {
+        "number": "10000"
+      }
+    }
+  ]
+}
