@@ -5,6 +5,7 @@ import '../domain/models/component_rules.dart';
 import '../domain/models/permission_rules.dart';
 import '../services/local_floor_service.dart';
 import 'order_provider.dart' show OrderRepository, orderQueriesProvider;
+import 'ticket_provider.dart' show ticketQueriesProvider;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -783,17 +784,9 @@ Future<Map<int?, ComponentGroupRule>> loadComponentGroupRules(
 /// while the payment screen is open, and a `FutureProvider` here cached the
 /// count from the first read and then reported it forever — the panel went on
 /// claiming "2 tickets" after the cashier had merged them back into one.
-final ticketDraftTicketCountProvider =
-    StreamProvider.autoDispose.family<int, int>((ref, orderId) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.ticketDraftSplits)
-        ..where((t) => t.orderId.equals(orderId)))
-      .watch()
-      // Distinct `draft_index` values, not row count: one draft ticket holds
-      // as many rows as it has lines, and a line divided across two tickets
-      // contributes a row to each.
-      .map((rows) => rows.map((r) => r.draftIndex).toSet().length);
-});
+final ticketDraftTicketCountProvider = StreamProvider.autoDispose
+    .family<int, int>((ref, orderId) =>
+        ref.watch(ticketQueriesProvider).watchDraftTicketCount(orderId));
 
 // Product Variants Provider - fetches all variants for a product with their attribute values
 final productVariantsProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, int>((ref, productId) async {

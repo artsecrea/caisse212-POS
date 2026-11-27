@@ -2240,7 +2240,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // and the table is never freed.
       // Read before the new ticket exists: the fee rides the first one.
       final existingTickets =
-          await ref.read(ticketRepositoryProvider).getTicketsByOrderId(orderId);
+          await ref.read(ticketQueriesProvider).getTicketsByOrderId(orderId);
       final paid = await ref.read(paymentServiceProvider).pay(
         orderId,
         paymentMethod: TransactionType.cash.value,

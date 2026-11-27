@@ -9,6 +9,7 @@ import '../../providers/order_provider.dart';
 import '../../providers/ticket_provider.dart';
 import '../../services/local_payment_service.dart';
 import '../../providers/database_providers.dart';
+import '../../domain/models/ticket_read_models.dart';
 import '../../providers/network_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/permission_service.dart';
@@ -68,7 +69,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   }
 
   void _refreshFuture() {
-    final repo = ref.read(ticketRepositoryProvider);
+    final repo = ref.read(ticketQueriesProvider);
     setState(() {
       _pageFuture = repo.getTicketsPage(
         offset: _currentPage * _rowsPerPage,
@@ -771,7 +772,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   Future<bool> _reprintSingleTicket(Ticket ticket) async {
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
-    final ticketRepo = ref.read(ticketRepositoryProvider);
+    final ticketRepo = ref.read(ticketQueriesProvider);
     final prefs = ref.read(sharedPreferencesProvider);
 
     final orderData =
@@ -839,7 +840,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   /// Reprint every ticket currently matching the active filters, oldest first.
   Future<void> _reprintAllFiltered() async {
     final l10n = AppLocalizations.of(context)!;
-    final ticketRepo = ref.read(ticketRepositoryProvider);
+    final ticketRepo = ref.read(ticketQueriesProvider);
     // getAllFilteredTickets already sorts by date ASC
     final filtered = await ticketRepo.getAllFilteredTickets(
       statusFilter: _statusFilter,
@@ -897,7 +898,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   // CRUD Operations
   void _showTicketDetails(Ticket ticket, int itemCount) async {
     // Get order products for this ticket
-    final ticketRepo = ref.read(ticketRepositoryProvider);
+    final ticketRepo = ref.read(ticketQueriesProvider);
     final catalogueRepo = ref.read(catalogueRepositoryProvider);
     final items = await ticketRepo.linesOfTicket(ticket.id);
 
@@ -1195,7 +1196,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
   ) async {
     final printingService = ref.read(printingServiceProvider);
     final currentUser = ref.read(currentUserProvider);
-    final ticketRepo = ref.read(ticketRepositoryProvider);
+    final ticketRepo = ref.read(ticketQueriesProvider);
 
     // Get order code
     final orderData =

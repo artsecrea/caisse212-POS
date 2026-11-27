@@ -3,13 +3,15 @@ import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/order_money.dart';
 import '../domain/models/order_money_rows.dart';
+import '../domain/models/ticket_read_models.dart';
 import '../services/pending_operations_service.dart';
 import '../services/ticket_settlement_service.dart';
 import 'database_providers.dart';
 import 'settings_provider.dart';
 import '../utils/pos_log.dart';
+import '../domain/services/ticket_queries.dart';
 
-class TicketRepository {
+class TicketRepository implements TicketQueries {
   final AppDatabase _database;
   final Ref? _ref;
 
@@ -28,6 +30,7 @@ class TicketRepository {
   }
 
   // Get tickets by order ID
+  @override
   Future<List<Ticket>> getTicketsByOrderId(int orderId) async {
     return await (_database.select(_database.tickets)
           ..where((tbl) => tbl.orderId.equals(orderId))
@@ -36,6 +39,17 @@ class TicketRepository {
   }
 
   // Get ticket by ID
+  /// How many draft tickets [orderId]'s split has, as it changes: distinct
+  /// `draft_index` values, not rows — one draft ticket holds as many rows as
+  /// it has lines, and a line divided across two tickets has a row in each.
+  @override
+  Stream<int> watchDraftTicketCount(int orderId) =>
+      (_database.select(_database.ticketDraftSplits)
+            ..where((t) => t.orderId.equals(orderId)))
+          .watch()
+          .map((rows) => rows.map((r) => r.draftIndex).toSet().length);
+
+  @override
   Future<Ticket?> getTicketById(int id) async {
     return await (_database.select(_database.tickets)
           ..where((tbl) => tbl.id.equals(id)))
@@ -208,6 +222,7 @@ class TicketRepository {
 
   /// Returns one page of tickets (already enriched with item count + Z-lock)
   /// and the total count of matching rows.
+  @override
   Future<(List<TicketWithDetails>, int)> getTicketsPage({
     required int offset,
     required int limit,
@@ -269,6 +284,7 @@ class TicketRepository {
 
   /// Returns all tickets matching the filters (no pagination), sorted by date
   /// ascending. Used for bulk-reprint operations.
+  @override
   Future<List<Ticket>> getAllFilteredTickets({
     String statusFilter = 'ALL',
     String searchQuery = '',
@@ -390,6 +406,7 @@ class TicketRepository {
   /// parts the payment screen printed when the ticket was cut.
   ///
   /// Every line on the ticket counts, cancelled or not: it was paid for.
+  @override
   Future<double> discountTotalOf(
       int ticketId, double orderDiscountPercentage) async {
     final lines = await (_database.select(_database.orderProducts)
@@ -447,6 +464,7 @@ class TicketRepository {
 
   /// Every ticket of [orderIds], in any state — the caller sorts paid from
   /// cancelled itself.
+  @override
   Future<List<Ticket>> ticketsForOrders(List<int> orderIds) async {
     if (orderIds.isEmpty) return [];
     return await (_database.select(_database.tickets)
@@ -457,6 +475,7 @@ class TicketRepository {
   /// The 50 most recent paid tickets of [orderIds]. Capped because it feeds
   /// a profile's payment history; older history lives in the orders screen.
   /// A cancelled ticket still counts when it is marked paid.
+  @override
   Future<List<Ticket>> paidTicketsForOrders(List<int> orderIds) async {
     if (orderIds.isEmpty) return [];
     return await (_database.select(_database.tickets)
@@ -470,6 +489,7 @@ class TicketRepository {
   }
 
   /// The order lines [ticketId] paid for.
+  @override
   Future<List<OrderProduct>> linesOfTicket(int ticketId) async {
     return await (_database.select(_database.orderProducts)
           ..where((tbl) => tbl.ticketId.equals(ticketId)))
@@ -484,6 +504,7 @@ class TicketRepository {
   /// divided order must not repeat the fee, or two receipts would each claim
   /// to have collected it. Every ticket of the order competes for "first",
   /// cancelled or unpaid ones included.
+  @override
   Future<double?> deliveryFeeForTicket(int orderId, int ticketId) async {
     final order = await (_database.select(_database.orders)
           ..where((o) => o.id.equals(orderId)))
@@ -503,6 +524,7 @@ class TicketRepository {
   /// VAT carried by [ticketId]'s lines, summed the same way
   /// `OrderItem.totalTva` does (`unitaryTva * quantity`) so a reprint shows
   /// the figure the original receipt showed.
+  @override
   Future<double> tvaTotalOf(int ticketId) async {
     final products = await linesOfTicket(ticketId);
     return products.fold<double>(
@@ -512,6 +534,7 @@ class TicketRepository {
   /// [ticketId]'s lines in the shape the receipt printer takes for a reprint.
   /// A component since removed from the catalogue is left off the paper; a
   /// removed product still prints, as 'Unknown Product'.
+  @override
   Future<List<Map<String, dynamic>>> printItemsOf(int ticketId) async {
     final products = await linesOfTicket(ticketId);
 
@@ -561,29 +584,6 @@ class TicketRepository {
   }
 }
 
-// Helper class for ticket with details
-class TicketWithDetails {
-  final Ticket ticket;
-  final int itemCount;
-  final bool isZLocked; // True when linked session is ended (Z-report closed)
-  final int? orderNumber; // Per-session number of the ticket's order
-  /// The order's delivery fee when this is the ticket that collected it,
-  /// else 0. Not part of [Ticket.amount], which stays products-only.
-  final double deliveryFee;
-
-  TicketWithDetails({
-    required this.ticket,
-    required this.itemCount,
-    this.isZLocked = false,
-    this.orderNumber,
-    this.deliveryFee = 0.0,
-  });
-
-  /// What to show as the ticket's amount, with or without the fee.
-  double displayAmount({required bool includeDeliveryFee}) =>
-      ticket.amount + (includeDeliveryFee ? deliveryFee : 0.0);
-}
-
 final ticketSettlementServiceProvider = Provider<TicketSettlementService>(
     (ref) => TicketSettlementService(ref.watch(databaseProvider)));
 
@@ -591,4 +591,9 @@ final ticketRepositoryProvider = Provider<TicketRepository>((ref) {
   final database = ref.watch(databaseProvider);
   return TicketRepository(database, ref);
 });
+
+/// What the screens read about tickets. A hub-linked till overrides this one
+/// provider; nothing else changes.
+final ticketQueriesProvider =
+    Provider<TicketQueries>((ref) => ref.watch(ticketRepositoryProvider));
 

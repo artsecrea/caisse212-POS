@@ -77,7 +77,7 @@ final _dashboardStatsProvider =
     FutureProvider.autoDispose.family<DashboardStats, _DashboardKey>(
         (ref, key) async {
   final orderRepo = ref.watch(orderQueriesProvider);
-  final ticketRepo = ref.watch(ticketRepositoryProvider);
+  final ticketRepo = ref.watch(ticketQueriesProvider);
   final catalogue = ref.watch(catalogueRepositoryProvider);
   final dayStart = DateTime(key.date.year, key.date.month, key.date.day);
   final dayEnd = dayStart.add(const Duration(days: 1));

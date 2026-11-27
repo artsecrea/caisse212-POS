@@ -3515,7 +3515,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       final ticketNumStr = paid.ticketNum;
 
       final row =
-          (await ref.read(ticketRepositoryProvider).getTicketById(ticketId))!;
+          (await ref.read(ticketQueriesProvider).getTicketById(ticketId))!;
 
       if (mounted) {
         setState(() {
@@ -4336,7 +4336,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       // A ticket closed by split-by-amount holds only its last share — the
       // earlier parts are rows of their own. Reprint what this row took.
       final row = await ref
-          .read(ticketRepositoryProvider)
+          .read(ticketQueriesProvider)
           .getTicketById(ticket.ticketId!);
       final total = roundMoney(ticket.total);
       final paid = row != null && row.amount < total - 0.005

@@ -236,7 +236,7 @@ class _WaiterProfileDialogState extends ConsumerState<WaiterProfileDialog>
       // management screen.
       final orderIds = result.orders.map((o) => o.order.id).toList();
       final tickets = await ref
-          .read(ticketRepositoryProvider)
+          .read(ticketQueriesProvider)
           .paidTicketsForOrders(orderIds);
 
       if (!mounted) return;
