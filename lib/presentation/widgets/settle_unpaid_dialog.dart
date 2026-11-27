@@ -271,6 +271,9 @@ Future<void> showSettleUnpaidDialog({
         if (ids.isEmpty) return e.sessionId;
         final rows =
             await sessionService.getSessionsByIds(ids, oldestFirst: true);
+        // The day's sessions may be gone from this till (deleted, or only
+        // known to the cloud): fall back as for a day with none.
+        if (rows.isEmpty) return e.sessionId;
         final own = rows.where((s) => s.cashierId == e.holderId);
         return own.isNotEmpty ? own.first.id : rows.first.id;
     }
