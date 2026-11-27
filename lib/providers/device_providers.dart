@@ -1,212 +1,30 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
-import '../domain/models/socket_models.dart';
 import 'database_providers.dart';
+import '../domain/services/device_service.dart';
 
 // KDS Providers
-final kdsListProvider = StreamProvider<List<KDS>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.kDSs)..watch()).watch();
-});
-
-final activeKdsListProvider = StreamProvider<List<KDS>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.kDSs)
-    ..where((tbl) => tbl.isActive.equals(true))
-    ..watch()).watch();
-});
-
-final kdsProvider = StreamProvider.family<KDS?, int>((ref, kdsId) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.kDSs)
-    ..where((tbl) => tbl.id.equals(kdsId))
-    ..watch()).watchSingleOrNull();
-});
+final kdsListProvider = StreamProvider<List<KDS>>(
+    (ref) => ref.watch(deviceServiceProvider).watchKdsList());
 
 // Kiosk Providers
-final kioskListProvider = StreamProvider<List<Kiosk>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.kiosks)..watch()).watch();
-});
-
-final activeKioskListProvider = StreamProvider<List<Kiosk>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.kiosks)
-    ..where((tbl) => tbl.isActive.equals(true))
-    ..watch()).watch();
-});
-
-final kioskProvider = StreamProvider.family<Kiosk?, int>((ref, kioskId) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.kiosks)
-    ..where((tbl) => tbl.id.equals(kioskId))
-    ..watch()).watchSingleOrNull();
-});
+final kioskListProvider = StreamProvider<List<Kiosk>>(
+    (ref) => ref.watch(deviceServiceProvider).watchKiosks());
 
 // Station Providers
-final stationListProvider = StreamProvider<List<Station>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.stations)..watch()).watch();
-});
+final stationListProvider = StreamProvider<List<Station>>(
+    (ref) => ref.watch(deviceServiceProvider).watchStations());
 
-final stationProvider = StreamProvider.family<Station?, int>((ref, stationId) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.stations)
-    ..where((tbl) => tbl.id.equals(stationId))
-    ..watch()).watchSingleOrNull();
-});
-
-// KDS with Station info
-class KDSWithStation {
-  final KDS kds;
-  final Station? station;
-
-  KDSWithStation({required this.kds, this.station});
-}
-
-final kdsWithStationProvider = StreamProvider.family<KDSWithStation?, int>((ref, kdsId) async* {
-  final database = ref.watch(databaseProvider);
-
-  await for (final kds in (database.select(database.kDSs)
-    ..where((tbl) => tbl.id.equals(kdsId))
-    ..watch()).watchSingleOrNull()) {
-
-    if (kds == null) {
-      yield null;
-      continue;
-    }
-
-    if (kds.stationId == null) {
-      yield KDSWithStation(kds: kds);
-      continue;
-    }
-
-    final station = await (database.select(database.stations)
-      ..where((tbl) => tbl.id.equals(kds.stationId!)))
-        .getSingleOrNull();
-
-    yield KDSWithStation(kds: kds, station: station);
-  }
-});
-
-// Get all KDS devices for a specific station
-final kdsListByStationProvider = StreamProvider.family<List<KDS>, int>((ref, stationId) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.kDSs)
-    ..where((tbl) => tbl.stationId.equals(stationId))
-    ..watch()).watch();
-});
-
-// Convert to Socket Models
-final socketKdsListProvider = StreamProvider<List<SocketDeviceModel>>((ref) async* {
-  final kdsListAsync = ref.watch(kdsListProvider);
-
-  yield* kdsListAsync.when(
-    data: (kdsList) async* {
-      yield kdsList.map((kds) => SocketDeviceModel(
-        id: kds.id,
-        name: kds.name,
-        description: kds.description,
-        ip: kds.ip,
-        port: kds.port,
-        location: kds.location,
-        isActive: kds.isActive,
-        type: 'KDS',
-      )).toList();
-    },
-    loading: () async* {
-      yield <SocketDeviceModel>[];
-    },
-    error: (err, stack) async* {
-      yield <SocketDeviceModel>[];
-    },
-  );
-});
-
-final socketKioskListProvider = StreamProvider<List<SocketDeviceModel>>((ref) async* {
-  final kioskListAsync = ref.watch(kioskListProvider);
-
-  yield* kioskListAsync.when(
-    data: (kioskList) async* {
-      yield kioskList.map((kiosk) => SocketDeviceModel(
-        id: kiosk.id,
-        name: kiosk.name,
-        description: kiosk.description,
-        ip: kiosk.ip,
-        port: kiosk.port,
-        location: kiosk.location,
-        isActive: kiosk.isActive,
-        type: 'KIOSK',
-      )).toList();
-    },
-    loading: () async* {
-      yield <SocketDeviceModel>[];
-    },
-    error: (err, stack) async* {
-      yield <SocketDeviceModel>[];
-    },
-  );
-});
-
-final socketStationListProvider = StreamProvider<List<SocketStationModel>>((ref) async* {
-  final database = ref.watch(databaseProvider);
-  final stationsAsync = ref.watch(stationListProvider);
-
-  yield* stationsAsync.when(
-    data: (stations) async* {
-      final socketStations = <SocketStationModel>[];
-
-      for (final station in stations) {
-        // Get all KDS devices assigned to this station
-        final kdsList = await (database.select(database.kDSs)
-          ..where((tbl) => tbl.stationId.equals(station.id)))
-            .get();
-
-        // Get the first active KDS for this station (if any)
-        final activeKds = kdsList.where((kds) => kds.isActive).firstOrNull;
-
-        socketStations.add(SocketStationModel(
-          id: station.id,
-          name: station.name,
-          description: station.description,
-          kdsId: activeKds?.id,
-          kdsName: activeKds?.name,
-        ));
-      }
-
-      yield socketStations;
-    },
-    loading: () async* {
-      yield <SocketStationModel>[];
-    },
-    error: (err, stack) async* {
-      yield <SocketStationModel>[];
-    },
-  );
-});
-
-// All devices combined
-final allSocketDevicesProvider = StreamProvider<List<SocketDeviceModel>>((ref) async* {
-  final kdsList = ref.watch(socketKdsListProvider);
-  final kioskList = ref.watch(socketKioskListProvider);
-
-  if (kdsList.hasValue && kioskList.hasValue) {
-    yield [...kdsList.value!, ...kioskList.value!];
-  }
-});
-
-
-
-// Provider to track connected devices
-
-// Device Repository for CRUD operations
-class DeviceRepository {
+/// The LAN devices — KDS screens, kiosks — and the kitchen stations, on
+/// this till's database.
+class DeviceRepository implements DeviceService {
   final AppDatabase _database;
 
   DeviceRepository(this._database);
 
   // Add device
+  @override
   Future<int> addDevice({
     required String name,
     required String type,
@@ -260,6 +78,7 @@ class DeviceRepository {
   }
 
   // Update device
+  @override
   Future<void> updateDevice({
     required int id,
     required String type,
@@ -300,6 +119,7 @@ class DeviceRepository {
   }
 
   // Delete device
+  @override
   Future<void> deleteDevice(int id, String type) async {
     if (type == 'KDS') {
       await (_database.delete(_database.kDSs)..where((tbl) => tbl.id.equals(id))).go();
@@ -308,12 +128,14 @@ class DeviceRepository {
     }
   }
 
+  @override
   Future<Station?> getStationById(int id) =>
       (_database.select(_database.stations)..where((tbl) => tbl.id.equals(id)))
           .getSingleOrNull();
 
   /// Ids are assigned locally (max + 1), as for KDS and kiosks in
   /// [addDevice]. An empty [description] is stored as null. Returns the new id.
+  @override
   Future<int> addStation({required String name, String? description}) async {
     final maxId = await (_database.selectOnly(_database.stations)
       ..addColumns([_database.stations.id.max()]))
@@ -330,10 +152,26 @@ class DeviceRepository {
     );
     return newId;
   }
+
+  /// The KDS screens, as they change.
+  @override
+  Stream<List<KDS>> watchKdsList() =>
+      (_database.select(_database.kDSs)..watch()).watch();
+
+  /// The kiosks, as they change.
+  @override
+  Stream<List<Kiosk>> watchKiosks() =>
+      (_database.select(_database.kiosks)..watch()).watch();
+
+  /// The kitchen stations, as they change.
+  @override
+  Stream<List<Station>> watchStations() =>
+      (_database.select(_database.stations)..watch()).watch();
 }
 
-final deviceRepositoryProvider = Provider<DeviceRepository>((ref) {
+/// The devices for the screens. A hub-linked till overrides this one
+/// provider; nothing else changes.
+final deviceServiceProvider = Provider<DeviceService>((ref) {
   final database = ref.watch(databaseProvider);
   return DeviceRepository(database);
 });
-

@@ -298,7 +298,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
     List<Kiosk> kioskList,
   ) async {
     final devices = <DeviceRowData>[];
-    final deviceRepo = ref.read(deviceRepositoryProvider);
+    final deviceRepo = ref.read(deviceServiceProvider);
 
     for (final kds in kdsList) {
       String? stationName;
@@ -418,7 +418,7 @@ class _DevicesManagementScreenState extends ConsumerState<DevicesManagementScree
 
     if (confirmed == true) {
       try {
-        final deviceRepo = ref.read(deviceRepositoryProvider);
+        final deviceRepo = ref.read(deviceServiceProvider);
         await deviceRepo.deleteDevice(device.id, device.type);
 
         if (mounted) {
@@ -663,7 +663,7 @@ class _DeviceFormDialogState extends ConsumerState<_DeviceFormDialog> {
     if (!_formKey.currentState!.validate()) return;
 
     try {
-      final deviceRepo = ref.read(deviceRepositoryProvider);
+      final deviceRepo = ref.read(deviceServiceProvider);
 
       final port = _portController.text.isEmpty ? null : int.tryParse(_portController.text);
 
@@ -814,7 +814,7 @@ class _AddStationDialogState extends ConsumerState<_AddStationDialog> {
     if (!_formKey.currentState!.validate()) return;
 
     try {
-      final newId = await ref.read(deviceRepositoryProvider).addStation(
+      final newId = await ref.read(deviceServiceProvider).addStation(
             name: _nameController.text,
             description: _descriptionController.text,
           );
