@@ -35,6 +35,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
     try {
       final service = ref.read(reportQueriesProvider);
       final sessions = await service.getSessionsInRange(_startDate, _endDate);
+      if (!mounted) return;
 
       setState(() {
         _availableSessions = sessions;
@@ -43,14 +44,13 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
-      if (mounted) {
-        final l10n = AppLocalizations.of(context);
-        SnackBarHelper.error(
-          context,
-          '${l10n?.translate('error_loading_sessions') ?? 'Error loading sessions'}: $e',
-        );
-      }
+      final l10n = AppLocalizations.of(context);
+      SnackBarHelper.error(
+        context,
+        '${l10n?.translate('error_loading_sessions') ?? 'Error loading sessions'}: $e',
+      );
     }
   }
 
@@ -74,20 +74,20 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
         endDate: _endDate,
         sessionIds: _selectedSessionIds.toList(),
       );
+      if (!mounted) return;
 
       setState(() {
         _report = report;
         _isGenerating = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isGenerating = false);
-      if (mounted) {
-        final l10n = AppLocalizations.of(context);
-        SnackBarHelper.error(
-          context,
-          '${l10n?.translate('error_generating_report') ?? 'Error generating report'}: $e',
-        );
-      }
+      final l10n = AppLocalizations.of(context);
+      SnackBarHelper.error(
+        context,
+        '${l10n?.translate('error_generating_report') ?? 'Error generating report'}: $e',
+      );
     }
   }
 
@@ -103,7 +103,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
       confirmText: l10n?.translate('confirm') ?? 'Confirm',
     );
 
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() {
         _startDate = picked.start;
         _endDate = picked.end;
