@@ -60,7 +60,7 @@ class _KitchenBoardState extends ConsumerState<_KitchenBoard> {
       builder: (_) => _OrderActionsDialog(orderId: orderId),
     );
     if (open != true || !mounted) return;
-    final order = await ref.read(orderRepositoryProvider).getOrderById(orderId);
+    final order = await ref.read(orderQueriesProvider).getOrderById(orderId);
     if (order == null || !mounted) return;
     ref.read(orderProvider.notifier).loadOrder(order);
     Navigator.of(context).pop();

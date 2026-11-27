@@ -246,7 +246,7 @@ class OrderPanel extends ConsumerWidget {
       builder: (_) => const UnpaidOrdersDialog(),
     );
     if (orderId == null || !context.mounted) return;
-    final repo = ref.read(orderRepositoryProvider);
+    final repo = ref.read(orderQueriesProvider);
     final order = await repo.getOrderById(orderId);
     if (order == null) return;
     ref.read(orderProvider.notifier).loadOrder(order);
@@ -440,7 +440,7 @@ class OrderPanel extends ConsumerWidget {
             final currentOrder = ref.read(orderProvider);
             if (currentOrder.orderId != null) {
               final reloaded = await ref
-                  .read(orderRepositoryProvider)
+                  .read(orderQueriesProvider)
                   .getOrderById(currentOrder.orderId!);
               if (reloaded != null) {
                 ref.read(orderProvider.notifier).loadOrder(reloaded);

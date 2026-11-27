@@ -12,7 +12,7 @@ class HeldOrdersDialog extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final orderRepo = ref.watch(orderRepositoryProvider);
+    final orderRepo = ref.watch(orderQueriesProvider);
 
     return Dialog(
       child: Container(

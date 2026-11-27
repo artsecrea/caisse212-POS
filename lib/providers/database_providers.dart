@@ -4,7 +4,7 @@ import 'package:drift/drift.dart' show OrderingTerm, BooleanExpressionOperators;
 import '../domain/models/component_rules.dart';
 import '../domain/models/permission_rules.dart';
 import '../services/local_floor_service.dart';
-import 'order_provider.dart' show OrderRepository;
+import 'order_provider.dart' show OrderRepository, orderQueriesProvider;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -647,16 +647,8 @@ final areaTablesProvider = StreamProvider<List<db.AreaTable>>(
 /// carries an order id — the waiter lives on the order. Keyed by order rather
 /// than by table so a stale table pointer shows nobody instead of borrowing
 /// some other table's waiter.
-final orderWaiterIdsProvider = StreamProvider<Map<int, int>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.orders)
-        ..where((o) => o.waiterId.isNotNull()))
-      .watch()
-      .map((orders) => {
-            for (final o in orders)
-              if (o.waiterId != null) o.id: o.waiterId!,
-          });
-});
+final orderWaiterIdsProvider = StreamProvider<Map<int, int>>(
+    (ref) => ref.watch(orderQueriesProvider).watchWaiterIdsByOrder());
 
 // Commercials Provider
 final commercialsProvider = StreamProvider<List<db.Commercial>>((ref) {

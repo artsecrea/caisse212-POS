@@ -143,7 +143,7 @@ class _OrdersManagementScreenState
 
     try {
       final order =
-          await ref.read(orderRepositoryProvider).getOrderRow(targetId);
+          await ref.read(orderQueriesProvider).getOrderRow(targetId);
       if (order != null && mounted) _showOrderDetails(order);
     } catch (_) {}
   }
@@ -193,7 +193,7 @@ class _OrdersManagementScreenState
     });
 
     try {
-      final orderRepo = ref.read(orderRepositoryProvider);
+      final orderRepo = ref.read(orderQueriesProvider);
       final currentUser = ref.read(currentUserProvider);
       // Admin elevation bypasses both the "my orders" cashier filter and
       // any session scoping — when an admin opens this screen they see
@@ -2103,7 +2103,7 @@ class _OrdersManagementScreenState
 
   // CRUD Operations
   void _showOrderDetails(Order order) async {
-    final orderRepo = ref.read(orderRepositoryProvider);
+    final orderRepo = ref.read(orderQueriesProvider);
     final fullDetails = await orderRepo.getOrderFullDetails(order.id);
 
     if (!mounted) return;
@@ -2116,7 +2116,7 @@ class _OrdersManagementScreenState
 
   void _editOrder(Order order) async {
     final currentOrderNotifier = ref.read(orderProvider.notifier);
-    final orderRepo = ref.read(orderRepositoryProvider);
+    final orderRepo = ref.read(orderQueriesProvider);
     final currentOrder = await orderRepo.getOrderById(order.id);
     currentOrderNotifier.loadOrder(currentOrder!);
 
@@ -2128,7 +2128,7 @@ class _OrdersManagementScreenState
   /// navigating away from the management screen.
   Future<void> _payOrder(Order order) async {
     final l10n = AppLocalizations.of(context)!;
-    final orderRepo = ref.read(orderRepositoryProvider);
+    final orderRepo = ref.read(orderQueriesProvider);
     final currentOrderRaw = await orderRepo.getOrderById(order.id);
     if (currentOrderRaw == null) return;
     if (!mounted) return;
@@ -2553,7 +2553,7 @@ class _OrdersManagementScreenState
     try {
       // Step 1: Search in local database first
       final order =
-          await ref.read(orderRepositoryProvider).findOrderRowByCode(orderCode);
+          await ref.read(orderQueriesProvider).findOrderRowByCode(orderCode);
 
       if (order != null) {
         // Order found in local database

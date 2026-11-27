@@ -361,7 +361,7 @@ Future<UnpaidGateResult> runUnpaidOrdersGate(
   required int? cashSessionId,
   bool forZ = false,
 }) async {
-  final repo = ref.read(orderRepositoryProvider);
+  final repo = ref.read(orderQueriesProvider);
   final unpaid = <OrderFullDetails>[];
   if (sessionIds.isNotEmpty) {
     final res = await BlockingProgress.run(

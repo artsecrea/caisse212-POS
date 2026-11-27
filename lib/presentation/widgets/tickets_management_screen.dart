@@ -775,7 +775,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     final prefs = ref.read(sharedPreferencesProvider);
 
     final orderData =
-        await ref.read(orderRepositoryProvider).getOrderRow(ticket.orderId);
+        await ref.read(orderQueriesProvider).getOrderRow(ticket.orderId);
 
     String? customerName;
     String? customerPhone;
@@ -914,7 +914,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
     // Get order details
     final orderData =
-        await ref.read(orderRepositoryProvider).getOrderRow(ticket.orderId);
+        await ref.read(orderQueriesProvider).getOrderRow(ticket.orderId);
 
     final deliveryFee = orderData == null
         ? 0.0
@@ -1199,7 +1199,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
 
     // Get order code
     final orderData =
-        await ref.read(orderRepositoryProvider).getOrderRow(ticket.orderId);
+        await ref.read(orderQueriesProvider).getOrderRow(ticket.orderId);
 
     // Get customer information from order
     String? customerName;

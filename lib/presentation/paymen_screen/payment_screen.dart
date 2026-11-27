@@ -899,7 +899,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final orderId = widget.order.orderId;
     if (orderId == null) return const [];
     try {
-      return await ref.read(orderRepositoryProvider).moneySplitParts(orderId);
+      return await ref.read(orderQueriesProvider).moneySplitParts(orderId);
     } catch (e) {
       _logger.error('Failed to load split parts: $e');
       return const [];
@@ -911,7 +911,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final orderId = widget.order.orderId;
     if (orderId == null) return const {};
     try {
-      return await ref.read(orderRepositoryProvider).lineUidsForOrder(orderId);
+      return await ref.read(orderQueriesProvider).lineUidsForOrder(orderId);
     } catch (e) {
       _logger.error('Failed to load line uids: $e');
       return const {};

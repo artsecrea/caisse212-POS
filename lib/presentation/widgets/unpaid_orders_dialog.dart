@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../domain/models/order_read_models.dart';
 import '../../providers/floor_repository.dart';
 import '../../providers/order_provider.dart';
 import '../../utils/app_localizations.dart';
@@ -113,7 +114,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
 
   Future<void> _query() async {
     setState(() => _isLoading = true);
-    final orderRepo = ref.read(orderRepositoryProvider);
+    final orderRepo = ref.read(orderQueriesProvider);
     final customerRepo = ref.read(customerServiceProvider);
 
     // When the cashier has picked a specific customer, filter orders

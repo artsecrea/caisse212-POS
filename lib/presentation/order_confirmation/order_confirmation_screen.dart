@@ -317,7 +317,7 @@ class _OrderConfirmationScreenState
         return;
       }
       final fullOrder =
-          await ref.read(orderRepositoryProvider).getOrderById(orderId);
+          await ref.read(orderQueriesProvider).getOrderById(orderId);
       if (!mounted) return;
       if (fullOrder == null) {
         SnackBarHelper.showErrorSnackBar(context, ref, 'Order not found');
@@ -327,7 +327,7 @@ class _OrderConfirmationScreenState
       // TEMP-TIP-HIDDEN: tip dialog before PaymentScreen disabled.
       // final withTip = await applyTipIfEnabled(context, ref, fullOrder);
       // if (withTip.tip != fullOrder.tip) {
-      //   await ref.read(orderRepositoryProvider).updateOrder(withTip);
+      //   await ref.read(orderQueriesProvider).updateOrder(withTip);
       // }
       if (!mounted) return;
       Navigator.of(context).pop();

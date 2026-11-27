@@ -67,7 +67,7 @@ class _WaiterSettlementDialogState
 
   Future<void> _load() async {
     try {
-      final repo = ref.read(orderRepositoryProvider);
+      final repo = ref.read(orderQueriesProvider);
       // pageSize is high enough that a single waiter shift won't paginate
       // in practice. If you ever see a waiter rack up >200 unpaid orders
       // the workflow itself is broken before pagination is.

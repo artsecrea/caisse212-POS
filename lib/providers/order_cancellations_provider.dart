@@ -1,48 +1,22 @@
-import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/database/app_database.dart';
 import '../domain/models/order_models.dart';
-import 'database_providers.dart';
+import '../domain/models/order_read_models.dart';
+import 'order_provider.dart' show orderQueriesProvider;
 
 /// Cancellations already recorded on an order, newest first: lines taken off
 /// it after it was saved, by the cashier or the waiter. Live, so a waiter's
 /// removal shows up on an open panel without a reload.
 final orderCancellationsProvider =
-    StreamProvider.family<List<RemovedOrderItem>, int>((ref, orderId) {
-  final db = ref.watch(databaseProvider);
-  return (db.select(db.removedOrderItems)
-        ..where((r) => r.orderId.equals(orderId))
-        ..orderBy([(r) => OrderingTerm.desc(r.removedAt)]))
-      .watch();
-});
-
-/// A saved line of an order, with its product's name.
-class SavedOrderLine {
-  final OrderProduct row;
-  final String name;
-  const SavedOrderLine(this.row, this.name);
-}
+    StreamProvider.family<List<RemovedOrderItem>, int>((ref, orderId) =>
+        ref.watch(orderQueriesProvider).watchCancellations(orderId));
 
 /// The order's lines as the database holds them right now — what the cart's
 /// unsaved removals are measured against.
 final savedOrderLinesProvider =
-    StreamProvider.family<List<SavedOrderLine>, int>((ref, orderId) {
-  final db = ref.watch(databaseProvider);
-  final query = db.select(db.orderProducts).join([
-    leftOuterJoin(
-        db.products, db.products.id.equalsExp(db.orderProducts.productId)),
-  ])
-    ..where(db.orderProducts.orderId.equals(orderId));
-  return query.watch().map((rows) => [
-        for (final r in rows)
-          SavedOrderLine(
-            r.readTable(db.orderProducts),
-            r.readTableOrNull(db.products)?.name ??
-                'item #${r.readTable(db.orderProducts).productId}',
-          ),
-      ]);
-});
+    StreamProvider.family<List<SavedOrderLine>, int>((ref, orderId) =>
+        ref.watch(orderQueriesProvider).watchSavedLines(orderId));
 
 /// A cancellation the cashier has made in the panel but not saved yet.
 class PendingCancellation {

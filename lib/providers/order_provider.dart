@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 import '../domain/models/order_course.dart';
 import '../domain/models/order_models.dart';
+import '../domain/models/order_read_models.dart';
 import '../domain/models/order_money.dart';
 import '../domain/models/order_money_rows.dart';
 import '../domain/services/floor_service.dart' show TableOccupiedException;
@@ -32,44 +33,9 @@ import '../services/waiter_kitchen_events.dart';
 import '../services/product_cost_resolver.dart';
 import '../services/z_day_resolver.dart';
 import '../services/pos_notifications.dart';
+import '../domain/services/order_queries.dart';
 
 // Current Order State Provider
-/// What an order contains, condensed for a pick-list row.
-class OrderContentSummary {
-  /// Total units, so "3 articles" means three things to hand over.
-  final double units;
-
-  /// Distinct lines, which is what the preview is truncated against.
-  final int lineCount;
-
-  /// Up to N "2x Tajine" strings.
-  final List<String> preview;
-
-  /// How many lines the preview left out. Reported as a number rather than
-  /// left to an ellipsis: "+4" tells the waiter how much they cannot see.
-  final int hiddenLines;
-
-  const OrderContentSummary({
-    this.units = 0,
-    this.lineCount = 0,
-    this.preview = const [],
-    this.hiddenLines = 0,
-  });
-
-  bool get isEmpty => lineCount == 0;
-
-  /// Whole counts read "3", weighed ones keep their decimals.
-  String get unitsLabel => units == units.roundToDouble()
-      ? units.toStringAsFixed(0)
-      : units.toStringAsFixed(3);
-
-  String get previewLabel {
-    if (preview.isEmpty) return '';
-    final joined = preview.join(' · ');
-    return hiddenLines > 0 ? '$joined  +$hiddenLines' : joined;
-  }
-}
-
 class OrderNotifier extends StateNotifier<CurrentOrder> {
   /// Optional so nothing that constructs a bare notifier (tests, throwaway
   /// state) has to care. Present in the app, where it is used to hand a
@@ -549,7 +515,7 @@ bool orderMatchesSearch(Order order, String search, {Customer? customer}) {
 String? _blankToNull(String? s) =>
     (s == null || s.trim().isEmpty) ? null : s.trim();
 
-class OrderRepository {
+class OrderRepository implements OrderQueries {
   final AppDatabase _database;
   final Ref? _ref;
   final _logger = Logger.instance;
@@ -602,6 +568,54 @@ class OrderRepository {
 
   OrderRepository(this._database, [this._ref]) {
     _logService = OrderLogService(_database);
+  }
+
+  /// [orderId]'s row as it changes — with the backend's payment position,
+  /// which the server owns: a service order is routinely part-paid across
+  /// tills.
+  @override
+  Stream<Order?> watchOrderRow(int orderId) => (_database.select(
+        _database.orders,
+      )..where((o) => o.id.equals(orderId)))
+          .watchSingleOrNull();
+
+  /// Which waiter is on each order, keyed by `orders.id`, as it changes.
+  @override
+  Stream<Map<int, int>> watchWaiterIdsByOrder() =>
+      (_database.select(_database.orders)
+            ..where((o) => o.waiterId.isNotNull()))
+          .watch()
+          .map((orders) => {
+                for (final o in orders)
+                  if (o.waiterId != null) o.id: o.waiterId!,
+              });
+
+  /// Cancellations recorded on [orderId], newest first, as they come.
+  @override
+  Stream<List<RemovedOrderItem>> watchCancellations(int orderId) =>
+      (_database.select(_database.removedOrderItems)
+            ..where((r) => r.orderId.equals(orderId))
+            ..orderBy([(r) => OrderingTerm.desc(r.removedAt)]))
+          .watch();
+
+  /// [orderId]'s lines as the database holds them, with their product's
+  /// name, as they change.
+  @override
+  Stream<List<SavedOrderLine>> watchSavedLines(int orderId) {
+    final db = _database;
+    final query = db.select(db.orderProducts).join([
+      leftOuterJoin(
+          db.products, db.products.id.equalsExp(db.orderProducts.productId)),
+    ])
+      ..where(db.orderProducts.orderId.equals(orderId));
+    return query.watch().map((rows) => [
+          for (final r in rows)
+            SavedOrderLine(
+              r.readTable(db.orderProducts),
+              r.readTableOrNull(db.products)?.name ??
+                  'item #${r.readTable(db.orderProducts).productId}',
+            ),
+        ]);
   }
 
   /// Restart the per-session order number so the next order in [sessionId]
@@ -696,6 +710,7 @@ class OrderRepository {
   /// `closesGroups` existed). Its parts paid for lines that are now settled,
   /// so they are no longer credit — counting them would discount another
   /// ticket of the same order.
+  @override
   Future<List<Ticket>> moneySplitParts(int orderId) async {
     final rows =
         await (_database.select(_database.tickets)
@@ -1976,6 +1991,7 @@ class OrderRepository {
     );
   }
 
+  @override
   Future<CurrentOrder?> getOrderById(int orderId) async {
     final order = await (_database.select(
       _database.orders,
@@ -1988,6 +2004,7 @@ class OrderRepository {
 
   /// The bare `orders` row, for screens that only need its columns and not
   /// the hydrated cart [getOrderById] builds.
+  @override
   Future<Order?> getOrderRow(int id) async {
     return await (_database.select(_database.orders)
           ..where((tbl) => tbl.id.equals(id)))
@@ -1995,6 +2012,7 @@ class OrderRepository {
   }
 
   /// The `orders` row carrying [code] (codes are unique), or null.
+  @override
   Future<Order?> findOrderRowByCode(String code) async {
     return await (_database.select(_database.orders)
           ..where((tbl) => tbl.code.equals(code))
@@ -2004,6 +2022,7 @@ class OrderRepository {
 
   /// Each line of [orderId] with its cross-till `lineUid`, keyed by local
   /// row id, so a money split can name its lines on every till.
+  @override
   Future<Map<int, String?>> lineUidsForOrder(int orderId) async {
     final rows = await (_database.select(_database.orderProducts)
           ..where((p) => p.orderId.equals(orderId)))
@@ -2016,6 +2035,7 @@ class OrderRepository {
   /// The 'CANCELLED' spelling matches no row — the app writes 'CANCELED' —
   /// so cancelled orders are offered too. Kept as the note dialog always had
   /// it; excluding them would be a deliberate change of its own.
+  @override
   Future<List<Order>> recentOrdersForNoteLink() async {
     return await (_database.select(_database.orders)
           ..where((o) => o.status.isNotIn(['CANCELLED']))
@@ -2026,6 +2046,7 @@ class OrderRepository {
 
   /// Orders created in [from, to). With [userId], only those that user
   /// created or took — either side of the hand-over counts as theirs.
+  @override
   Future<List<Order>> ordersCreatedBetween(DateTime from, DateTime to,
       {int? userId}) async {
     return await (_database.select(_database.orders)
@@ -2039,6 +2060,7 @@ class OrderRepository {
   }
 
   /// Every line of [orderId], oldest first: a refund line names a real row.
+  @override
   Future<List<OrderProduct>> linesOfOrder(int orderId) async {
     return await (_database.select(_database.orderProducts)
           ..where((op) => op.orderId.equals(orderId))
@@ -2047,6 +2069,7 @@ class OrderRepository {
   }
 
   /// Every line of [orderIds], unordered.
+  @override
   Future<List<OrderProduct>> linesForOrders(List<int> orderIds) async {
     if (orderIds.isEmpty) return [];
     return await (_database.select(_database.orderProducts)
@@ -2055,6 +2078,7 @@ class OrderRepository {
   }
 
   /// The components chosen on [lineIds], unordered.
+  @override
   Future<List<OrderProductComponent>> componentsOfLines(
       Iterable<int> lineIds) async {
     if (lineIds.isEmpty) return [];
@@ -2155,6 +2179,7 @@ class OrderRepository {
   }
 
   /// Find an active product by its MBW / PLU code (string comparison only).
+  @override
   Future<Product?> findByMbwCode(String plu) async {
     return (_database.select(_database.products)
           ..where((t) => t.mbwCode.equals(plu))
@@ -2162,6 +2187,7 @@ class OrderRepository {
         .getSingleOrNull();
   }
 
+  @override
   Future<CurrentOrder?> getOrderByCode(String orderCode) async {
     final order = await (_database.select(
       _database.orders,
@@ -2172,6 +2198,7 @@ class OrderRepository {
     return await loadOrderDetails(order);
   }
 
+  @override
   Future<CurrentOrder> loadOrderDetails(Order order) async {
     // Batched-fetch rewrite: collapses the previous N+1 pattern
     // (one query per item × product / variant / OPCs / per-component) into
@@ -2464,6 +2491,7 @@ class OrderRepository {
   }
 
   // Get all held orders (ONHOLD status)
+  @override
   Future<List<Order>> getHeldOrders() async {
     return await (_database.select(_database.orders)
           ..where((tbl) => tbl.status.equals('ONHOLD'))
@@ -3337,6 +3365,7 @@ class OrderRepository {
     return int.tryParse(q.startsWith('#') ? q.substring(1) : q);
   }
 
+  @override
   Future<PaginatedOrders> getPaginatedOrdersWithFullDetails({
     required int page,
     required int pageSize,
@@ -3570,6 +3599,7 @@ class OrderRepository {
   /// Cap defaults to 50 — the dialog this feeds is meant for "pick the
   /// one you were just working on", not for browsing a long history.
   /// The orders-management screen handles the deep-browse case.
+  @override
   Future<List<Order>> getUnpaidOrdersForResume({
     String? typeFilter,
     int? tableId,
@@ -3660,6 +3690,7 @@ class OrderRepository {
   ///
   /// The preview is capped at [previewLimit] names and reports how many lines it
   /// left out, so a 40-line table renders in the same space as a two-line one.
+  @override
   Future<Map<int, OrderContentSummary>> getOrderContentSummaries(
     List<int> orderIds, {
     int previewLimit = 3,
@@ -3706,6 +3737,7 @@ class OrderRepository {
     return result;
   }
 
+  @override
   Future<Map<int, double>> getOrderTotals(List<int> orderIds) async {
     if (orderIds.isEmpty) return const {};
 
@@ -3976,6 +4008,7 @@ class OrderRepository {
   }
 
   // Get full details for a specific order
+  @override
   Future<OrderFullDetails> getOrderFullDetails(int orderId) async {
     final order = await (_database.select(
       _database.orders,
@@ -4154,15 +4187,13 @@ final orderRepositoryProvider = Provider<OrderRepository>((ref) {
   return repository;
 });
 
+/// What the screens read about orders. A hub-linked till overrides this one
+/// provider; nothing else changes.
+final orderQueriesProvider =
+    Provider<OrderQueries>((ref) => ref.watch(orderRepositoryProvider));
+
 /// The backend's payment position for an order: what has been collected and
 /// what is still owed. Watched rather than computed locally because the
 /// server owns the sum — a service order is routinely part-paid across tills.
-final orderPaymentPositionProvider = StreamProvider.family<Order?, int>((
-  ref,
-  orderId,
-) {
-  final db = ref.watch(databaseProvider);
-  return (db.select(
-    db.orders,
-  )..where((o) => o.id.equals(orderId))).watchSingleOrNull();
-});
+final orderPaymentPositionProvider = StreamProvider.family<Order?, int>(
+    (ref, orderId) => ref.watch(orderQueriesProvider).watchOrderRow(orderId));

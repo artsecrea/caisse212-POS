@@ -6,7 +6,7 @@ import '../../domain/models/exchange.dart';
 import '../../domain/models/refund_policy.dart';
 import '../../providers/catalogue_repository.dart';
 import '../../providers/order_provider.dart'
-    show orderProvider, orderRepositoryProvider;
+    show orderProvider, orderQueriesProvider;
 import 'exchange_settle_dialog.dart' show exchangeDraftProvider;
 import '../../providers/database_providers.dart';
 import '../../services/local_returns_service.dart';
@@ -86,7 +86,7 @@ Future<bool> showRefundDialog({
   final l10n = AppLocalizations.of(context)!;
   final fmt = ref.read(currencyFormatterProvider);
   final returns = ref.read(returnsServiceProvider);
-  final orderRepo = ref.read(orderRepositoryProvider);
+  final orderRepo = ref.read(orderQueriesProvider);
   final catalogue = ref.read(catalogueRepositoryProvider);
   final serials = ref.read(serialServiceProvider);
 

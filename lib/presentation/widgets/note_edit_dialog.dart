@@ -274,7 +274,7 @@ class _OrderLinkPicker extends ConsumerWidget {
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final orderRepo = ref.watch(orderRepositoryProvider);
+    final orderRepo = ref.watch(orderQueriesProvider);
 
     return FutureBuilder<List<Order>>(
       future: orderRepo.recentOrdersForNoteLink(),

@@ -167,7 +167,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   }
 
   Future<void> _handleOrderBarcode(String barcode) async {
-    final orderRepo = ref.read(orderRepositoryProvider);
+    final orderRepo = ref.read(orderQueriesProvider);
     final currentOrder = ref.read(orderProvider);
 
     try {
@@ -384,7 +384,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   Future<void> _handleWeightedBarcode(WeightedItem result) async {
     final l10n = AppLocalizations.of(context);
     final scaleConfig = ref.read(scaleConfigProvider);
-    final orderRepo = ref.read(orderRepositoryProvider);
+    final orderRepo = ref.read(orderQueriesProvider);
 
     // Look up product by MBW/PLU code.
     _logger.info('Scale barcode: PLU="${result.plu}" value=${result.extractedValue}');
@@ -618,7 +618,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         // server's change back on top of it.
         if (panel.hasUnsavedChanges) return;
         final refreshed = await ref
-            .read(orderRepositoryProvider)
+            .read(orderQueriesProvider)
             .getOrderById(updatedOrderId);
         if (refreshed != null && mounted) {
           ref.read(orderProvider.notifier).setOrder(refreshed);
@@ -1716,7 +1716,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   : () async {
                       final currentUser = ref.read(currentUserProvider);
                       final printSession = ref.read(currentSessionProvider);
-                      final orderRepo = ref.read(orderRepositoryProvider);
+                      final orderRepo = ref.read(orderQueriesProvider);
 
                       if (currentUser == null) return;
                       if (printSession == null) {
@@ -2222,7 +2222,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // Parts already paid by amount (split bill) come off: this payment
       // closes that split, so it carries its `split` too.
       final moneyParts = await ref
-          .read(orderRepositoryProvider)
+          .read(orderQueriesProvider)
           .moneySplitParts(orderId);
       final credit = moneyParts.fold<double>(0, (s, t) => s + t.amount);
       final total = credit > 0
@@ -2530,7 +2530,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if (_isSavingOrder) return;
     final perf = Stopwatch()..start();
     var currentOrder = ref.read(orderProvider);
-    final orderRepo = ref.read(orderRepositoryProvider);
+    final orderRepo = ref.read(orderQueriesProvider);
     final currentUser = ref.read(currentUserProvider);
 
     if (currentUser == null) return;

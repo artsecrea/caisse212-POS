@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:caisse212/providers/order_provider.dart';
+import 'package:caisse212/domain/models/order_read_models.dart';
 
 /// The condensed "what is in this order" line shown on parked/held orders.
 ///

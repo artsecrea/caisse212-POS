@@ -76,7 +76,7 @@ class _TopProduct {
 final _dashboardStatsProvider =
     FutureProvider.autoDispose.family<DashboardStats, _DashboardKey>(
         (ref, key) async {
-  final orderRepo = ref.watch(orderRepositoryProvider);
+  final orderRepo = ref.watch(orderQueriesProvider);
   final ticketRepo = ref.watch(ticketRepositoryProvider);
   final catalogue = ref.watch(catalogueRepositoryProvider);
   final dayStart = DateTime(key.date.year, key.date.month, key.date.day);

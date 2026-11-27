@@ -202,7 +202,7 @@ class _WaiterProfileDialogState extends ConsumerState<WaiterProfileDialog>
       _error = null;
     });
     try {
-      final repo = ref.read(orderRepositoryProvider);
+      final repo = ref.read(orderQueriesProvider);
       final w = _windowFilter();
       // Capture the label here too so the header subtitle stays in sync
       // with the window the data was fetched for (a session change

@@ -247,7 +247,7 @@ Future<void> showSettleUnpaidDialog({
   );
   if (go != true || !context.mounted) return;
 
-  final repo = ref.read(orderRepositoryProvider);
+  final repo = ref.read(orderQueriesProvider);
   final toSettle = [
     for (final e in entries)
       if (selected.contains(e.order.id)) e,
