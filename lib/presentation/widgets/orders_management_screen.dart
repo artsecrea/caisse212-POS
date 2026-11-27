@@ -719,7 +719,7 @@ class _OrdersManagementScreenState
 
   Future<void> _showTablePicker() async {
     final l10n = AppLocalizations.of(context)!;
-    final tables = await ref.read(floorRepositoryProvider).allTables();
+    final tables = await ref.read(floorQueriesProvider).allTables();
     if (!mounted) return;
     final selectedId = await showDialog<int?>(
       context: context,

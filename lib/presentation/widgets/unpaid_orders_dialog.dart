@@ -71,7 +71,7 @@ class _UnpaidOrdersDialogState extends ConsumerState<UnpaidOrdersDialog> {
 
   Future<void> _bootstrap() async {
     final tables =
-        await ref.read(floorRepositoryProvider).allTables(orderByName: true);
+        await ref.read(floorQueriesProvider).allTables(orderByName: true);
     if (!mounted) return;
     setState(() {
       _tables = tables;

@@ -39,7 +39,7 @@ class _WaiterSelectionDialogState extends ConsumerState<WaiterSelectionDialog> {
   Future<void> _initializeAreaFromTable() async {
     if (widget.currentTableId != null) {
       final table = await ref
-          .read(floorRepositoryProvider)
+          .read(floorQueriesProvider)
           .tableById(widget.currentTableId!);
       if (table != null && table.areaId != null && mounted) {
         setState(() {

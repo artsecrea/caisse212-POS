@@ -4,7 +4,7 @@ import 'package:loggecrea/loggecrea.dart';
 
 import '../../domain/models/app_settings.dart';
 import '../../providers/database_providers.dart';
-import '../../providers/floor_repository.dart';
+import '../../domain/services/floor_queries.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/daily_summary_service.dart';
@@ -82,7 +82,7 @@ class StaffChoices {
 
   const StaffChoices({required this.waiters, required this.cashiers});
 
-  static Future<StaffChoices> load(FloorRepository floor,
+  static Future<StaffChoices> load(FloorQueries floor,
       UserRepository users, AppLocalizations l10n) async {
     final waiterRows = await floor.allWaiters();
     final userRows = await users.getAllUsers();

@@ -5,20 +5,21 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/providers/database_providers.dart';
+import 'package:caisse212/domain/services/floor_queries.dart';
 import 'package:caisse212/providers/floor_repository.dart';
 
 /// Floor and waiter reads moved out of the screens: same rows, same order.
 void main() {
   late AppDatabase db;
   late ProviderContainer container;
-  late FloorRepository repo;
+  late FloorQueries repo;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     container = ProviderContainer(overrides: [
       databaseProvider.overrideWithValue(db),
     ]);
-    repo = container.read(floorRepositoryProvider);
+    repo = container.read(floorQueriesProvider);
   });
   tearDown(() {
     container.dispose();

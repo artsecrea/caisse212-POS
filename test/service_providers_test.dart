@@ -39,7 +39,7 @@ void main() {
       zDayResolverProvider,
       customerServiceProvider,
       catalogueRepositoryProvider,
-      floorRepositoryProvider,
+      floorQueriesProvider,
     ];
     for (final p in providers) {
       expect(identical(container.read(p), container.read(p)), isTrue);

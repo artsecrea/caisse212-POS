@@ -96,7 +96,7 @@ Future<_UnpaidAction?> _promptUnpaidOrders(
   final nameById = <int, String>{};
   if (waiterIds.isNotEmpty) {
     final waiterRows =
-        await ref.read(floorRepositoryProvider).waitersByIds(waiterIds);
+        await ref.read(floorQueriesProvider).waitersByIds(waiterIds);
     for (final w in waiterRows) {
       nameById[w.id] = '${w.firstName} ${w.lastName ?? ''}'.trim();
     }
@@ -512,7 +512,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
   final StaffChoices staffChoices;
   try {
     summary = await sessionService.getSessionSummary(sessionId);
-    staffChoices = await StaffChoices.load(ref.read(floorRepositoryProvider),
+    staffChoices = await StaffChoices.load(ref.read(floorQueriesProvider),
         ref.read(userRepositoryProvider), l10n);
   } finally {
     preparing.close();

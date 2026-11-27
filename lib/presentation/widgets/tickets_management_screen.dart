@@ -795,7 +795,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
     String? tableName;
     if (orderData?.tableId != null) {
       final table =
-          await ref.read(floorRepositoryProvider).tableById(orderData!.tableId!);
+          await ref.read(floorQueriesProvider).tableById(orderData!.tableId!);
       tableName = table?.name;
     }
 
@@ -1220,7 +1220,7 @@ class _TicketDetailsDialog extends ConsumerWidget {
     String? tableName;
     if (orderData?.tableId != null) {
       final table =
-          await ref.read(floorRepositoryProvider).tableById(orderData!.tableId!);
+          await ref.read(floorQueriesProvider).tableById(orderData!.tableId!);
       tableName = table?.name;
     }
 

@@ -44,7 +44,7 @@ Future<void> showPrintZReportDialog({
   var selected = days.first;
   var includeTotals = true;
   final documents = ReportDocuments.fromSettings(ref.read(settingsProvider));
-  final staff = await StaffChoices.load(ref.read(floorRepositoryProvider),
+  final staff = await StaffChoices.load(ref.read(floorQueriesProvider),
       ref.read(userRepositoryProvider), l10n);
   if (!context.mounted) return;
 

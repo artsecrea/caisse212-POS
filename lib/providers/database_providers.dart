@@ -4,7 +4,8 @@ import 'package:drift/drift.dart' show OrderingTerm, BooleanExpressionOperators;
 import '../domain/models/component_rules.dart';
 import '../domain/models/permission_rules.dart';
 import '../services/local_floor_service.dart';
-import 'order_provider.dart' show OrderRepository, orderQueriesProvider;
+import 'order_provider.dart' show orderQueriesProvider;
+import 'floor_repository.dart' show floorQueriesProvider;
 import 'ticket_provider.dart' show ticketQueriesProvider;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -625,10 +626,8 @@ final filteredProductsProvider = Provider.autoDispose<AsyncValue<List<db.Product
 });
 
 // Areas Provider
-final areasProvider = StreamProvider<List<db.Area>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.areas)..watch()).watch();
-});
+final areasProvider = StreamProvider<List<db.Area>>(
+    (ref) => ref.watch(floorQueriesProvider).watchAreas());
 
 // Area Tables Provider
 final areaTablesProvider = StreamProvider<List<db.AreaTable>>(
@@ -860,102 +859,23 @@ final productAttributesProvider = FutureProvider.autoDispose.family<List<Map<Str
 // Waiter Providers
 
 /// Get all waiters
-final waitersProvider = StreamProvider<List<Waiter>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.waiters)
-    ..where((tbl) => tbl.isActive.equals(true))
-    ..orderBy([(tbl) => OrderingTerm.asc(tbl.firstName)]))
-    .watch();
-});
-
-/// Get waiter by ID
-final waiterByIdProvider = FutureProvider.autoDispose.family<Waiter?, int>((ref, waiterId) async {
-  final database = ref.watch(databaseProvider);
-  return await (database.select(database.waiters)
-    ..where((tbl) => tbl.id.equals(waiterId)))
-    .getSingleOrNull();
-});
-
-/// Get area IDs assigned to a waiter
-final waiterAreasProvider = FutureProvider.autoDispose.family<List<int>, int>((ref, waiterId) async {
-  final database = ref.watch(databaseProvider);
-  final waiterAreas = await (database.select(database.waiterAreas)
-    ..where((tbl) => tbl.waiterId.equals(waiterId)))
-    .get();
-  return waiterAreas.map((wa) => wa.areaId).toList();
-});
+final waitersProvider = StreamProvider<List<Waiter>>(
+    (ref) => ref.watch(floorQueriesProvider).watchActiveWaiters());
 
 /// Get waiters by area (includes waiters with no area assignments - they serve all areas)
-final waitersByAreaProvider = FutureProvider.autoDispose.family<List<Waiter>, int?>((ref, areaId) async {
-  final database = ref.watch(databaseProvider);
+final waitersByAreaProvider = FutureProvider.autoDispose
+    .family<List<Waiter>, int?>((ref, areaId) =>
+        ref.watch(floorQueriesProvider).waitersForArea(areaId));
 
-  // Get all active waiters
-  final allWaiters = await (database.select(database.waiters)
-    ..where((tbl) => tbl.isActive.equals(true)))
-    .get();
-
-  if (areaId == null) {
-    // No area selected, return all waiters
-    return allWaiters;
-  }
-
-  // Get all waiter-area assignments
-  final allAssignments = await database.select(database.waiterAreas).get();
-
-  // Group assignments by waiter ID
-  final waiterAreaMap = <int, List<int>>{};
-  for (final assignment in allAssignments) {
-    waiterAreaMap.putIfAbsent(assignment.waiterId, () => []).add(assignment.areaId);
-  }
-
-  // Filter waiters: include those assigned to this area OR those with no assignments (serve all)
-  final result = <Waiter>[];
-  for (final waiter in allWaiters) {
-    final assignedAreas = waiterAreaMap[waiter.id] ?? [];
-    if (assignedAreas.isEmpty || assignedAreas.contains(areaId)) {
-      result.add(waiter);
-    }
-  }
-
-  return result;
-});
+/// Get area IDs assigned to a waiter
+final waiterAreasProvider = FutureProvider.autoDispose
+    .family<List<int>, int>((ref, waiterId) =>
+        ref.watch(floorQueriesProvider).areasOfWaiter(waiterId));
 
 /// Get waiter statistics: active orders count and total unpaid amount
-final waiterStatsProvider = FutureProvider.autoDispose.family<Map<String, dynamic>, int>((ref, waiterId) async {
-  final database = ref.watch(databaseProvider);
-
-  // Orders are born COMPLETED, so the status says nothing about whether one
-  // is still open. "Unpaid" is the same test the unpaid chip, the resume
-  // picker and the close gate use, and the balance is what it compares.
-  final orders = await (database.select(database.orders)
-        ..where((tbl) => tbl.waiterId.equals(waiterId))
-        ..where((_) => OrderRepository.unpaidOrderSql))
-      .get();
-  final orderIds = [for (final o in orders) o.id];
-  double unpaidTotal = 0.0;
-  if (orderIds.isNotEmpty) {
-    final totals = await OrderRepository(database).getOrderTotals(orderIds);
-    final paidTickets = await (database.select(database.tickets)
-          ..where((t) =>
-              t.orderId.isIn(orderIds) &
-              t.isPaid.equals(true) &
-              t.isCancelled.equals(false)))
-        .get();
-    final paidByOrder = <int, double>{};
-    for (final t in paidTickets) {
-      paidByOrder[t.orderId] = (paidByOrder[t.orderId] ?? 0) + t.amount;
-    }
-    for (final id in orderIds) {
-      unpaidTotal += (totals[id] ?? 0) - (paidByOrder[id] ?? 0);
-    }
-  }
-  final totalOrders = orderIds.length;
-
-  return {
-    'totalOrders': totalOrders,
-    'unpaidTotal': unpaidTotal,
-  };
-});
+final waiterStatsProvider = FutureProvider.autoDispose
+    .family<Map<String, dynamic>, int>((ref, waiterId) =>
+        ref.watch(floorQueriesProvider).waiterStats(waiterId));
 
 /// Check if a waiter can serve an area
 final canWaiterServeAreaProvider = FutureProvider.autoDispose.family<bool, ({int waiterId, int areaId})>((ref, params) async {
