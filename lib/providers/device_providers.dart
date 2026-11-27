@@ -133,26 +133,6 @@ class DeviceRepository implements DeviceService {
       (_database.select(_database.stations)..where((tbl) => tbl.id.equals(id)))
           .getSingleOrNull();
 
-  /// Ids are assigned locally (max + 1), as for KDS and kiosks in
-  /// [addDevice]. An empty [description] is stored as null. Returns the new id.
-  @override
-  Future<int> addStation({required String name, String? description}) async {
-    final maxId = await (_database.selectOnly(_database.stations)
-      ..addColumns([_database.stations.id.max()]))
-      .map((row) => row.read(_database.stations.id.max()))
-      .getSingleOrNull();
-    final newId = (maxId ?? 0) + 1;
-
-    await _database.into(_database.stations).insert(
-      StationsCompanion.insert(
-        id: Value(newId),
-        name: name,
-        description: Value(description == null || description.isEmpty ? null : description),
-      ),
-    );
-    return newId;
-  }
-
   /// The KDS screens, as they change.
   @override
   Stream<List<KDS>> watchKdsList() =>

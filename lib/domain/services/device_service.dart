@@ -39,8 +39,4 @@ abstract interface class DeviceService {
   Future<void> deleteDevice(int id, String type);
 
   Future<Station?> getStationById(int id);
-
-  /// Ids are assigned locally (max + 1), as for KDS and kiosks in
-  /// [addDevice]. An empty [description] is stored as null. Returns the new id.
-  Future<int> addStation({required String name, String? description});
 }

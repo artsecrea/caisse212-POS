@@ -8,7 +8,8 @@ import 'package:caisse212/domain/services/device_service.dart';
 import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/providers/device_providers.dart';
 
-/// Stations created and read from the devices screen.
+/// Stations read from the devices screen. They come from the back office
+/// with the catalogue sync; the till never creates one.
 void main() {
   late AppDatabase db;
   late ProviderContainer container;
@@ -26,23 +27,12 @@ void main() {
     return db.close();
   });
 
-  test('addStation: first id is 1, then max + 1 even across gaps', () async {
-    expect(await repo.addStation(name: 'Grill'), 1);
-    await db.into(db.stations).insert(
-        StationsCompanion.insert(id: const Value(7), name: 'Synced'));
-    expect(await repo.addStation(name: 'Bar', description: 'Drinks'), 8);
-
-    final bar = (await repo.getStationById(8))!;
+  test('getStationById: the synced row', () async {
+    await db.into(db.stations).insert(StationsCompanion.insert(
+        id: const Value(7), name: 'Bar', description: const Value('Drinks')));
+    final bar = (await repo.getStationById(7))!;
     expect(bar.name, 'Bar');
     expect(bar.description, 'Drinks');
-  });
-
-  test('addStation stores an empty description as null, name as given',
-      () async {
-    final id = await repo.addStation(name: ' Pizza ', description: '');
-    final row = (await repo.getStationById(id))!;
-    expect(row.name, ' Pizza ');
-    expect(row.description, isNull);
   });
 
   test('getStationById: null when missing', () async {

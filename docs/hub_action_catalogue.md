@@ -158,7 +158,7 @@ These cart edits stay **local, outside the interface**: they are in-memory until
 | # | Proposed action | Implemented | Called by | Hub? |
 |---|---|---|---|---|
 | L1 | `addDevice` / `updateDevice` / `deleteDevice` | `DeviceRepository` `device_providers.dart:210`, `:263`, `:303` | `devices_management_screen.dart:672`, `:684`, `:422` | LAN-scoped config: belongs to whoever serves KDS (the hub) |
-| L2 | `addStation` | `device_providers.dart:317` | `devices_management_screen.dart:817` | same |
+| L2 | ~~`addStation`~~ | removed 2026-11-27: stations come from the back office | — | — |
 | L3 | `setProductAvailability(productId, bool)` (86 a product) | `CatalogueRepository` `catalogue_repository.dart:58` | `product_grid.dart:1271` | shared state: every till must see it |
 | L4 | `createQuickProduct(...)` | `QuickProductService.create` `quick_product_service.dart:39` | `quick_product_dialog.dart:102` | catalogue write |
 | L5 | `setDisplayName` / `updateLastLogin` | `UserRepository` `user_provider.dart:46`, `:56` | `profile_dialog.dart:63`, `login_screen.dart:663` | master data |
