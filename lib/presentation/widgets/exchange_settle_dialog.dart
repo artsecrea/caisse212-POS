@@ -9,11 +9,9 @@ import '../../data/database/app_database.dart';
 import '../../domain/models/exchange.dart';
 import '../../domain/models/order_models.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_returns_service.dart';
 import '../../providers/order_provider.dart';
 import '../../providers/settings_provider.dart';
-import '../../services/activity_log_service.dart';
-import '../../services/local_payment_service.dart';
-import '../../services/pos_notifications.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
@@ -198,7 +196,7 @@ Future<bool> _settle({
   required String backMethod,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final exchange = ref.read(exchangeServiceProvider);
+  final returns = ref.read(returnsServiceProvider);
   final session = ref.read(currentSessionProvider);
   final user = ref.read(currentUserProvider);
   final orderId = order.orderId;
@@ -210,7 +208,9 @@ Future<bool> _settle({
   late int lastTicketId;
   late String lastTicketNum;
   try {
-    final result = await exchange.settle(
+    // Records both sides, completes the new order (status, table) exactly
+    // as a payment does, and tells the admins.
+    final result = await returns.settleExchange(
       draft: draft,
       newOrderId: orderId,
       newOrderCode: order.orderCode!,
@@ -220,6 +220,7 @@ Future<bool> _settle({
       sessionId: session.id,
       zDay: ref.read(currentZDayProvider),
       refundedBy: user?.id,
+      cashierName: user?.effectiveDisplayName,
       posName: ref.read(apiServiceProvider).terminalTag(),
     );
     refund = result.refund;
@@ -230,27 +231,6 @@ Future<bool> _settle({
     if (context.mounted) SnackBarHelper.failure(context, e);
     return false;
   }
-
-  // Complete the new order (status, table) exactly as a payment does.
-  try {
-    await ref.read(paymentServiceProvider).completeIfSettled(orderId);
-  } catch (e) {
-    Logger.instance.error('Exchange order completion failed: $e');
-  }
-
-  notifyRefund(
-    ref.read,
-    orderCode: refund.orderCode,
-    amount: refund.totalAmount,
-    method: refund.method,
-    reason: refund.reason,
-  );
-  await ref.read(activityLogServiceProvider).logPayment(
-        order.total.toStringAsFixed(2),
-        order.orderCode!,
-        userId: user?.id,
-        username: user?.effectiveDisplayName,
-      );
 
   // One ticket for both sides of the swap. Detached, like a payment's.
   final prefs = ref.read(sharedPreferencesProvider);
@@ -303,16 +283,8 @@ Future<bool> _settle({
     }
   }());
 
-  // New order first, then the refund that names it (syncRefundsBulk also
-  // pushes the order itself if it has not gone yet).
-  unawaited(() async {
-    try {
-      await ref.read(dataSyncServiceProvider).syncSingleOrder(orderId);
-      await ref.read(dataSyncServiceProvider).syncRefundsBulk();
-    } catch (e) {
-      Logger.instance.warning('Exchange sync deferred: $e');
-    }
-  }());
+  // New order first, then the refund that names it.
+  unawaited(returns.publish(exchangeOrderId: orderId));
   return true;
 }
 

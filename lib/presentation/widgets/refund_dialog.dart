@@ -9,6 +9,7 @@ import '../../providers/order_provider.dart'
     show orderProvider, orderRepositoryProvider;
 import 'exchange_settle_dialog.dart' show exchangeDraftProvider;
 import '../../providers/database_providers.dart';
+import '../../services/local_returns_service.dart';
 import '../../providers/network_provider.dart'
     show lastKnownOnlineStatusProvider;
 import '../../utils/admin_auth.dart';
@@ -21,7 +22,6 @@ import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/snackbar_helper.dart';
 import './adaptive_text_field.dart';
-import '../../services/pos_notifications.dart';
 
 /// A refundable order line: the DB row plus the bits the dialog needs to show.
 /// Trims the trailing `.0` so a whole quantity reads "2", not "2.0", while a
@@ -85,7 +85,7 @@ Future<bool> showRefundDialog({
 }) async {
   final l10n = AppLocalizations.of(context)!;
   final fmt = ref.read(currencyFormatterProvider);
-  final refundService = ref.read(refundServiceProvider);
+  final returns = ref.read(returnsServiceProvider);
   final orderRepo = ref.read(orderRepositoryProvider);
   final catalogue = ref.read(catalogueRepositoryProvider);
   final serials = ref.read(serialServiceProvider);
@@ -115,7 +115,7 @@ Future<bool> showRefundDialog({
     return false;
   }
 
-  final policyContext = await refundService.policyContextFor(
+  final policyContext = await returns.policyContextFor(
     order,
     currentZId: session.zId ?? ref.read(currentZProvider)?.id,
     currentZDay: ref.read(currentZDayProvider),
@@ -125,7 +125,7 @@ Future<bool> showRefundDialog({
   // Quantities already given back — here and on every other till — so a line
   // can never be refunded twice.
   final alreadyRefunded = <int, double>{
-    ...await refundService.refundedQuantitiesForOrder(order.id),
+    ...await returns.refundedQuantities(order.id),
   };
   refundedElsewhere.forEach((id, q) {
     alreadyRefunded[id] = (alreadyRefunded[id] ?? 0) + q;
@@ -303,7 +303,7 @@ Future<bool> showRefundDialog({
                   amount: overrideAmount[i.id],
                 ),
           ];
-          final created = await refundService.createRefund(
+          final created = await returns.refund(
             order: order,
             method: method,
             lines: lines,
@@ -324,21 +324,13 @@ Future<bool> showRefundDialog({
             posName: ref.read(apiServiceProvider).terminalTag(),
           );
 
-          notifyRefund(
-            ref.read,
-            orderCode: created.orderCode,
-            amount: created.totalAmount,
-            method: created.method,
-            reason: created.reason,
-          );
-
           // Slip first, sync second. The customer is standing there and the
           // paper carries the refund code support will ask them for; a slow or
           // offline network must not delay it. Failures are swallowed for the
           // same reason the close-session prints are: the refund is already
           // recorded, and a dead printer must not undo it.
           try {
-            final slip = await refundService.slipFor(created);
+            final slip = await returns.slipFor(created);
             await ref.read(printingServiceProvider).printRefundSlip(
                   data: slip,
                   // Same source the Z and session slips use.
@@ -350,9 +342,7 @@ Future<bool> showRefundDialog({
           }
 
           // Best-effort immediate push; the queue covers it when offline.
-          try {
-            await ref.read(dataSyncServiceProvider).syncRefundsBulk();
-          } catch (_) {}
+          await returns.publish();
 
           if (ctx.mounted) Navigator.pop(ctx, true);
         } catch (e) {
@@ -871,13 +861,6 @@ Future<bool> startRefund({
     return false;
   }
 
-  final api = ref.read(apiServiceProvider);
-  final sync = ref.read(dataSyncServiceProvider);
-  final refunds = ref.read(refundServiceProvider);
-  final orderRepo = ref.read(orderRepositoryProvider);
-
-  Future<Order?> localOrder() => orderRepo.findOrderRowByCode(code);
-
   // A modal spinner: the lookup is two round-trips and the cashier must not
   // start a second refund meanwhile.
   showDialog<void>(
@@ -898,28 +881,9 @@ Future<bool> startRefund({
   Order? order;
   Map<int, double> elsewhere = const {};
   try {
-    // An order of this till not on the server yet has nothing to check
-    // against: push it first.
-    final before = await localOrder();
-    if (before != null && !before.isSynced) {
-      await sync.syncSingleOrder(before.id);
-    }
-
-    final item = await api.fetchOrderForRefund(code);
-    final serverRefunds = await api.fetchRefundsForRefund(code);
-
-    // Take the server's copy (lines, payments, cancellations). Skipped by
-    // applyServerOrder only when this till still has an edit to push, in
-    // which case the local row is the newer one anyway.
-    await sync.applyServerOrder(item);
-    order = await localOrder();
-    if (order != null) {
-      elsewhere = otherTillsRefunded(
-        serverRefunds: serverRefunds,
-        localCodes: await refunds.localRefundCodes(order.id),
-        localIdByServerId: await refunds.localIdsByServerId(order.id),
-      );
-    }
+    final found = await ref.read(returnsServiceProvider).lookup(code);
+    order = found.order;
+    elsewhere = found.refundedElsewhere;
   } on RefundLookupException catch (e) {
     closeSpinner();
     if (context.mounted) {

@@ -5,6 +5,7 @@ import 'package:loggecrea/loggecrea.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_returns_service.dart';
 import '../../services/permission_service.dart';
 import '../../domain/models/refund_sync_state.dart';
 import '../../utils/app_localizations.dart';
@@ -42,7 +43,7 @@ class _OrderRefundsPanelState extends ConsumerState<OrderRefundsPanel> {
 
   Future<void> _load() async {
     final rows =
-        await ref.read(refundServiceProvider).refundsForOrder(widget.orderId);
+        await ref.read(returnsServiceProvider).refundsForOrder(widget.orderId);
     if (mounted) {
       setState(() {
         _refunds = rows;
@@ -57,7 +58,7 @@ class _OrderRefundsPanelState extends ConsumerState<OrderRefundsPanel> {
     try {
       // Rebuilt from stored rows, so a reprint is identical to the original
       // even if the catalogue changed in between.
-      final slip = await ref.read(refundServiceProvider).slipFor(refund);
+      final slip = await ref.read(returnsServiceProvider).slipFor(refund);
       final ok = await ref.read(printingServiceProvider).printRefundSlip(
             data: slip,
             businessName:

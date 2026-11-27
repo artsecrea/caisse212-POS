@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_returns_service.dart';
 import '../../providers/user_provider.dart';
 import '../../services/permission_service.dart';
 import '../../services/refund_service.dart';
@@ -60,14 +61,14 @@ class _RefundsScreenState extends ConsumerState<RefundsScreen> {
 
   Future<void> _loadLocal() async {
     setState(() => _loadingLocal = true);
-    final refunds = ref.read(refundServiceProvider);
+    final returns = ref.read(returnsServiceProvider);
     final List<Refund> rows;
     if (_period == _Period.session) {
-      rows = await refunds.localRefunds(
+      rows = await returns.refunds(
           sessionId: ref.read(currentSessionProvider)?.id);
     } else {
       final (from, _) = _range();
-      rows = await refunds.localRefunds(since: from);
+      rows = await returns.refunds(since: from);
     }
     if (mounted) {
       setState(() {
@@ -113,7 +114,7 @@ class _RefundsScreenState extends ConsumerState<RefundsScreen> {
   Future<void> _reprint(Refund r) async {
     setState(() => _printing = r.id);
     try {
-      final slip = await ref.read(refundServiceProvider).slipFor(r);
+      final slip = await ref.read(returnsServiceProvider).slipFor(r);
       await ref.read(printingServiceProvider).printRefundSlip(
             data: slip,
             businessName:
@@ -127,7 +128,7 @@ class _RefundsScreenState extends ConsumerState<RefundsScreen> {
   Future<void> _showDetails(Refund r) async {
     final l10n = AppLocalizations.of(context)!;
     final currency = ref.read(currencySymbolProvider);
-    final slip = await ref.read(refundServiceProvider).slipFor(r);
+    final slip = await ref.read(returnsServiceProvider).slipFor(r);
     final users = ref.read(userRepositoryProvider);
     String? approver;
     if (r.approvedBy != null) {
