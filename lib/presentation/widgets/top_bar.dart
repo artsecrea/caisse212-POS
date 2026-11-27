@@ -785,7 +785,7 @@ class _TopBarState extends ConsumerState<TopBar> {
     // Record the logout before clearing the user.
     final user = ref.read(currentUserProvider);
     if (user != null) {
-      ref.read(activityLogServiceProvider).logLogout(
+      ref.read(auditLogProvider).logLogout(
             userId: user.id,
             username: user.effectiveDisplayName,
           );

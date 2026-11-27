@@ -77,7 +77,7 @@ class AdminModeChip extends ConsumerWidget {
       final actor = ref.read(currentUserProvider);
       // Fire-and-forget the audit log — we don't want to await it while the
       // tree is mid-rebuild.
-      ref.read(activityLogServiceProvider).logAdminElevationGranted(
+      ref.read(auditLogProvider).logAdminElevationGranted(
             userId: actor?.id,
             username: actor?.effectiveDisplayName,
             adminUsername: result.adminUsername,
@@ -92,7 +92,7 @@ class AdminModeChip extends ConsumerWidget {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(adminElevationProvider.notifier).state = null;
       final actor = ref.read(currentUserProvider);
-      ref.read(activityLogServiceProvider).logAdminElevationRevoked(
+      ref.read(auditLogProvider).logAdminElevationRevoked(
             userId: actor?.id,
             username: actor?.effectiveDisplayName,
           );

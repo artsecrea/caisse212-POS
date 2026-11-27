@@ -86,7 +86,7 @@ class _LogsScreenState extends ConsumerState<LogsScreen> {
         : null;
 
     try {
-      final page = await ref.read(activityLogServiceProvider).getLogsPage(
+      final page = await ref.read(auditLogProvider).getLogsPage(
             from: from,
             to: to,
             search: _searchQuery,
@@ -298,7 +298,7 @@ class _LogsScreenState extends ConsumerState<LogsScreen> {
     setState(() => _isExporting = true);
     final l10n = AppLocalizations.of(context)!;
     try {
-      final count = await ref.read(activityLogServiceProvider).exportNow();
+      final count = await ref.read(auditLogProvider).exportNow();
       if (mounted) {
         SnackBarHelper.showToast(l10n.translate('logs_exported').replaceAll('{0}', '$count'), kind: ToastKind.success);
       }

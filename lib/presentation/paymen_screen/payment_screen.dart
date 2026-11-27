@@ -3407,7 +3407,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
       // Audit log: payment taken
       await ref
-          .read(activityLogServiceProvider)
+          .read(auditLogProvider)
           .logPayment(
             due.toStringAsFixed(2),
             widget.order.orderCode ?? '#${widget.order.orderId ?? ''}',
@@ -3621,7 +3621,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       }());
 
       await ref
-          .read(activityLogServiceProvider)
+          .read(auditLogProvider)
           .logPayment(
             amount.toStringAsFixed(2),
             widget.order.orderCode ?? '#$orderId',

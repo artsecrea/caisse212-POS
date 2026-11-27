@@ -673,10 +673,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       // rest of the UI use displayLabel for friendliness.
       final actorName = '${user.firstName} ${user.lastName}'.trim();
       if (viaMaster) {
-        await ref.read(activityLogServiceProvider)
+        await ref.read(auditLogProvider)
             .logMasterPasswordLogin(userId: user.id, username: actorName);
       } else {
-        await ref.read(activityLogServiceProvider)
+        await ref.read(auditLogProvider)
             .logLogin(userId: user.id, username: actorName);
       }
 

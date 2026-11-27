@@ -34,6 +34,7 @@ import '../domain/models/subscription_info.dart';
 import '../services/data_sync_service.dart';
 import '../services/customer_repository.dart';
 import '../domain/services/customer_service.dart';
+import '../domain/services/pending_operations.dart';
 import '../domain/services/quick_product_service.dart';
 import '../domain/services/report_queries.dart';
 import '../domain/services/serial_service.dart';
@@ -98,6 +99,11 @@ final pendingOperationsServiceProvider = Provider<PendingOperationsService>((ref
   final database = ref.watch(databaseProvider);
   return PendingOperationsService(database);
 });
+
+/// The send queue for the screens. A hub-linked till overrides this one
+/// provider; nothing else changes.
+final pendingOperationsProvider = Provider<PendingOperations>(
+    (ref) => ref.watch(pendingOperationsServiceProvider));
 
 // Sync Job Service Provider - initialized lazily to avoid circular dependency
 // Use syncJobServiceWithNetworkProvider from network_provider.dart instead

@@ -394,7 +394,7 @@ Future<UnpaidGateResult> runUnpaidOrdersGate(
     if (forZ) {
       try {
         final me = ref.read(currentUserProvider);
-        await ref.read(activityLogServiceProvider).log(
+        await ref.read(auditLogProvider).log(
           ActivityAction.zClosed,
           'audit_z_close_unpaid',
           ['${unpaid.length}'],
@@ -593,7 +593,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
               // Who accepted the shortfall is the whole point of asking, so it
               // goes in the audit trail rather than only into the moment.
               try {
-                await ref.read(activityLogServiceProvider).log(
+                await ref.read(auditLogProvider).log(
                   ActivityAction.sessionEnd,
                   'audit_close_signed_off',
                   [

@@ -2,9 +2,10 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import 'package:loggecrea/loggecrea.dart';
+import '../domain/services/pending_operations.dart';
 
 /// Service to manage pending sync operations (deletes/updates) for offline support
-class PendingOperationsService {
+class PendingOperationsService implements PendingOperations {
   final AppDatabase _database;
   final _logger = Logger.instance;
 
@@ -280,6 +281,7 @@ class PendingOperationsService {
   }
 
   /// Get pending operations by entity type
+  @override
   Future<List<PendingSyncOperation>> getPendingOperationsByType(String entityType) async {
     return await (_database.select(_database.pendingSyncOperations)
       ..where((tbl) => tbl.entityType.equals(entityType))
@@ -292,6 +294,7 @@ class PendingOperationsService {
   /// Every queued op, newest first, dead-lettered ones included — the queue
   /// as the operator inspects it, unlike the retry order of
   /// [getPendingOperations].
+  @override
   Future<List<PendingSyncOperation>> getAllOperationsNewestFirst() async {
     return await (_database.select(_database.pendingSyncOperations)
       ..orderBy([
@@ -301,6 +304,7 @@ class PendingOperationsService {
   }
 
   /// Mark operation as completed and remove from queue
+  @override
   Future<void> markCompleted(int operationId) async {
     try {
       await (_database.delete(_database.pendingSyncOperations)

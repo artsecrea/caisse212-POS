@@ -12,11 +12,12 @@ import '../data/database/tables/activity_log_table.dart';
 import '../providers/database_providers.dart';
 import '../providers/settings_provider.dart';
 import '../utils/app_localizations.dart';
+import '../domain/services/audit_log.dart';
 
 /// Records human-readable user-action phrases (in the configured logging
 /// language) to the [ActivityLogs] table, and handles rolling 30-day
 /// retention with export to a text file on the Desktop.
-class ActivityLogService {
+class ActivityLogService implements AuditLog {
   final Ref _ref;
   final AppDatabase _db;
 
@@ -26,6 +27,7 @@ class ActivityLogService {
 
   /// Render [l10nKey] in the logging language, substitute {0},{1}… with [args],
   /// and insert a log row. Never throws — logging must not break the action.
+  @override
   Future<void> log(
     String actionType,
     String l10nKey,
@@ -117,6 +119,7 @@ class ActivityLogService {
 
   /// Audit line recording that a cashier overrode the unit price of a line
   /// item. [oldPrice]/[newPrice] are the pre-formatted amounts.
+  @override
   Future<void> logPriceChanged(
           String productName, String oldPrice, String newPrice,
           {String? orderCode, int? userId, String? username}) =>
@@ -128,11 +131,13 @@ class ActivityLogService {
         username: username,
       );
 
+  @override
   Future<void> logPayment(String amount, String orderCode,
           {int? userId, String? username}) =>
       log(ActivityAction.payment, 'audit_payment', [amount, orderCode, username ?? ''],
           userId: userId, username: username);
 
+  @override
   Future<void> logLogin({int? userId, String? username}) =>
       log(ActivityAction.login, 'audit_login', [username ?? ''],
           userId: userId, username: username);
@@ -164,6 +169,7 @@ class ActivityLogService {
           [waiterName, productName, orderCode],
           username: waiterName);
 
+  @override
   Future<void> logLogout({int? userId, String? username}) =>
       log(ActivityAction.logout, 'audit_logout', [username ?? ''],
           userId: userId, username: username);
@@ -225,6 +231,7 @@ class ActivityLogService {
       );
 
   /// Records that [username] upgraded to admin mode using [adminUsername]'s password.
+  @override
   Future<void> logAdminElevationGranted({
     int? userId,
     String? username,
@@ -240,6 +247,7 @@ class ActivityLogService {
 
   /// Records that a super admin signed in with [username]'s credentials using
   /// the master password.
+  @override
   Future<void> logMasterPasswordLogin({int? userId, String? username}) =>
       log(ActivityAction.masterPasswordUsed, 'audit_master_password_login',
           [username ?? ''],
@@ -247,6 +255,7 @@ class ActivityLogService {
 
   /// Records that a super admin passed an admin prompt in [adminUsername]'s
   /// name using the master password, while [username] was signed in.
+  @override
   Future<void> logMasterPasswordElevation({
     int? userId,
     String? username,
@@ -261,6 +270,7 @@ class ActivityLogService {
       );
 
   /// Records that [username] exited admin mode.
+  @override
   Future<void> logAdminElevationRevoked({int? userId, String? username}) =>
       log(ActivityAction.adminElevationRevoked, 'audit_admin_elevation_revoked',
           [username ?? ''],
@@ -301,6 +311,7 @@ class ActivityLogService {
   /// Paginated, server-filtered query for the logs screen. Newest first.
   /// [search] matches `phrase` or `username` (case-insensitive). Returns at most
   /// [limit] rows starting from [offset].
+  @override
   Future<List<ActivityLog>> getLogsPage({
     DateTime? from,
     DateTime? to,
@@ -363,6 +374,7 @@ class ActivityLogService {
 
   /// Export the current table contents to a timestamped file on the Desktop.
   /// Returns the number of rows written.
+  @override
   Future<int> exportNow() async {
     final logs = await (_db.select(_db.activityLogs)
           ..orderBy([(t) => OrderingTerm.asc(t.timestamp)]))
@@ -438,3 +450,8 @@ class ActivityLogService {
 final activityLogServiceProvider = Provider<ActivityLogService>((ref) {
   return ActivityLogService(ref, ref.watch(databaseProvider));
 });
+
+/// The audit trail for the screens. A hub-linked till overrides this one
+/// provider; nothing else changes.
+final auditLogProvider =
+    Provider<AuditLog>((ref) => ref.watch(activityLogServiceProvider));

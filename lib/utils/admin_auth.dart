@@ -229,7 +229,7 @@ Future<AdminElevation?> showAdminCredentialDialog(
             if (r.viaMasterPassword) {
               final actor = ref.read(currentUserProvider);
               unawaited(ref
-                  .read(activityLogServiceProvider)
+                  .read(auditLogProvider)
                   .logMasterPasswordElevation(
                     userId: actor?.id,
                     username: actor?.effectiveDisplayName,

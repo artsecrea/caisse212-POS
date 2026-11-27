@@ -77,7 +77,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
   Future<void> _loadPendingOperationsCount() async {
     try {
-      final pendingOpsService = ref.read(pendingOperationsServiceProvider);
+      final pendingOpsService = ref.read(pendingOperationsProvider);
       final operations = await pendingOpsService.getPendingOperationsByType('SESSION');
       if (mounted) {
         setState(() => _pendingOperationsCount = operations.length);
@@ -813,7 +813,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
 
   Future<void> _showPendingOperationsDialog() async {
     final l10n = AppLocalizations.of(context)!;
-    final pendingOpsService = ref.read(pendingOperationsServiceProvider);
+    final pendingOpsService = ref.read(pendingOperationsProvider);
     final operations = await pendingOpsService.getPendingOperationsByType('SESSION');
 
     if (!mounted) return;

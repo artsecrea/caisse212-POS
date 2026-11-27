@@ -333,7 +333,7 @@ class OrderPanel extends ConsumerWidget {
         final actor = ref.read(currentUserProvider);
         final currency = ref.read(settingsProvider).currency;
         ref
-            .read(activityLogServiceProvider)
+            .read(auditLogProvider)
             .logPriceChanged(
               item.displayName,
               CurrencyFormatter.formatWithCurrency(item.finalPrice, currency),

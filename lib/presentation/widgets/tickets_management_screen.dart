@@ -86,7 +86,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
 
   Future<void> _loadPendingOperationsCount() async {
     try {
-      final pendingOpsService = ref.read(pendingOperationsServiceProvider);
+      final pendingOpsService = ref.read(pendingOperationsProvider);
       final operations = await pendingOpsService.getPendingOperationsByType('TICKET');
       if (mounted) {
         setState(() {
@@ -248,7 +248,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   }
 
   Future<void> _showPendingOperationsDialog() async {
-    final pendingOpsService = ref.read(pendingOperationsServiceProvider);
+    final pendingOpsService = ref.read(pendingOperationsProvider);
     final operations = await pendingOpsService.getPendingOperationsByType('TICKET');
 
     if (!mounted) return;

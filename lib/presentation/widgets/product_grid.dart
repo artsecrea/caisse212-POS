@@ -1180,7 +1180,7 @@ class _ProductCard extends ConsumerWidget {
     if (priceOverride != null && priceOverride >= 0 && priceOverride != basePrice) {
       final actor = ref.read(currentUserProvider);
       final currency = ref.read(settingsProvider).currency;
-      ref.read(activityLogServiceProvider).logPriceChanged(
+      ref.read(auditLogProvider).logPriceChanged(
             variantName ?? product.name,
             CurrencyFormatter.formatWithCurrency(basePrice, currency),
             CurrencyFormatter.formatWithCurrency(priceOverride, currency),

@@ -2391,7 +2391,7 @@ class _OrdersManagementScreenState
   Future<void> _showPendingOperationsDialog() async {
     final l10n = AppLocalizations.of(context)!;
     try {
-      final pendingOps = ref.read(pendingOperationsServiceProvider);
+      final pendingOps = ref.read(pendingOperationsProvider);
       final operations = await pendingOps.getAllOperationsNewestFirst();
 
       if (!mounted) return;
