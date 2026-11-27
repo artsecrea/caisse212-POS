@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/domain/services/catalogue_service.dart';
 import 'package:caisse212/providers/catalogue_repository.dart';
 import 'package:caisse212/providers/database_providers.dart';
 
@@ -13,14 +14,14 @@ import 'package:caisse212/providers/database_providers.dart';
 void main() {
   late AppDatabase db;
   late ProviderContainer container;
-  late CatalogueRepository repo;
+  late CatalogueService repo;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     container = ProviderContainer(overrides: [
       databaseProvider.overrideWithValue(db),
     ]);
-    repo = container.read(catalogueRepositoryProvider);
+    repo = container.read(catalogueServiceProvider);
   });
   tearDown(() {
     container.dispose();

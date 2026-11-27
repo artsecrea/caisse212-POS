@@ -253,7 +253,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   }
 
   Future<void> _handleStaticBarcode(String barcode) async {
-    final catalogue = ref.read(catalogueRepositoryProvider);
+    final catalogue = ref.read(catalogueServiceProvider);
 
     try {
       // Match a scanned/typed code against barcode OR reference (SKU).

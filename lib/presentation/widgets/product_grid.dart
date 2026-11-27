@@ -1267,7 +1267,7 @@ class _ProductCard extends ConsumerWidget {
     if (ok != true) return;
 
     await ref
-        .read(catalogueRepositoryProvider)
+        .read(catalogueServiceProvider)
         .setProductAvailability(product.id, !makeUnavailable);
     ref.read(waiterKitchenEventServiceProvider).productAvailabilityChanged(
           productId: product.id,

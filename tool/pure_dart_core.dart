@@ -19,6 +19,7 @@ import 'package:caisse212/domain/models/split_bill.dart';
 import 'package:caisse212/domain/models/table_occupancy.dart';
 import 'package:caisse212/domain/models/ticket_read_models.dart';
 import 'package:caisse212/domain/services/cash_session_service.dart';
+import 'package:caisse212/domain/services/catalogue_service.dart';
 import 'package:caisse212/domain/services/customer_service.dart';
 import 'package:caisse212/domain/services/day_service.dart';
 import 'package:caisse212/domain/services/floor_queries.dart';

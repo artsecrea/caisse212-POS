@@ -899,7 +899,7 @@ class _TicketsManagementScreenState extends ConsumerState<TicketsManagementScree
   void _showTicketDetails(Ticket ticket, int itemCount) async {
     // Get order products for this ticket
     final ticketRepo = ref.read(ticketQueriesProvider);
-    final catalogueRepo = ref.read(catalogueRepositoryProvider);
+    final catalogueRepo = ref.read(catalogueServiceProvider);
     final items = await ticketRepo.linesOfTicket(ticket.id);
 
     // Get product names for each item

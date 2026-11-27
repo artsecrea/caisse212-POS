@@ -22,7 +22,7 @@ import 'side_panel.dart';
 final serviceCategoryNamesProvider = FutureProvider<Map<int, String>>((
   ref,
 ) {
-  return ref.watch(catalogueRepositoryProvider).categoryNamesById();
+  return ref.watch(catalogueServiceProvider).categoryNamesById();
 });
 
 /// One line of the reservation being built: a timed service on a person or

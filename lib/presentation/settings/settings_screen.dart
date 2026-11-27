@@ -4763,7 +4763,7 @@ class _ScaleConfigSectionState extends ConsumerState<_ScaleConfigSection> {
     if (enabled.isEmpty) return;
 
     try {
-      final all = await ref.read(catalogueRepositoryProvider).allProducts();
+      final all = await ref.read(catalogueServiceProvider).allProducts();
       // Export only products that carry an MBW code — not the whole catalog.
       final products = all
           .where((p) =>

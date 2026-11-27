@@ -1,10 +1,11 @@
 import 'dart:async';
 
-import 'package:drift/drift.dart' show OrderingTerm, BooleanExpressionOperators;
+import 'package:drift/drift.dart' show OrderingTerm;
 import '../domain/models/component_rules.dart';
 import '../domain/models/permission_rules.dart';
 import '../services/local_floor_service.dart';
 import 'order_provider.dart' show orderQueriesProvider;
+import 'catalogue_repository.dart' show catalogueServiceProvider;
 import 'floor_repository.dart' show floorQueriesProvider;
 import 'ticket_provider.dart' show ticketQueriesProvider;
 import 'package:flutter/foundation.dart';
@@ -46,7 +47,6 @@ import '../services/unpaid_orders_service.dart';
 import '../services/pending_operations_service.dart';
 import '../services/sync_job_service.dart';
 import '../services/barcode_scanner_service.dart';
-import '../utils/pos_log.dart';
 
 // Database Provider
 final databaseProvider = Provider<AppDatabase>((ref) {
@@ -507,26 +507,13 @@ final refundPolicyProvider =
 });
 
 // The order-tag catalogue, in the back office's order.
-final orderTagsProvider = StreamProvider<List<db.OrderTag>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.orderTags)
-        ..orderBy([
-          (t) => OrderingTerm(expression: t.sortOrder),
-          (t) => OrderingTerm(expression: t.label),
-        ]))
-      .watch();
-});
+final orderTagsProvider = StreamProvider<List<db.OrderTag>>(
+    (ref) => ref.watch(catalogueServiceProvider).watchOrderTags());
 
 // Categories Provider
 final categoriesProvider = StreamProvider<List<db.Category>>((ref) {
-  final database = ref.watch(databaseProvider);
+  final stream = ref.watch(catalogueServiceProvider).watchActiveCategories();
   final scope = ref.watch(categoryScopeProvider);
-
-  final stream = (database.select(database.categories)
-    ..where((tbl) => tbl.isActive.equals(true))
-    ..orderBy([(tbl) => OrderingTerm(expression: tbl.displayOrder)])
-    ..watch()).watch();
-
   if (scope == null) return stream;
   return stream.map((categories) => scopedCategories(categories, scope));
 });
@@ -564,7 +551,7 @@ final productSearchQueryProvider = StateProvider<String>((ref) => '');
 
 // Products by Category Provider
 final productsByCategoryProvider = StreamProvider.autoDispose.family<List<db.Product>, int?>((ref, categoryId) {
-  final database = ref.watch(databaseProvider);
+  final catalogue = ref.watch(catalogueServiceProvider);
   final scope = ref.watch(categoryScopeProvider);
 
   // Products keep syncing for every category; a product whose category is out
@@ -578,25 +565,19 @@ final productsByCategoryProvider = StreamProvider.autoDispose.family<List<db.Pro
   // categoryId == -1: Show all products
   // categoryId > 0: Show products for specific category
   if (categoryId == null) {
-    return scoped((database.select(database.products)
-      ..where((tbl) => tbl.isActive.equals(true))
-      ..watch()).watch());
+    return scoped(catalogue.watchActiveProducts());
   }
 
   if (categoryId == -1) {
     // Special value: Show ALL products
-    return scoped((database.select(database.products)
-      ..where((tbl) => tbl.isActive.equals(true))
-      ..watch()).watch());
+    return scoped(catalogue.watchActiveProducts());
   }
 
   if (scope != null && !scope.contains(categoryId)) {
     return Stream.value(const <db.Product>[]);
   }
 
-  return (database.select(database.products)
-    ..where((tbl) => tbl.isActive.equals(true) & tbl.categoryId.equals(categoryId))
-    ..watch()).watch();
+  return catalogue.watchActiveProducts(categoryId: categoryId);
 });
 
 // Filtered Products Provider (with search query)
@@ -643,76 +624,18 @@ final orderWaiterIdsProvider = StreamProvider<Map<int, int>>(
     (ref) => ref.watch(orderQueriesProvider).watchWaiterIdsByOrder());
 
 // Commercials Provider
-final commercialsProvider = StreamProvider<List<db.Commercial>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.commercials)..watch()).watch();
-});
-
-// Components Provider
-final componentsProvider = StreamProvider<List<db.Component>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.components)..watch()).watch();
-});
+final commercialsProvider = StreamProvider<List<db.Commercial>>(
+    (ref) => ref.watch(catalogueServiceProvider).watchCommercials());
 
 // Component Groups Provider
-final componentGroupsProvider = StreamProvider<List<db.ComponentGroup>>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.componentGroups)
-    ..orderBy([(tbl) => OrderingTerm(expression: tbl.displayOrder)])
-    ..watch()).watch();
-});
+final componentGroupsProvider = StreamProvider<List<db.ComponentGroup>>(
+    (ref) => ref.watch(catalogueServiceProvider).watchComponentGroups());
 
 // Product Components by Product ID Provider (components available for a product)
 // Returns a list of maps containing both Component and ProductComponent data
-final productComponentsProvider = StreamProvider.autoDispose.family<List<Map<String, dynamic>>, int>((ref, productId) async* {
-  final database = ref.watch(databaseProvider);
-
-  // Get product-component relationships with constraints
-  final productComponents = await (database.select(database.productComponents)
-    ..where((tbl) => tbl.productId.equals(productId))).get();
-  
-  posLog(productComponents.toString());
-
-
-  if (productComponents.isEmpty) {
-    yield [];
-    return;
-  }
-
-  // Get the actual components with their constraints. 86'd components are
-  // left out of ordering entirely — the row stays for history, but nobody can
-  // add one to a ticket.
-  final componentIds = productComponents.map((pc) => pc.componentId).toList();
-  final components = await (database.select(database.components)
-    ..where((tbl) => tbl.id.isIn(componentIds))
-    ..where((tbl) => tbl.isActive.equals(true))
-    ..orderBy([
-      (tbl) => OrderingTerm(expression: tbl.displayOrder),
-      (tbl) => OrderingTerm(expression: tbl.name),
-    ])).get();
-
-  // Combine component data with relationship constraints
-  final result = components.map((component) {
-    final productComponent = productComponents.firstWhere(
-      (pc) => pc.componentId == component.id,
-    );
-
-    return {
-      'component': component,
-      'isRequired': productComponent.isRequired,
-      'minQuantity': productComponent.minQuantity,
-      'maxQuantity': productComponent.maxQuantity,
-      // The resolved price: this link's override, or the component's own.
-      // Everything downstream — pricing, the free allowance, removal charges —
-      // reads this one number, so the precedence lives in exactly one place.
-      'defaultPrice': productComponent.defaultPrice ?? component.price,
-      'defaultQuantity': productComponent.defaultQuantity,
-      'chargeOnRemoval': productComponent.chargeOnRemoval,
-    };
-  }).toList();
-
-  yield result;
-});
+final productComponentsProvider = StreamProvider.autoDispose
+    .family<List<Map<String, dynamic>>, int>((ref, productId) =>
+        ref.watch(catalogueServiceProvider).productComponentsOf(productId));
 
 /// The component-group rules in force for one product.
 ///
@@ -722,7 +645,7 @@ final productComponentsProvider = StreamProvider.autoDispose.family<List<Map<Str
 /// with no override row at all is used exactly as the catalogue defines it.
 final productComponentGroupRulesProvider = FutureProvider.autoDispose
     .family<Map<int?, ComponentGroupRule>, int>((ref, productId) =>
-        loadComponentGroupRules(ref.watch(databaseProvider), productId));
+        ref.watch(catalogueServiceProvider).componentGroupRulesOf(productId));
 
 /// The resolution behind [productComponentGroupRulesProvider], callable
 /// without a ref so the kitchen ticket reads the rules exactly as the picker
@@ -780,81 +703,14 @@ final ticketDraftTicketCountProvider = StreamProvider.autoDispose
         ref.watch(ticketQueriesProvider).watchDraftTicketCount(orderId));
 
 // Product Variants Provider - fetches all variants for a product with their attribute values
-final productVariantsProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, int>((ref, productId) async {
-  final database = ref.watch(databaseProvider);
-
-  // Get all variants for this product
-  final variants = await (database.select(database.productVariants)
-    ..where((tbl) => tbl.productId.equals(productId))
-    ..where((tbl) => tbl.isActive.equals(true))).get();
-
-  if (variants.isEmpty) {
-    return [];
-  }
-
-  // Get all attribute values for these variants
-  final variantIds = variants.map((v) => v.id).toList();
-  final attributeValues = await (database.select(database.variantAttributeValues)
-    ..where((tbl) => tbl.variantId.isIn(variantIds))).get();
-
-  // Group attribute values by variant
-  final result = variants.map((variant) {
-    final variantAttrs = attributeValues
-        .where((av) => av.variantId == variant.id)
-        .toList();
-
-    return {
-      'variant': variant,
-      'attributeValues': variantAttrs,
-    };
-  }).toList();
-
-  return result;
-});
+final productVariantsProvider = FutureProvider.autoDispose
+    .family<List<Map<String, dynamic>>, int>((ref, productId) =>
+        ref.watch(catalogueServiceProvider).variantsOf(productId));
 
 // Get unique attributes for a product (for dropdown labels)
-final productAttributesProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, int>((ref, productId) async {
-  final database = ref.watch(databaseProvider);
-
-  // Get all variants for this product
-  final variants = await (database.select(database.productVariants)
-    ..where((tbl) => tbl.productId.equals(productId))
-    ..where((tbl) => tbl.isActive.equals(true))).get();
-
-  if (variants.isEmpty) {
-    return [];
-  }
-
-  // Get all attribute values for these variants
-  final variantIds = variants.map((v) => v.id).toList();
-  final attributeValues = await (database.select(database.variantAttributeValues)
-    ..where((tbl) => tbl.variantId.isIn(variantIds))).get();
-
-  // Group by attributeId to get unique attributes with their possible values
-  final attributesMap = <int, Map<String, dynamic>>{};
-
-  for (final av in attributeValues) {
-    if (!attributesMap.containsKey(av.attributeId)) {
-      attributesMap[av.attributeId] = {
-        'attributeId': av.attributeId,
-        'attributeName': av.attributeName ?? 'Attribute ${av.attributeId}',
-        'values': <Map<String, dynamic>>[],
-      };
-    }
-
-    // Add value if not already present
-    final values = attributesMap[av.attributeId]!['values'] as List<Map<String, dynamic>>;
-    final exists = values.any((v) => v['valueId'] == av.valueId);
-    if (!exists) {
-      values.add({
-        'valueId': av.valueId,
-        'value': av.value ?? 'Value ${av.valueId}',
-      });
-    }
-  }
-
-  return attributesMap.values.toList();
-});
+final productAttributesProvider = FutureProvider.autoDispose
+    .family<List<Map<String, dynamic>>, int>((ref, productId) =>
+        ref.watch(catalogueServiceProvider).attributesOf(productId));
 
 // Waiter Providers
 
@@ -876,21 +732,3 @@ final waiterAreasProvider = FutureProvider.autoDispose
 final waiterStatsProvider = FutureProvider.autoDispose
     .family<Map<String, dynamic>, int>((ref, waiterId) =>
         ref.watch(floorQueriesProvider).waiterStats(waiterId));
-
-/// Check if a waiter can serve an area
-final canWaiterServeAreaProvider = FutureProvider.autoDispose.family<bool, ({int waiterId, int areaId})>((ref, params) async {
-  final database = ref.watch(databaseProvider);
-
-  // Get waiter's assigned areas
-  final waiterAreas = await (database.select(database.waiterAreas)
-    ..where((tbl) => tbl.waiterId.equals(params.waiterId)))
-    .get();
-
-  // If no areas assigned, waiter can serve all areas
-  if (waiterAreas.isEmpty) {
-    return true;
-  }
-
-  // Check if the area is in the waiter's assigned areas
-  return waiterAreas.any((wa) => wa.areaId == params.areaId);
-});

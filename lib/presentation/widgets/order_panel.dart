@@ -294,7 +294,7 @@ class OrderPanel extends ConsumerWidget {
       double? newTva;
       final zeroPriceRate = ref.read(settingsProvider).zeroPriceTvaRate;
       if (priceOverride != null && priceOverride >= 0 && zeroPriceRate > 0) {
-        final catalogueRepo = ref.read(catalogueRepositoryProvider);
+        final catalogueRepo = ref.read(catalogueServiceProvider);
         final catalogue = item.variantId != null
             ? await catalogueRepo
                   .variantById(item.variantId!)

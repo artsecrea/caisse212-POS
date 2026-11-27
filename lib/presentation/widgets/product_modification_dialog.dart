@@ -216,7 +216,7 @@ class _ProductModificationDialogState extends ConsumerState<ProductModificationD
     // Load plannable flag for this product
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final product =
-          await ref.read(catalogueRepositoryProvider).productById(_productId);
+          await ref.read(catalogueServiceProvider).productById(_productId);
       if (product != null && mounted) {
         setState(() {
           _isPlannable = product.isPlannable;

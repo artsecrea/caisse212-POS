@@ -38,7 +38,7 @@ void main() {
       kitchenBoardServiceProvider,
       zDayResolverProvider,
       customerServiceProvider,
-      catalogueRepositoryProvider,
+      catalogueServiceProvider,
       floorQueriesProvider,
     ];
     for (final p in providers) {

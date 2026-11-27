@@ -87,7 +87,7 @@ Future<bool> showRefundDialog({
   final fmt = ref.read(currencyFormatterProvider);
   final returns = ref.read(returnsServiceProvider);
   final orderRepo = ref.read(orderQueriesProvider);
-  final catalogue = ref.read(catalogueRepositoryProvider);
+  final catalogue = ref.read(catalogueServiceProvider);
   final serials = ref.read(serialServiceProvider);
 
   // A refund line points at the SERVER id of an order line. An order that has

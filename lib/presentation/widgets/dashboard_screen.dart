@@ -78,7 +78,7 @@ final _dashboardStatsProvider =
         (ref, key) async {
   final orderRepo = ref.watch(orderQueriesProvider);
   final ticketRepo = ref.watch(ticketQueriesProvider);
-  final catalogue = ref.watch(catalogueRepositoryProvider);
+  final catalogue = ref.watch(catalogueServiceProvider);
   final dayStart = DateTime(key.date.year, key.date.month, key.date.day);
   final dayEnd = dayStart.add(const Duration(days: 1));
 

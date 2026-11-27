@@ -59,7 +59,7 @@ class _OrderConfirmationScreenState
 
   Future<List<Map<String, dynamic>>> _resolveExternalItems(
       ExternalQueueItem item) async {
-    final catalogue = ref.read(catalogueRepositoryProvider);
+    final catalogue = ref.read(catalogueServiceProvider);
     final result = <Map<String, dynamic>>[];
     for (final qi in item.order.items) {
       final product = await catalogue.productById(qi.productId);
