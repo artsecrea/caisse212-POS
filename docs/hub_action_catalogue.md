@@ -305,3 +305,50 @@ Reads: `openZ`, `z(id)`, `recentZs`, `sessionsOfZ`, `zDayOptions`, `closeBlock(z
 7. **`CustomerService` / `NotesService`.** Low value and low risk. Do them last, or alongside step 3 for the customer upsert inside `confirmExternal`.
 
 Step 0 for every interface: an abstract class, a `Local…` implementation that only delegates to today's code (no behaviour change), and a provider override point, so the Remote swap is one `ProviderScope` override. Tests can then pin the Local implementation before the call sites move.
+
+---
+
+## 6. As built (2026-11-27): the swap points
+
+Every screen now reaches business data through one of these interfaces (`lib/domain/services`, plain Dart). Standalone, each provider builds the local implementation; a hub-linked till overrides the provider, and nothing else changes. `test/screens_use_service_interfaces_test.dart` fails if a screen reads the database, builds a local service, or reads a provider typed by a concrete class.
+
+| Interface | Provider to override | Local implementation |
+|---|---|---|
+| **Actions** | | |
+| `OrderService` | `orderServiceProvider` | `LocalOrderService` |
+| `KitchenService` | `kitchenServiceProvider` | `LocalKitchenService` |
+| `FloorService` | `floorServiceProvider` | `LocalFloorService` |
+| `PaymentService` | `paymentServiceProvider` | `LocalPaymentService` |
+| `CashSessionService` | `cashSessionServiceProvider` | `LocalCashSessionService` |
+| `DayService` (Z) | `dayServiceProvider` | `LocalDayService` (runs `z_actions.dart`) |
+| `ReturnsService` | `returnsServiceProvider` | `LocalReturnsService` |
+| `CustomerService` | `customerServiceProvider` | `CustomerRepository` |
+| `ReservationService` | `reservationServiceProvider` | `LocalReservationService` |
+| `ExternalOrderService` | `externalOrderQueueServiceProvider` | `ExternalOrderQueueService` |
+| `SerialService` | `serialServiceProvider` | `LocalSerialService` |
+| `QuickProductService` | `quickProductServiceProvider` | `LocalQuickProductService` |
+| `NotesService` | `notesServiceProvider` | `NotesRepository` |
+| `DeviceService` | `deviceServiceProvider` | `DeviceRepository` |
+| `UserService` | `userServiceProvider` | `UserRepository` |
+| `CatalogueService` | `catalogueServiceProvider` | `CatalogueRepository` |
+| `AuditLog` | `auditLogProvider` | `ActivityLogService` |
+| `PendingOperations` | `pendingOperationsProvider` | `PendingOperationsService` |
+| `SyncService` | `syncServiceProvider`, `syncServiceFactoryProvider` | `LocalSyncService` over `DataSyncService` |
+| **Reads** | | |
+| `OrderQueries` | `orderQueriesProvider` | `OrderRepository` |
+| `TicketQueries` | `ticketQueriesProvider` | `TicketRepository` |
+| `SessionQueries` | `sessionQueriesProvider` | `SessionService` |
+| `ZQueries` | `zQueriesProvider` | `ZService` |
+| `ReportQueries` (X/Z, session, products, staff) | `reportQueriesProvider` | `DailySummaryService` |
+| `UnpaidQueries` | `unpaidQueriesProvider` | `UnpaidOrdersService` |
+| `FloorQueries` (areas, tables, waiters) | `floorQueriesProvider` | `FloorRepository` |
+| `KdsStatsQueries` | `kdsStatsServiceProvider` | `KdsStatsService` |
+
+The reactive providers the screens watch (`areasProvider`, `categoriesProvider`, `productComponentsProvider`, `orderCancellationsProvider`, `unpaidTablesProvider`, `openZStreamProvider`, …) no longer query Drift: each calls a `watch…` method of one of these interfaces, so they follow the override.
+
+**Still outside the interfaces**, deliberately or for a later step:
+- **The LAN server's writes** (waiter create/add/remove, kiosk create) in `server_service.dart`. Standalone only: with a hub, the waiter app and the KDS talk to the hub.
+- **Direct cloud calls from screens** (`apiServiceProvider`, 18 files: tenant sign-in, login checks, the API tester, sign-out). With a hub, those that touch business data must go through the hub.
+- **Printing** reads the till's synced catalogue copy for option types (`printing_service.dart`). The printer is the till's own; it stays local.
+- Services that build `SessionService` themselves inside the service layer (`pos_notifications.dart`, `update_resume_service.dart`, `refund_sandbox.dart`). They are behind the interfaces, not called from screens.
+- **Contract tests** exist for the action interfaces (`test/contracts/`). The read interfaces are pinned by the repositories' own tests; a hub implementation needs contract tests of its own for them, or shared golden fixtures.
