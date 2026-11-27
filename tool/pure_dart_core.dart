@@ -24,6 +24,7 @@ import 'package:caisse212/domain/services/catalogue_service.dart';
 import 'package:caisse212/domain/services/customer_service.dart';
 import 'package:caisse212/domain/services/day_service.dart';
 import 'package:caisse212/domain/services/device_service.dart';
+import 'package:caisse212/domain/services/external_order_service.dart';
 import 'package:caisse212/domain/services/floor_queries.dart';
 import 'package:caisse212/domain/services/floor_service.dart';
 import 'package:caisse212/domain/services/kds_stats_queries.dart';

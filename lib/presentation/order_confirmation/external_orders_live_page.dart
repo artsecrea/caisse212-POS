@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../utils/customer_display.dart';
+import '../../domain/models/live_external_order.dart';
 import '../../providers/external_orders_live_provider.dart';
 import '../../providers/network_provider.dart';
 import '../widgets/order_source_badge.dart';

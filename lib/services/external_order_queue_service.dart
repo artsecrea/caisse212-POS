@@ -1,13 +1,16 @@
-import 'package:drift/drift.dart' show Value;
+import 'package:drift/drift.dart';
 import 'package:loggecrea/loggecrea.dart';
 
 import '../data/database/app_database.dart';
 import '../domain/models/external_order_models.dart';
+import '../domain/models/live_external_order.dart';
+import '../domain/models/order_money_rows.dart' show componentsPerUnitOf;
 import 'api_service.dart';
 import 'customer_repository.dart';
 import 'product_cost_resolver.dart';
 import 'external_item_resolver.dart';
 import 'z_day_resolver.dart';
+import '../domain/services/external_order_service.dart';
 
 /// Handles the external order queue.
 ///
@@ -20,7 +23,7 @@ import 'z_day_resolver.dart';
 /// `orders` table; queue endpoints only flip queue state and forward it
 /// to DealUp. The locally-inserted order row goes up to the server on
 /// the next normal sync push (`PUT /pos/orders/{code}`).
-class ExternalOrderQueueService {
+class ExternalOrderQueueService implements ExternalOrderService {
   final ApiService _api;
   final AppDatabase _db;
   // Read on each confirm so a settings change applies without a rebuild.
@@ -69,6 +72,7 @@ class ExternalOrderQueueService {
   /// server still shows its actionable orders instead of an error screen. The
   /// fallback is synthesised into a single page and only makes sense for the
   /// PENDING view, which is what `/pending` returns.
+  @override
   Future<QueuePage> browse({
     int page = 0,
     int size = 20,
@@ -115,6 +119,103 @@ class ExternalOrderQueueService {
 
   /// Per-source tallies for the filter chips. Never throws — a missing badge
   /// must not take the screen down with it.
+  /// Orders already accepted into the POS from an external platform, from
+  /// the last 24 hours, newest first, as they change: read from the local
+  /// database, not the queue endpoint, so the counter sees what the order
+  /// holds now, edits included, and keeps working offline. "External" is
+  /// `source` set to anything but POS.
+  @override
+  Stream<List<LiveExternalOrder>> watchLiveOrders() {
+    final db = _db;
+
+    // Yesterday, not today: a late-night order handed over after midnight is
+    // still the order in front of you.
+    final since = DateTime.now().subtract(const Duration(hours: 24));
+
+    final query = db.select(db.orders)
+      ..where((o) =>
+          o.source.isNotNull() &
+          o.source.equals('POS').not() &
+          o.date.isBiggerOrEqualValue(since))
+      ..orderBy([(o) => OrderingTerm.desc(o.date)]);
+
+    return query.watch().asyncMap((orders) async {
+      if (orders.isEmpty) return const <LiveExternalOrder>[];
+
+      final orderIds = orders.map((o) => o.id).toList();
+      final lines = await (db.select(db.orderProducts)
+            ..where((p) => p.orderId.isIn(orderIds)))
+          .get();
+
+      final components = lines.isEmpty
+          ? const <OrderProductComponent>[]
+          : await (db.select(db.orderProductComponents)
+                ..where((c) => c.orderProductId.isIn([for (final l in lines) l.id])))
+              .get();
+      final componentsByLine = <int, List<OrderProductComponent>>{};
+      for (final c in components) {
+        componentsByLine.putIfAbsent(c.orderProductId, () => []).add(c);
+      }
+      final perUnit = {
+        for (final e in componentsByLine.entries)
+          e.key: componentsPerUnitOf(e.value),
+      };
+
+      final productIds = lines.map((l) => l.productId).toSet().toList();
+      final products = productIds.isEmpty
+          ? const <Product>[]
+          : await (db.select(db.products)..where((p) => p.id.isIn(productIds)))
+              .get();
+      final names = {for (final p in products) p.id: p.name};
+
+      final clientIds =
+          orders.map((o) => o.clientId).whereType<int>().toSet().toList();
+      final customers = clientIds.isEmpty
+          ? const <Customer>[]
+          : await (db.select(db.customers)..where((c) => c.id.isIn(clientIds)))
+              .get();
+      final byClient = {for (final c in customers) c.id: c};
+
+      final byOrder = <int, List<OrderProduct>>{};
+      for (final l in lines) {
+        byOrder.putIfAbsent(l.orderId, () => []).add(l);
+      }
+
+      return [
+        for (final o in orders)
+          LiveExternalOrder(
+            order: o,
+            lines: byOrder[o.id] ?? const [],
+            productNames: names,
+            componentsPerUnit: perUnit,
+            customer: o.clientId == null ? null : byClient[o.clientId!],
+          ),
+      ];
+    });
+  }
+
+  /// Tell the platform [order] is waiting on the counter: a signal, not a
+  /// state change — only `deliveryStatus` advances, and a failure is
+  /// reported, never queued (a late "ready" is worse than none). False
+  /// when the order has not reached the backend yet or the network is down.
+  @override
+  Future<bool> signalReady(Order order) async {
+    final api = _api;
+    final db = _db;
+
+    final signalled = await api.signalOrderReady(order.code);
+    if (!signalled) return false;
+
+    await (db.update(db.orders)..where((o) => o.id.equals(order.id)))
+        .write(OrdersCompanion(
+      deliveryStatus: const Value(DeliveryStatus.ready),
+      updatedAt: Value(DateTime.now()),
+    ));
+    Logger.instance.info('Signalled ready for pickup: order ${order.code}');
+    return true;
+  }
+
+  @override
   Future<QueueCounts> counts({String? status}) async {
     final raw = await _api.fetchQueueCounts(status: status);
     return QueueCounts.fromJson(raw);
@@ -136,6 +237,7 @@ class ExternalOrderQueueService {
   /// the queue view and surface a "taken" toast.
   ///
   /// Returns the local order row id.
+  @override
   Future<int> confirmAndSave(ExternalQueueItem item,
       {int? confirmedByUserId, int? overrideClientId}) async {
     // 1. Server-side confirm. Throws QueueItemTakenException on 409 so
@@ -173,6 +275,7 @@ class ExternalOrderQueueService {
   /// the audit trail.
   ///
   /// Returns the local order row id.
+  @override
   Future<int> cancelAndSave(ExternalQueueItem item,
       {int? confirmedByUserId}) async {
     final raw = await _api.cancelQueueItem(item.id);

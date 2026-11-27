@@ -3,7 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
-import 'package:caisse212/providers/external_orders_live_provider.dart';
+import 'package:caisse212/domain/models/live_external_order.dart';
 
 /// The counter view of a platform order showed a total without the options
 /// and without the order percentage, so it disagreed with the till.
