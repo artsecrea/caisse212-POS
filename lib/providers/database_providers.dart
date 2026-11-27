@@ -34,7 +34,9 @@ import '../domain/models/subscription_info.dart';
 import '../services/data_sync_service.dart';
 import '../services/customer_repository.dart';
 import '../domain/services/customer_service.dart';
+import '../domain/services/quick_product_service.dart';
 import '../domain/services/report_queries.dart';
+import '../domain/services/serial_service.dart';
 import '../domain/services/session_queries.dart';
 import '../domain/services/unpaid_queries.dart';
 import '../domain/services/z_queries.dart';
@@ -235,17 +237,21 @@ final customerServiceProvider = Provider<CustomerService>((ref) {
   return CustomerRepository(database);
 });
 
+/// Creating a product from the till. A hub-linked till overrides this one
+/// provider; nothing else changes.
 final quickProductServiceProvider = Provider<QuickProductService>((ref) {
   final db = ref.watch(databaseProvider);
   final api = ref.watch(apiServiceProvider);
-  return QuickProductService(api, db, DataSyncService(db, api));
+  return LocalQuickProductService(api, db, DataSyncService(db, api));
 });
 
 // ── Serial-managed products (unit-level stock) ──────────────────────────────
 
+/// Unit-level stock for the screens. A hub-linked till overrides this one
+/// provider; nothing else changes.
 final serialServiceProvider = Provider<SerialService>((ref) {
   final database = ref.watch(databaseProvider);
-  return SerialService(database);
+  return LocalSerialService(database);
 });
 
 /// Units of [productId] still sellable. A stream, not a future, so a serial

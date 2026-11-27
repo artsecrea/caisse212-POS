@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/providers/database_providers.dart';
-import 'package:caisse212/services/serial_service.dart';
+import 'package:caisse212/domain/services/serial_service.dart';
 
 /// Serial lookups for the refund slip and the double-sale alert.
 void main() {

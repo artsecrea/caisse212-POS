@@ -1,19 +1,21 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import '../domain/services/serial_service.dart';
 
 /// Local serial (unit-level stock) operations for serial-tracked products.
 ///
 /// The POS never creates serials — the web dashboard does that at reception.
 /// This owns the three things the till needs: answer "is this product tracked",
 /// list the units still sellable, and hold a unit while it sits in a basket.
-class SerialService {
+class LocalSerialService implements SerialService {
   final AppDatabase _db;
 
-  SerialService(this._db);
+  LocalSerialService(this._db);
 
   /// Tracked = the product's flag OR the specific variant's flag. Either side
   /// can turn it on, so a variant of an untracked product is still tracked.
+  @override
   Future<bool> isTracked({required int productId, int? variantId}) async {
     if (variantId != null) {
       final v = await (_db.select(_db.productVariants)
@@ -46,6 +48,7 @@ class SerialService {
     return rows.where((r) => !excludeIds.contains(r.id)).toList();
   }
 
+  @override
   Future<Serial?> byId(int id) => (_db.select(_db.serials)
         ..where((t) => t.id.equals(id))
         ..limit(1))
@@ -53,6 +56,7 @@ class SerialService {
 
   /// Serial number by id, so a refund slip names the exact unit going back.
   /// Ids no longer in the cache are simply absent.
+  @override
   Future<Map<int, String>> serialNumbersByIds(Iterable<int> ids) async {
     if (ids.isEmpty) return {};
     final rows = await (_db.select(_db.serials)..where((t) => t.id.isIn(ids)))
@@ -79,12 +83,14 @@ class SerialService {
   /// Hold a unit while it sits in a basket, so a second line on this terminal
   /// cannot claim it. Server truth overwrites this on the next catalogue pull,
   /// which is what recovers a crash mid-order.
+  @override
   Future<void> reserve(int serialId) => _setAvailable(serialId, false);
 
   /// Give the unit back — line removed, order cancelled, or the cashier changed
   /// the serial on a line.
   Future<void> release(int serialId) => _setAvailable(serialId, true);
 
+  @override
   Future<void> releaseAll(Iterable<int> serialIds) async {
     for (final id in serialIds) {
       await release(id);
@@ -111,6 +117,7 @@ class SerialService {
 
   /// Reactive variant for the picker, so another terminal's sale (arriving via
   /// a catalogue pull) removes the unit from an open list.
+  @override
   Stream<List<Serial>> watchAvailableFor(int productId) =>
       (_db.select(_db.serials)
             ..where(
@@ -120,6 +127,7 @@ class SerialService {
 
   /// Units this till sold that went to another order and nobody has said they
   /// have seen yet, newest first.
+  @override
   Stream<List<SerialConflict>> watchUnacknowledgedConflicts() =>
       (_db.select(_db.serialConflicts)
             ..where((c) => c.acknowledgedAt.isNull())
@@ -128,6 +136,7 @@ class SerialService {
 
   /// Acknowledged, not deleted: somebody will ask what happened to that box
   /// weeks from now. Every row gets the same [at].
+  @override
   Future<void> acknowledgeConflicts(Iterable<int> ids, DateTime at) async {
     for (final id in ids) {
       await (_db.update(_db.serialConflicts)..where((row) => row.id.equals(id)))

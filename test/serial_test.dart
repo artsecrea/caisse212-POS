@@ -12,11 +12,11 @@ import 'package:caisse212/services/serial_service.dart';
 /// sync time — long after the customer has left with the goods.
 void main() {
   late AppDatabase db;
-  late SerialService serials;
+  late LocalSerialService serials;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
-    serials = SerialService(db);
+    serials = LocalSerialService(db);
   });
   tearDown(() => db.close());
 
