@@ -28,6 +28,7 @@ import 'package:caisse212/domain/services/floor_queries.dart';
 import 'package:caisse212/domain/services/floor_service.dart';
 import 'package:caisse212/domain/services/kds_stats_queries.dart';
 import 'package:caisse212/domain/services/kitchen_service.dart';
+import 'package:caisse212/domain/services/notes_service.dart';
 import 'package:caisse212/domain/services/order_queries.dart';
 import 'package:caisse212/domain/services/order_service.dart';
 import 'package:caisse212/domain/services/payment_service.dart';

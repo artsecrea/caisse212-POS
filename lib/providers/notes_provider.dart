@@ -1,37 +1,27 @@
-import 'package:drift/drift.dart' show Value, OrderingTerm;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/database/app_database.dart';
+import '../domain/services/notes_service.dart';
+import '../services/notes_repository.dart';
 import 'database_providers.dart';
 
-// Stream of all notes, newest first
-final notesStreamProvider = StreamProvider<List<Note>>((ref) {
-  final db = ref.watch(databaseProvider);
-  return (db.select(db.notes)
-        ..orderBy([(n) => OrderingTerm.desc(n.createdAt)]))
-      .watch();
-});
+/// The notes board for the screens. A hub-linked till overrides this one
+/// provider; nothing else changes.
+final notesServiceProvider = Provider<NotesService>(
+    (ref) => NotesRepository(ref.watch(databaseProvider)));
 
-// Filter: notes linked to a specific order
-final notesByOrderProvider = StreamProvider.family<List<Note>, int>((ref, orderId) {
-  final db = ref.watch(databaseProvider);
-  return (db.select(db.notes)
-        ..where((n) => n.orderId.equals(orderId))
-        ..orderBy([(n) => OrderingTerm.desc(n.createdAt)]))
-      .watch();
-});
+// Stream of all notes, newest first
+final notesStreamProvider = StreamProvider<List<Note>>(
+    (ref) => ref.watch(notesServiceProvider).watchAll());
 
 class NoteNotifier extends StateNotifier<AsyncValue<List<Note>>> {
-  final AppDatabase _db;
+  final NotesService _notes;
 
-  NoteNotifier(this._db) : super(const AsyncValue.loading()) {
+  NoteNotifier(this._notes) : super(const AsyncValue.loading()) {
     _load();
   }
 
   void _load() {
-    (_db.select(_db.notes)
-          ..orderBy([(n) => OrderingTerm.desc(n.createdAt)]))
-        .watch()
-        .listen((notes) {
+    _notes.watchAll().listen((notes) {
       state = AsyncValue.data(notes);
     });
   }
@@ -45,70 +35,32 @@ class NoteNotifier extends StateNotifier<AsyncValue<List<Note>>> {
     double height = 180.0,
     int? orderId,
     String? orderCode,
-  }) async {
-    await _db.into(_db.notes).insert(NotesCompanion(
-          content: Value(content),
-          color: Value(color),
-          posX: Value(posX),
-          posY: Value(posY),
-          width: Value(width),
-          height: Value(height),
-          orderId: Value(orderId),
-          orderCode: Value(orderCode),
-          updatedAt: Value(DateTime.now()),
-        ));
-  }
+  }) =>
+      _notes.addNote(
+        content: content,
+        color: color,
+        posX: posX,
+        posY: posY,
+        width: width,
+        height: height,
+        orderId: orderId,
+        orderCode: orderCode,
+      );
 
-  Future<void> updateNote(Note note) async {
-    await (_db.update(_db.notes)..where((n) => n.id.equals(note.id))).write(
-      NotesCompanion(
-        content: Value(note.content),
-        color: Value(note.color),
-        posX: Value(note.posX),
-        posY: Value(note.posY),
-        width: Value(note.width),
-        height: Value(note.height),
-        orderId: Value(note.orderId),
-        orderCode: Value(note.orderCode),
-        updatedAt: Value(DateTime.now()),
-      ),
-    );
-  }
+  Future<void> updateNote(Note note) => _notes.updateNote(note);
 
-  Future<void> moveNote(int id, double posX, double posY) async {
-    await (_db.update(_db.notes)..where((n) => n.id.equals(id))).write(
-      NotesCompanion(
-        posX: Value(posX),
-        posY: Value(posY),
-        updatedAt: Value(DateTime.now()),
-      ),
-    );
-  }
+  Future<void> moveNote(int id, double posX, double posY) =>
+      _notes.moveNote(id, posX, posY);
 
-  Future<void> resizeNote(int id, double width, double height) async {
-    await (_db.update(_db.notes)..where((n) => n.id.equals(id))).write(
-      NotesCompanion(
-        width: Value(width),
-        height: Value(height),
-        updatedAt: Value(DateTime.now()),
-      ),
-    );
-  }
+  Future<void> resizeNote(int id, double width, double height) =>
+      _notes.resizeNote(id, width, height);
 
-  Future<void> deleteNote(int id) async {
-    await (_db.delete(_db.notes)..where((n) => n.id.equals(id))).go();
-  }
+  Future<void> deleteNote(int id) => _notes.deleteNote(id);
 
-  Future<void> clearAll() async {
-    await _db.delete(_db.notes).go();
-  }
+  Future<void> clearAll() => _notes.clearAll();
 }
 
 final noteNotifierProvider =
     StateNotifierProvider<NoteNotifier, AsyncValue<List<Note>>>((ref) {
-  final db = ref.watch(databaseProvider);
-  return NoteNotifier(db);
+  return NoteNotifier(ref.watch(notesServiceProvider));
 });
-
-
-
