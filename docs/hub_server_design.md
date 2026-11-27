@@ -400,7 +400,7 @@ Decided (2026-11-27): in hub mode **the till opens no SSE stream**; the hub is t
 - **Delete means cancel:** a web delete of an order or line arrives as a cancellation; undo lowers `canceledQuantity`.
 - **Cloud sees terminal states only:** orders are born `COMPLETED`; kitchen micro-states (`IN_PROGRESS`, `DONE`…) stay on the hub and are not pushed as order status.
 - **zDay on the wire is `yyyy-MM-dd`** (a datetime is silently nulled server-side).
-- **Datetimes:** store UTC `timestamptz`; send ISO-8601 with offset.
+- **Datetimes:** store UTC `timestamptz`, but send each field in the shape the till sends today: local wall clock with no offset (`toIso8601String()` on local time, `formatLocalMillis`), except `refundedAt`, UTC with `Z`. The backend reads them that way.
 - **Identity per terminal:** the cloud identifies a till by `X-POS-Name` and its terminal record. The hub pushes each row with the terminal that rang it up (it holds every paired till's terminal identity), so cloud reports per terminal stay correct.
 
 ---
