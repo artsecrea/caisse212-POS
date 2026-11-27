@@ -14,6 +14,8 @@ Status: **brainstorm, nothing built.** Written 2026-11-27 on branch `pos-hub-rea
 | 2026-11-27 | **A till is either the LAN server (standalone) or a hub client, never both.** `ServerService` stays as it is and runs only standalone. With a hub, the waiter app, kiosk and KDS talk to the hub. |
 | 2026-11-27 | **Back-office data comes from the real backend** (users, waiters, catalogue, tenant, subscription). The POS never creates it. The hub mirrors it read-only; account-level calls (login, tokens, subscription) can stay direct. |
 | 2026-11-27 | Storage: **PostgreSQL**. |
+| 2026-11-27 | **The mode is set on the till**, in the Super admin screen (§2.1). Standalone stays the default. |
+| 2026-11-27 | **HTTPS on the shop LAN** for everything the hub serves, with a private certificate authority per shop handed over at pairing (§2.2). |
 
 ---
 
@@ -30,7 +32,8 @@ Status: **brainstorm, nothing built.** Written 2026-11-27 on branch `pos-hub-rea
               │ Hub A (primary)   Hub B (standby)│  Go + PostgreSQL, on the shop LAN
               │      └── replication ──┘         │
               └──┬────────┬─────────┬──────────┬─┘
-     /hub/v1 API │        │ LAN-compat API     │ mDNS _caisse212._tcp
+     /hub/v1 API │        │ LAN-compat API     │ mDNS _caisse212-hub._tcp + _caisse212._tcp
+     (all HTTPS) │        │                    │
             ┌────┴──┐ ┌───┴────┐ ┌────┴───┐ ┌──┴───┐
             │ Tills │ │ Waiter │ │  KDS   │ │Kiosk │
             │ (POS) │ │  app   │ │ screens│ │      │
@@ -45,6 +48,38 @@ Modes of a till (one setting, `hubMode`):
 | `hub` | the hub; **the till has no database**, only its settings and the queue of writes made while both hubs are down (§7) | **off** (must never start) | the hub | the hub (provisional ones while queued, §7) |
 
 Switching mode is a provider override at boot: each of the 28 swap-point providers listed in `hub_action_catalogue.md` §6 gets a `Hub…` implementation. Nothing else in the app changes.
+
+### 2.1 Setting a till up: standalone or hub
+
+Decided 2026-11-27: the mode is set **on the till**, in the **Super admin** screen (`presentation/super_admin/`), on a new **Mode** tab. Not in Settings, and not from the back office for now.
+
+- **Why there:** the Super admin screen is protected by the daily master code and opens from the logo on the tenant login screen, so a till can be set up at installation, before anyone signs in, and no cashier or shop admin can flip it by mistake. The mode decides where every sale is saved.
+- **Android tills:** the logo taps open the Super admin screen on Windows and Linux only today (`super_admin_tap_target.dart`). A till running on Android needs the Mode tab reachable too, behind the same code; to add when the tab is built.
+- **What it holds:**
+  1. **Standalone / Hub.** Standalone is the default: every existing till stays as it is.
+  2. **Hub address 1 and hub address 2** (failover, §9), with a **Find** button that browses the LAN for hubs. Hubs announce `_caisse212-hub._tcp`, a type of their own, so the search never lists tills (which announce `_caisse212._tcp`).
+  3. **Pairing** (§5.9): the till shows a code, someone approves it on the hub, and the hub returns the till's device token and its certificate authority (§2.2). The fingerprint is shown on both screens so the person can check they match.
+- **It replaces the LAN server switch:** today's `auto_start_server` setting only applies to standalone. In hub mode the LAN server never starts, whatever that setting says.
+- **Switching is guarded,** because data must be in the right place first. A switch that fails a check is refused with the reason, never done halfway:
+  - **standalone → hub:** no session open on the till, and nothing left to send to the cloud (pending queue at 0). Otherwise sales that exist only on this till would be stranded.
+  - **hub → standalone:** the till's offline queue (§7) is empty, i.e. everything was handed to the hub. The till then does a full sync from the cloud, as on a fresh install.
+- **Later:** the back office shows each till's mode, and may set it remotely (`set_config`). Kept on the till first: simpler, and a mistake cannot come from far away.
+
+### 2.2 HTTPS on the shop LAN
+
+Decided 2026-11-27: **everything the hub serves is HTTPS**: the till API (`/hub/v1`), the LAN-compatible API (§6) and the event streams. The hub opens no plain HTTP port. A standalone till's LAN server is not part of this: it stays as today (HTTP + `x-server-password`) until decided otherwise.
+
+A public certificate authority cannot issue a certificate for a LAN address, so the hub brings its own:
+
+1. **A private certificate authority per shop**, created by the hub at first start (key stays on the hub, valid 10 years). It issues the hub's **server certificate** (1 year, renewed automatically), naming the hub's LAN IPs, its mDNS name (`<hub-name>.local`) and `localhost`.
+2. **The standby hub uses the same authority** (copied when the standby is set up, §9), with its own server certificate. One trust anchor covers both hubs, so failover needs nothing on the tills.
+3. **Apps trust that authority only, and only for the hub.** It is handed over at pairing (§2.1). The till, the waiter app and the KDS app load it into their own HTTP client (Dio with a `SecurityContext` holding just that certificate), not into the system store. No install on the device, no warning, and nobody else's certificate is accepted for the hub.
+4. **The hub's IP should not move.** The certificate names the IPs it was issued for. Give the hub a DHCP reservation or a fixed IP. If the IP changes anyway, the hub issues a new server certificate for it at start (same authority, so clients keep trusting it), and devices that found it by mDNS name are unaffected.
+5. **Devices also authenticate:** HTTPS protects the link, the device token from pairing says who is calling. `x-server-password` stays on the LAN-compatible routes for the existing clients.
+
+**Browsers are the exception.** A KDS board or kiosk running in a web browser cannot be given a private authority the way an app can. Two ways, to choose (§11):
+- **A:** install the shop's authority on that device once (Windows certificate store, or Android's user certificates, which Chrome trusts). Works offline; one step per device.
+- **B:** a public name per hub (for example `<hub-id>.lan.caisse212.com`) that resolves to its LAN IP, with a real certificate obtained through the cloud (Let's Encrypt, DNS challenge). No step on the devices, but it needs internet to issue and renew every 90 days, and some routers refuse DNS answers that point to a private IP (DNS rebinding protection).
 
 ---
 
@@ -233,7 +268,8 @@ Conventions:
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | liveness + `{role: primary\|standby, version, dbOk, cloudOk}` |
-| `POST /pair` | a till, KDS or tablet pairs once with a code shown on the hub (or the admin PIN) → long-lived device token |
+| `GET /pair/info` | the hub's name, role and certificate-authority fingerprint, for the pairing screen. The only call a device makes before it trusts the hub; it carries no data |
+| `POST /pair` | a till, KDS or tablet pairs once with a code shown on the hub (or the admin PIN) → long-lived device token + the shop's certificate authority (§2.2) |
 | `POST /devices/heartbeat` | presence (replaces today's KDS presence registry) |
 | `GET /hub/info` | terminal list, business, versions, failover peer |
 
@@ -241,7 +277,7 @@ Conventions:
 
 ## 6. LAN-compatible API (waiter app, KDS, kiosk)
 
-The hub serves **the same routes as `ServerService` today**, so the existing waiter app, KDS web board and kiosk work against the hub unchanged. Only the address changes, and they find it the same way (mDNS `_caisse212._tcp`, advertised by the active hub). Auth stays `x-server-password` (plus the waiter PIN login).
+The hub serves **the same routes as `ServerService` today**, so the waiter app, KDS and kiosk keep their requests and payloads. They find it the same way (mDNS `_caisse212._tcp`, advertised by the active hub). Auth stays `x-server-password` (plus the waiter PIN login). **One change on their side:** the hub is HTTPS only (§2.2), so they connect with `https://` and trust the shop's certificate authority, received when they pair. A browser-based KDS board needs option A or B of §2.2.
 
 | Method | Route | Today's handler (`server_service.dart`) |
 |---|---|---|
@@ -422,6 +458,8 @@ A line removed after it was saved, by a cashier, a waiter or the web, is a **can
 7. **Multi-site:** one hub per shop (assumed), or one hub serving several businesses?
 8. **What a till may create:** stations come from the back office only (Add Station removed from the till, 2026-11-27). Still to decide, for the same reason: quick product create (`POST /pos/products`), category create (`POST /pos/categories`), and anything else the till writes into the back-office data.
 9. ~~**Remote SQL in hub mode**~~: decided 2026-11-27, it runs on the hub's PostgreSQL, read-only (§8.4).
+10. **Browsers on HTTPS** (§2.2): install the shop's certificate authority on each browser device (A), or a public name per hub with a real certificate (B)?
+11. **Older waiter app builds:** the hub is HTTPS only, so a waiter build that only speaks HTTP cannot reach it. Update every tablet before a shop moves to a hub, or let the hub open a temporary HTTP port for the LAN-compatible routes (off by default)?
 
 ---
 
@@ -453,7 +491,8 @@ hub/
   internal/store/            Postgres (pgx + sqlc), migrations/
   internal/cloud/            BMS client, outbox worker, delta pullers, cloud SSE
   internal/replication/      lease, role (primary/standby), promotion
-  internal/discovery/        mDNS _caisse212._tcp
+  internal/discovery/        mDNS _caisse212-hub._tcp (tills) + _caisse212._tcp (LAN-compatible clients)
+  internal/pki/              the shop's certificate authority, server certificate issue and renewal (§2.2)
   internal/auth/             pairing, device tokens, waiter PIN, permissions (pos:*)
   testdata/golden/           fixtures shared with the Dart tests
 ```
@@ -465,7 +504,7 @@ Libraries: `net/http` + `chi` (routing), `pgx` + `sqlc` (typed SQL), `goose` (mi
 ## 14. Suggested order of work
 
 1. **Golden fixtures from Dart** (money, options, Z rules, refunds, tables, splits: done, `test/golden/`), then the Go `domain` package passing them.
-2. **Hub skeleton:** Postgres schema for the mirror + shop data, `/health`, pairing, event stream.
+2. **Hub skeleton:** Postgres schema for the mirror + shop data, the shop's certificate authority and HTTPS (§2.2), `/health`, pairing, event stream. On the POS: the Super admin **Mode** tab (§2.1).
 3. **Cloud mirror down** (back-office data, read-only), then **outbox up** for orders/tickets/sessions.
 4. **Till API for reads** (§5 GETs) and a `Hub…` implementation of the 8 read interfaces in the POS, behind `hubMode`; run the POS read contract (`test/contracts/read_queries_contract.dart`) against it.
 5. **Till API for writes**, interface by interface in the catalogue's order (Floor → Kitchen → Order → Payment → Sessions/Z → Returns → the rest), each with its POS contract test running against the hub.
