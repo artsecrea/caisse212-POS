@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../domain/services/user_service.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/permission_rules.dart';
 import '../providers/admin_elevation_provider.dart';
@@ -28,7 +29,7 @@ import '../presentation/widgets/adaptive_text_field.dart';
 /// Returns an [AdminElevation] identifying the admin on success, or `null` if
 /// no admin user matches.
 Future<AdminElevation?> verifyAdminCredentials(
-  UserRepository users,
+  UserService users,
   SharedPreferences prefs, {
   required String username,
   required String password,
@@ -80,7 +81,7 @@ bool userHasPermission(User user, String permission) => roleGrants(
 /// holds [permission] (used for the login-screen Z gate where a "manager" is a
 /// non-admin permission-holder). Returns an [AdminElevation] on success.
 Future<AdminElevation?> verifyManagerCredentials(
-  UserRepository users,
+  UserService users,
   SharedPreferences prefs, {
   required String username,
   required String password,
@@ -152,9 +153,9 @@ Future<AdminElevation?> showAdminCredentialDialog(
   List<User> admins = const [];
   try {
     if (required.isEmpty) {
-      admins = await ref.read(userRepositoryProvider).getUsersByType('admin');
+      admins = await ref.read(userServiceProvider).getUsersByType('admin');
     } else {
-      final all = await ref.read(userRepositoryProvider).getAllUsers();
+      final all = await ref.read(userServiceProvider).getAllUsers();
       admins = all
           .where((u) => required.every((p) => userHasPermission(u, p)))
           .toList();
@@ -188,7 +189,7 @@ Future<AdminElevation?> showAdminCredentialDialog(
             });
             AdminElevation? r;
             try {
-              final users = ref.read(userRepositoryProvider);
+              final users = ref.read(userServiceProvider);
               final prefs = ref.read(sharedPreferencesProvider);
               r = required.isEmpty
                   ? await verifyAdminCredentials(

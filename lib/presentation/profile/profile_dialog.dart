@@ -59,7 +59,7 @@ class _ProfileDialogState extends ConsumerState<ProfileDialog> {
     try {
       final newName = _displayNameController.text.trim();
       await ref
-          .read(userRepositoryProvider)
+          .read(userServiceProvider)
           .setDisplayName(currentUser.id, newName.isEmpty ? null : newName);
       ref.read(currentUserProvider.notifier).state =
           currentUser.copyWith(displayName: newName.isEmpty ? null : newName);

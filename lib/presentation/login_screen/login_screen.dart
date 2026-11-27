@@ -193,7 +193,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
   Future<void> _loadUsers() async {
     try {
-      final users = await ref.read(userRepositoryProvider).getAllUsers();
+      final users = await ref.read(userServiceProvider).getAllUsers();
       if (!mounted) return;
       setState(() {
         _availableUsers = users;
@@ -597,7 +597,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     });
 
     try {
-      final userRepository = ref.read(userRepositoryProvider);
+      final userRepository = ref.read(userServiceProvider);
       final users = await userRepository.getAllUsers();
       if (users.isEmpty) {
         if (mounted) {
@@ -666,7 +666,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
 
       // Record the login time so the users table shows an accurate last login.
       try {
-        await ref.read(userRepositoryProvider).updateLastLogin(user.id);
+        await ref.read(userServiceProvider).updateLastLogin(user.id);
       } catch (_) {}
 
       // Audit log uses the legal full name; the dropdown above and the

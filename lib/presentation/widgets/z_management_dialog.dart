@@ -36,7 +36,7 @@ Future<void> showZManagementDialog(
 
   // Load the acting user's permissions for per-button gating.
   final actor =
-      await ref.read(userRepositoryProvider).getUserById(elevation.adminId);
+      await ref.read(userServiceProvider).getUserById(elevation.adminId);
   bool can(String perm) => actor != null && userHasPermission(actor, perm);
 
   if (!context.mounted) return;

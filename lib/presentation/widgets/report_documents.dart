@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 
+import '../../domain/services/user_service.dart';
 import '../../domain/models/app_settings.dart';
 import '../../providers/database_providers.dart';
 import '../../domain/services/floor_queries.dart';
 import '../../providers/settings_provider.dart';
-import '../../providers/user_provider.dart';
 import '../../services/daily_summary_service.dart';
 import '../../utils/app_localizations.dart';
 
@@ -83,7 +83,7 @@ class StaffChoices {
   const StaffChoices({required this.waiters, required this.cashiers});
 
   static Future<StaffChoices> load(FloorQueries floor,
-      UserRepository users, AppLocalizations l10n) async {
+      UserService users, AppLocalizations l10n) async {
     final waiterRows = await floor.allWaiters();
     final userRows = await users.getAllUsers();
     return StaffChoices(

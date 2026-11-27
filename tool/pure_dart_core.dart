@@ -9,6 +9,7 @@
 
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/domain/models/component_rules.dart';
+import 'package:caisse212/domain/models/current_user.dart';
 import 'package:caisse212/domain/models/line_payment.dart';
 import 'package:caisse212/domain/models/order_money.dart';
 import 'package:caisse212/domain/models/order_money_rows.dart';
@@ -34,6 +35,7 @@ import 'package:caisse212/domain/services/returns_service.dart';
 import 'package:caisse212/domain/services/session_queries.dart';
 import 'package:caisse212/domain/services/ticket_queries.dart';
 import 'package:caisse212/domain/services/unpaid_queries.dart';
+import 'package:caisse212/domain/services/user_service.dart';
 import 'package:caisse212/domain/services/z_queries.dart';
 import 'package:caisse212/services/cash_report_sections.dart';
 import 'package:caisse212/services/kitchen_timing.dart';

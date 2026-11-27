@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:caisse212/domain/services/user_service.dart';
 import 'package:caisse212/data/database/app_database.dart';
 import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/providers/user_provider.dart';
@@ -12,14 +13,14 @@ import 'package:caisse212/providers/user_provider.dart';
 void main() {
   late AppDatabase db;
   late ProviderContainer container;
-  late UserRepository repo;
+  late UserService repo;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     container = ProviderContainer(overrides: [
       databaseProvider.overrideWithValue(db),
     ]);
-    repo = container.read(userRepositoryProvider);
+    repo = container.read(userServiceProvider);
   });
   tearDown(() {
     container.dispose();

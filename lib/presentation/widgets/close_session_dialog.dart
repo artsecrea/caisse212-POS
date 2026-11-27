@@ -513,7 +513,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
   try {
     summary = await sessionService.getSessionSummary(sessionId);
     staffChoices = await StaffChoices.load(ref.read(floorQueriesProvider),
-        ref.read(userRepositoryProvider), l10n);
+        ref.read(userServiceProvider), l10n);
   } finally {
     preparing.close();
   }
@@ -1157,7 +1157,7 @@ Future<int?> _authorizeZClose(
   if (elevation == null) return null;
   // The signer must clear every rule, not just the one that stopped us.
   final signer =
-      await ref.read(userRepositoryProvider).getUserById(elevation.adminId);
+      await ref.read(userServiceProvider).getUserById(elevation.adminId);
   if (signer == null) return null;
   final again = await ref.read(dayServiceProvider).closeBlock(
     z,

@@ -77,7 +77,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final userRepo = ref.watch(userRepositoryProvider);
+    final userRepo = ref.watch(userServiceProvider);
     return Scaffold(
       appBar: _buildAppBar(),
       body: Column(

@@ -129,7 +129,7 @@ class _RefundsScreenState extends ConsumerState<RefundsScreen> {
     final l10n = AppLocalizations.of(context)!;
     final currency = ref.read(currencySymbolProvider);
     final slip = await ref.read(returnsServiceProvider).slipFor(r);
-    final users = ref.read(userRepositoryProvider);
+    final users = ref.read(userServiceProvider);
     String? approver;
     if (r.approvedBy != null) {
       final u = await users.getUserById(r.approvedBy!);

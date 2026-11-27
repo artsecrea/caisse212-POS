@@ -998,7 +998,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
   Future<void> _syncData(AppLocalizations? l10n, ApiService apiService) async {
     try {
-      final users = ref.read(userRepositoryProvider);
+      final users = ref.read(userServiceProvider);
       final syncService = ref.read(dataSyncServiceFactoryProvider)(apiService);
 
       // The terminal's category scope rides on login/refresh only — never on
