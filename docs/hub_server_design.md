@@ -378,6 +378,7 @@ A line removed after it was saved, by a cashier, a waiter or the web, is a **can
 
 - **One floor for every till:** live table state, transfers and payments seen instantly everywhere, no double-occupied table.
 - **Shared numbering:** no more per-till order codes or station ids colliding (`max+1`).
+- **One "86" list for the shop:** taking a product off (`Products.isAvailable`) is local to each till today, on purpose: it is never sent to the cloud and a catalogue sync keeps it. So a product 86'd on one till is still sold on the others. The hub holds the flag for the whole shop and pushes it to every till and tablet; it still never sends it to the cloud.
 - **One platform-order reader:** the queue is polled once per shop instead of once per till, and a pending order shows as taken on every till the moment one accepts it.
 - **Central kitchen routing:** lines routed to stations and KDS by the hub; one board for all tills; per-station throughput.
 - **Live shop reports:** X/Z and unpaid across all tills, before anything reaches the cloud.
