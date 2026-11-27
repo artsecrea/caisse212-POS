@@ -89,6 +89,10 @@ class LocalOrderService implements OrderService {
     await _orders.setOrderTags(orderId, tagIds);
     unawaited(_ref.read(dataSyncServiceProvider).pushOrderTags());
   }
+
+  @override
+  Future<void> resetOrderNumber(int? sessionId, {String mode = 'session'}) =>
+      _orders.resetOrderNumber(sessionId, mode: mode);
 }
 
 /// The order actions for the screens. A hub-linked till overrides this one

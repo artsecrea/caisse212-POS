@@ -101,6 +101,19 @@ void orderServiceContract(String name, Future<OrderHarness> Function() make) {
       expect(s.reloaded!.items.single.quantity, 2);
     });
 
+    test('a reset restarts the session\u2019s order numbers at 1', () async {
+      final session = await h.openSession();
+      Future<int?> next() async => (await h.orders
+              .submitCart(cart(), userId: 1, sessionId: session))
+          .reloaded
+          ?.sessionOrderNo;
+
+      expect(await next(), 1);
+      expect(await next(), 2);
+      await h.orders.resetOrderNumber(session);
+      expect(await next(), 1);
+    });
+
     test('a saved cart is updated in place', () async {
       final session = await h.openSession();
       final first = await h.orders

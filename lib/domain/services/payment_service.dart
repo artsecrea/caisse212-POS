@@ -71,4 +71,9 @@ abstract interface class PaymentService {
 
   /// Delete a ticket and unlink its lines, which become unpaid again.
   Future<void> deleteTicket(int ticketId);
+
+  /// Delete paid line [lineId], options included, from its ticket
+  /// [ticketId]: the ticket goes with it when it held only that line — the
+  /// answer is true — otherwise its amount is what its other lines cost.
+  Future<bool> removePaidLine(int lineId, {required int ticketId});
 }

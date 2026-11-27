@@ -10,6 +10,7 @@ import '../../providers/settings_provider.dart';
 import '../../providers/server_provider.dart';
 import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
+import '../../services/local_order_service.dart';
 import '../../providers/update_provider.dart';
 import '../../services/update_config.dart';
 import '../widgets/users_management_screen.dart' show kPermissionGroups;
@@ -1391,7 +1392,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   /// the open session's, its Z's, or the manual counter, per the mode.
   Future<void> _confirmResetOrderNumber(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
-    final orders = ref.read(orderRepositoryProvider);
+    final orders = ref.read(orderServiceProvider);
     final mode = ref.read(settingsProvider).orderNumberResetMode;
     final session = await ref.read(zDayResolverProvider).activeSession();
     if (!context.mounted) return;

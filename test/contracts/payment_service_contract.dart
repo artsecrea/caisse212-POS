@@ -137,6 +137,21 @@ void paymentServiceContract(
       expect((await h.ticket(part.ticketId))!.amount, 4);
     });
 
+    test('removing a paid line keeps its ticket until the last one goes',
+        () async {
+      final o = await h.orderWithLines(2);
+      final t = await h.paidTicket(o.orderId, o.lineIds);
+
+      expect(await h.payments.removePaidLine(o.lineIds[0], ticketId: t),
+          isFalse);
+      expect(await h.ticket(t), isNotNull);
+      expect(await h.ticketOfLine(o.lineIds[1]), t);
+
+      expect(await h.payments.removePaidLine(o.lineIds[1], ticketId: t),
+          isTrue);
+      expect(await h.ticket(t), isNull);
+    });
+
     test('an order completes only once everything is paid, and its draft goes',
         () async {
       final o = await h.orderWithLines(2);

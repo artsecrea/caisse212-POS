@@ -21,7 +21,7 @@ import '../../services/permission_service.dart';
 import '../../services/activity_log_service.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/database_providers.dart';
-import '../../providers/network_provider.dart';
+import '../../services/local_payment_service.dart';
 import 'product_modification_dialog.dart' show ProductModificationDialog;
 import 'unpaid_orders_dialog.dart';
 import '../../utils/button_styles.dart';
@@ -429,16 +429,10 @@ class OrderPanel extends ConsumerWidget {
 
       if (confirmed == true && context.mounted) {
         try {
-          final isOnline = ref.read(lastKnownOnlineStatusProvider);
-
           if (item.id != null && item.ticketId != null) {
             final ticketDeleted = await ref
-                .read(orderRepositoryProvider)
-                .deletePaidLine(
-                  orderProductId: item.id!,
-                  ticketId: item.ticketId!,
-                  isOnline: isOnline,
-                );
+                .read(paymentServiceProvider)
+                .removePaidLine(item.id!, ticketId: item.ticketId!);
 
             // Reload the whole order. Rebuilding the items by hand here left
             // out the print cursors, variant and server id of every remaining

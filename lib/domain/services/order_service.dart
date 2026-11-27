@@ -38,4 +38,9 @@ abstract interface class OrderService {
 
   /// Replace [orderId]'s tags and send them to the cloud.
   Future<void> setTags(int orderId, List<int> tagIds);
+
+  /// Restart the order number, so the next order is #1: of [sessionId], or
+  /// of its Z, or the manual counter, as [mode] (`session`, `z`, `manual`)
+  /// says.
+  Future<void> resetOrderNumber(int? sessionId, {String mode = 'session'});
 }

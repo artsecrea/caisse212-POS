@@ -184,6 +184,14 @@ class LocalPaymentService implements PaymentService {
 
   @override
   Future<void> deleteTicket(int ticketId) => _tickets.deleteTicket(ticketId);
+
+  @override
+  Future<bool> removePaidLine(int lineId, {required int ticketId}) =>
+      _orders.deletePaidLine(
+        orderProductId: lineId,
+        ticketId: ticketId,
+        isOnline: _ref.read(lastKnownOnlineStatusProvider),
+      );
 }
 
 /// The money actions for the screens. A hub-linked till overrides this one
