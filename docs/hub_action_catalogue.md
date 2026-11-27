@@ -348,7 +348,7 @@ The reactive providers the screens watch (`areasProvider`, `categoriesProvider`,
 
 **Still outside the interfaces**, deliberately or for a later step:
 - **The LAN server's writes** (waiter create/add/remove, kiosk create) in `server_service.dart`. Standalone only: with a hub, the waiter app and the KDS talk to the hub.
-- **Direct cloud calls from screens** (`apiServiceProvider`, 18 files: tenant sign-in, login checks, the API tester, sign-out). With a hub, those that touch business data must go through the hub.
+- **Account-level cloud calls from screens** (`apiServiceProvider`: sign-in, tokens, subscription, account status, tenant URL, demo mode, terminal names, issue reports, admin notices). They are the real backend's in every mode and stay direct. Till data from the cloud (another till's order, the business's refunds) goes through `OrderQueries` / `ReturnsService`; the guard fails on any other `ApiService` call from a screen.
 - **Printing** reads the till's synced catalogue copy for option types (`printing_service.dart`). The printer is the till's own; it stays local.
 - Services that build `SessionService` themselves inside the service layer (`pos_notifications.dart`, `update_resume_service.dart`, `refund_sandbox.dart`). They are behind the interfaces, not called from screens.
 - **Contract tests** exist for the action interfaces (`test/contracts/`). The read interfaces are pinned by the repositories' own tests; a hub implementation needs contract tests of its own for them, or shared golden fixtures.
