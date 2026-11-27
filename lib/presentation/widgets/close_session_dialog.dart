@@ -15,7 +15,8 @@ import '../../services/daily_summary_service.dart';
 import '../../utils/button_styles.dart';
 import '../../services/printing_service.dart';
 import '../../services/session_service.dart';
-import '../../services/z_actions.dart';
+import '../../services/local_day_service.dart';
+import '../../utils/z_rule_message.dart';
 import '../../services/z_rules.dart' show ZRuleBlock, printSessionXWithZ;
 import '../../services/z_service.dart';
 import '../../data/database/app_database.dart' as db;
@@ -454,7 +455,10 @@ Future<CloseSessionResult> showCloseSessionDialog({
       // BY_SESSION: this close takes the Z with it, behind the scenes — the
       // cashier sees a plain session close.
       final closesZWithSession =
-          openZ != null && await zClosesWithSessionFor(ref, openZ, sessionId);
+          openZ != null &&
+              await ref
+                  .read(dayServiceProvider)
+                  .closesWithSession(openZ, sessionId);
       final sessionsInZ = closesZWithSession
           ? (await zService.sessionsForZ(openZ.id)).length
           : 0;
@@ -674,7 +678,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
               closeMode = ZService.closeAuto;
             } else if (!closeTheZ &&
                 openZ != null &&
-                zAutoCloseDueFor(ref, openZ)) {
+                await ref.read(dayServiceProvider).autoCloseDue(openZ)) {
               progress.close();
               var yes = await _askCloseDay(ctx, l10n);
               // The session is already counted and ended, so its unpaid
@@ -714,7 +718,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
             if (closeTheZ && openZ != null) {
               progress.message = l10n.translate('closing_z_progress');
               try {
-                await closeZNow(ref, openZ,
+                await ref.read(dayServiceProvider).close(openZ,
                     closeMode: closeMode, endedBy: zClosedBy);
                 closedZId = openZ.id;
                 // The Z report is the day's legal document — always printed.
@@ -1127,8 +1131,7 @@ Future<int?> _authorizeZClose(
   final l10n = AppLocalizations.of(context)!;
   final perms = ref.read(permissionServiceProvider);
   final me = ref.read(currentUserProvider)?.id;
-  final block = await zCloseBlock(
-    ref,
+  final block = await ref.read(dayServiceProvider).closeBlock(
     z,
     hasClosePermission: perms.hasPermission(Permissions.zClose),
     hasOverride: perms.hasPermission(Permissions.zOverride),
@@ -1156,8 +1159,7 @@ Future<int?> _authorizeZClose(
   final signer =
       await ref.read(userRepositoryProvider).getUserById(elevation.adminId);
   if (signer == null) return null;
-  final again = await zCloseBlock(
-    ref,
+  final again = await ref.read(dayServiceProvider).closeBlock(
     z,
     hasClosePermission: userHasPermission(signer, Permissions.zClose),
     hasOverride: userHasPermission(signer, Permissions.zOverride),

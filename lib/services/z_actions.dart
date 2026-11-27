@@ -1,73 +1,41 @@
 import 'dart:async';
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:loggecrea/loggecrea.dart';
 
 import '../data/database/app_database.dart' as db;
+import '../domain/services/day_service.dart';
 import '../domain/models/session_rules.dart';
 import '../providers/business_day_provider.dart';
 import '../providers/database_providers.dart';
 import '../providers/network_provider.dart';
 import '../providers/session_rules_provider.dart';
 import '../utils/admin_auth.dart' show userHasPermission;
-import '../utils/app_localizations.dart';
 import 'activity_log_service.dart';
 import 'daily_summary_service.dart';
-import 'pos_notifications.dart' show notifySessionClosed, notifyZClosed;
+import 'pos_notifications.dart'
+    show ProviderReader, notifySessionClosed, notifyZClosed;
 import 'permission_service.dart' show Permissions;
 import 'z_rules.dart';
 import 'z_service.dart';
 
-/// Z (day close) orchestration for the v3 contract, shared by the login
-/// screen, the session-close dialog and the Z management dialog.
+/// Z (day close) orchestration for the v3 contract: the standalone till's
+/// [DayService] (`LocalDayService`) runs it on this till's database.
 ///
 /// A Z is a (zDay, zSeq) label on sessions; the till owns the counter and the
 /// server learns everything from the session push. See
 /// `bms/docs/POS_Z_CONTRACT.md`.
 
-/// A Z rule refused an open or a close.
-class ZRuleViolation implements Exception {
-  final ZRuleBlock block;
-
-  /// The `HH:mm` limit that applied, for the message.
-  final String? limit;
-
-  const ZRuleViolation(this.block, {this.limit});
-
-  String message(AppLocalizations l10n) => zRuleMessage(l10n, block, limit);
-
-  @override
-  String toString() => 'ZRuleViolation($block, $limit)';
-}
-
-String zRuleMessage(AppLocalizations l10n, ZRuleBlock block, String? limit) {
-  switch (block) {
-    case ZRuleBlock.manualOpenRequired:
-      return l10n.translate('z_block_manual_open');
-    case ZRuleBlock.tooLateToOpen:
-      return l10n
-          .translate('z_block_too_late_open')
-          .replaceAll('{0}', limit ?? '');
-    case ZRuleBlock.tooEarlyToClose:
-      return l10n
-          .translate('z_block_too_early_close')
-          .replaceAll('{0}', limit ?? '');
-    case ZRuleBlock.noClosePermission:
-      return l10n.translate('z_block_no_close_permission');
-  }
-}
-
 /// Refresh the business-day definition and the terminal's Z rules from the
 /// server. Best-effort and bounded: offline, the cached copies stand.
-Future<void> refreshZConfig(WidgetRef ref) async {
-  if (!ref.read(lastKnownOnlineStatusProvider)) return;
-  final sync = ref.read(dataSyncServiceProvider);
+Future<void> refreshZConfig(ProviderReader read) async {
+  if (!read(lastKnownOnlineStatusProvider)) return;
+  final sync = read(dataSyncServiceProvider);
   try {
     final config = await sync
         .syncBusinessDayConfig()
         .timeout(const Duration(seconds: 5), onTimeout: () => null);
     if (config != null) {
-      await ref.read(businessDayProvider.notifier).update(config);
+      await read(businessDayProvider.notifier).update(config);
     }
   } catch (_) {}
   try {
@@ -75,7 +43,7 @@ Future<void> refreshZConfig(WidgetRef ref) async {
         .syncSessionRules()
         .timeout(const Duration(seconds: 5), onTimeout: () => null);
     if (rules != null) {
-      await ref.read(sessionRulesProvider.notifier).updateRules(rules);
+      await read(sessionRulesProvider.notifier).updateRules(rules);
     }
   } catch (_) {}
 }
@@ -90,16 +58,15 @@ typedef _Planned = ({
 });
 
 /// Ask the server where this terminal's counter stands, and plan from it.
-Future<_Planned> _planZ(WidgetRef ref) async {
-  final zService = ref.read(zServiceProvider);
-  var currentZDay = ref.read(businessDayProvider.notifier).currentZDay();
+Future<_Planned> _planZ(ProviderReader read) async {
+  final zService = read(zServiceProvider);
+  var currentZDay = read(businessDayProvider.notifier).currentZDay();
 
   ZSnapshot? server;
   String? serverCloseMode;
   var serverOpenSessions = const <Map<String, dynamic>>[];
-  if (ref.read(lastKnownOnlineStatusProvider)) {
-    final cur = await ref
-        .read(apiServiceProvider)
+  if (read(lastKnownOnlineStatusProvider)) {
+    final cur = await read(apiServiceProvider)
         .fetchCurrentZ()
         .timeout(const Duration(seconds: 5), onTimeout: () => null);
     if (cur != null) {
@@ -151,9 +118,9 @@ Future<_Planned> _planZ(WidgetRef ref) async {
 /// over, the last of them also closes that Z FORCED — but only for the
 /// server's latest Z while it is still open: any other Z may already have a
 /// closing session, and a second one would shadow its close.
-Future<void> _closeServerOrphans(WidgetRef ref, _Planned planned) async {
+Future<void> _closeServerOrphans(ProviderReader read, _Planned planned) async {
   if (planned.serverOpenSessions.isEmpty) return;
-  final database = ref.read(databaseProvider);
+  final database = read(databaseProvider);
   final orphans = <Map<String, dynamic>>[];
   for (final o in planned.serverOpenSessions) {
     final code = o['code']?.toString();
@@ -171,7 +138,7 @@ Future<void> _closeServerOrphans(WidgetRef ref, _Planned planned) async {
     final day = o['zDay']?.toString() ?? '';
     byZ.putIfAbsent('$day#${o['zSeq']}', () => []).add(o);
   }
-  final api = ref.read(apiServiceProvider);
+  final api = read(apiServiceProvider);
   final now = DateTime.now().toIso8601String();
   final latest = planned.server;
   for (final group in byZ.values) {
@@ -207,11 +174,11 @@ Future<void> _closeServerOrphans(WidgetRef ref, _Planned planned) async {
 }
 
 /// Close whatever the plan says must go before a new Z can start.
-Future<void> _applyPlanCloses(WidgetRef ref, _Planned planned) async {
-  await _closeServerOrphans(ref, planned);
+Future<void> _applyPlanCloses(ProviderReader read, _Planned planned) async {
+  await _closeServerOrphans(read, planned);
   final open = planned.localOpen;
   if (open == null) return;
-  final zService = ref.read(zServiceProvider);
+  final zService = read(zServiceProvider);
   if (planned.plan.closeLocalAsServerClosed) {
     await zService.markClosedByServer(open.id,
         closeMode: planned.serverCloseMode);
@@ -222,16 +189,16 @@ Future<void> _applyPlanCloses(WidgetRef ref, _Planned planned) async {
 /// adopt after a reinstall, or a new one — which must pass the terminal's
 /// open rules. Throws [ZRuleViolation] when a new Z may not open by itself.
 /// [superAdmin] (a master-password sign-in) holds every Z permission.
-Future<db.Z> ensureZForSession(WidgetRef ref,
+Future<db.Z> ensureZForSession(ProviderReader read,
     {required db.User user, bool superAdmin = false}) async {
-  final zService = ref.read(zServiceProvider);
-  final planned = await _planZ(ref);
+  final zService = read(zServiceProvider);
+  final planned = await _planZ(read);
   final plan = planned.plan;
 
   if (plan.action == ZPlanAction.continueOpen) {
-    await _closeServerOrphans(ref, planned);
+    await _closeServerOrphans(read, planned);
     final z = planned.localOpen!;
-    ref.read(currentZProvider.notifier).state = z;
+    read(currentZProvider.notifier).state = z;
     return z;
   }
 
@@ -240,7 +207,7 @@ Future<db.Z> ensureZForSession(WidgetRef ref,
   var usedOverride = false;
   if (plan.action == ZPlanAction.openNew) {
     usedOverride = _checkOpen(
-      ref,
+      read,
       plan.next,
       explicitOpen: false,
       hasOpenPermission:
@@ -249,18 +216,17 @@ Future<db.Z> ensureZForSession(WidgetRef ref,
     );
   }
 
-  await _applyPlanCloses(ref, planned);
+  await _applyPlanCloses(read, planned);
 
   final z = await zService.openZ(
     label: plan.next,
     createdBy: user.id,
     openMode: plan.action == ZPlanAction.adoptServer ? null : ZService.openAuto,
-    posId: ref.read(apiServiceProvider).getPosId(),
+    posId: read(apiServiceProvider).getPosId(),
     openOverride: usedOverride,
   );
-  ref.read(currentZProvider.notifier).state = z;
-  ref
-      .read(activityLogServiceProvider)
+  read(currentZProvider.notifier).state = z;
+  read(activityLogServiceProvider)
       .logZOpened(ZService.displayName(z), userId: user.id);
   return z;
 }
@@ -268,40 +234,39 @@ Future<db.Z> ensureZForSession(WidgetRef ref,
 /// A user deliberately opens the Z (the "Open Z" button, or MANUAL mode).
 /// Returns the open Z — the existing one when a Z is already open.
 Future<db.Z> openZManually(
-  WidgetRef ref, {
+  ProviderReader read, {
   required int userId,
   required bool hasOpenPermission,
   required bool hasOverride,
 }) async {
-  final planned = await _planZ(ref);
+  final planned = await _planZ(read);
   final plan = planned.plan;
   if (plan.action == ZPlanAction.continueOpen) {
-    await _closeServerOrphans(ref, planned);
-    ref.read(currentZProvider.notifier).state = planned.localOpen;
+    await _closeServerOrphans(read, planned);
+    read(currentZProvider.notifier).state = planned.localOpen;
     return planned.localOpen!;
   }
   var usedOverride = false;
   if (plan.action == ZPlanAction.openNew) {
     usedOverride = _checkOpen(
-      ref,
+      read,
       plan.next,
       explicitOpen: true,
       hasOpenPermission: hasOpenPermission,
       hasOverride: hasOverride,
     );
   }
-  await _applyPlanCloses(ref, planned);
-  final z = await ref.read(zServiceProvider).openZ(
+  await _applyPlanCloses(read, planned);
+  final z = await read(zServiceProvider).openZ(
         label: plan.next,
         createdBy: userId,
         openMode:
             plan.action == ZPlanAction.adoptServer ? null : ZService.openManual,
-        posId: ref.read(apiServiceProvider).getPosId(),
+        posId: read(apiServiceProvider).getPosId(),
         openOverride: usedOverride,
       );
-  ref.read(currentZProvider.notifier).state = z;
-  ref
-      .read(activityLogServiceProvider)
+  read(currentZProvider.notifier).state = z;
+  read(activityLogServiceProvider)
       .logZOpened(ZService.displayName(z), userId: userId);
   return z;
 }
@@ -310,16 +275,16 @@ Future<db.Z> openZManually(
 /// do not block: the close ends them (`autoClosed`), so a session never
 /// outlives its Z.
 Future<ZRuleViolation?> zCloseBlock(
-  WidgetRef ref,
+  ProviderReader read,
   db.Z z, {
   required bool hasClosePermission,
   required bool hasOverride,
 }) async {
-  final rules = ref.read(sessionRulesProvider);
+  final rules = read(sessionRulesProvider);
   final block = checkZClose(
     now: DateTime.now(),
     zDay: ZService.labelOf(z).zDay,
-    startHour: ref.read(businessDayProvider).startHour,
+    startHour: read(businessDayProvider).startHour,
     earliestCloseTime: rules.zEarliestCloseTime,
     hasClosePermission: hasClosePermission,
     hasOverride: hasOverride,
@@ -331,12 +296,12 @@ Future<ZRuleViolation?> zCloseBlock(
 
 /// Whether closing [z] now is only allowed through `pos:z:override` — i.e.
 /// it is before `zEarliestCloseTime`. Recorded on the closing session.
-bool zCloseNeedsOverride(WidgetRef ref, db.Z z) =>
+bool zCloseNeedsOverride(ProviderReader read, db.Z z) =>
     checkZClose(
       now: DateTime.now(),
       zDay: ZService.labelOf(z).zDay,
-      startHour: ref.read(businessDayProvider).startHour,
-      earliestCloseTime: ref.read(sessionRulesProvider).zEarliestCloseTime,
+      startHour: read(businessDayProvider).startHour,
+      earliestCloseTime: read(sessionRulesProvider).zEarliestCloseTime,
       hasClosePermission: true,
       hasOverride: false,
       ) ==
@@ -345,17 +310,17 @@ bool zCloseNeedsOverride(WidgetRef ref, db.Z z) =>
 /// Throws [ZRuleViolation] when [label] may not open; returns whether it
 /// opens only thanks to `pos:z:override`.
 bool _checkOpen(
-  WidgetRef ref,
+  ProviderReader read,
   ZLabel label, {
   required bool explicitOpen,
   required bool hasOpenPermission,
   required bool hasOverride,
 }) {
-  final rules = ref.read(sessionRulesProvider);
+  final rules = read(sessionRulesProvider);
   ZRuleBlock? check(bool override) => checkZOpen(
         now: DateTime.now(),
         zDay: label.zDay,
-        startHour: ref.read(businessDayProvider).startHour,
+        startHour: read(businessDayProvider).startHour,
         openMode: rules.zOpenMode,
         cantOpenAfter: rules.zCantOpenAfter,
         explicitOpen: explicitOpen,
@@ -368,12 +333,12 @@ bool _checkOpen(
 }
 
 /// Whether a session closing now should ASK to close the Z (AUTO_AFTER_HOUR).
-bool zAutoCloseDueFor(WidgetRef ref, db.Z z) {
-  final SessionRules rules = ref.read(sessionRulesProvider);
+bool zAutoCloseDueFor(ProviderReader read, db.Z z) {
+  final SessionRules rules = read(sessionRulesProvider);
   return zAutoCloseDue(
     now: DateTime.now(),
     zDay: ZService.labelOf(z).zDay,
-    startHour: ref.read(businessDayProvider).startHour,
+    startHour: read(businessDayProvider).startHour,
     closeMode: rules.zCloseMode,
     autoCloseAfter: rules.zAutoCloseAfter,
   );
@@ -381,55 +346,54 @@ bool zAutoCloseDueFor(WidgetRef ref, db.Z z) {
 
 /// `BY_SESSION`: whether closing [sessionId] closes [z] with it.
 Future<bool> zClosesWithSessionFor(
-    WidgetRef ref, db.Z z, int sessionId) async {
+    ProviderReader read, db.Z z, int sessionId) async {
   final others =
-      await ref.read(zServiceProvider).openSessionsOf(z.id, except: sessionId);
+      await read(zServiceProvider).openSessionsOf(z.id, except: sessionId);
   return zClosesWithSession(
-    closeMode: ref.read(sessionRulesProvider).zCloseMode,
+    closeMode: read(sessionRulesProvider).zCloseMode,
     otherOpenSessions: others.length,
-    tooEarly: zCloseNeedsOverride(ref, z),
+    tooEarly: zCloseNeedsOverride(read, z),
   );
 }
 
 /// Close [z] with [closeMode] (rules already checked by the caller), then
 /// push its closing session. Does not print — callers drive the paper.
 Future<void> closeZNow(
-  WidgetRef ref,
+  ProviderReader read,
   db.Z z, {
   required String closeMode,
   int? endedBy,
 }) async {
   // The sessions the close is about to end for their cashiers: each still
   // owes the admin its own POS_SESSION_CLOSED card.
-  final autoEnded = await ref.read(zServiceProvider).openSessionsOf(z.id);
-  await ref.read(zServiceProvider).closeZ(
+  final autoEnded = await read(zServiceProvider).openSessionsOf(z.id);
+  await read(zServiceProvider).closeZ(
         zId: z.id,
         closeMode: closeMode,
-        sessionService: ref.read(sessionServiceProvider),
+        sessionService: read(sessionServiceProvider),
         endedBy: endedBy,
         closeOverride:
-            closeMode != ZService.closeForced && zCloseNeedsOverride(ref, z),
+            closeMode != ZService.closeForced && zCloseNeedsOverride(read, z),
       );
-  ref.read(currentZProvider.notifier).state = null;
+  read(currentZProvider.notifier).state = null;
   for (final s in autoEnded) {
-    unawaited(notifySessionClosed(ref.read, s.id));
+    unawaited(notifySessionClosed(read, s.id));
   }
-  unawaited(notifyZClosed(ref.read, z.id));
+  unawaited(notifyZClosed(read, z.id));
 
-  final closed = await ref.read(zServiceProvider).getById(z.id);
+  final closed = await read(zServiceProvider).getById(z.id);
   final total = closed?.totalPaid;
-  ref.read(activityLogServiceProvider).logZClosed(
+  read(activityLogServiceProvider).logZClosed(
         ZService.displayName(z),
         total: total?.toStringAsFixed(2),
         userId: endedBy,
       );
-  await _pushSessions(ref);
+  await _pushSessions(read);
 }
 
-Future<void> _pushSessions(WidgetRef ref) async {
+Future<void> _pushSessions(ProviderReader read) async {
   try {
-    await ref
-        .read(dataSyncServiceProvider)
+    await read(dataSyncServiceProvider)
         .syncSessionsBulk()
         .timeout(const Duration(seconds: 15));
   } catch (e) {
@@ -438,18 +402,16 @@ Future<void> _pushSessions(WidgetRef ref) async {
   }
 }
 
-/// Print an X (mid-Z snapshot) or the Z of [zId], summed from its sessions.
-/// [reprint] stamps DUPLICATA — any Z printed again after its close.
-Future<bool> printZReport(
-  WidgetRef ref,
+/// An X (mid-Z snapshot) or the Z of [zId], summed from its sessions.
+Future<ZReport?> zReportFor(
+  ProviderReader read,
   int zId, {
   required bool isX,
-  bool reprint = false,
 }) async {
-  final database = ref.read(databaseProvider);
-  final zService = ref.read(zServiceProvider);
+  final database = read(databaseProvider);
+  final zService = read(zServiceProvider);
   final sessions = await zService.sessionsForZ(zId);
-  if (sessions.isEmpty) return false;
+  if (sessions.isEmpty) return null;
   final z = await zService.getById(zId);
   final start = sessions
       .map((s) => s.startedAt)
@@ -462,10 +424,5 @@ Future<bool> printZReport(
     endDate: end,
     sessionIds: sessions.map((s) => s.id).toList(),
   );
-  return ref.read(printingServiceProvider).printDailySummaryReport(
-        report: report,
-        reportType: isX ? 'X' : 'Z',
-        zLabel: z == null ? null : ZService.displayName(z),
-        isReprint: reprint && !isX,
-      );
+  return (report: report, zLabel: z == null ? null : ZService.displayName(z));
 }

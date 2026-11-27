@@ -8,7 +8,9 @@ import '../../providers/database_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/permission_service.dart';
-import '../../services/z_actions.dart';
+import '../../domain/services/day_service.dart' show ZRuleViolation;
+import '../../services/local_day_service.dart';
+import '../../utils/z_rule_message.dart';
 import '../../services/z_service.dart';
 import '../../utils/admin_auth.dart';
 import '../../utils/app_localizations.dart';
@@ -38,7 +40,7 @@ Future<void> showZManagementDialog(
   bool can(String perm) => actor != null && userHasPermission(actor, perm);
 
   if (!context.mounted) return;
-  await refreshZConfig(ref);
+  await ref.read(dayServiceProvider).refreshConfig();
   if (!context.mounted) return;
   // A Z close in flight — a second tap must not start another.
   var closingZ = false;
@@ -73,8 +75,7 @@ Future<void> showZManagementDialog(
 
             Future<void> openZ() async {
               try {
-                await openZManually(
-                  ref,
+                await ref.read(dayServiceProvider).openManually(
                   userId: elevation.adminId,
                   hasOpenPermission: can(Permissions.zOpen),
                   hasOverride: can(Permissions.zOverride),
@@ -96,8 +97,7 @@ Future<void> showZManagementDialog(
               if (closingZ) return;
               closingZ = true;
               try {
-                final block = await zCloseBlock(
-                  ref,
+                final block = await ref.read(dayServiceProvider).closeBlock(
                   open,
                   hasClosePermission: can(Permissions.zClose),
                   hasOverride: can(Permissions.zOverride),
@@ -126,7 +126,7 @@ Future<void> showZManagementDialog(
                 if (!ctx.mounted) return;
                 final printOk = await BlockingProgress.run(
                     ctx, l10n.translate('closing_z_progress'), (progress) async {
-                  await closeZNow(ref, open,
+                  await ref.read(dayServiceProvider).close(open,
                       closeMode: ZService.closeManual,
                       endedBy: elevation.adminId);
                   if (!printZ) return true;

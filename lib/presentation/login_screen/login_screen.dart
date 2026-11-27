@@ -12,7 +12,9 @@ import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
 import '../../services/local_cash_session_service.dart';
 import '../../services/permission_service.dart';
-import '../../services/z_actions.dart';
+import '../../domain/services/day_service.dart' show ZRuleViolation;
+import '../../services/local_day_service.dart';
+import '../../utils/z_rule_message.dart';
 import '../../services/z_rules.dart' show ZRuleBlock;
 import '../../services/z_service.dart';
 import '../../providers/business_day_provider.dart';
@@ -1423,9 +1425,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       return (ok: true, z: z);
     }
 
-    await refreshZConfig(ref);
+    final days = ref.read(dayServiceProvider);
+    await days.refreshConfig();
     try {
-      return (ok: true, z: await ensureZForSession(ref, user: user, superAdmin: superAdmin));
+      return (
+        ok: true,
+        z: await days.ensureForSession(user: user, superAdmin: superAdmin)
+      );
     } on ZRuleViolation catch (refused) {
       var v = refused;
       if (v.block == ZRuleBlock.manualOpenRequired &&
@@ -1450,8 +1456,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         );
         if (go == true) {
           try {
-            final z = await openZManually(
-              ref,
+            final z = await days.openManually(
               userId: user.id,
               hasOpenPermission: true,
               hasOverride: superAdmin ||

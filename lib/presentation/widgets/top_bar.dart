@@ -41,7 +41,7 @@ import 'sync_inspector_dialog.dart';
 import 'update_dialog.dart' show showUpdateDialog;
 import '../../providers/update_provider.dart';
 import '../../services/update_service.dart' show UpdateService;
-import '../../services/z_actions.dart' show refreshZConfig;
+import '../../services/local_day_service.dart' show dayServiceProvider;
 import './adaptive_text_field.dart';
 import '../../core/theme/app_theme.dart';
 
@@ -1014,7 +1014,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       await syncService.syncAllData();
 
       // Settings that otherwise only refresh at login or on an SSE push.
-      await refreshZConfig(ref);
+      await ref.read(dayServiceProvider).refreshConfig();
       await syncService.syncIntegrationMappings();
       await syncService.syncPendingNotifications();
 
