@@ -3,6 +3,7 @@ import 'package:drift/drift.dart';
 import '../data/database/app_database.dart';
 import '../domain/models/order_money.dart';
 import '../domain/models/order_money_rows.dart';
+import '../domain/services/unpaid_queries.dart';
 
 /// One unpaid order, with who is currently carrying it.
 class UnpaidOrderEntry {
@@ -122,7 +123,7 @@ class UnpaidOrdersSummary {
 /// unpaid order [claim]s it as they go, so the order follows the person
 /// actually working it and the next cashier simply picks the table up. This
 /// service is what the floor, the reports and that claim all read from.
-class UnpaidOrdersService {
+class UnpaidOrdersService implements UnpaidQueries {
   final AppDatabase _db;
 
   UnpaidOrdersService(this._db);
@@ -135,6 +136,7 @@ class UnpaidOrdersService {
   ///
   /// [tablesOnly] narrows it to orders sitting on a table, which is what the
   /// floor view wants; the reports want both.
+  @override
   Future<List<UnpaidOrderEntry>> unpaidOrders({bool tablesOnly = false}) async {
     final query = _db.select(_db.orders)
       ..where((o) => o.status.equals('CANCELED').not())
@@ -247,7 +249,30 @@ class UnpaidOrdersService {
     return out;
   }
 
+  /// [summary], re-read whenever anything that could change it changes.
+  ///
+  /// The trivial `SELECT 1` is a drift idiom, not a mistake: declaring
+  /// `readsFrom` makes the stream re-emit on any write to those tables, which
+  /// is what lets one recomputation cover orders, their lines, their tickets
+  /// and the floor plan together. Watching only `orders` would miss a
+  /// payment, and the figures on the floor would quietly go stale.
+  @override
+  Stream<UnpaidOrdersSummary> watchSummary({bool tablesOnly = false}) => _db
+      .customSelect(
+        'SELECT 1',
+        readsFrom: {
+          _db.orders,
+          _db.orderProducts,
+          _db.orderProductComponents,
+          _db.tickets,
+          _db.areaTables,
+        },
+      )
+      .watch()
+      .asyncMap((_) => summary(tablesOnly: tablesOnly));
+
   /// The whole floor's outstanding position in one object.
+  @override
   Future<UnpaidOrdersSummary> summary({bool tablesOnly = false}) async =>
       UnpaidOrdersSummary(
         entries: await unpaidOrders(tablesOnly: tablesOnly),

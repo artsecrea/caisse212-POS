@@ -32,7 +32,9 @@ import '../domain/models/subscription_info.dart';
 import '../services/data_sync_service.dart';
 import '../services/customer_repository.dart';
 import '../domain/services/customer_service.dart';
+import '../domain/services/report_queries.dart';
 import '../domain/services/session_queries.dart';
+import '../domain/services/unpaid_queries.dart';
 import '../domain/services/z_queries.dart';
 import '../services/daily_summary_service.dart';
 import '../services/exchange_service.dart';
@@ -195,10 +197,18 @@ final dailySummaryServiceProvider = Provider<DailySummaryService>((ref) {
   return DailySummaryService(database);
 });
 
+/// What the screens read about the reports (X, Z, sessions, products, orders, staff). A hub-linked till overrides
+/// this one provider; nothing else changes.
+final reportQueriesProvider = Provider<ReportQueries>((ref) => ref.watch(dailySummaryServiceProvider));
+
 final unpaidOrdersServiceProvider = Provider<UnpaidOrdersService>((ref) {
   final database = ref.watch(databaseProvider);
   return UnpaidOrdersService(database);
 });
+
+/// What the screens read about what is still owed. A hub-linked till overrides
+/// this one provider; nothing else changes.
+final unpaidQueriesProvider = Provider<UnpaidQueries>((ref) => ref.watch(unpaidOrdersServiceProvider));
 
 final exchangeServiceProvider = Provider<ExchangeService>((ref) {
   final database = ref.watch(databaseProvider);
@@ -281,32 +291,10 @@ DateTime zDayForSession(db.CashSession session) => DateTime(
 /// What the floor still owes, refreshed whenever anything that could change
 /// it changes.
 ///
-/// The trivial `SELECT 1` is a drift idiom, not a mistake: declaring
-/// `readsFrom` makes the stream re-emit on any write to those tables, which is
-/// what lets one recomputation cover orders, their lines, their tickets and
-/// the floor plan together. Watching only `orders` would miss a payment, and
-/// the figures on the floor would quietly go stale.
-///
 /// Tables only — this feeds the table picker. The reports ask the service
 /// directly for the wider set.
-final unpaidTablesProvider =
-    StreamProvider.autoDispose<UnpaidOrdersSummary>((ref) {
-  final database = ref.watch(databaseProvider);
-  final service = UnpaidOrdersService(database);
-  return database
-      .customSelect(
-        'SELECT 1',
-        readsFrom: {
-          database.orders,
-          database.orderProducts,
-          database.orderProductComponents,
-          database.tickets,
-          database.areaTables,
-        },
-      )
-      .watch()
-      .asyncMap((_) => service.summary(tablesOnly: true));
-});
+final unpaidTablesProvider = StreamProvider.autoDispose<UnpaidOrdersSummary>(
+    (ref) => ref.watch(unpaidQueriesProvider).watchSummary(tablesOnly: true));
 
 final currentZDayProvider = Provider<DateTime>((ref) {
   final z = ref.watch(currentZProvider);

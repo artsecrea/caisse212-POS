@@ -51,7 +51,7 @@ Future<void> showSettleUnpaidDialog({
   final l10n = AppLocalizations.of(context)!;
   final sessionService = ref.read(sessionQueriesProvider);
 
-  final entries = await ref.read(unpaidOrdersServiceProvider).unpaidOrders();
+  final entries = await ref.read(unpaidQueriesProvider).unpaidOrders();
   if (!context.mounted) return;
   if (entries.isEmpty) {
     SnackBarHelper.error(context, l10n.translate('nothing_outstanding'));

@@ -218,7 +218,7 @@ class _TestModeScreenState extends ConsumerState<TestModeScreen> {
     }
     try {
       final report = await ref
-          .read(dailySummaryServiceProvider)
+          .read(reportQueriesProvider)
           .generateSessionReport(session.id);
       final bytes =
           await ref.read(printingServiceProvider).buildDailySummaryReportBytes(

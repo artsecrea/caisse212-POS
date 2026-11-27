@@ -1,4 +1,5 @@
 import '../data/database/app_database.dart';
+import '../domain/services/kds_stats_queries.dart';
 
 /// Per-station kitchen throughput for the current shift.
 class StationThroughput {
@@ -77,13 +78,14 @@ class KdsSessionStats {
 ///
 /// Matches the KDS endpoint scoping: stats belong to the open shift. Pass the
 /// session id from `currentSessionProvider`; a null id yields [KdsSessionStats.empty].
-class KdsStatsService {
+class KdsStatsService implements KdsStatsQueries {
   final AppDatabase _db;
   KdsStatsService(this._db);
 
   static const _terminalDelivered = {'COMPLETED', 'DELIVERED'};
   static const _readyOrTerminal = {'READY', 'COMPLETED', 'DELIVERED', 'CANCELED'};
 
+  @override
   Future<KdsSessionStats> forSession(int? sessionId) async {
     if (sessionId == null) return KdsSessionStats.empty;
 

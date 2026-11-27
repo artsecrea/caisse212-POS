@@ -12,6 +12,7 @@ import 'cash_movement_service.dart';
 import 'refund_service.dart';
 import 'session_service.dart' show PaymentBreakdown;
 import 'z_service.dart' show ZService;
+import '../domain/services/report_queries.dart';
 
 /// Per-waiter rollup inside a session or across a full report.
 ///
@@ -509,12 +510,13 @@ class DailySummaryReport {
       totalPaidByExchange;
 }
 
-class DailySummaryService {
+class DailySummaryService implements ReportQueries {
   final AppDatabase _db;
 
   DailySummaryService(this._db);
 
   /// Get sessions within a date range
+  @override
   Future<List<CashSession>> getSessionsInRange(DateTime startDate, DateTime endDate) async {
     final start = DateTime(startDate.year, startDate.month, startDate.day, 0, 0, 0);
     final end = DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
@@ -526,6 +528,7 @@ class DailySummaryService {
   }
 
   /// Get summary report for specific sessions
+  @override
   Future<DailySummaryReport> generateReport({
     required DateTime startDate,
     required DateTime endDate,
@@ -848,6 +851,7 @@ class DailySummaryService {
   /// one place. The returned [DailySummaryReport] has `sessions.length == 1`,
   /// which is what `printDailySummaryReport` checks to decide whether to print
   /// the variance block at the bottom.
+  @override
   Future<DailySummaryReport> generateSessionReport(int sessionId) async {
     final session = await (_db.select(_db.cashSessions)
           ..where((s) => s.id.equals(sessionId)))
@@ -988,6 +992,7 @@ class DailySummaryService {
   /// [discountedOnly] narrows the list to orders something came off — the
   /// reductions ticket a manager signs at close. The discount is computed the
   /// same way the banded report computes it, so the two always agree.
+  @override
   Future<OrdersListReport> generateOrdersList({
     required List<int> sessionIds,
     required String scopeLabel,
@@ -1075,6 +1080,7 @@ class DailySummaryService {
   /// inclusive). The business day is the session's Z day, or the day it
   /// started when it has no Z — the same rule the Z report's day list uses.
   /// Open sessions count: a period report is read mid-day as often as not.
+  @override
   Future<List<int>> sessionIdsForPeriod(DateTime from, DateTime to) async {
     final first = DateTime(from.year, from.month, from.day);
     final last = DateTime(to.year, to.month, to.day);
@@ -1094,6 +1100,7 @@ class DailySummaryService {
     ];
   }
 
+  @override
   Future<ProductsSummaryReport> generateProductsSummary({
     required List<int> sessionIds,
     required String scopeLabel,
@@ -1179,6 +1186,7 @@ class DailySummaryService {
   /// row rather than dropped: leaving them out would make the ticket's total
   /// disagree with the Z, and a cashier chasing the difference would have
   /// nothing to find.
+  @override
   Future<StaffSalesReport> generateStaffSales({
     required List<int> sessionIds,
     required String scopeLabel,
@@ -1319,6 +1327,7 @@ class DailySummaryService {
 
   /// Modifiers sold across [sessionIds]. Cancelled orders are left out, the
   /// same rule as [generateProductsSummary], so the two tickets agree.
+  @override
   Future<OptionsSummaryReport> generateOptionsSummary({
     required List<int> sessionIds,
     required String scopeLabel,
@@ -1393,6 +1402,7 @@ class DailySummaryService {
   /// The trading day [session] belongs to: every session of its Z when it has
   /// one, otherwise every session whose business day is the day it started.
   /// Open sessions count — this is read mid-day, not at close.
+  @override
   Future<ReportScope> dayScopeFor(CashSession session) async {
     if (session.zId != null) {
       final z = await _zScope(session.zId!);

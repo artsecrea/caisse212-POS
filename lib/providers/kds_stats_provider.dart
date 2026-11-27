@@ -2,8 +2,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/kds_stats_service.dart';
 import 'database_providers.dart';
+import '../domain/services/kds_stats_queries.dart';
 
-final kdsStatsServiceProvider = Provider<KdsStatsService>((ref) {
+/// The kitchen stats for the screens. A hub-linked till overrides this one
+/// provider; nothing else changes.
+final kdsStatsServiceProvider = Provider<KdsStatsQueries>((ref) {
   return KdsStatsService(ref.read(databaseProvider));
 });
 

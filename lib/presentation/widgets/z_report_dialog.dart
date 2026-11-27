@@ -143,7 +143,7 @@ Future<void> showPrintZReportDialog({
   if (includeTotals) {
     attempted++;
     try {
-      final summaries = ref.read(dailySummaryServiceProvider);
+      final summaries = ref.read(reportQueriesProvider);
       final report = await summaries.generateReport(
         startDate: scope.day,
         endDate: scope.day,

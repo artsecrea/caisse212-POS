@@ -5,6 +5,7 @@ import 'package:loggecrea/loggecrea.dart';
 
 import '../../data/database/app_database.dart';
 import '../../providers/database_providers.dart';
+import '../../domain/services/report_queries.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/daily_summary_service.dart';
 import '../../services/permission_service.dart';
@@ -87,7 +88,7 @@ class _SessionReportsDialogState extends ConsumerState<_SessionReportsDialog> {
   DateTime _asOf = DateTime.now();
   bool _printing = false;
 
-  DailySummaryService get _summaries => ref.read(dailySummaryServiceProvider);
+  ReportQueries get _summaries => ref.read(reportQueriesProvider);
 
   @override
   void initState() {
@@ -165,7 +166,7 @@ class _SessionReportsDialogState extends ConsumerState<_SessionReportsDialog> {
         }
         UnpaidOrdersSummary? outstanding;
         try {
-          outstanding = await ref.read(unpaidOrdersServiceProvider).summary();
+          outstanding = await ref.read(unpaidQueriesProvider).summary();
         } catch (e) {
           Logger.instance.error('Reports: outstanding lookup failed: $e');
         }

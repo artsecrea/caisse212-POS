@@ -113,7 +113,7 @@ Future<void> showProductsSoldReportDialog(
   if (go != true || !context.mounted) return;
 
   try {
-    final summaries = ref.read(dailySummaryServiceProvider);
+    final summaries = ref.read(reportQueriesProvider);
     final sessionIds =
         await summaries.sessionIdsForPeriod(range.start, range.end);
     final report = await summaries.generateProductsSummary(

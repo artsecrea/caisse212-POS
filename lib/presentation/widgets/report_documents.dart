@@ -305,8 +305,8 @@ Future<PrintRun> printReportDocuments({
   int? zNumber,
 }) async {
   final printing = ref.read(printingServiceProvider);
-  final summaries = ref.read(dailySummaryServiceProvider);
-  final unpaidOrders = ref.read(unpaidOrdersServiceProvider);
+  final summaries = ref.read(reportQueriesProvider);
+  final unpaidOrders = ref.read(unpaidQueriesProvider);
   final businessName =
       ref.read(sharedPreferencesProvider).getString('business_name');
 

@@ -431,7 +431,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
 }) async {
   final l10n = AppLocalizations.of(context)!;
   final sessionService = ref.read(sessionQueriesProvider);
-  final dailySummary = ref.read(dailySummaryServiceProvider);
+  final dailySummary = ref.read(reportQueriesProvider);
 
   // Everything up to the dialog reads the day off disk — on a long history
   // that is seconds, and the button must not look dead meanwhile. Each step
@@ -645,7 +645,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
             UnpaidOrdersSummary? outstanding;
             try {
               outstanding =
-                  await ref.read(unpaidOrdersServiceProvider).summary();
+                  await ref.read(unpaidQueriesProvider).summary();
             } catch (_) {}
             try {
               zReport = await dailySummary.generateSessionReport(sessionId);

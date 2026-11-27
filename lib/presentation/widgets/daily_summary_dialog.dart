@@ -33,7 +33,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
     setState(() => _isLoading = true);
 
     try {
-      final service = ref.read(dailySummaryServiceProvider);
+      final service = ref.read(reportQueriesProvider);
       final sessions = await service.getSessionsInRange(_startDate, _endDate);
 
       setState(() {
@@ -68,7 +68,7 @@ class _DailySummaryDialogState extends ConsumerState<DailySummaryDialog> {
     setState(() => _isGenerating = true);
 
     try {
-      final service = ref.read(dailySummaryServiceProvider);
+      final service = ref.read(reportQueriesProvider);
       final report = await service.generateReport(
         startDate: _startDate,
         endDate: _endDate,
