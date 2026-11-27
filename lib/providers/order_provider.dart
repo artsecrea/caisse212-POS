@@ -570,6 +570,18 @@ class OrderRepository implements OrderQueries {
     _logService = OrderLogService(_database);
   }
 
+  /// The business's copy of order [code] when this till holds none — an
+  /// order of another till — as the server's JSON (`/pos/orders/{code}`).
+  /// Needs the network.
+  @override
+  Future<Map<String, dynamic>> businessOrderByCode(String code) {
+    final ref = _ref;
+    if (ref == null) {
+      throw StateError('businessOrderByCode needs the repository\'s Ref');
+    }
+    return ref.read(apiServiceProvider).fetchOrderByCode(code);
+  }
+
   /// [orderId]'s row as it changes — with the backend's payment position,
   /// which the server owns: a service order is routinely part-paid across
   /// tills.

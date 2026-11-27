@@ -80,4 +80,10 @@ abstract interface class ReturnsService {
 
   /// This till's refunds, newest first: of [sessionId], or since [since].
   Future<List<Refund>> refunds({int? sessionId, DateTime? since});
+
+  /// The whole business's refunds between [from] and [to], every till's, as
+  /// the server's page (`content` holds the rows); null when the server does
+  /// not offer the list. Needs the network.
+  Future<Map<String, dynamic>?> businessRefunds(
+      {required DateTime from, required DateTime to, int size = 50});
 }

@@ -2573,8 +2573,9 @@ class _OrdersManagementScreenState
         return;
       }
 
-      final apiService = ref.read(apiServiceProvider);
-      final orderData = await apiService.fetchOrderByCode(orderCode);
+      final orderData = await ref
+          .read(orderQueriesProvider)
+          .businessOrderByCode(orderCode);
 
       if (mounted) Navigator.of(context).pop(); // Close loading dialog
 

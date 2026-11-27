@@ -178,6 +178,13 @@ class LocalReturnsService implements ReturnsService {
   @override
   Future<List<Refund>> refunds({int? sessionId, DateTime? since}) =>
       _refunds.localRefunds(sessionId: sessionId, since: since);
+
+  @override
+  Future<Map<String, dynamic>?> businessRefunds(
+          {required DateTime from, required DateTime to, int size = 50}) =>
+      _ref
+          .read(apiServiceProvider)
+          .fetchRefundsPage(from: from, to: to, size: size);
 }
 
 /// The refund and exchange actions for the screens. A hub-linked till

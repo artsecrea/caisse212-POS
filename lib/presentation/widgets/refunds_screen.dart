@@ -86,8 +86,8 @@ class _RefundsScreenState extends ConsumerState<RefundsScreen> {
     final (from, to) = _range();
     try {
       final page = await ref
-          .read(apiServiceProvider)
-          .fetchRefundsPage(from: from, to: to, size: 200);
+          .read(returnsServiceProvider)
+          .businessRefunds(from: from, to: to, size: 200);
       if (!mounted) return;
       setState(() {
         _remote = page == null

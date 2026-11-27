@@ -105,6 +105,56 @@ void main() {
     expect(offenders, isEmpty);
   });
 
+  // What a screen may ask the cloud directly: the account and terminal —
+  // sign-in, tokens, subscription, tenant URL, demo mode — the till's own
+  // names, and messages to the back office. All of it is the real backend's.
+  // Orders, tickets, sessions, refunds and the like go through a service,
+  // which a hub-linked till answers from the hub.
+  const accountLevelApi = {
+    'checkAccountStatus', 'clearAllAuthData', 'clearAuthData',
+    'debugSetAccessExpiry', 'debugSetRefreshExpiry',
+    'debugSimulateRefreshRejected', 'getAccessExpiresAt', 'getAccessToken',
+    'getBaseUrl', 'getPosName', 'getRefreshExpiresAt', 'getRefreshToken',
+    'getTenantId', 'getUsername', 'isDemoMode', 'login', 'logout',
+    'postNotification', 'refreshSubscription', 'refreshTerminalInfo',
+    'setBaseUrl', 'setDemoMode', 'submitIssue', 'terminalTag',
+  };
+
+  test('screens ask the cloud only for account-level data', () {
+    final api = File('lib/services/api_service.dart').readAsStringSync();
+    final apiStart = api.indexOf(RegExp(r'^class ApiService\b', multiLine: true));
+    final apiMethods = {
+      for (final m in RegExp(r'^  (?!static )[\w<>?, ()]+? (\w+)\(', multiLine: true)
+          .allMatches(api, apiStart))
+        if (!m.group(1)!.startsWith('_')) m.group(1)!,
+    };
+    // Calls made on an ApiService: straight off the provider, or on a local
+    // that holds one.
+    const source = r'(?:ref\s*\.\s*(?:read|watch)\(\s*apiServiceProvider\s*\)|'
+        r'ApiService\([^)]*\))';
+    final offenders = <String>{};
+    for (final f in screens) {
+      final s = f.readAsStringSync();
+      final receivers = {
+        for (final m
+            in RegExp(r'(?:final|var)\s+(\w+)\s*=\s*' + source).allMatches(s))
+          m.group(1)!,
+      };
+      final calls = [
+        ...RegExp(source + r'\s*\.\s*(\w+)\(').allMatches(s),
+        for (final r in receivers)
+          ...RegExp(r'\b' + r + r'\s*\.\s*(\w+)\(').allMatches(s),
+      ];
+      for (final m in calls) {
+        final name = m.group(1)!;
+        if (apiMethods.contains(name) && !accountLevelApi.contains(name)) {
+          offenders.add('${rel(f)} calls ApiService.$name');
+        }
+      }
+    }
+    expect(offenders, isEmpty);
+  });
+
   // A provider typed by an interface builds its local implementation on the
   // database: that is the swap point. Every other provider a screen reads —
   // streams, futures, notifiers, values — must get its data through one.

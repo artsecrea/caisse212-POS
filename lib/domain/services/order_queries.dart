@@ -164,4 +164,9 @@ abstract interface class OrderQueries {
 
   /// Find an active product by its MBW / PLU code (string comparison only).
   Future<Product?> findByMbwCode(String plu);
+
+  /// The business's copy of order [code] when this till holds none — an
+  /// order of another till — as the server's JSON (`/pos/orders/{code}`).
+  /// Needs the network.
+  Future<Map<String, dynamic>> businessOrderByCode(String code);
 }
