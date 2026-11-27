@@ -33,6 +33,7 @@ import 'package:caisse212/domain/services/order_queries.dart';
 import 'package:caisse212/domain/services/order_service.dart';
 import 'package:caisse212/domain/services/payment_service.dart';
 import 'package:caisse212/domain/services/report_queries.dart';
+import 'package:caisse212/domain/services/reservation_service.dart';
 import 'package:caisse212/domain/services/returns_service.dart';
 import 'package:caisse212/domain/services/session_queries.dart';
 import 'package:caisse212/domain/services/ticket_queries.dart';

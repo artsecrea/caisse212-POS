@@ -1,28 +1,19 @@
 import 'dart:async';
 
-import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/database/app_database.dart';
 
 import '../domain/models/reservation_models.dart';
+import '../domain/services/reservation_service.dart';
 import '../services/reservation_service.dart';
 import 'database_providers.dart';
 import 'network_provider.dart';
 
 /// Every bookable service: a time-managed, active product with a duration.
 /// One without a duration cannot be sized into a slot, so it is not offered.
-final bookableServicesProvider = StreamProvider<List<Product>>((ref) {
-  final db = ref.watch(databaseProvider);
-  return (db.select(db.products)
-        ..where((p) =>
-            p.isPlannable.equals(true) &
-            p.isActive.equals(true) &
-            p.planDurationMinutes.isNotNull() &
-            p.planDurationMinutes.isBiggerThanValue(0))
-        ..orderBy([(p) => OrderingTerm(expression: p.name)]))
-      .watch();
-});
+final bookableServicesProvider = StreamProvider<List<Product>>(
+    (ref) => ref.watch(reservationServiceProvider).watchBookableServices());
 
 /// Ids of [bookableServicesProvider], for "does this cart hold a service".
 final bookableProductIdsProvider = Provider<Set<int>>((ref) => {
@@ -33,32 +24,14 @@ final bookableProductIdsProvider = Provider<Set<int>>((ref) => {
 
 /// Each service's resource pool (who can do it), from the product sync.
 /// No entry = any staff member.
-final servicePoolsProvider = StreamProvider<Map<int, Set<int>>>((ref) {
-  final db = ref.watch(databaseProvider);
-  return db.select(db.productResources).watch().map((rows) {
-    final out = <int, Set<int>>{};
-    for (final r in rows) {
-      out.putIfAbsent(r.productId, () => <int>{}).add(r.resourceId);
-    }
-    return out;
-  });
-});
+final servicePoolsProvider = StreamProvider<Map<int, Set<int>>>(
+    (ref) => ref.watch(reservationServiceProvider).watchServicePools());
 
 /// Retail products (not time-managed) matching a search, to sell alongside
 /// a reservation.
 final retailProductSearchProvider =
-    FutureProvider.family<List<Product>, String>((ref, query) {
-  final db = ref.watch(databaseProvider);
-  final q = '%${query.trim().toLowerCase()}%';
-  return (db.select(db.products)
-        ..where((p) =>
-            p.isActive.equals(true) &
-            p.isPlannable.equals(false) &
-            (p.name.lower().like(q) | p.barcode.like(q)))
-        ..orderBy([(p) => OrderingTerm(expression: p.name)])
-        ..limit(30))
-      .get();
-});
+    FutureProvider.family<List<Product>, String>((ref, query) =>
+        ref.watch(reservationServiceProvider).searchRetailProducts(query));
 
 /// Whether reservation writes can run right now. They are never queued (a
 /// slot belongs to the shop's one diary), so offline they are refused and
@@ -67,8 +40,10 @@ final canReserveProvider = Provider<bool>((ref) {
   return ref.watch(lastKnownOnlineStatusProvider);
 });
 
+/// The diary for the screens. A hub-linked till overrides this one provider;
+/// nothing else changes.
 final reservationServiceProvider = Provider<ReservationService>((ref) {
-  return ReservationService(
+  return LocalReservationService(
     ref.watch(apiServiceProvider),
     ref.watch(databaseProvider),
     // Read, not watch: the guard reflects the connection when a call is

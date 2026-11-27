@@ -241,7 +241,7 @@ void main() {
 
   group('ReservationService (cache + conversion)', () {
     late AppDatabase db;
-    late ReservationService service;
+    late LocalReservationService service;
     var online = false;
 
     setUp(() async {
@@ -249,7 +249,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       db = AppDatabase.forTesting(NativeDatabase.memory());
       online = false;
-      service = ReservationService(ApiService(prefs), db, () => online);
+      service = LocalReservationService(ApiService(prefs), db, () => online);
       await db.into(db.products).insert(ProductsCompanion.insert(
             id: const Value(19),
             name: 'Coupe',

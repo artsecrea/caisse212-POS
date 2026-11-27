@@ -34,7 +34,7 @@ Future<void> _settle(WidgetTester tester) async {
 /// Offline, and never touches the database: drift's timers do not run under
 /// the widget tester's fake clock. The cache paths are covered in
 /// reservations_test.dart against a real in-memory database.
-class _NoDbService extends ReservationService {
+class _NoDbService extends LocalReservationService {
   _NoDbService(ApiService api, AppDatabase db) : super(api, db, () => false);
 
   @override

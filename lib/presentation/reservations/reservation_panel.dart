@@ -11,7 +11,6 @@ import '../../providers/catalogue_repository.dart';
 import '../../providers/database_providers.dart';
 import '../../providers/reservation_providers.dart';
 import '../../providers/resource_providers.dart';
-import '../../services/reservation_service.dart';
 import '../../utils/app_localizations.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/customer_display.dart';

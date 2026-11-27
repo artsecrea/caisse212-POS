@@ -10,104 +10,7 @@ import '../utils/customer_display.dart';
 import '../utils/phone_normalizer.dart';
 import '../utils/zero_price_tva.dart';
 import 'api_service.dart';
-
-/// A reservation being created or edited, before it is sent.
-class ReservationDraftItem {
-  final int? id;
-  final int productId;
-  final int? variantId;
-  final double quantity;
-  final DateTime? startAt;
-  final DateTime? endAt;
-
-  /// Empty = let the server auto-assign one per required type.
-  final List<int> resourceIds;
-
-  /// Agreed price when it is not the catalogue's; null = the server's.
-  final double? unitPrice;
-
-  /// False for a retail product sold with the reservation: no time, no
-  /// resource, it only rides along to the till.
-  final bool timed;
-
-  const ReservationDraftItem({
-    this.id,
-    required this.productId,
-    this.variantId,
-    this.quantity = 1,
-    this.startAt,
-    this.endAt,
-    this.resourceIds = const [],
-    this.unitPrice,
-    this.timed = true,
-  });
-
-  Map<String, dynamic> toJson() => {
-    if (id != null) 'id': id,
-    'productId': productId,
-    if (variantId != null) 'variantId': variantId,
-    if (quantity != 1) 'quantity': quantity,
-    if (unitPrice != null) 'unitPrice': unitPrice,
-    if (timed && startAt != null) 'startAt': toWireInstant(startAt!),
-    if (timed && endAt != null) 'endAt': toWireInstant(endAt!),
-    if (timed && resourceIds.isNotEmpty) 'resourceIds': resourceIds,
-  };
-}
-
-class ReservationDraft {
-  final DateTime startAt;
-  final int? customerId;
-  final String? customerName;
-  final String? customerPhone;
-  final String? note;
-  final String? internalNote;
-
-  /// BOOKED or CONFIRMED on create; null on edit (the status is kept).
-  final String? status;
-  final List<ReservationDraftItem> items;
-
-  /// A manager double-booking on purpose, after a 409 that said they may
-  /// (`overbookable`). Covers capacity only; hours and blocks stay `force`.
-  final bool overbook;
-
-  /// An unconfirmed (BOOKED) booking may sit over others; no permission
-  /// needed. The agenda then flags the overlap to sort out, and confirming
-  /// it later is refused while it still collides with a firm booking.
-  final bool allowOverlap;
-
-  const ReservationDraft({
-    required this.startAt,
-    this.customerId,
-    this.customerName,
-    this.customerPhone,
-    this.note,
-    this.internalNote,
-    this.status = ReservationStatus.booked,
-    required this.items,
-    this.overbook = false,
-    this.allowOverlap = false,
-  });
-
-  Map<String, dynamic> toJson() {
-    String? blank(String? s) =>
-        (s == null || s.trim().isEmpty) ? null : s.trim();
-    return {
-      'startAt': toWireInstant(startAt),
-      // Never a local-only id (the server answers 404): the caller passes
-      // only ids the server knows, else name + phone and the server matches
-      // or creates the customer by phone.
-      if (customerId != null) 'customerId': customerId,
-      if (blank(customerName) != null) 'customerName': blank(customerName),
-      if (blank(customerPhone) != null) 'customerPhone': blank(customerPhone),
-      if (blank(note) != null) 'note': blank(note),
-      if (blank(internalNote) != null) 'internalNote': blank(internalNote),
-      if (status != null) 'status': status,
-      if (overbook) 'overbook': true,
-      if (allowOverlap) 'allowOverlap': true,
-      'items': [for (final i in items) i.toJson()],
-    };
-  }
-}
+import '../domain/services/reservation_service.dart';
 
 /// The one path through which the POS reads and changes reservations.
 ///
@@ -116,13 +19,13 @@ class ReservationDraft {
 /// promise this till cannot keep. Reads fall back to the last pull, and a
 /// reservation held here can be rung up as an order offline; the order sync
 /// links it later through `reservationCode`.
-class ReservationService {
+class LocalReservationService implements ReservationService {
   final ApiService _api;
   final AppDatabase _db;
   final bool Function() _isOnline;
   final _logger = Logger.instance;
 
-  ReservationService(this._api, this._db, this._isOnline);
+  LocalReservationService(this._api, this._db, this._isOnline);
 
   bool get isOnline => _isOnline();
 
@@ -135,6 +38,7 @@ class ReservationService {
   /// Pull [from]..[to] (local days, inclusive) and replace the cache for
   /// that window. Returns the server's summary, or null when offline or the
   /// pull failed — the cache is then left as it was.
+  @override
   Future<AgendaSummary?> pullAgenda(DateTime from, DateTime to) async {
     if (!_isOnline()) return null;
     try {
@@ -202,6 +106,7 @@ class ReservationService {
       );
 
   /// One day from the cache: its frame and every reservation touching it.
+  @override
   Future<AgendaDay> loadDay(DateTime day) async {
     final key = dayKey(day);
     final from = dayStartOf(day);
@@ -263,6 +168,7 @@ class ReservationService {
   }
 
   /// Search online when possible, the cache otherwise.
+  @override
   Future<List<Reservation>> search(String query) async {
     if (_isOnline()) {
       try {
@@ -280,6 +186,7 @@ class ReservationService {
 
   /// The freshest copy of a reservation: the server when online, else the
   /// cache. Null when neither has it.
+  @override
   Future<Reservation?> refresh(Reservation r) async {
     if (_isOnline()) {
       try {
@@ -298,6 +205,7 @@ class ReservationService {
 
   // ── Writes (online only) ────────────────────────────────────────────────
 
+  @override
   Future<List<AvailabilitySlot>> availability({
     required List<int> productIds,
     required DateTime date,
@@ -317,6 +225,7 @@ class ReservationService {
     );
   }
 
+  @override
   Future<Reservation> create(ReservationDraft draft) async {
     _requireOnline();
     final r = await _api.createReservation(draft.toJson());
@@ -325,6 +234,7 @@ class ReservationService {
   }
 
   /// Full replace. Items that keep their `id` are kept server-side.
+  @override
   Future<Reservation> update(int id, ReservationDraft draft) async {
     _requireOnline();
     final r = await _api.updateReservation(id, draft.toJson());
@@ -332,6 +242,7 @@ class ReservationService {
     return r;
   }
 
+  @override
   Future<Reservation> move(
     int id, {
     required DateTime startAt,
@@ -351,6 +262,7 @@ class ReservationService {
     return r;
   }
 
+  @override
   Future<Reservation> moveItem(
     int itemId, {
     required DateTime startAt,
@@ -372,6 +284,7 @@ class ReservationService {
     return r;
   }
 
+  @override
   Future<Reservation> setStatus(
     int id,
     String status, {
@@ -389,6 +302,7 @@ class ReservationService {
     return r;
   }
 
+  @override
   Future<void> addBlock({
     required int resourceId,
     required String kind,
@@ -406,6 +320,7 @@ class ReservationService {
     );
   }
 
+  @override
   Future<void> deleteBlock(int id) {
     _requireOnline();
     return _api.deleteAgendaBlock(id);
@@ -413,6 +328,7 @@ class ReservationService {
 
   /// Best effort, never blocks the sale: tells the server the customer is
   /// here. Skipped offline and when already ARRIVED.
+  @override
   Future<void> markArrivedQuietly(Reservation r) async {
     if (!_isOnline() || r.status == ReservationStatus.arrived) return;
     try {
@@ -432,6 +348,7 @@ class ReservationService {
   ///
   /// Throws [StateError] naming the first service missing from the local
   /// catalogue — it cannot be priced or sent.
+  @override
   Future<CurrentOrder> buildCart(
     Reservation r, {
     required String orderType,
@@ -521,6 +438,7 @@ class ReservationService {
 
   /// Orders already rung up from [code] on this till — a second conversion
   /// here is almost certainly a mistake.
+  @override
   Future<List<Order>> localOrdersFor(String code) =>
       (_db.select(_db.orders)..where(
             (o) =>
@@ -528,4 +446,57 @@ class ReservationService {
                 o.status.isNotValue('CANCELED'),
           ))
           .get();
+
+  // ── What can be booked ──────────────────────────────────────────────────
+
+  /// Every bookable service: a time-managed, active product with a duration,
+  /// as they change. One without a duration cannot be sized into a slot, so
+  /// it is not offered.
+  @override
+  Stream<List<Product>> watchBookableServices() => (_db.select(_db.products)
+        ..where((p) =>
+            p.isPlannable.equals(true) &
+            p.isActive.equals(true) &
+            p.planDurationMinutes.isNotNull() &
+            p.planDurationMinutes.isBiggerThanValue(0))
+        ..orderBy([(p) => OrderingTerm(expression: p.name)]))
+      .watch();
+
+  /// Each service's resource pool (who can do it), as it changes. No entry =
+  /// any staff member.
+  @override
+  Stream<Map<int, Set<int>>> watchServicePools() =>
+      _db.select(_db.productResources).watch().map((rows) {
+        final out = <int, Set<int>>{};
+        for (final r in rows) {
+          out.putIfAbsent(r.productId, () => <int>{}).add(r.resourceId);
+        }
+        return out;
+      });
+
+  /// Retail products (not time-managed) matching [query], to sell alongside
+  /// a reservation.
+  @override
+  Future<List<Product>> searchRetailProducts(String query) {
+    final q = '%${query.trim().toLowerCase()}%';
+    return (_db.select(_db.products)
+          ..where((p) =>
+              p.isActive.equals(true) &
+              p.isPlannable.equals(false) &
+              (p.name.lower().like(q) | p.barcode.like(q)))
+          ..orderBy([(p) => OrderingTerm(expression: p.name)])
+          ..limit(30))
+        .get();
+  }
+
+  /// The active bookable resources (staff, rooms, chairs, equipment) in the
+  /// back office's order, as they change.
+  @override
+  Stream<List<Resource>> watchResources() => (_db.select(_db.resources)
+        ..where((r) => r.isActive.equals(true))
+        ..orderBy([
+          (r) => OrderingTerm(expression: r.sortOrder),
+          (r) => OrderingTerm(expression: r.name),
+        ]))
+      .watch();
 }

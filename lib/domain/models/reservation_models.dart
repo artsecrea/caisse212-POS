@@ -740,3 +740,101 @@ class ReservationLink {
         .toList();
   }
 }
+
+/// A reservation being created or edited, before it is sent.
+class ReservationDraftItem {
+  final int? id;
+  final int productId;
+  final int? variantId;
+  final double quantity;
+  final DateTime? startAt;
+  final DateTime? endAt;
+
+  /// Empty = let the server auto-assign one per required type.
+  final List<int> resourceIds;
+
+  /// Agreed price when it is not the catalogue's; null = the server's.
+  final double? unitPrice;
+
+  /// False for a retail product sold with the reservation: no time, no
+  /// resource, it only rides along to the till.
+  final bool timed;
+
+  const ReservationDraftItem({
+    this.id,
+    required this.productId,
+    this.variantId,
+    this.quantity = 1,
+    this.startAt,
+    this.endAt,
+    this.resourceIds = const [],
+    this.unitPrice,
+    this.timed = true,
+  });
+
+  Map<String, dynamic> toJson() => {
+    if (id != null) 'id': id,
+    'productId': productId,
+    if (variantId != null) 'variantId': variantId,
+    if (quantity != 1) 'quantity': quantity,
+    if (unitPrice != null) 'unitPrice': unitPrice,
+    if (timed && startAt != null) 'startAt': toWireInstant(startAt!),
+    if (timed && endAt != null) 'endAt': toWireInstant(endAt!),
+    if (timed && resourceIds.isNotEmpty) 'resourceIds': resourceIds,
+  };
+}
+
+class ReservationDraft {
+  final DateTime startAt;
+  final int? customerId;
+  final String? customerName;
+  final String? customerPhone;
+  final String? note;
+  final String? internalNote;
+
+  /// BOOKED or CONFIRMED on create; null on edit (the status is kept).
+  final String? status;
+  final List<ReservationDraftItem> items;
+
+  /// A manager double-booking on purpose, after a 409 that said they may
+  /// (`overbookable`). Covers capacity only; hours and blocks stay `force`.
+  final bool overbook;
+
+  /// An unconfirmed (BOOKED) booking may sit over others; no permission
+  /// needed. The agenda then flags the overlap to sort out, and confirming
+  /// it later is refused while it still collides with a firm booking.
+  final bool allowOverlap;
+
+  const ReservationDraft({
+    required this.startAt,
+    this.customerId,
+    this.customerName,
+    this.customerPhone,
+    this.note,
+    this.internalNote,
+    this.status = ReservationStatus.booked,
+    required this.items,
+    this.overbook = false,
+    this.allowOverlap = false,
+  });
+
+  Map<String, dynamic> toJson() {
+    String? blank(String? s) =>
+        (s == null || s.trim().isEmpty) ? null : s.trim();
+    return {
+      'startAt': toWireInstant(startAt),
+      // Never a local-only id (the server answers 404): the caller passes
+      // only ids the server knows, else name + phone and the server matches
+      // or creates the customer by phone.
+      if (customerId != null) 'customerId': customerId,
+      if (blank(customerName) != null) 'customerName': blank(customerName),
+      if (blank(customerPhone) != null) 'customerPhone': blank(customerPhone),
+      if (blank(note) != null) 'note': blank(note),
+      if (blank(internalNote) != null) 'internalNote': blank(internalNote),
+      if (status != null) 'status': status,
+      if (overbook) 'overbook': true,
+      if (allowOverlap) 'allowOverlap': true,
+      'items': [for (final i in items) i.toJson()],
+    };
+  }
+}

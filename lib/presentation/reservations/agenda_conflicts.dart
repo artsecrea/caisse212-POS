@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/models/reservation_models.dart';
 import '../../providers/reservation_providers.dart';
-import '../../services/reservation_service.dart';
+import '../../domain/services/reservation_service.dart';
 import '../../utils/app_localizations.dart';
 import 'reservation_actions.dart';
 import 'reservation_detail_sheet.dart';
