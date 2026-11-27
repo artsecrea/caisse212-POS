@@ -91,12 +91,12 @@ void main() {
           [newer, older]);
     });
 
-    test("keeps CANCELED orders: the filter spells it 'CANCELLED'", () async {
-      final canceled = await order('C1', status: 'CANCELED');
-      final doubleL = await order('C2', status: 'CANCELLED');
+    test('leaves cancelled orders out, in both spellings', () async {
+      final open = await order('O1');
+      await order('C1', status: 'CANCELED');
+      await order('C2', status: 'CANCELLED');
       final ids = [for (final o in await repo.recentOrdersForNoteLink()) o.id];
-      expect(ids, contains(canceled));
-      expect(ids, isNot(contains(doubleL)));
+      expect(ids, [open]);
     });
 
     test('capped at the 100 newest', () async {

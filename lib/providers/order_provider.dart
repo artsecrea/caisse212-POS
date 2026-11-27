@@ -2042,15 +2042,13 @@ class OrderRepository implements OrderQueries {
     return {for (final r in rows) r.id: r.lineUid};
   }
 
-  /// The 100 newest orders a note can be linked to.
-  ///
-  /// The 'CANCELLED' spelling matches no row — the app writes 'CANCELED' —
-  /// so cancelled orders are offered too. Kept as the note dialog always had
-  /// it; excluding them would be a deliberate change of its own.
+  /// The 100 newest orders a note can be linked to, cancelled ones left
+  /// out. Both spellings: the app writes 'CANCELED', older rows and the
+  /// cloud may carry 'CANCELLED'.
   @override
   Future<List<Order>> recentOrdersForNoteLink() async {
     return await (_database.select(_database.orders)
-          ..where((o) => o.status.isNotIn(['CANCELLED']))
+          ..where((o) => o.status.isNotIn(['CANCELED', 'CANCELLED']))
           ..orderBy([(o) => OrderingTerm.desc(o.createdAt)])
           ..limit(100))
         .get();
