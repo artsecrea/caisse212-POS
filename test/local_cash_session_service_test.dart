@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:caisse212/data/database/app_database.dart';
+import 'package:caisse212/domain/models/session_rules.dart';
+import 'package:caisse212/providers/session_rules_provider.dart';
 import 'package:caisse212/domain/services/cash_session_service.dart';
 import 'package:caisse212/providers/database_providers.dart';
 import 'package:caisse212/services/local_cash_session_service.dart';
@@ -69,6 +71,24 @@ class _LocalCashSessionHarness implements CashSessionHarness {
       (await (db.select(db.cashSessions)..where((s) => s.id.equals(sessionId)))
               .getSingle())
           .countedCash;
+
+  @override
+  Future<int> openZ() => db.into(db.zs).insert(ZsCompanion.insert(
+      id: const Value(1),
+      code: 'Z1',
+      createdBy: 1,
+      zDay: const Value('2026-11-27')));
+
+  @override
+  Future<int?> zOf(int sessionId) async =>
+      (await (db.select(db.cashSessions)..where((s) => s.id.equals(sessionId)))
+              .getSingle())
+          .zId;
+
+  @override
+  Future<void> requireOpeningFloat() => container
+      .read(sessionRulesProvider.notifier)
+      .updateRules(const SessionRules(requireOpeningFloat: true));
 
   @override
   Future<String?> statusOf(int sessionId) async =>

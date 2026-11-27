@@ -7,11 +7,14 @@ import 'package:uuid/uuid.dart';
 import '../data/database/app_database.dart';
 import '../domain/services/cash_session_service.dart';
 import '../providers/database_providers.dart';
+import '../providers/session_rules_provider.dart';
 import '../providers/settings_provider.dart';
 import 'activity_log_service.dart';
+import 'api_service.dart';
 import 'cash_movement_service.dart';
 import 'daily_summary_service.dart';
 import 'local_floor_service.dart';
+import 'notification_params.dart';
 import 'pos_notifications.dart'
     show notifySessionClosed, notifySessionPauseChange;
 import 'session_service.dart';
@@ -27,6 +30,72 @@ class LocalCashSessionService implements CashSessionService {
 
   SessionService get _sessions => _ref.read(sessionServiceProvider);
   CashMovementService get _movements => _ref.read(cashMovementServiceProvider);
+
+  @override
+  Future<OpenedSession> openForCashier({
+    required SessionActor cashier,
+    required double moneyAtStart,
+    required bool isAdmin,
+    int? zId,
+  }) async {
+    final cashierId = cashier.userId!;
+    final log = _ref.read(activityLogServiceProvider);
+    final existing = await _sessions.getActiveSession(cashierId);
+    if (existing != null) {
+      if (existing.status != 'paused') {
+        return (session: existing, how: SessionOpening.continued);
+      }
+      await resume(existing.id);
+      final resumed = (await _sessions.getSessionById(existing.id))!;
+      await log.logSessionResume(
+          userId: cashierId, username: cashier.username);
+      return (session: resumed, how: SessionOpening.resumed);
+    }
+
+    await _sessions.checkOpenRules(
+      _ref.read(sessionRulesProvider),
+      isAdmin: isAdmin,
+      cashierId: cashierId,
+      moneyAtStart: moneyAtStart,
+    );
+    var session = await _sessions.startSession(
+      cashierId: cashierId,
+      moneyAtStart: moneyAtStart,
+      posId: _ref.read(apiServiceProvider).getPosId(),
+      // Each cashier brings their own float for now; nothing carries over
+      // from the previous session.
+      moneyEntered: moneyAtStart,
+    );
+    // Attach BEFORE the first push: the session carries its Z label (and, as
+    // the Z's first session, its open mode) to the server.
+    if (zId != null) {
+      await _ref.read(zServiceProvider).attachSession(session.id, zId);
+      session = (await _sessions.getSessionById(session.id))!;
+    }
+    // Best-effort: offline, isSynced stays false and syncSessionsBulk sends
+    // it later.
+    try {
+      final prefs = _ref.read(sharedPreferencesProvider);
+      await _ref
+          .read(dataSyncServiceFactoryProvider)(ApiService(prefs))
+          .syncSingleSession(session.id);
+    } catch (_) {}
+    await log.logSessionStart(userId: cashierId, username: cashier.username);
+    // Fire-and-forget: the sign-in must not wait on admin devices.
+    unawaited(_ref.read(notificationOutboxProvider).send(
+          'POS_SESSION_OPENED',
+          NotificationParams.sessionOpened(
+            terminalName: _ref.read(apiServiceProvider).getPosName() ?? '',
+            cashierName: cashier.username ?? '',
+            cashierId: cashierId,
+            openedAt: session.startedAt,
+            startingBalance: moneyAtStart,
+            currency: _ref.read(settingsProvider).currency,
+          ),
+          refId: session.id.toString(),
+        ));
+    return (session: session, how: SessionOpening.started);
+  }
 
   @override
   Future<bool> pause(int sessionId) async {
@@ -50,7 +119,7 @@ class LocalCashSessionService implements CashSessionService {
     double? countedCash,
     String? notes,
     bool autoClosed = false,
-    SessionCloser? closedBy,
+    SessionActor? closedBy,
     bool freeTables = false,
   }) async {
     await _sessions.endSession(

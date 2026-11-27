@@ -1,14 +1,41 @@
-import '../../data/database/app_database.dart' show CashMovement;
+import '../../data/database/app_database.dart' show CashMovement, CashSession;
 import '../../services/daily_summary_service.dart' show DailySummaryReport;
 
-/// The person who closed a session, as the activity log records them.
-typedef SessionCloser = ({int? userId, String? username});
+/// The person behind a session action, as the activity log records them.
+typedef SessionActor = ({int? userId, String? username});
+
+/// How a cashier got their session at sign-in.
+enum SessionOpening {
+  /// Their session was already running.
+  continued,
+
+  /// Their paused session was resumed.
+  resumed,
+
+  /// A new session was started.
+  started,
+}
+
+typedef OpenedSession = ({CashSession session, SessionOpening how});
 
 /// What a till does to a cash session and its drawer. An interface because a
 /// session is shared state — on a hub, the hub records it — so a standalone
 /// till answers from its own database (`LocalCashSessionService`) and a
 /// hub-linked one will ask the hub.
 abstract interface class CashSessionService {
+  /// The session [cashier] works in once signed in: theirs if it runs, theirs
+  /// resumed if it was paused, or a new one — after the terminal's open
+  /// rules ([isAdmin] is exempt), counted in Z [zId], with [moneyAtStart] as
+  /// its float. Every one but the first is logged as [cashier]'s, and a new
+  /// one is announced to the admins. Throws a `SessionRuleViolation` when a
+  /// rule refuses a new session.
+  Future<OpenedSession> openForCashier({
+    required SessionActor cashier,
+    required double moneyAtStart,
+    required bool isAdmin,
+    int? zId,
+  });
+
   /// Pause [sessionId] and tell the admins. False when it was not open, and
   /// nothing changed.
   Future<bool> pause(int sessionId);
@@ -27,7 +54,7 @@ abstract interface class CashSessionService {
     double? countedCash,
     String? notes,
     bool autoClosed = false,
-    SessionCloser? closedBy,
+    SessionActor? closedBy,
     bool freeTables = false,
   });
 

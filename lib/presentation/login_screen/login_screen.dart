@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../data/database/app_database.dart';
 import '../../providers/admin_elevation_provider.dart';
 import '../../providers/database_providers.dart';
+import '../../domain/services/cash_session_service.dart' show SessionOpening;
 import '../../services/local_cash_session_service.dart';
 import '../../services/permission_service.dart';
 import '../../domain/services/day_service.dart' show ZRuleViolation;
@@ -30,7 +31,6 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../widgets/caisse212_logo.dart';
 import '../super_admin/super_admin_tap_target.dart';
 import '../../services/api_service.dart';
-import '../../services/notification_params.dart';
 import '../../services/remote_support_service.dart';
 import '../../providers/session_rules_provider.dart';
 import '../../utils/app_localizations.dart';
@@ -681,88 +681,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       }
 
       try {
-        final sessionService = ref.read(sessionServiceProvider);
         final startingBalance =
             double.tryParse(_startingBalanceController.text) ?? 0.0;
-
-        final zService = ref.read(zServiceProvider);
         ref.read(currentZProvider.notifier).state = zGate.z;
 
-        final existingSession =
-            await sessionService.getActiveSession(user.id);
-
-        if (existingSession != null) {
-          if (existingSession.status == 'paused') {
-            await ref
-                .read(cashSessionServiceProvider)
-                .resume(existingSession.id);
-            final resumedSession =
-                await sessionService.getSessionById(existingSession.id);
-            ref.read(currentSessionProvider.notifier).state = resumedSession;
-            await ref.read(activityLogServiceProvider)
-                .logSessionResume(userId: user.id, username: actorName);
-            if (mounted) {
-              SnackBarHelper.showToast(l10n
-                    .translate('resumed_session')
-                    .replaceAll('{0}', existingSession.id.toString()), kind: ToastKind.success);
-            }
-          } else {
-            ref.read(currentSessionProvider.notifier).state = existingSession;
-          }
-        } else {
-          // Enforce session-open rules (admin users are exempt).
-          final rules = ref.read(sessionRulesProvider);
-          final isAdmin = viaMaster || user.type.toLowerCase() == 'admin';
-          await sessionService.checkOpenRules(
-            rules,
-            isAdmin: isAdmin,
-            cashierId: user.id,
-            moneyAtStart: startingBalance,
-          );
-
-          var newSession = await sessionService.startSession(
-            cashierId: user.id,
-            moneyAtStart: startingBalance,
-            posId: ref.read(apiServiceProvider).getPosId(),
-            // Each cashier brings their own float for now; nothing carries
-            // over from the previous session.
-            moneyEntered: startingBalance,
-          );
-          // Attach BEFORE the first push: the session carries its Z label
-          // (and, as the Z's first session, its open mode) to the server.
-          final z = zGate.z;
-          if (z != null) {
-            await zService.attachSession(newSession.id, z.id);
-            newSession = (await sessionService.getSessionById(newSession.id))!;
-          }
-          ref.read(currentSessionProvider.notifier).state = newSession;
-          // Push the new session to the server immediately (best-effort).
-          // If offline, isSynced stays false and syncSessionsBulk covers it later.
-          try {
-            final prefs = ref.read(sharedPreferencesProvider);
-            await ref
-                .read(dataSyncServiceFactoryProvider)(ApiService(prefs))
-                .syncSingleSession(newSession.id);
-          } catch (_) {}
-          await ref.read(activityLogServiceProvider)
-              .logSessionStart(userId: user.id, username: actorName);
-          // Fire-and-forget: notify admin devices that a session was opened.
-          unawaited(ref.read(notificationOutboxProvider).send(
-            'POS_SESSION_OPENED',
-            NotificationParams.sessionOpened(
-              terminalName: ref.read(apiServiceProvider).getPosName() ?? '',
-              cashierName: actorName,
-              cashierId: user.id,
-              openedAt: newSession.startedAt,
-              startingBalance: startingBalance,
-              currency: ref.read(settingsProvider).currency,
-            ),
-            refId: newSession.id.toString(),
-          ));
-          if (mounted) {
-            SnackBarHelper.showToast(l10n
-                  .translate('started_new_session')
-                  .replaceAll('{0}', newSession.id.toString()), kind: ToastKind.info);
+        final opened =
+            await ref.read(cashSessionServiceProvider).openForCashier(
+                  cashier: (userId: user.id, username: actorName),
+                  moneyAtStart: startingBalance,
+                  // Admins are exempt from the session-open rules.
+                  isAdmin: viaMaster || user.type.toLowerCase() == 'admin',
+                  zId: zGate.z?.id,
+                );
+        ref.read(currentSessionProvider.notifier).state = opened.session;
+        if (mounted) {
+          final id = opened.session.id.toString();
+          switch (opened.how) {
+            case SessionOpening.resumed:
+              SnackBarHelper.showToast(
+                  l10n.translate('resumed_session').replaceAll('{0}', id),
+                  kind: ToastKind.success);
+            case SessionOpening.started:
+              SnackBarHelper.showToast(
+                  l10n.translate('started_new_session').replaceAll('{0}', id),
+                  kind: ToastKind.info);
+            case SessionOpening.continued:
+              break;
           }
         }
 

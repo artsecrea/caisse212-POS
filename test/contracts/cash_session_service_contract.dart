@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:caisse212/domain/services/cash_session_service.dart';
+import 'package:caisse212/domain/models/session_rules.dart'
+    show SessionRuleViolation;
 
 /// What a [CashSessionService] must do, whoever implements it: the local
 /// service runs these on the till's database, a hub-backed one will run them
@@ -8,8 +10,15 @@ import 'package:caisse212/domain/services/cash_session_service.dart';
 abstract class CashSessionHarness {
   CashSessionService get sessions;
 
-  /// A session in [status] (`active`, `paused` or `ended`).
+  /// A session in [status] (`active`, `paused` or `ended`), of cashier 1.
   Future<int> session(String status);
+
+  /// A Z open on this terminal.
+  Future<int> openZ();
+  Future<int?> zOf(int sessionId);
+
+  /// The terminal requires an opening float on a new session.
+  Future<void> requireOpeningFloat();
   Future<String?> statusOf(int sessionId);
 
   /// An order of [sessionId] seated at a new table; returns the table.
@@ -27,6 +36,50 @@ void cashSessionServiceContract(
 
     setUp(() async => h = await make());
     tearDown(() => h.dispose());
+
+    const cashier = (userId: 1, username: 'Amina');
+
+    test('a cashier with no session gets a new one, counted in the Z',
+        () async {
+      final z = await h.openZ();
+
+      final opened = await h.sessions
+          .openForCashier(cashier: cashier, moneyAtStart: 50, isAdmin: false, zId: z);
+
+      expect(opened.how, SessionOpening.started);
+      expect(opened.session.status, 'active');
+      expect(opened.session.moneyAtStart, 50);
+      expect(await h.zOf(opened.session.id), z);
+
+      final again = await h.sessions
+          .openForCashier(cashier: cashier, moneyAtStart: 0, isAdmin: false);
+      expect(again.how, SessionOpening.continued);
+      expect(again.session.id, opened.session.id);
+    });
+
+    test('a cashier with a paused session gets it back, resumed', () async {
+      final s = await h.session('paused');
+
+      final opened = await h.sessions
+          .openForCashier(cashier: cashier, moneyAtStart: 0, isAdmin: false);
+
+      expect(opened.how, SessionOpening.resumed);
+      expect(opened.session.id, s);
+      expect(opened.session.status, 'active');
+    });
+
+    test('the open rules refuse a new session, except to an admin', () async {
+      await h.requireOpeningFloat();
+
+      await expectLater(
+          h.sessions.openForCashier(
+              cashier: cashier, moneyAtStart: 0, isAdmin: false),
+          throwsA(isA<SessionRuleViolation>()));
+
+      final admin = await h.sessions
+          .openForCashier(cashier: cashier, moneyAtStart: 0, isAdmin: true);
+      expect(admin.how, SessionOpening.started);
+    });
 
     test('an open session pauses, then resumes, once each', () async {
       final s = await h.session('active');
