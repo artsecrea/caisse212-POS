@@ -107,8 +107,8 @@ class _SessionReportsDialogState extends ConsumerState<_SessionReportsDialog> {
   // ── Data ─────────────────────────────────────────────────────────────────
 
   Future<({ReportScope scope, bool provisional})> _resolveScope() async {
-    final sessions = ref.read(sessionServiceProvider);
-    final zService = ref.read(zServiceProvider);
+    final sessions = ref.read(sessionQueriesProvider);
+    final zService = ref.read(zQueriesProvider);
     final session = widget.session;
     if (!_dayScope) {
       final fresh = await sessions.getSessionById(session.id);

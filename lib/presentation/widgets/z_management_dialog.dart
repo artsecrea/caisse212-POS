@@ -32,7 +32,7 @@ Future<void> showZManagementDialog(
   AdminElevation elevation,
 ) async {
   final l10n = AppLocalizations.of(context)!;
-  final zService = ref.read(zServiceProvider);
+  final zService = ref.read(zQueriesProvider);
 
   // Load the acting user's permissions for per-button gating.
   final actor =
@@ -108,7 +108,7 @@ Future<void> showZManagementDialog(
                 }
                 if (ref.read(settingsProvider).unpaidPromptOnZClose &&
                     ctx.mounted) {
-                  final zService = ref.read(zServiceProvider);
+                  final zService = ref.read(zQueriesProvider);
                   // Settled cash needs a session still open to count it; the
                   // close then ends that session with the cash in its totals.
                   final openSessions = await zService.openSessionsOf(open.id);

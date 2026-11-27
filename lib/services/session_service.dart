@@ -9,9 +9,11 @@ import 'daily_summary_service.dart';
 import 'session_z_details.dart';
 import 'cash_report_sections.dart' show CashReportSections;
 import 'refund_service.dart';
+import 'z_day_resolver.dart';
 import 'pending_operations_service.dart';
 import '../utils/pos_log.dart';
 import 'package:loggecrea/loggecrea.dart';
+import '../domain/services/session_queries.dart';
 
 /// Per-method money breakdown for a set of tickets.
 ///
@@ -243,7 +245,7 @@ bool closeNeedsSignOff({
   return (countedCash - expectedCash).abs() > tolerance;
 }
 
-class SessionService {
+class SessionService implements SessionQueries {
   final AppDatabase _database;
 
   SessionService(this._database);
@@ -432,6 +434,13 @@ class SessionService {
   /// Newest first: a till that already holds two open sessions for one
   /// cashier (a double-fired login on 2026-11-26) must still let them sign
   /// in, and `getSingleOrNull` threw "Bad state: Too many elements" there.
+  /// The session taking money on this till now, whoever's it is: the
+  /// newest active one. A paused session does not count.
+  @override
+  Future<CashSession?> activeSessionOnTill() =>
+      ZDayResolver(_database).activeSession();
+
+  @override
   Future<CashSession?> getActiveSession(int cashierId) async {
     final open = await (_database.select(_database.cashSessions)
           ..where((tbl) =>
@@ -447,6 +456,7 @@ class SessionService {
   }
 
   /// Get session by ID
+  @override
   Future<CashSession?> getSessionById(int sessionId) async {
     return await (_database.select(_database.cashSessions)
       ..where((tbl) => tbl.id.equals(sessionId)))
@@ -456,6 +466,7 @@ class SessionService {
   /// The sessions behind a report scope. Unordered unless [oldestFirst]:
   /// the day-scope check only asks whether any is still open, while the
   /// settle-unpaid target falls back to the day's first shift.
+  @override
   Future<List<CashSession>> getSessionsByIds(Iterable<int> ids,
       {bool oldestFirst = false}) async {
     final query = _database.select(_database.cashSessions)
@@ -611,6 +622,7 @@ class SessionService {
   }
 
   /// Get session summary with calculated totals
+  @override
   Future<SessionSummary> getSessionSummary(int sessionId) async {
     final session = await getSessionById(sessionId);
     if (session == null) {
@@ -652,6 +664,7 @@ class SessionService {
   }
 
   /// Paginated, filtered, sorted sessions with resolved cashier names and summaries.
+  @override
   Future<(List<SessionWithCashier>, int)> getSessionsPage({
     required int offset,
     required int limit,

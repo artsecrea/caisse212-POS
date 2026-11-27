@@ -430,7 +430,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
   bool closeZ = false,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final sessionService = ref.read(sessionServiceProvider);
+  final sessionService = ref.read(sessionQueriesProvider);
   final dailySummary = ref.read(dailySummaryServiceProvider);
 
   // Everything up to the dialog reads the day off disk — on a long history
@@ -439,7 +439,7 @@ Future<CloseSessionResult> showCloseSessionDialog({
   var preparing =
       BlockingProgress.show(context, l10n.translate('close_preparing'));
 
-  final zService = ref.read(zServiceProvider);
+  final zService = ref.read(zQueriesProvider);
   final (sessionZ, openZ, closesZWithSession, sessionsInZ) = await () async {
     try {
       // The Z this session belongs to. Null only on a legacy session opened

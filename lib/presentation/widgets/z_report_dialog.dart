@@ -25,7 +25,7 @@ Future<void> showPrintZReportDialog({
   required WidgetRef ref,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final zService = ref.read(zServiceProvider);
+  final zService = ref.read(zQueriesProvider);
 
   if (await zService.reportBlockedByOpenShift()) {
     if (context.mounted) {

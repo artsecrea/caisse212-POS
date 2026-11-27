@@ -4,11 +4,12 @@ import '../data/database/app_database.dart';
 import '../domain/models/z_day_option.dart';
 import 'session_service.dart';
 import 'z_rules.dart';
+import '../domain/services/z_queries.dart';
 
 /// The till's local Z records (contract v3): one open Z at a time, each a
 /// (zDay, zSeq) label over a run of cash sessions. Nothing here talks to the
 /// server — the Z reaches it through the fields its sessions carry.
-class ZService {
+class ZService implements ZQueries {
   final AppDatabase _database;
 
   ZService(this._database);
@@ -41,6 +42,16 @@ class ZService {
     return '${l.zDay} · Z${l.zSeq}';
   }
 
+  /// The open Z as it changes: for screens that show it before the current
+  /// Z is known (the login screen).
+  @override
+  Stream<Z?> watchOpenZ() => (_database.select(_database.zs)
+        ..where((z) => z.status.equals('open'))
+        ..orderBy([(z) => OrderingTerm.desc(z.startedAt)])
+        ..limit(1))
+      .watchSingleOrNull();
+
+  @override
   Future<Z?> getOpenZ() => (_database.select(_database.zs)
         ..where((z) => z.status.equals('open'))
         ..orderBy([(z) => OrderingTerm.desc(z.startedAt)])
@@ -57,11 +68,13 @@ class ZService {
         ..limit(1))
       .getSingleOrNull();
 
+  @override
   Future<Z?> getById(int zId) => (_database.select(_database.zs)
         ..where((z) => z.id.equals(zId)))
       .getSingleOrNull();
 
   /// Most recent Zs (open + closed), newest first — for the history list.
+  @override
   Future<List<Z>> recentZs({int limit = 25}) => (_database.select(_database.zs)
         ..orderBy([
           (z) => OrderingTerm.desc(z.zDay),
@@ -85,6 +98,7 @@ class ZService {
   /// Capped because this feeds a dropdown, not an archive browser; a shop
   /// wanting an older day has the sessions screen. The cap is generous enough
   /// to cover a quarter of trading.
+  @override
   Future<List<ZDayOption>> zDayOptions({int limitDays = 120}) async {
     final sessions = await (_database.select(_database.cashSessions)
           ..orderBy([(s) => OrderingTerm.desc(s.startedAt)]))
@@ -131,6 +145,7 @@ class ZService {
   /// True while the till is still trading: a Z is open, or a cash session is
   /// active or paused. The Z report is the closing document, so it is not
   /// printable until then — mid-shift figures are the X report's job.
+  @override
   Future<bool> reportBlockedByOpenShift() async {
     final openZ = await (_database.select(_database.zs)
           ..where((z) => z.status.equals('open'))
@@ -196,6 +211,7 @@ class ZService {
   }
 
   /// All sessions that belong to [zId], oldest first.
+  @override
   Future<List<CashSession>> sessionsForZ(int zId) =>
       (_database.select(_database.cashSessions)
             ..where((s) => s.zId.equals(zId))
@@ -203,6 +219,7 @@ class ZService {
           .get();
 
   /// Sessions of [zId] still active or paused, other than [except].
+  @override
   Future<List<CashSession>> openSessionsOf(int zId, {int? except}) async {
     final all = await sessionsForZ(zId);
     return all

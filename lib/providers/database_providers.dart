@@ -32,6 +32,8 @@ import '../domain/models/subscription_info.dart';
 import '../services/data_sync_service.dart';
 import '../services/customer_repository.dart';
 import '../domain/services/customer_service.dart';
+import '../domain/services/session_queries.dart';
+import '../domain/services/z_queries.dart';
 import '../services/daily_summary_service.dart';
 import '../services/exchange_service.dart';
 import '../services/kitchen_board_service.dart';
@@ -155,11 +157,19 @@ final sessionServiceProvider = Provider<SessionService>((ref) {
   return SessionService(database);
 });
 
+/// What the screens read about cash sessions. A hub-linked till overrides this
+/// one provider; nothing else changes.
+final sessionQueriesProvider = Provider<SessionQueries>((ref) => ref.watch(sessionServiceProvider));
+
 // Z (shift) Service Provider
 final zServiceProvider = Provider<ZService>((ref) {
   final database = ref.watch(databaseProvider);
   return ZService(database);
 });
+
+/// What the screens read about the Zs. A hub-linked till overrides this
+/// one provider; nothing else changes.
+final zQueriesProvider = Provider<ZQueries>((ref) => ref.watch(zServiceProvider));
 
 /// Every admin notification goes through the outbox: queued in the DB, sent,
 /// deleted once delivered, retried by the sync job when the network is down.
@@ -253,14 +263,8 @@ final currentZProvider = StateProvider<db.Z?>((ref) => null);
 
 /// The open Z straight from the database, for screens that show it before
 /// [currentZProvider] is set (the login screen).
-final openZStreamProvider = StreamProvider.autoDispose<db.Z?>((ref) {
-  final database = ref.watch(databaseProvider);
-  return (database.select(database.zs)
-        ..where((z) => z.status.equals('open'))
-        ..orderBy([(z) => OrderingTerm.desc(z.startedAt)])
-        ..limit(1))
-      .watchSingleOrNull();
-});
+final openZStreamProvider = StreamProvider.autoDispose<db.Z?>(
+    (ref) => ref.watch(zQueriesProvider).watchOpenZ());
 
 /// The business day of [z] — the canonical z_day for everything created while
 /// that Z is open.

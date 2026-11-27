@@ -1361,11 +1361,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
       {bool superAdmin = false}) async {
     final l10n = AppLocalizations.of(context)!;
     final active =
-        await ref.read(sessionServiceProvider).getActiveSession(user.id);
+        await ref.read(sessionQueriesProvider).getActiveSession(user.id);
     if (active != null) {
       final z = active.zId == null
           ? null
-          : await ref.read(zServiceProvider).getById(active.zId!);
+          : await ref.read(zQueriesProvider).getById(active.zId!);
       return (ok: true, z: z);
     }
 

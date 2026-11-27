@@ -60,7 +60,7 @@ class _SessionsManagementScreenState extends ConsumerState<SessionsManagementScr
   }
 
   void _refreshFuture() {
-    final sessionService = ref.read(sessionServiceProvider);
+    final sessionService = ref.read(sessionQueriesProvider);
     setState(() {
       _pageFuture = sessionService.getSessionsPage(
         offset: _currentPage * _rowsPerPage,

@@ -403,7 +403,7 @@ class _TopBarState extends ConsumerState<TopBar> {
     final l10n = AppLocalizations.of(context);
     // Refuse before asking for credentials — typing a password only to be
     // told no is worse than being told no.
-    if (await ref.read(zServiceProvider).reportBlockedByOpenShift()) {
+    if (await ref.read(zQueriesProvider).reportBlockedByOpenShift()) {
       if (mounted) {
         SnackBarHelper.error(
             context, l10n?.translate('z_report_blocked_open') ?? 'Close the Z first');
@@ -431,7 +431,7 @@ class _TopBarState extends ConsumerState<TopBar> {
       return;
     }
 
-    final sessionService = ref.read(sessionServiceProvider);
+    final sessionService = ref.read(sessionQueriesProvider);
     final session = await sessionService.getActiveSession(currentUser.id);
 
     if (session == null) {
@@ -553,7 +553,7 @@ class _TopBarState extends ConsumerState<TopBar> {
         return;
       }
 
-      final sessionService = ref.read(sessionServiceProvider);
+      final sessionService = ref.read(sessionQueriesProvider);
       final session = await sessionService.getActiveSession(currentUser.id);
 
       if (session == null || session.status != 'active') {
@@ -564,7 +564,7 @@ class _TopBarState extends ConsumerState<TopBar> {
 
       // Z close availability — offered next to End Session. The dialog it
       // opens re-checks every Z rule; this only decides whether to offer it.
-      final openZForClose = await ref.read(zServiceProvider).getOpenZ();
+      final openZForClose = await ref.read(zQueriesProvider).getOpenZ();
       final canCloseZ = openZForClose != null &&
           ref.read(permissionServiceProvider).hasPermission(Permissions.zClose);
 
@@ -758,7 +758,7 @@ class _TopBarState extends ConsumerState<TopBar> {
   /// must never be blocked by a failed sync.
   Future<void> _syncAndCloseBeforeLogout(int? userId) async {
     try {
-      final sessionService = ref.read(sessionServiceProvider);
+      final sessionService = ref.read(sessionQueriesProvider);
       final syncService = ref.read(dataSyncServiceProvider);
       if (userId != null) {
         final session = await sessionService.getActiveSession(userId);

@@ -1394,7 +1394,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final l10n = AppLocalizations.of(context)!;
     final orders = ref.read(orderServiceProvider);
     final mode = ref.read(settingsProvider).orderNumberResetMode;
-    final session = await ref.read(zDayResolverProvider).activeSession();
+    final session = await ref.read(sessionQueriesProvider).activeSessionOnTill();
     if (!context.mounted) return;
     if (session == null && mode != 'manual') {
       SnackBarHelper.showToast(l10n.translate('reset_order_number_no_session'), kind: ToastKind.info);

@@ -49,7 +49,7 @@ Future<void> showSettleUnpaidDialog({
   required WidgetRef ref,
 }) async {
   final l10n = AppLocalizations.of(context)!;
-  final sessionService = ref.read(sessionServiceProvider);
+  final sessionService = ref.read(sessionQueriesProvider);
 
   final entries = await ref.read(unpaidOrdersServiceProvider).unpaidOrders();
   if (!context.mounted) return;
@@ -58,7 +58,7 @@ Future<void> showSettleUnpaidDialog({
     return;
   }
 
-  final days = await ref.read(zServiceProvider).zDayOptions();
+  final days = await ref.read(zQueriesProvider).zDayOptions();
   final session = ref.read(currentSessionProvider);
   if (!context.mounted) return;
 

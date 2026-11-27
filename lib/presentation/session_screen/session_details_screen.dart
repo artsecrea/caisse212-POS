@@ -34,7 +34,7 @@ class _SessionDetailsScreenState extends ConsumerState<SessionDetailsScreen> {
     });
 
     try {
-      final sessionService = ref.read(sessionServiceProvider);
+      final sessionService = ref.read(sessionQueriesProvider);
       final currentUser = ref.read(currentUserProvider);
 
       if (currentUser != null) {
