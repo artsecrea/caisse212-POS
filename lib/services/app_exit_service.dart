@@ -9,7 +9,6 @@ import 'package:window_manager/window_manager.dart';
 
 import '../providers/database_providers.dart';
 import '../presentation/widgets/close_session_dialog.dart';
-import 'session_service.dart';
 
 /// Self-contained localization for the exit flow. The app's L10n is
 /// hand-written and huge; keeping these few strings here keeps the feature in
@@ -163,7 +162,7 @@ Future<bool> runAppExitFlow(BuildContext context, WidgetRef ref) async {
     final user = ref.read(currentUserProvider);
     if (user != null && context.mounted) {
       final session =
-          await SessionService(ref.read(databaseProvider)).getActiveSession(user.id);
+          await ref.read(sessionQueriesProvider).getActiveSession(user.id);
       if (session != null && session.status == 'active' && context.mounted) {
         final choice = await showDialog<String>(
           context: context,

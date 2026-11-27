@@ -434,6 +434,13 @@ class SessionService implements SessionQueries {
   /// Newest first: a till that already holds two open sessions for one
   /// cashier (a double-fired login on 2026-11-26) must still let them sign
   /// in, and `getSingleOrNull` threw "Bad state: Too many elements" there.
+  /// Every session on this till still open, active or paused.
+  @override
+  Future<List<CashSession>> openSessionsOnTill() =>
+      (_database.select(_database.cashSessions)
+            ..where((s) => s.status.isIn(['active', 'paused'])))
+          .get();
+
   /// The session taking money on this till now, whoever's it is: the
   /// newest active one. A paused session does not count.
   @override

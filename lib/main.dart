@@ -29,7 +29,6 @@ import 'presentation/widgets/refunds_screen.dart';
 import 'package:caisse212/presentation/widgets/dashboard_screen.dart';
 import 'package:caisse212/presentation/widgets/notes_screen.dart';
 import 'package:caisse212/presentation/widgets/logs_screen.dart';
-import 'package:caisse212/services/session_service.dart';
 import 'package:caisse212/services/server_startup_service.dart';
 import 'package:caisse212/services/activity_log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -532,9 +531,9 @@ class _MyAppState extends ConsumerState<MyApp>
     try {
       final currentUser = ref.read(currentUserProvider);
       if (currentUser != null) {
-        final database = ref.read(databaseProvider);
-        final sessionService = SessionService(database);
-        final session = await sessionService.getActiveSession(currentUser.id);
+        final session = await ref
+            .read(sessionQueriesProvider)
+            .getActiveSession(currentUser.id);
 
         if (session != null && session.status == 'active') {
           // await sessionService.pauseSession(session.id);

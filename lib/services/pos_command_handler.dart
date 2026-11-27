@@ -6,7 +6,6 @@ import '../providers/database_providers.dart';
 import 'local_cash_session_service.dart';
 import 'activity_log_service.dart';
 import 'data_sync_service.dart';
-import 'session_service.dart';
 import 'subscription_store.dart';
 
 /// Dispatches `pos-command` SSE events to the appropriate service action.
@@ -267,8 +266,8 @@ class PosCommandHandler {
     await _run('close_current_session', () async {
       final user = _ref.read(currentUserProvider);
       if (user == null) return;
-      final db = _ref.read(databaseProvider);
-      final session = await SessionService(db).getActiveSession(user.id);
+      final session =
+          await _ref.read(sessionQueriesProvider).getActiveSession(user.id);
       if (session == null) return;
       await _ref.read(cashSessionServiceProvider).close(session.id);
       _ref.read(currentSessionProvider.notifier).state = null;
@@ -282,9 +281,8 @@ class PosCommandHandler {
     await _run('kick_pause_session', () async {
       final user = _ref.read(currentUserProvider);
       if (user == null) return;
-      final db = _ref.read(databaseProvider);
-      final service = SessionService(db);
-      final session = await service.getActiveSession(user.id);
+      final session =
+          await _ref.read(sessionQueriesProvider).getActiveSession(user.id);
       if (session != null && session.status == 'active') {
         await _ref.read(cashSessionServiceProvider).pause(session.id);
       }
@@ -297,10 +295,8 @@ class PosCommandHandler {
 
   Future<void> _closeAllSessions() async {
     await _run('close_all_sessions', () async {
-      final db = _ref.read(databaseProvider);
-      final sessions = await (db.select(db.cashSessions)
-            ..where((s) => s.status.isIn(['active', 'paused'])))
-          .get();
+      final sessions =
+          await _ref.read(sessionQueriesProvider).openSessionsOnTill();
       final service = _ref.read(cashSessionServiceProvider);
       for (final s in sessions) {
         await service.close(s.id);

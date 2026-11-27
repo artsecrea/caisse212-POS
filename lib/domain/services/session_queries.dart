@@ -40,4 +40,12 @@ abstract interface class SessionQueries {
     int sortColumn = 2,
     bool sortAscending = false,
   });
+
+  /// Get active session for a user
+  ///
+  /// Newest first: a till that already holds two open sessions for one
+  /// cashier (a double-fired login on 2026-11-26) must still let them sign
+  /// in, and `getSingleOrNull` threw "Bad state: Too many elements" there.
+  /// Every session on this till still open, active or paused.
+  Future<List<CashSession>> openSessionsOnTill();
 }
