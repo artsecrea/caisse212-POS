@@ -202,7 +202,7 @@ final _dashboardStatsProvider =
   }
   topProds.sort((a, b) => b.qty.compareTo(a.qty));
 
-  final totalItems = orderProducts.fold<int>(0, (s, op) => s + op.quantity.round());
+  final totalItems = owedProducts.fold<int>(0, (s, op) => s + op.quantity.round());
 
   return DashboardStats(
     totalOrders: allOrders.length,
